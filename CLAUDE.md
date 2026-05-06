@@ -49,7 +49,8 @@ tests/unit/            # 单元测试（主要）
 tests/integration/     # 集成占位，以 unit 为准
 main.py                # python main.py → Web；python main.py cli …
 api.md                 # 公网 VPN API 说明（Basic、批量、下载）
-README.md              # 使用与部署入门
+README.md              # 入门与文档导航
+docs/overview.md       # 产品能力说明（设备绑定、Mesh 等）
 ```
 
 ## 常用命令
