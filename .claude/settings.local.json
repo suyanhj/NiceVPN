@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell.exe -NoProfile -Command \"cd 'C:\\\\Users\\\\EDY\\\\Desktop\\\\proj\\\\ops\\\\script\\\\py\\\\vpn'; .\\\\.specify\\\\scripts\\\\powershell\\\\update-agent-context.ps1 -AgentType claude\" 2>&1)",
+      "Bash(powershell.exe -NoProfile -Command \"cd 'C:\\\\Users\\\\EDY\\\\Desktop\\\\proj\\\\ops\\\\script\\\\py\\\\vpn'; .\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1 -Json -PathsOnly\" 2>&1)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:openvpn.net)",
+      "WebSearch",
+      "Bash(powershell.exe -NoProfile -Command \"cd 'C:\\\\Users\\\\EDY\\\\Desktop\\\\proj\\\\ops\\\\script\\\\py\\\\vpn'; .\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1 -Json\" 2>&1)",
+      "Bash(powershell.exe -NoProfile -Command \"cd 'C:\\\\Users\\\\EDY\\\\Desktop\\\\proj\\\\ops\\\\script\\\\py\\\\vpn'; .\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks\" 2>&1)",
+      "Bash(for d:*)",
+      "Bash(do touch:*)",
+      "Bash(done)",
+      "Bash(sed -i 's/- \\\\[ \\\\] T007/- [x] T007/' specs/001-openvpn-mgmt-system/tasks.md)",
+      "Bash(sed -i 's/- \\\\[ \\\\] T008/- [x] T008/' specs/001-openvpn-mgmt-system/tasks.md)",
+      "Bash(sed -i 's/- \\\\[ \\\\] T009/- [x] T009/' specs/001-openvpn-mgmt-system/tasks.md)",
+      "Bash(sed -i 's/- \\\\[ \\\\] T010/- [x] T010/' specs/001-openvpn-mgmt-system/tasks.md)",
+      "Bash(sed -i 's/- \\\\[ \\\\] T011/- [x] T011/' specs/001-openvpn-mgmt-system/tasks.md)",
+      "Bash(for t:*)",
+      "Bash(do sed:*)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(pip index:*)",
+      "Bash(powershell.exe -NoProfile -Command \"pip index versions nicegui 2>&1 | Select -First 2; pip index versions fastapi 2>&1 | Select -First 2; pip index versions uvicorn 2>&1 | Select -First 2; pip index versions pydantic 2>&1 | Select -First 2; pip index versions python-box 2>&1 | Select -First 2; pip index versions requests 2>&1 | Select -First 2; pip index versions schedule 2>&1 | Select -First 2; pip index versions packaging 2>&1 | Select -First 2; pip index versions pytest 2>&1 | Select -First 2; pip index versions pytest-asyncio 2>&1 | Select -First 2\")",
+      "Bash(powershell.exe -NoProfile -Command \"python -m pip index versions nicegui 2>&1 | Select -First 1\")",
+      "Bash(powershell.exe -NoProfile -Command \"python -m pip install --dry-run nicegui fastapi 'uvicorn[standard]' pydantic python-box requests schedule packaging pytest pytest-asyncio 2>&1 | Select-String 'Would install'\" 2>&1)"
+    ]
+  }
+}

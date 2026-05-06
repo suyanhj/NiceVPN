@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# 运行时数据（含敏感信息）
+data/
+backups/
+
+# 敏感文件
+*.ovpn
+*.key
+*.pem
+*.crt
+*.csr
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# speckit
+.specify/
+specs/

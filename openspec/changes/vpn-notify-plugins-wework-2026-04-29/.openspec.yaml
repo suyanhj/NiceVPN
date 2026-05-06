@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-04-29
+status: implemented
+note: 通知插件注册表、钉钉迁移为插件、企业微信机器人通道、设置页按通道显隐与 bind_visibility 修正（已实现回填）

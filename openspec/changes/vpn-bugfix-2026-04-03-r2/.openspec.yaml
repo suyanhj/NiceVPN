@@ -1,0 +1,18 @@
+schema: spec-driven
+name: vpn-bugfix-2026-04-03-r2
+created: "2026-04-03"
+status: done
+description: "修复组管理根组逻辑、用户启用/停用操作按钮、防火墙CDN和默认规则同步"
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+affected_files:
+  - app/core/init_wizard.py
+  - app/services/group/crud.py
+  - app/services/group/subnet.py
+  - app/services/user/crud.py
+  - app/ui/pages/users.py
+  - app/ui/pages/groups.py
+  - app/ui/pages/firewall.py
+  - app/models/group.py

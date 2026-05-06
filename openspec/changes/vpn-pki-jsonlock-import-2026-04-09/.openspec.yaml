@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-04-09
+status: implemented
+note: 与当前代码库对齐的已落地变更（用户删除 PKI 清理、POSIX 锁文件、NiceGUI3 批量导入上传）

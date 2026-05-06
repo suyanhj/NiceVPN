@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenVPN 可视化管理系统
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/openvpn-mgmt
+ExecStart=/usr/bin/python3 main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

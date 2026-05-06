@@ -1,0 +1,18 @@
+schema: spec-driven
+name: vpn-bugfix-2026-04-03-r3
+created: "2026-04-03"
+status: done
+description: "防火墙页面统一渲染、ipset清理顺序、SortableJS本地化、仪表盘清理假数据、启用停用CCD生效、批量导入、证书搜索"
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+affected_files:
+  - app/ui/pages/firewall.py
+  - app/services/firewall/iptables_mgr.py
+  - app/ui/static/Sortable.min.js
+  - main.py
+  - app/ui/pages/dashboard.py
+  - app/services/user/crud.py
+  - app/ui/pages/users.py
+  - app/ui/pages/certs.py

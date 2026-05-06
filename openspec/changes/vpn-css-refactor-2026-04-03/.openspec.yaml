@@ -1,0 +1,18 @@
+schema: spec-driven
+name: vpn-css-refactor-2026-04-03
+created: "2026-04-03"
+status: done
+description: "前端样式统一重构：提取 mgmt-* 通用组件类，消除各页面重复 CSS，删除废弃 drag_list 组件"
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+affected_files:
+  - app/ui/theme.py
+  - app/ui/pages/groups.py
+  - app/ui/pages/users.py
+  - app/ui/pages/certs.py
+  - app/ui/pages/services.py
+  - app/ui/pages/settings.py
+  - app/ui/pages/firewall.py
+  - app/ui/components/drag_list.py

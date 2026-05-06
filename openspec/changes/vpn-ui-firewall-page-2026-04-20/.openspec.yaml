@@ -1,0 +1,18 @@
+schema: spec-driven
+name: vpn-ui-firewall-page-2026-04-20
+created: "2026-04-20"
+status: done
+description: "防火墙「规则管理」单页总览：双 Tab 语义、中心/对端数据流、与后端/主题/相关变更的索引（文档变更，不单独改业务代码）"
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+affected_files: []
+refs:
+  - app/ui/pages/firewall.py
+  - app/ui/theme.py
+  - app/services/firewall/rule_service.py
+  - app/services/firewall/iptables_mgr.py
+  - app/services/peer_instance/remote_chain_cache.py
+  - app/services/peer_instance/remote_peer_iptables.py
+  - app/services/peer_instance/service.py

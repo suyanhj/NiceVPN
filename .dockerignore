@@ -1,0 +1,14 @@
+.git/
+data/
+backups/
+*.ovpn
+*.key
+*.pem
+.env*
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+specs/
+.specify/
+tests/

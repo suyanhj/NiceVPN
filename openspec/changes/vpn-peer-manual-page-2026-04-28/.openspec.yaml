@@ -1,0 +1,19 @@
+schema: spec-driven
+name: vpn-peer-manual-page-2026-04-28
+created: "2026-04-28"
+status: done
+description: >-
+  对端部署说明从侧边 Markdown 弹窗改为独立子页 /peers/manual：结构化步骤、命令一键复制、
+  压缩 Markdown 下载；PeerService.export_peer_manual_context 与 peer_manual_md.build_peer_site_manual_context。
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+affected_files:
+  - main.py
+  - app/ui/pages/peers.py
+  - app/ui/theme.py
+  - app/services/peer_instance/peer_manual_md.py
+  - app/services/peer_instance/service.py
+refs:
+  - app/ui/copy_clipboard.py

@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-05-06
+status: implemented
+note: >-
+  公网 VPN HTTP API（/api/vpn/*，HTTP Basic）、批量创建合并 vpns_*.zip、一次性下载链、api.md/README/单测；
+  初始化向导右栏可滚动与 systemctl 后台任务 UI 通知与规范目录 CLAUDE 等以代码为准，见 design/tasks。

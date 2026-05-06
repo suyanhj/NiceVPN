@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-04-13
+status: done
+note: >
+  对端站点、中心 mesh/CCD、VPN_PEER、对端 SSH（OpenVPN 探测/安装、配置推送、iptables/SNAT、部署说明独立页）
+  等与当前实现对齐；`tasks.md` 中曾标为进阶的项已以「产品收口」勾选。另起变更再追：known_hosts 硬化、对端 ipset 多离散 IP、
+  CIDR 变更后自动 SSH 重推等。
