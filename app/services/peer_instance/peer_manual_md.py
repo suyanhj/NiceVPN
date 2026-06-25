@@ -67,17 +67,17 @@ iptables -t nat -S POSTROUTING | grep 'peer={peer_id}' || true"""
             "command": firewall_cmd,
         },
     ]
-    if masquerade_on_peer:
-        steps.append(
-            {
-                "title": "可选 SNAT 转换",
-                "summary": "需要让对端后方网络看到统一源地址时启用；目标地址不限制。",
-                "command": (
-                    f"iptables -t nat -I POSTROUTING 1 -s {gs} "
-                    f'-m comment --comment "{masq_comment}" -j MASQUERADE'
-                ),
-            }
-        )
+    # if masquerade_on_peer:
+    steps.append(
+        {
+            "title": "可选 SNAT 转换",
+            "summary": "需要访问对端后方网络时，对端局域网内未配置静态路由时，必须配置 SNAT。",
+            "command": (
+                f"iptables -t nat -I POSTROUTING 1 -s {gs} "
+                f'-m comment --comment "{masq_comment}" -j MASQUERADE'
+            ),
+        }
+    )
     steps.append(
         {
             "title": "验证状态与规则",

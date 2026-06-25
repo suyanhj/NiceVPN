@@ -4,11 +4,16 @@
 import logging
 from pathlib import Path
 
-from app.core.constants import DEVICE_BIND_LOG_FILE, OPENVPN_ETC_DIR
+from app.core.constants import DEVICE_BIND_LOG_FILE, OPENVPN_ETC_DIR, VPN_SESSION_AUDIT_LOG_FILE
 
 logger = logging.getLogger(__name__)
 
-_SCRIPT_NAMES = ("device-bind.sh", "device_binding_json.py")
+_SCRIPT_NAMES = (
+    "device-bind.sh",
+    "device_binding_json.py",
+    "vpn_session_audit.py",
+    "vpn-session-disconnect.sh",
+)
 
 
 def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
@@ -29,6 +34,7 @@ def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
         content = src.read_text(encoding="utf-8").replace("\r\n", "\n")
         content = content.replace("__OPENVPN_ETC_DIR__", str(OPENVPN_ETC_DIR))
         content = content.replace("__DEVICE_BIND_LOG_FILE__", DEVICE_BIND_LOG_FILE.as_posix())
+        content = content.replace("__VPN_SESSION_AUDIT_LOG_FILE__", VPN_SESSION_AUDIT_LOG_FILE.as_posix())
         dst = scripts_dir / script_name
         dst.write_text(content, encoding="utf-8", newline="\n")
         if script_name.endswith(".sh"):

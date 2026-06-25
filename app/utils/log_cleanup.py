@@ -4,7 +4,7 @@
 说明：
 - app.log / openvpn-install.log 由 TimedRotatingFileHandler 按天轮转，backupCount=LOG_RETENTION_DAYS；
   此处额外按 mtime 清理遗留的 *.log.*，防止历史 Rotating 后缀堆积。
-- /etc/openvpn/log 下守护进程与 device-bind 日志：按 mtime 超过保留期则删除（活跃文件 mtime 会更新，一般不会被删）。
+- /etc/openvpn/log 下守护进程、device-bind 与 VPN 审计日志：按 mtime 超过保留期则删除（活跃文件 mtime 会更新，一般不会被删）。
 - 审计 audit-YYYY-MM-DD.jsonl：按文件名日期早于保留期则删除。
 """
 from __future__ import annotations
@@ -79,7 +79,7 @@ def cleanup_expired_logs(retention_days: int | None = None) -> None:
             if name.startswith("app.log.") or name.startswith("openvpn-install.log."):
                 _unlink_if_expired(p)
 
-    # OpenVPN 守护进程与状态、设备绑定日志
+    # OpenVPN 守护进程与状态、设备绑定日志、VPN 审计 JSONL
     scan_dirs = tuple(dict.fromkeys((OPENVPN_DAEMON_LOG_DIR, OPENVPN_LOG_ROOT)))
     for scan_dir in scan_dirs:
         if not scan_dir.is_dir():
@@ -87,7 +87,7 @@ def cleanup_expired_logs(retention_days: int | None = None) -> None:
         for p in scan_dir.iterdir():
             if not p.is_file():
                 continue
-            if not (p.suffix == ".log" or p.name.endswith("-status.log")):
+            if not (p.suffix in {".log", ".jsonl"} or p.name.endswith("-status.log")):
                 continue
             _unlink_if_expired(p)
 

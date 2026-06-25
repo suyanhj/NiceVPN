@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""VPN 用户对外 HTTP API（HTTP Basic）：创建用户+下载链、批量创建、注销用户、重置设备绑定。"""
+"""VPN 用户对外 HTTP API（HTTP Basic）：创建用户+下载链、批量创建、切组、注销用户、重置设备绑定。"""
 from __future__ import annotations
 
 import logging
@@ -183,6 +183,23 @@ class ResetDeviceBindingResponse(BaseModel):
     username_prefix: str
     reset_users: list[str]
     bindings_cleared: int = Field(description="成功清除的绑定条目数（含多用户上曾有绑定）")
+
+
+class ChangeUserGroupBody(BaseModel):
+    """切换 VPN 用户组请求体。"""
+
+    group_name: str = Field(..., min_length=1, description="目标用户组名称，须与控制台一致")
+
+
+class ChangeUserGroupResponse(BaseModel):
+    """切换 VPN 用户组结果。"""
+
+    username: str
+    old_group_id: str
+    new_group_id: str
+    old_virtual_ip: str | None = None
+    new_virtual_ip: str | None = None
+    changed: bool
 
 
 def _execute_create_vpn_user(body: CreateVpnUserBody, request: Request) -> CreateVpnUserResponse:
@@ -479,6 +496,34 @@ def api_create_vpn_users_batch(
             detail=f"批量总账号数（各 count 之和）不得超过 {_BATCH_MAX_TOTAL_ACCOUNTS}，当前为 {total_n}",
         )
     return _execute_batch_create_vpn_users(items, request)
+
+
+@router.post(
+    "/users/{username}/group",
+    response_model=ChangeUserGroupResponse,
+    dependencies=[Depends(_verify_api_basic), Depends(_require_initialized)],
+)
+def api_change_vpn_user_group(
+    username: str,
+    body: ChangeUserGroupBody,
+) -> ChangeUserGroupResponse:
+    """切换单个 VPN 用户所属组；成功后会重分配虚拟 IP 并踢下线，用户重连后生效。"""
+    raw_username = username.strip()
+    if not raw_username or "/" in raw_username or "\\" in raw_username:
+        raise HTTPException(status_code=400, detail="用户名非法或为空")
+    group_id = _resolve_group_id_by_name(body.group_name)
+    user_service = UserService()
+    try:
+        result = user_service.change_group(raw_username, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        logger.exception("API 切换用户组失败 user=%s group_name=%s", raw_username, body.group_name)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("API 切换用户组异常 user=%s group_name=%s", raw_username, body.group_name)
+        raise HTTPException(status_code=500, detail="切换用户组失败，详见服务日志") from e
+    return ChangeUserGroupResponse(**result)
 
 
 @router.delete(

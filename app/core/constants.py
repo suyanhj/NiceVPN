@@ -23,6 +23,10 @@ OPENVPN_LOG_ROOT = OPENVPN_ETC_DIR / "log"
 OPENVPN_DAEMON_LOG_DIR = OPENVPN_LOG_ROOT
 # 设备绑定审计日志：由 device-bind.sh 的 log() 追加写入；部署时 script_sync 把该路径写入脚本的 BIND_LOG
 DEVICE_BIND_LOG_FILE = OPENVPN_LOG_ROOT / "openvpn-device-bind.log"
+# VPN 会话审计 JSONL：client-connect/client-disconnect 钩子写入，供 Fluent Bit 采集到 VictoriaLogs
+VPN_SESSION_AUDIT_LOG_FILE = OPENVPN_LOG_ROOT / "openvpn-session-audit.jsonl"
+# VPN 连接审计 JSONL：conntrack -E 监听器写入，供 Fluent Bit 采集到 VictoriaLogs
+VPN_CONNECTION_AUDIT_LOG_FILE = OPENVPN_LOG_ROOT / "openvpn-connection-audit.jsonl"
 
 # ---------- 管理端应用数据（Python 进程读写，放项目 data/）----------
 DATA_DIR = BASE_DIR / "data"

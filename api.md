@@ -4,7 +4,7 @@
 
 ## 认证
 
-除另有说明外，以下创建/删除/重置接口均需 **HTTP Basic**：
+除另有说明外，以下创建/切组/删除/重置接口均需 **HTTP Basic**：
 
 | 项 | 说明 |
 |----|------|
@@ -137,7 +137,58 @@
 
 ---
 
-## 2. 按前缀批量删除用户
+## 2. 切换单个用户所属组
+
+切组后服务端会按目标组子网重新分配 CCD 固定虚拟 IP，并通过 OpenVPN management 踢掉该用户当前连接；用户重连后拿到新 IP 与新路由。证书 CN 不变，不需要重新下载 `.ovpn`。
+
+**请求**
+
+| 项目 | 值 |
+|------|-----|
+| 方法 / 路径 | `POST /api/vpn/users/{username}/group` |
+| Header | `Content-Type: application/json`，以及 Basic |
+| Path | `username`：单个 VPN 用户名 |
+| Body (JSON) | 见下表 |
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `group_name` | string | 是 | 目标用户组**显示名称**（与控制台一致） |
+
+**成功响应** `200`，Body (JSON)：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `username` | string | 已切组的用户名 |
+| `old_group_id` | string | 原用户组 ID |
+| `new_group_id` | string | 目标用户组 ID |
+| `old_virtual_ip` | string \| null | 原 CCD 虚拟 IP |
+| `new_virtual_ip` | string \| null | 新 CCD 虚拟 IP |
+| `changed` | boolean | 是否实际发生切组 |
+
+**示例**
+
+```json
+{
+  "username": "lisi",
+  "old_group_id": "old-gid",
+  "new_group_id": "new-gid",
+  "old_virtual_ip": "10.8.1.2",
+  "new_virtual_ip": "10.8.2.2",
+  "changed": true
+}
+```
+
+**常见错误**
+
+| HTTP | 说明 |
+|------|------|
+| 400 | 用户名非法、用户不存在、组不存在、目标组停用、目标组无可用 IP |
+| 401 / 503 | 认证或系统未就绪 |
+| 500 | 切组过程异常或 mesh 路由同步失败 |
+
+---
+
+## 3. 按前缀批量删除用户
 
 路径参数中的字符串视为**用户名前缀**，匹配规则：**完全相同** 或 **`前缀_纯数字`**（如 `lisi`、`lisi_1`、`lisi_2`），与控制台批量命名一致；不匹配 `lisi_backup` 等。
 
@@ -196,7 +247,7 @@ Authorization: Basic xxx
 
 ---
 
-## 3. 按前缀批量重置设备绑定
+## 4. 按前缀批量重置设备绑定
 
 匹配规则与 **删除接口** 相同。
 
@@ -284,6 +335,11 @@ curl -sS -u 'vpn:你的密码' -H 'Content-Type: application/json' -d @- \
   { "username": "beta", "count": 2, "group_name": "默认用户组" }
 ]
 EOF
+
+# 切换用户 demo 到「研发组」
+curl -sS -u 'vpn:你的密码' -H 'Content-Type: application/json' \
+  -d '{"group_name":"研发组"}' \
+  https://api.example.com/api/vpn/users/demo/group
 
 # 删除前缀 demo
 curl -sS -u 'vpn:你的密码' -X DELETE \

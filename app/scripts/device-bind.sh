@@ -20,6 +20,11 @@ case "$BIND_LOG" in *"__DEVICE_BIND_LOG_FILE__"*)
     BIND_LOG="${OVPN_ETC}/log/openvpn-device-bind.log"
     ;;
 esac
+SESSION_AUDIT_LOG="__VPN_SESSION_AUDIT_LOG_FILE__"
+case "$SESSION_AUDIT_LOG" in *"__VPN_SESSION_AUDIT_LOG_FILE__"*)
+    SESSION_AUDIT_LOG="${OVPN_ETC}/log/openvpn-session-audit.jsonl"
+    ;;
+esac
 BINDINGS_DIR="${OVPN_ETC}/mgmt/device_bindings"
 MODE_FILE="${OVPN_ETC}/mgmt/device_bind_mode"
 
@@ -27,6 +32,7 @@ CN="${common_name}"
 # 与 device_binding_json.py 同目录（部署在 /etc/openvpn/scripts/）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BD_JSON_PY="${SCRIPT_DIR}/device_binding_json.py"
+SESSION_AUDIT_PY="${SCRIPT_DIR}/vpn_session_audit.py"
 
 # 选用 PATH 中版本号最高的 python3.x（多版本并存时避免 python3 指向旧解释器），最后回退 python3
 init_py3_for_bind() {
@@ -64,9 +70,28 @@ if [ -z "${CN}" ]; then
     exit 1
 fi
 
+write_session_start() {
+    if [ ! -f "${SESSION_AUDIT_PY}" ]; then
+        log "错误: 未找到 ${SESSION_AUDIT_PY}，请与 device-bind.sh 一并部署到 scripts 目录，CN=${CN}"
+        exit 1
+    fi
+    if ! init_py3_for_bind; then
+        log "错误: 未找到 python3 / python3.x，无法写入会话审计 JSONL，CN=${CN}"
+        exit 1
+    fi
+    if ! "${PY3_BIND}" "${SESSION_AUDIT_PY}" \
+        --event-type vpn_session_start \
+        --log-file "${SESSION_AUDIT_LOG}" \
+        2>>"${BIND_LOG}"; then
+        log "错误: 写入会话开始审计失败（${PY3_BIND} 执行 vpn_session_audit.py），CN=${CN}"
+        exit 1
+    fi
+}
+
 # ---------- 模式 A：仅记录 ----------
 if [ "${DEVICE_BIND_MODE}" = "weak_log" ]; then
     log "mode=weak_log CN=${CN} IV_PLAT=${IV_PLAT:-} UV_UUID=${UV_UUID:-} IV_VER=${IV_VER:-} IV_HWADDR=${IV_HWADDR:-} IV_AUTO_SESS=${IV_AUTO_SESS:-} IV_PLAT_VER=${IV_PLAT_VER:-} IV_GUI_VER=${IV_GUI_VER:-}"
+    write_session_start
     exit 0
 fi
 
@@ -90,6 +115,7 @@ else
             ios|iphone|ipad|mac|macos|macosx|darwin|osx|win|windows)
                 if [ -z "${UV_UUID:-}" ]; then
                     log "mode=weak_fingerprint CN=${CN} 平台 IV_PLAT=${IV_PLAT:-?}（iOS/Mac/Win）无 IV_HWADDR 且缺 UV_UUID，仅证书认证通过"
+                    write_session_start
                     exit 0
                 fi
                 FINGERPRINT="${UV_UUID}"
@@ -98,6 +124,7 @@ else
             android)
                 if [ -z "${IV_PLAT_VER:-}" ]; then
                     log "mode=weak_fingerprint CN=${CN} 安卓无 IV_HWADDR 且缺 IV_PLAT_VER，仅证书认证通过"
+                    write_session_start
                     exit 0
                 fi
                 FINGERPRINT="${IV_PLAT:-android}|${IV_PLAT_VER}"
@@ -106,6 +133,7 @@ else
             *)
                 if [ -z "${IV_PLAT_VER:-}" ] && [ -z "${IV_GUI_VER:-}" ]; then
                     log "mode=weak_fingerprint CN=${CN} 无 IV_HWADDR，IV_PLAT=${IV_PLAT:-?} 非 iOS/Mac/Win/安卓或未上报 PLAT_VER|GUI_VER，仅证书认证通过"
+                    write_session_start
                     exit 0
                 fi
                 FINGERPRINT="${IV_PLAT_VER:-}|${IV_GUI_VER:-}"
@@ -170,6 +198,7 @@ update_binding_seen_and_plat() {
 if [ -z "${BINDING_FILE}" ]; then
     write_binding_json
     log "新设备绑定: mode=${DEVICE_BIND_MODE} 用户=${CN}, 指纹=${FINGERPRINT}, source=${FINGERPRINT_SOURCE}"
+    write_session_start
     exit 0
 fi
 
@@ -178,6 +207,7 @@ STORED_FP=$(grep -o '"fingerprint": "[^"]*"' "${BINDING_FILE}" | head -1 | cut -
 if [ "${FINGERPRINT}" = "${STORED_FP}" ]; then
     update_binding_seen_and_plat
     log "设备指纹匹配: CN=${CN} mode=${DEVICE_BIND_MODE}"
+    write_session_start
     exit 0
 fi
 

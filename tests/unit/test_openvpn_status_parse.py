@@ -39,14 +39,15 @@ def test_get_status_comma_delimited(monkeypatch, tmp_path: Path):
     assert out["total_bytes_sent"] == 11774
 
 
-def test_generate_server_conf_has_client_connect_only():
-    """生成的 server.conf 含 client-connect；全局池路由由 CCD ifconfig 掩码与 server 一致实现。"""
+def test_generate_server_conf_has_client_hooks():
+    """生成的 server.conf 含连接和断开钩子；全局池路由由 CCD ifconfig 掩码与 server 一致实现。"""
     from app.services.openvpn.instance import generate_server_conf
 
     text = generate_server_conf("srv1", {"openvpn_conf_dir": "/etc/openvpn", "pki_dir": "/etc/openvpn/pki"})
+    assert "setenv VPN_INSTANCE_NAME srv1" in text
     assert "client-connect" in text
     assert "device-bind.sh" in text
-    assert "client-disconnect" not in text
+    assert "client-disconnect /etc/openvpn/scripts/vpn-session-disconnect.sh" in text
     assert "log-append /etc/openvpn/log/srv1.log" in text
     assert "status /etc/openvpn/log/srv1-status.log 30" in text
     assert "topology subnet" in text

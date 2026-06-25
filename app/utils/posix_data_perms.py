@@ -126,19 +126,33 @@ def fix_path_for_openvpn_shared_data(path: Path) -> None:
         raise
 
 
-def ensure_device_bind_log_file() -> None:
-    """保证设备绑定日志存在，并属主 nobody:nobody（单文件 chown）。"""
+def _ensure_nobody_owned_log_file(path: Path, description: str) -> None:
+    """保证 OpenVPN 钩子可写日志文件存在，并属主 nobody:nobody。"""
     if os.name == "nt":
         return
-    from app.core.constants import DEVICE_BIND_LOG_FILE
 
-    p = DEVICE_BIND_LOG_FILE
     uid, gid = _nobody_uid_gid()
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        if not p.exists():
-            p.touch()
-        os.chown(p, uid, gid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.touch()
+        os.chown(path, uid, gid)
     except OSError as e:
-        logger.error("无法准备设备绑定日志 %s: %s", p, e)
+        logger.error("无法准备%s %s: %s", description, path, e)
         raise
+
+
+def ensure_device_bind_log_file() -> None:
+    """保证设备绑定日志存在，并属主 nobody:nobody（单文件 chown）。"""
+    from app.core.constants import DEVICE_BIND_LOG_FILE
+
+    _ensure_nobody_owned_log_file(DEVICE_BIND_LOG_FILE, "设备绑定日志")
+
+
+def ensure_openvpn_audit_log_files() -> None:
+    """保证 OpenVPN 钩子审计日志文件存在，并属主 nobody:nobody。"""
+    from app.core.constants import VPN_CONNECTION_AUDIT_LOG_FILE, VPN_SESSION_AUDIT_LOG_FILE
+
+    ensure_device_bind_log_file()
+    _ensure_nobody_owned_log_file(VPN_SESSION_AUDIT_LOG_FILE, "VPN 会话审计日志")
+    _ensure_nobody_owned_log_file(VPN_CONNECTION_AUDIT_LOG_FILE, "VPN 连接审计日志")

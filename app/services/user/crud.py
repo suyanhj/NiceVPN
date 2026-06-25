@@ -3,6 +3,7 @@
 import json
 import logging
 import socket
+import threading
 import uuid
 from datetime import datetime, timezone
 from ipaddress import IPv4Network
@@ -19,6 +20,7 @@ from app.utils.posix_data_perms import (
 )
 
 logger = logging.getLogger(__name__)
+_USER_CREATE_LOCK = threading.Lock()
 
 
 def _ifconfig_push_netmask(group_subnet: IPv4Network) -> str:
@@ -57,6 +59,13 @@ class UserService:
         5. 保存用户 JSON 记录
         6. 写入审计日志
         """
+        with _USER_CREATE_LOCK:
+            return self._create_locked(username, group_id, password_enabled, password)
+
+    def _create_locked(self, username: str, group_id: str,
+                       password_enabled: bool = False,
+                       password: str | None = None) -> User:
+        """在全局创建锁内执行用户创建，避免并发写 PKI 和 CCD。"""
         # 校验用户名唯一性
         if self._user_exists(username):
             raise ValueError(f"用户名已存在: {username}")
@@ -302,6 +311,104 @@ class UserService:
                        f"状态变更为 {new_status}", "success")
         return new_status
 
+    def change_group(self, username: str, new_group_id: str) -> dict:
+        """切换用户所属组，并按新组子网重新分配 CCD 固定 IP。
+
+        参数:
+            username: VPN 用户名。
+            new_group_id: 目标用户组 ID。
+
+        返回:
+            切组结果，包含旧组、新组、旧虚拟 IP、新虚拟 IP。
+
+        异常:
+            ValueError: 用户不存在、目标组不存在、目标组停用或目标组无可用 IP。
+            RuntimeError: mesh 路由同步失败。
+        """
+        user = self._load_user(username)
+        if not user:
+            raise ValueError(f"用户不存在: {username}")
+        if user.get("status") == "deleted":
+            raise ValueError(f"用户已删除: {username}")
+
+        target_group_id = str(new_group_id or "").strip()
+        if not target_group_id:
+            raise ValueError("目标组不能为空")
+        target_group = self._load_group(target_group_id)
+        if not target_group:
+            raise ValueError(f"用户组不存在: {target_group_id}")
+        if target_group.get("status") != "active":
+            raise ValueError(f"用户组已停用: {target_group_id}")
+
+        old_group_id = str(user.get("group_id") or "").strip()
+        if old_group_id == target_group_id:
+            return {
+                "username": username,
+                "old_group_id": old_group_id,
+                "new_group_id": target_group_id,
+                "old_virtual_ip": self._read_ccd_virtual_ip(username),
+                "new_virtual_ip": self._read_ccd_virtual_ip(username),
+                "changed": False,
+            }
+
+        try:
+            new_ip, netmask = self._allocate_virtual_ip_for_group(target_group)
+            ccd_file = CCD_DIR / username
+            old_text = ccd_file.read_text(encoding="utf-8") if ccd_file.exists() else ""
+            old_ip, new_text = self._replace_ccd_ifconfig_push(old_text, new_ip, netmask)
+
+            CCD_DIR.mkdir(parents=True, exist_ok=True)
+            ccd_file.write_text(new_text, encoding="utf-8")
+            fix_path_for_openvpn_shared_data(ccd_file)
+
+            now = datetime.now(timezone.utc).isoformat()
+            user["group_id"] = target_group_id
+            user["updated_at"] = now
+            write_json_atomic(USERS_DIR / f"{username}.json", user)
+            self._increment_group_user_count(old_group_id, -1)
+            self._increment_group_user_count(target_group_id, 1)
+
+            from app.services.peer_instance.service import PeerService
+
+            PeerService().sync_all_mesh_push_routes_in_ccd()
+            self._kill_client_session(username)
+
+            result = {
+                "username": username,
+                "old_group_id": old_group_id,
+                "new_group_id": target_group_id,
+                "old_virtual_ip": old_ip,
+                "new_virtual_ip": new_ip,
+                "changed": True,
+            }
+            self.audit.log("change_user_group", "user", username, result, "success")
+            logger.info(
+                "用户已切换组 username=%s old_group=%s new_group=%s old_ip=%s new_ip=%s",
+                username,
+                old_group_id,
+                target_group_id,
+                old_ip or "",
+                new_ip,
+            )
+            return result
+        except Exception as exc:
+            logger.error(
+                "用户切换组失败 username=%s old_group=%s new_group=%s: %s",
+                username,
+                old_group_id,
+                target_group_id,
+                exc,
+            )
+            self.audit.log(
+                "change_user_group",
+                "user",
+                username,
+                {"old_group_id": old_group_id, "new_group_id": target_group_id, "error": str(exc)},
+                "failure",
+                str(exc),
+            )
+            raise
+
     def _update_ccd_disable(self, username: str, disable: bool) -> None:
         """在 CCD 文件中写入或移除 disable 指令。"""
         ccd_file = CCD_DIR / username
@@ -377,6 +484,7 @@ class UserService:
             data = read_json(f)
             if data and data.get("status") != "deleted":
                 users.append(data)
+        users.sort(key=lambda u: str(u.get("username") or "").lower())
         return users
 
     def list_usernames_by_group(self, group_id: str) -> list[str]:
@@ -440,30 +548,61 @@ class UserService:
         在组子网的 hosts 范围内找到下一个可用地址。
         """
         CCD_DIR.mkdir(parents=True, exist_ok=True)
+        client_ip, netmask = self._allocate_virtual_ip_for_group(group)
+
+        # CCD 文件内容：固定 IP 分配；掩码用全局池，与 OpenVPN server 行一致
+        ccd_content = f"ifconfig-push {client_ip} {netmask}\n"
+        ccd_file = CCD_DIR / username
+        ccd_file.write_text(ccd_content, encoding="utf-8")
+        fix_path_for_openvpn_shared_data(ccd_file)
+
+    def _allocate_virtual_ip_for_group(self, group: dict) -> tuple[str, str]:
+        """从组子网分配一个未占用的虚拟 IP，并返回对应 ifconfig-push 掩码。"""
         subnet = group.get("subnet", "10.8.1.0/24")
         network = IPv4Network(subnet, strict=False)
         hosts = list(network.hosts())
         if not hosts:
             raise ValueError(f"组子网 {subnet} 没有可用的主机地址")
 
-        # 收集同组所有已分配的 IP
         used_ips = self._collect_used_ips_in_group(group["id"], network)
-
-        # 从 hosts[1] 开始分配（跳过 .1 通常作为网关）
-        client_ip = None
         for host in hosts[1:]:
             if str(host) not in used_ips:
-                client_ip = str(host)
-                break
+                return str(host), _ifconfig_push_netmask(network)
+        raise ValueError(f"组子网 {subnet} 内没有可用 IP，所有地址已分配")
 
-        if client_ip is None:
-            raise ValueError(f"组子网 {subnet} 内没有可用 IP，所有地址已分配")
-
-        # CCD 文件内容：固定 IP 分配；掩码用全局池，与 OpenVPN server 行一致
-        ccd_content = f"ifconfig-push {client_ip} {_ifconfig_push_netmask(network)}\n"
+    def _read_ccd_virtual_ip(self, username: str) -> str | None:
+        """读取用户 CCD 中的 ifconfig-push 虚拟 IP。"""
         ccd_file = CCD_DIR / username
-        ccd_file.write_text(ccd_content, encoding="utf-8")
-        fix_path_for_openvpn_shared_data(ccd_file)
+        if not ccd_file.exists():
+            return None
+        for line in ccd_file.read_text(encoding="utf-8").splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == "ifconfig-push":
+                return parts[1]
+        return None
+
+    def _replace_ccd_ifconfig_push(self, existing_text: str, client_ip: str, netmask: str) -> tuple[str | None, str]:
+        """替换 CCD 中的固定 IP 行，保留 disable、iroute 和 mesh push 块。"""
+        new_line = f"ifconfig-push {client_ip} {netmask}"
+        lines = existing_text.splitlines()
+        output: list[str] = []
+        old_ip: str | None = None
+        replaced = False
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == "ifconfig-push":
+                if old_ip is None:
+                    old_ip = parts[1]
+                if not replaced:
+                    output.append(new_line)
+                    replaced = True
+                continue
+            output.append(line)
+
+        if not replaced:
+            insert_at = 1 if output and output[0].strip() == "disable" else 0
+            output.insert(insert_at, new_line)
+        return old_ip, "\n".join(output).rstrip() + "\n"
 
     def _collect_used_ips_in_group(self, group_id: str, network: IPv4Network) -> set[str]:
         """收集指定组内所有用户已分配的虚拟 IP 地址。"""

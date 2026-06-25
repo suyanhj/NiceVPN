@@ -222,7 +222,6 @@ _THEME_STYLE = """
     gap: 18px;
     align-items: stretch;
     min-height: 0;
-    height: 100%;
   }
 
   /* 仅防火墙页：在 .nicegui-content 中占满余高 */
@@ -1873,6 +1872,7 @@ _THEME_STYLE = """
 
   .cert-advanced-panel {
     padding: 0;
+    margin-top: 4px;
     overflow: hidden;
     border-color: rgba(127, 29, 29, 0.3);
   }
@@ -3290,7 +3290,6 @@ _THEME_STYLE = """
     /* 与 .mgmt-stretch 一致：在 mgmt-page 中作为第二块占满余高 */
     flex: 1 1 0%;
     min-height: 0;
-    height: 100%;
   }
 
   .mgmt-panel-list > .nicegui-column {
@@ -3298,7 +3297,7 @@ _THEME_STYLE = """
     flex-direction: column;
     flex: 1 1 0%;
     min-height: 0;
-    height: 100%;
+    overflow-y: auto;
   }
 
   .mgmt-header-row {

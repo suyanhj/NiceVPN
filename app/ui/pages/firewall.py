@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -235,6 +236,9 @@ class FirewallPage:
         # 导入：上传 .json/.txt 时的分支；与当前框内文本一致时保留，手改后清空
         self._import_source_file_mode: str | None = None
         self._import_last_uploaded_text: str | None = None
+        self._center_import_running = False
+        self._center_import_result: dict[str, Any] | None = None
+        self._center_import_timer = None
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
 
@@ -2259,12 +2263,15 @@ class FirewallPage:
     def _import_ok_center_backup(self, dialog, text: str) -> None:
         self._import_source_file_mode = None
         self._import_last_uploaded_text = None
-        if self.rule_service.restore(text):
-            dialog.close()
-            self._notify_for_page("backup 已恢复", type="positive")
-            self._refresh_rules()
-        else:
-            self._notify_for_page("backup 恢复失败", type="negative")
+        if self._center_import_running:
+            self._notify_for_page("中心规则正在导入，请稍候", type="warning")
+            return
+        dialog.close()
+        self._start_center_import_worker(
+            "backup 恢复",
+            lambda: {"ok": bool(self.rule_service.restore(text)), "count": 0},
+            "backup 已恢复",
+        )
 
     def _import_ok_center_simplified(self, dialog, specs) -> None:
         """简写多行：逐条 create，优先级取全局未占用值。"""
@@ -2272,7 +2279,11 @@ class FirewallPage:
 
         self._import_source_file_mode = None
         self._import_last_uploaded_text = None
+        if self._center_import_running:
+            self._notify_for_page("中心规则正在导入，请稍候", type="warning")
+            return
         oid = (self.current_owner_id or "").strip()
+        payloads: list[dict] = []
         try:
             owner_type = resolve_center_owner_type(oid)
         except ValueError as exc:
@@ -2305,25 +2316,81 @@ class FirewallPage:
                 source_subnet=src_sub,
                 source_ips=src_ips,
             )
-            all_r = self.rule_service.list_all_flat()
-            used = {int(r.get("priority", 0) or 0) for r in all_r}
-            mx = max(used) if used else 0
+            if str(payload.get("protocol") or "").lower() in ("any", "all", ""):
+                payload["protocol"] = "all"
+            payloads.append(payload)
+        dialog.close()
+        self._start_center_import_worker(
+            "中心简写导入",
+            lambda: self._run_center_simplified_import(payloads),
+            f"简写已追加 {len(payloads)} 条",
+        )
+
+    def _start_center_import_worker(self, label: str, worker_fn, success_message: str) -> None:
+        """后台执行中心规则导入，避免 iptables 刷新阻塞页面。"""
+        self._center_import_running = True
+        self._center_import_result = None
+        self._notify_for_page(f"{label}已开始，请稍候", type="info")
+        logger.info("%s后台任务已启动", label)
+
+        def worker() -> None:
+            try:
+                result = worker_fn()
+                if not result.get("ok"):
+                    self._center_import_result = {
+                        "ok": False,
+                        "message": f"{label}失败",
+                    }
+                    return
+                self._center_import_result = {
+                    "ok": True,
+                    "message": success_message,
+                    "count": result.get("count", 0),
+                }
+            except Exception as exc:
+                logger.exception("%s后台任务失败", label)
+                self._center_import_result = {
+                    "ok": False,
+                    "message": f"{label}失败: {exc}",
+                }
+
+        threading.Thread(target=worker, daemon=True, name="firewall-center-import").start()
+        self._center_import_timer = ui.timer(0.3, self._poll_center_import_progress)
+
+    def _run_center_simplified_import(self, payloads: list[dict]) -> dict[str, Any]:
+        """为简写导入分配优先级后批量写入，只刷新一次 VPN_FORWARD。"""
+        all_r = self.rule_service.list_all_flat()
+        used = {int(r.get("priority", 0) or 0) for r in all_r}
+        mx = max(used) if used else 0
+        for payload in payloads:
             cand = mx + 10
             while cand in used:
                 cand += 1
             payload["priority"] = int(cand)
-            try:
-                if str(payload.get("protocol") or "").lower() in ("any", "all", ""):
-                    payload["protocol"] = "all"
-                self.rule_service.create(payload)
-            except Exception as exc:
-                logger.error("中心简写第 %s 行创建失败: %s", i + 1, exc)
-                self._notify_for_page(f"第 {i + 1} 行创建失败: {exc}", type="negative")
-                return
-        dialog.close()
-        logger.info("中心简写导入完成 n=%s owner=%s", len(specs), oid)
-        self._notify_for_page("简写已追加", type="positive")
-        self._refresh_rules()
+            used.add(cand)
+            mx = cand
+        created = self.rule_service.create_many(payloads)
+        return {"ok": True, "count": len(created)}
+
+    def _poll_center_import_progress(self) -> None:
+        """在 UI 线程收尾中心导入后台任务。"""
+        if self._center_import_result is None:
+            return
+        if self._center_import_timer is not None:
+            if hasattr(self._center_import_timer, "deactivate"):
+                self._center_import_timer.deactivate()
+            elif hasattr(self._center_import_timer, "active"):
+                self._center_import_timer.active = False
+            self._center_import_timer = None
+
+        result = self._center_import_result
+        self._center_import_result = None
+        self._center_import_running = False
+        if result.get("ok"):
+            self._notify_for_page(str(result.get("message") or "导入完成"), type="positive")
+            self._refresh_rules()
+        else:
+            self._notify_for_page(str(result.get("message") or "导入失败"), type="negative")
 
     async def _import_ok_remote_async(self, dialog, text: str) -> None:
         self._import_source_file_mode = None

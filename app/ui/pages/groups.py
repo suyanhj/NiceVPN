@@ -65,6 +65,7 @@ class GroupsPage:
     def _render_group_card(self, group: dict, is_root: bool = False):
         """渲染单个分组卡片。"""
         group_id = group["id"]
+        group_short = group_id[:8] if group_id else ""
         status = group.get("status", "active")
         is_active = status == "active"
         user_count = group.get("user_count", 0)
@@ -85,6 +86,12 @@ class GroupsPage:
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="14px")
                             ui.label(f"用户数 {user_count}")
+                        if group_id:
+                            ui.button(
+                                f"GID {group_short}",
+                                icon="content_copy",
+                                on_click=lambda value=group_id: self._copy_group_id(value),
+                            ).props("flat dense no-caps no-ripple").classes("user-copy-chip")
 
             with ui.element("div").classes("group-record-side hidden md:flex"):
                 ui.label("ACTIVE" if is_active else "DISABLED").classes(

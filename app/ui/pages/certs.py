@@ -32,7 +32,10 @@ class CertsPage:
         self.advanced_body = None
         self.search_input = None
         self.list_container = None
+        self.pagination_container = None
         self.selected_certs: set = set()
+        self.page = 1
+        self.page_size = 50
 
     def render(self):
         """渲染证书管理页面。"""
@@ -45,8 +48,8 @@ class CertsPage:
                     with ui.element("div").classes("mgmt-toolbar"):
                         self.search_input = ui.input(
                             placeholder="搜索用户名",
-                        ).classes("mgmt-search-input").on("keydown.enter", self._refresh_cert_list)
-                        ui.button("搜索", icon="search", on_click=self._refresh_cert_list).props(
+                        ).classes("mgmt-search-input").on("keydown.enter", self._handle_search)
+                        ui.button("搜索", icon="search", on_click=self._handle_search).props(
                             "outline no-caps no-ripple"
                         ).classes("mgmt-toolbar-btn is-outline mgmt-search-btn")
                         ui.button("批量续签", icon="autorenew", on_click=self._batch_renew).props(
@@ -65,8 +68,8 @@ class CertsPage:
                 with ui.element("div").classes("mgmt-list-head"):
                     ui.label("证书库").classes("mgmt-kicker")
                 self.list_container = ui.column().classes("w-full")
-                with self.list_container:
-                    self._render_cert_list()
+                self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
+                self._refresh_cert_list()
 
             with ui.element("section").classes("cert-advanced-panel"):
                 with ui.element("div").classes("cert-advanced-toggle").on(
@@ -89,13 +92,24 @@ class CertsPage:
                             "outline no-caps no-ripple"
                         ).classes("cert-danger-btn")
 
+    def _handle_search(self):
+        """执行搜索并重置到第一页。"""
+        self.page = 1
+        self._refresh_cert_list()
+
+    def _on_page_change(self, new_page: int):
+        if self.page != new_page:
+            self.page = new_page
+            self._refresh_cert_list()
+
     def _refresh_cert_list(self):
         """按搜索条件过滤并刷新证书列表。"""
         if self.list_container is None:
             return
         self.list_container.clear()
-        with self.list_container:
-            self._render_cert_list()
+        if self.pagination_container is not None:
+            self.pagination_container.clear()
+        self._render_cert_list()
 
     def _render_expiry_alerts(self):
         """渲染即将到期告警。"""
@@ -117,24 +131,43 @@ class CertsPage:
         now = datetime.now(timezone.utc)
 
         if not certs:
-            ui.label("暂无证书。").classes("empty-state")
+            with self.list_container:
+                ui.label("暂无证书。").classes("empty-state")
             return
 
-        with ui.element("div").classes("mgmt-record-list"):
-            for cert in certs:
-                display_status = cert["status"]
-                if cert["status"] == "valid":
-                    try:
-                        expires_at = datetime.fromisoformat(cert["expires_at"])
-                        from app.core.constants import CERT_EXPIRY_WARN_DAYS
+        total_count = len(certs)
+        total_pages = (total_count + self.page_size - 1) // self.page_size
+        if self.page > total_pages and total_pages > 0:
+            self.page = total_pages
 
-                        if (expires_at - now).days <= CERT_EXPIRY_WARN_DAYS:
-                            display_status = "expiring"
-                    except (ValueError, TypeError):
-                        pass
+        start_idx = (self.page - 1) * self.page_size
+        page_certs = certs[start_idx : start_idx + self.page_size]
 
-                style = self._STATUS_STYLES.get(display_status, self._STATUS_STYLES["valid"])
-                self._render_cert_row(cert, style)
+        with self.list_container:
+            with ui.element("div").classes("mgmt-record-list"):
+                for cert in page_certs:
+                    display_status = cert["status"]
+                    if cert["status"] == "valid":
+                        try:
+                            expires_at = datetime.fromisoformat(cert["expires_at"])
+                            from app.core.constants import CERT_EXPIRY_WARN_DAYS
+
+                            if (expires_at - now).days <= CERT_EXPIRY_WARN_DAYS:
+                                display_status = "expiring"
+                        except (ValueError, TypeError):
+                            pass
+
+                    style = self._STATUS_STYLES.get(display_status, self._STATUS_STYLES["valid"])
+                    self._render_cert_row(cert, style)
+
+        if self.pagination_container is not None:
+            with self.pagination_container:
+                with ui.row().classes("w-full justify-between items-center q-mt-md"):
+                    ui.label(f"共 {total_count} 个证书，第 {self.page} / {total_pages} 页").classes("text-caption text-grey")
+                    if total_pages > 1:
+                        ui.pagination(
+                            min=1, max=total_pages, value=self.page, on_change=lambda e: self._on_page_change(e.value)
+                        ).props("color=primary active-color=primary outline")
 
     def _render_cert_row(self, cert: dict, style: dict):
         """渲染单个证书条目。"""
@@ -149,11 +182,11 @@ class CertsPage:
             name_classes += " is-muted"
 
         with ui.element("div").classes(row_classes):
-            ui.checkbox(
-                value=common_name in self.selected_certs,
-                on_change=lambda e, cn=common_name: self._toggle_cert_selection(cn, e.value),
-            ).classes("mgmt-checkbox")
             with ui.element("div").classes("mgmt-record-main"):
+                ui.checkbox(
+                    value=common_name in self.selected_certs,
+                    on_change=lambda e, cn=common_name: self._toggle_cert_selection(cn, e.value),
+                ).classes("mgmt-checkbox")
                 with ui.element("div").classes("mgmt-record-copy"):
                     ui.label(common_name).classes(name_classes)
                     with ui.element("div").classes("mgmt-record-meta"):

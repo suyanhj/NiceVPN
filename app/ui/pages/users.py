@@ -2,6 +2,7 @@
 """用户管理页面。"""
 
 import logging
+import threading
 import re
 from datetime import datetime
 
@@ -24,7 +25,13 @@ class UsersPage:
         self.user_service = UserService()
         self.selected_users: set[str] = set()
         self.list_container = None
+        self.pagination_container = None
         self.search_input = None
+        self._create_running = False
+        self._create_result: dict | None = None
+        self._create_timer = None
+        self.page = 1
+        self.page_size = 50
 
     def render(self):
         """渲染用户管理页面。"""
@@ -43,8 +50,8 @@ class UsersPage:
                     with ui.element("div").classes("mgmt-toolbar"):
                         self.search_input = ui.input(
                             placeholder="搜索用户名",
-                        ).classes("mgmt-search-input").on("keydown.enter", self._refresh_user_list)
-                        ui.button("搜索", icon="search", on_click=self._refresh_user_list).props(
+                        ).classes("mgmt-search-input").on("keydown.enter", self._handle_search)
+                        ui.button("搜索", icon="search", on_click=self._handle_search).props(
                             "outline no-caps no-ripple"
                         ).classes("mgmt-toolbar-btn is-outline mgmt-search-btn")
                         ui.button("新建用户", icon="person_add", on_click=self._show_create_dialog).props(
@@ -67,8 +74,18 @@ class UsersPage:
                     ui.label("用户列表").classes("mgmt-kicker")
 
                 self.list_container = ui.column().classes("w-full")
-                with self.list_container:
-                    self._render_user_list(users, live_sessions, binding_aux, ccd_vip_map)
+                self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
+                self._refresh_user_list()
+
+    def _handle_search(self):
+        """执行搜索并重置到第一页。"""
+        self.page = 1
+        self._refresh_user_list()
+
+    def _on_page_change(self, new_page: int):
+        if self.page != new_page:
+            self.page = new_page
+            self._refresh_user_list()
 
     def _refresh_user_list(self):
         """按搜索条件刷新列表。"""
@@ -80,9 +97,12 @@ class UsersPage:
         live_sessions = self._load_live_sessions()
         binding_aux = DeviceBindingService().build_user_binding_aux()
         ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
+        if self.list_container is None:
+            return
         self.list_container.clear()
-        with self.list_container:
-            self._render_user_list(users, live_sessions, binding_aux, ccd_vip_map)
+        if self.pagination_container is not None:
+            self.pagination_container.clear()
+        self._render_user_list(users, live_sessions, binding_aux, ccd_vip_map)
 
     def _render_user_list(
         self,
@@ -93,18 +113,37 @@ class UsersPage:
     ):
         """渲染用户列表容器。"""
         if not users:
-            ui.label("暂无用户，点「新建用户」添加。").classes("empty-state")
+            with self.list_container:
+                ui.label("暂无用户，点「新建用户」添加。").classes("empty-state")
             return
 
-        with ui.element("div").classes("mgmt-record-list"):
-            for item in users:
-                uname = item["username"]
-                self._render_user_card(
-                    item,
-                    live_sessions.get(uname),
-                    binding_aux.get(uname) or {},
-                    (ccd_vip_map.get(uname) or "").strip(),
-                )
+        total_count = len(users)
+        total_pages = (total_count + self.page_size - 1) // self.page_size
+        if self.page > total_pages and total_pages > 0:
+            self.page = total_pages
+
+        start_idx = (self.page - 1) * self.page_size
+        page_users = users[start_idx : start_idx + self.page_size]
+
+        with self.list_container:
+            with ui.element("div").classes("mgmt-record-list"):
+                for item in page_users:
+                    uname = item["username"]
+                    self._render_user_card(
+                        item,
+                        live_sessions.get(uname),
+                        binding_aux.get(uname) or {},
+                        (ccd_vip_map.get(uname) or "").strip(),
+                    )
+
+        if self.pagination_container is not None:
+            with self.pagination_container:
+                with ui.row().classes("w-full justify-between items-center q-mt-md"):
+                    ui.label(f"共 {total_count} 个用户，第 {self.page} / {total_pages} 页").classes("text-caption text-grey")
+                    if total_pages > 1:
+                        ui.pagination(
+                            min=1, max=total_pages, value=self.page, on_change=lambda e: self._on_page_change(e.value)
+                        ).props("color=primary active-color=primary outline")
 
     def _render_user_card(
         self,
@@ -216,6 +255,10 @@ class UsersPage:
                     on_click=lambda current=username: self._edit_ovpn(current),
                 ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("编辑配置")
                 ui.button(
+                    icon="drive_file_move",
+                    on_click=lambda current=username: self._show_change_group_dialog(current),
+                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("切换组")
+                ui.button(
                     icon="phonelink_lock",
                     on_click=lambda current=username: self._confirm_reset_binding(current),
                 ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("重置设备绑定")
@@ -325,6 +368,57 @@ class UsersPage:
             self._refresh_user_list()
         except Exception as exc:
             ui.notify(f"踢下线失败: {exc}", type="negative")
+
+    def _show_change_group_dialog(self, username: str):
+        """显示用户切换组弹窗。"""
+        from app.services.group.crud import GroupService
+
+        user = self.user_service.get(username)
+        if not user:
+            ui.notify(f"用户不存在: {username}", type="negative")
+            return
+        current_group_id = str(user.get("group_id") or "").strip()
+        groups = [
+            g for g in GroupService().list_all()
+            if g.get("status") == "active" and str(g.get("id") or "") != current_group_id
+        ]
+        if not groups:
+            ui.notify("没有可切换的启用用户组", type="warning")
+            return
+
+        group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
+        with ui.dialog() as dialog, ui.card().classes("w-96"):
+            ui.label(f"切换用户组 — {username}").classes("text-h6")
+            ui.label("切换后会重新分配虚拟 IP，并立即踢下线，用户重连后生效。").classes(
+                "text-caption text-grey"
+            )
+            group_select = ui.select(group_options, label="目标组").classes("w-full")
+
+            with ui.row().classes("justify-end q-mt-md"):
+                ui.button("取消", on_click=dialog.close).props("flat")
+                ui.button(
+                    "切换",
+                    on_click=lambda: self._do_change_group(dialog, username, group_select.value),
+                ).props("color=primary")
+        dialog.open()
+
+    def _do_change_group(self, dialog, username: str, new_group_id: str):
+        """执行用户切换组。"""
+        if not new_group_id:
+            ui.notify("请选择目标组", type="negative")
+            return
+        try:
+            result = self.user_service.change_group(username, new_group_id)
+            dialog.close()
+            if result.get("changed"):
+                old_ip = result.get("old_virtual_ip") or "无"
+                new_ip = result.get("new_virtual_ip") or "无"
+                ui.notify(f"已切换 {username} 的用户组，虚拟 IP: {old_ip} -> {new_ip}", type="positive")
+            else:
+                ui.notify(f"{username} 已在目标组，无需切换", type="warning")
+            self._refresh_user_list()
+        except Exception as exc:
+            ui.notify(f"切换组失败: {exc}", type="negative")
 
     def _download_ovpn(self, username: str):
         """直接下载用户的 .ovpn 配置文件。"""
@@ -477,6 +571,9 @@ class UsersPage:
 
     def _do_create(self, dialog, username: str, count: int, group_id: str, password_enabled: bool, password: str):
         """执行用户创建（支持批量命名）。"""
+        if self._create_running:
+            ui.notify("用户正在后台创建，请稍候", type="warning")
+            return
         if not username or not group_id:
             ui.notify("请填写完整信息", type="negative")
             return
@@ -489,28 +586,70 @@ class UsersPage:
             base = username.strip()
             names = [base] + [f"{base}_{i}" for i in range(1, count)]
 
-        created = []
-        for name in names:
-            try:
-                self.user_service.create(
-                    username=name,
-                    group_id=group_id,
-                    password_enabled=password_enabled,
-                    password=password if password_enabled else None,
-                )
-                created.append(name)
-            except Exception as exc:
-                ui.notify(f"创建 {name} 失败: {exc}", type="negative")
-                return
-
+        self._create_running = True
+        self._create_result = None
         dialog.close()
-        ui.notify(f"已创建 {len(created)} 个用户", type="positive")
+        ui.notify(f"已开始后台创建 {len(names)} 个用户，请稍候", type="info")
+        logger.info("后台用户创建任务已启动 count=%s first_user=%s", len(names), names[0])
+
+        def worker():
+            created = []
+            current_name = ""
+            try:
+                for name in names:
+                    current_name = name
+                    logger.info("后台创建用户开始 user=%s", name)
+                    self.user_service.create(
+                        username=name,
+                        group_id=group_id,
+                        password_enabled=password_enabled,
+                        password=password if password_enabled else None,
+                    )
+                    created.append(name)
+                    logger.info("后台创建用户完成 user=%s", name)
+                self._create_result = {"ok": True, "created": created}
+            except Exception as exc:
+                logger.exception("后台创建用户失败 user=%s", current_name)
+                self._create_result = {
+                    "ok": False,
+                    "created": created,
+                    "error": f"创建 {current_name} 失败: {exc}",
+                }
+
+        threading.Thread(target=worker, daemon=True, name="user-create-worker").start()
+        self._create_timer = ui.timer(0.3, self._poll_create_progress)
+
+    def _poll_create_progress(self):
+        """轮询后台用户创建结果，并在 UI 线程刷新页面。"""
+        if self._create_result is None:
+            return
+
+        if self._create_timer is not None:
+            if hasattr(self._create_timer, "deactivate"):
+                self._create_timer.deactivate()
+            elif hasattr(self._create_timer, "active"):
+                self._create_timer.active = False
+            self._create_timer = None
+
+        self._create_running = False
+        result = self._create_result
+        self._create_result = None
+        created = result.get("created") or []
+
+        if result.get("ok"):
+            ui.notify(f"已创建 {len(created)} 个用户", type="positive")
+            if created:
+                self._copy_download_link(created[0])
+                # 延后跳转，避免页面卸载导致剪贴板脚本未执行
+                ui.timer(0.25, lambda: ui.navigate.to("/users"), once=True)
+            else:
+                ui.navigate.to("/users")
+            return
+
         if created:
-            self._copy_download_link(created[0])
-            # 延后跳转，避免页面卸载导致剪贴板脚本未执行
-            ui.timer(0.25, lambda: ui.navigate.to("/users"), once=True)
-        else:
-            ui.navigate.to("/users")
+            ui.notify(f"已创建 {len(created)} 个用户，后续创建中断", type="warning")
+        ui.notify(str(result.get("error") or "创建失败"), type="negative")
+        self._refresh_user_list()
 
     def _ensure_one_time_download_url(self, username: str) -> str | None:
         """

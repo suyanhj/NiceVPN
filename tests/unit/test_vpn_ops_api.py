@@ -345,6 +345,44 @@ def test_batch_rejects_sum_count_over_limit(client, monkeypatch, tmp_path):
     assert "2000" in (r.json().get("detail") or "")
 
 
+def test_change_user_group_api(client, monkeypatch):
+    def _cfg():
+        m = MagicMock()
+        m.initialized = True
+        m.download_base_url = None
+        return m
+
+    monkeypatch.setattr(vpn_ops, "load_config", _cfg)
+    monkeypatch.setattr(vpn_ops, "_resolve_group_id_by_name", lambda name: "gid-new")
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeUserSvc:
+        def change_group(self, username, group_id):
+            calls.append((username, group_id))
+            return {
+                "username": username,
+                "old_group_id": "gid-old",
+                "new_group_id": group_id,
+                "old_virtual_ip": "10.8.1.2",
+                "new_virtual_ip": "10.8.2.2",
+                "changed": True,
+            }
+
+    monkeypatch.setattr(vpn_ops, "UserService", FakeUserSvc)
+    r = client.post(
+        "/api/vpn/users/alice/group",
+        json={"group_name": "研发组"},
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "alice"
+    assert body["new_group_id"] == "gid-new"
+    assert body["new_virtual_ip"] == "10.8.2.2"
+    assert calls == [("alice", "gid-new")]
+
+
 def test_create_skips_when_user_already_exists(client, monkeypatch, tmp_path):
     monkeypatch.setattr(abc_mod, "API_BASIC_CREDENTIALS_FILE", tmp_path / "api_basic.json")
     (tmp_path / "api_basic.json").write_text(

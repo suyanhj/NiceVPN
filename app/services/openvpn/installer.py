@@ -48,6 +48,9 @@ _RHEL_BUILD_DEPS = [
     "systemd-devel",
     "which",
 ]
+_RHEL_RUNTIME_DEPS = [
+    "conntrack-tools",
+]
 
 
 def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
@@ -74,7 +77,7 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
             f"> /etc/apt/sources.list.d/openvpn.list\n"
             "export DEBIAN_FRONTEND=noninteractive\n"
             "apt-get update -y\n"
-            "apt-get install -y openvpn\n"
+            "apt-get install -y openvpn conntrack\n"
         )
     if distro == "rhel":
         deps = " ".join(_RHEL_BUILD_DEPS)
@@ -105,11 +108,11 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
             "| sort -V | tail -n 1)\"\n"
             "if [ -n \"${PKG_VERSION}\" ] && version_ge \"${PKG_VERSION}\" \"${OPENVPN_MIN_TLS_CRYPT_V2}\"; then\n"
             "  echo \"仓库 openvpn ${PKG_VERSION} 支持 tls-crypt-v2，使用系统包安装\"\n"
-            "  ${PM} install -y openvpn\n"
+            "  ${PM} install -y openvpn conntrack-tools\n"
             "  exit 0\n"
             "fi\n"
             "echo \"仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_TLS_CRYPT_V2}，改为源码编译安装\"\n"
-            f"${{PM}} install -y {deps}\n"
+            f"${{PM}} install -y {deps} {' '.join(_RHEL_RUNTIME_DEPS)}\n"
             "if [ ! -s \"${OPENVPN_CACHE}\" ]; then\n"
             "  ok=0\n"
             "  while IFS= read -r url; do\n"
@@ -134,7 +137,7 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
             "mkdir -p \"${OPENVPN_SRC_ROOT}\"\n"
             "tar -xzf \"${OPENVPN_CACHE}\" -C \"${OPENVPN_SRC_ROOT}\"\n"
             "cd \"${OPENVPN_SRC_DIR}\"\n"
-            "./configure --prefix=\"${OPENVPN_PREFIX}\" --enable-pkcs11 --enable-async-push --enable-systemd\n"
+            "./configure --prefix=\"${OPENVPN_PREFIX}\" --enable-async-push --enable-systemd\n"
             "make -j\"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)\"\n"
             "make install\n"
             "ln -sfn \"${OPENVPN_PREFIX}/sbin/openvpn\" /usr/local/sbin/openvpn\n"
@@ -188,7 +191,7 @@ def _install_debian(version_id: str, on_output: Callable[[str], None] | None) ->
             ),
         ],
         ["apt-get", "update", "-y"],
-        ["apt-get", "install", "-y", "openvpn", "easy-rsa"],
+        ["apt-get", "install", "-y", "openvpn", "easy-rsa", "conntrack"],
     ]
 
     _emit(on_output, f"[信息] 开始为 debian {version_id} 安装 OpenVPN ...")
@@ -204,6 +207,7 @@ def _install_rhel_from_source(version_id: str, on_output: Callable[[str], None] 
 
     _emit(on_output, f"[信息] 开始为 rhel {version_id} 编译安装 OpenVPN ...")
     _run_command([package_manager, "install", "-y", *_RHEL_BUILD_DEPS], on_output)
+    _run_command([package_manager, "install", "-y", *_RHEL_RUNTIME_DEPS], on_output)
 
     openvpn_release = _resolve_latest_release_asset(
         repo="OpenVPN/openvpn",
@@ -237,7 +241,6 @@ def _install_rhel_from_source(version_id: str, on_output: Callable[[str], None] 
         configure_cmd = [
             "./configure",
             f"--prefix={OPENVPN_INSTALL_PREFIX}",
-            "--enable-pkcs11",
             "--enable-async-push",
             "--enable-systemd",
         ]

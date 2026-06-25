@@ -121,7 +121,9 @@ verify-client-cert require
 
 # ======== 客户端连接脚本 ========
 script-security 2
+setenv VPN_INSTANCE_NAME {instance_name}
 client-connect {base_dir}/scripts/device-bind.sh
+client-disconnect {base_dir}/scripts/vpn-session-disconnect.sh
 
 # ======== 客户端专属配置目录（CCD）========
 client-config-dir {ccd_dir}

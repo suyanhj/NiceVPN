@@ -68,6 +68,14 @@ def start_scheduler():
                     regenerate_all_server_confs()
                 except Exception as exc:
                     logger.error("启动时重写 server.conf 失败: %s", exc)
+                try:
+                    from app.services.audit.conntrack_audit import start_conntrack_audit_listener
+                    from app.utils.posix_data_perms import ensure_openvpn_audit_log_files
+
+                    ensure_openvpn_audit_log_files()
+                    start_conntrack_audit_listener()
+                except Exception as exc:
+                    logger.error("启动 conntrack 连接审计监听失败: %s", exc)
         except Exception as e:
             logger.error("启动时重建防火墙失败（请检查本机 iptables/ipset 权限）: %s", e)
 

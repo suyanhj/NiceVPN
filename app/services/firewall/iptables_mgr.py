@@ -991,7 +991,12 @@ class IptablesManager:
             logger.error("iptables -S %s 失败: %s", chain_name, e)
             return None
         if r.returncode != 0:
-            logger.error("iptables -S %s 非零: %s", chain_name, (r.stderr or "").strip())
+            err = (r.stderr or "").strip()
+            # 首次部署或链被手工删除时 -S 会报 No chain；视为空链以便 restore 新建
+            if "No chain" in err or "doesn't exist" in err:
+                logger.info("iptables 链 %s 尚不存在，按空规则备份", chain_name)
+                return []
+            logger.error("iptables -S %s 非零: %s", chain_name, err)
             return None
         return [
             line.strip()

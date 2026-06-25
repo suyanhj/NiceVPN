@@ -119,8 +119,8 @@ class FirewallRuleService:
 
     # ---- 公开接口 ----
 
-    def create(self, rule_data: dict) -> dict:
-        """创建防火墙规则，执行三重校验后持久化并仅刷新 ``VPN_FORWARD``。
+    def create(self, rule_data: dict, *, refresh_kernel: bool = True) -> dict:
+        """创建防火墙规则，执行三重校验后持久化并可选刷新 ``VPN_FORWARD``。
 
         三重校验：
         1. 端口格式校验（由 Pydantic 模型 field_validator 完成）
@@ -129,6 +129,7 @@ class FirewallRuleService:
 
         参数:
             rule_data: 规则数据字典，字段参见 FirewallRule 模型
+            refresh_kernel: 为 False 时只落库 JSON，不写内核（初始化向导在随后 ``rebuild_iptables`` 时使用）
 
         返回:
             创建成功的规则字典
@@ -171,13 +172,14 @@ class FirewallRuleService:
         self._save_rules(owner_id, existing_rules)
 
         # 规则管理页只允许修改 VPN_FORWARD，项目级 INPUT/MASQUERADE 等由启动/停止流程维护
-        try:
-            self._refresh_vpn_forward_only()
-        except Exception:
-            self._rollback_center_json_after_rebuild_fail(owner_id, had_main)
-            raise
-        if had_main:
-            self._clear_center_prepush_backup(owner_id)
+        if refresh_kernel:
+            try:
+                self._refresh_vpn_forward_only()
+            except Exception:
+                self._rollback_center_json_after_rebuild_fail(owner_id, had_main)
+                raise
+            if had_main:
+                self._clear_center_prepush_backup(owner_id)
 
         # 审计日志
         self.audit.log(
@@ -191,6 +193,78 @@ class FirewallRuleService:
 
         logger.info("防火墙规则 %s 创建成功", rule.id)
         return rule_dict
+
+    def create_many(self, rule_payloads: list[dict]) -> list[dict]:
+        """批量创建同一 owner 下的防火墙规则，仅刷新一次 ``VPN_FORWARD``。
+
+        参数:
+            rule_payloads: 与 :meth:`create` 同形的规则字典列表，必须归属同一 owner。
+
+        返回:
+            成功落库的规则字典列表。
+
+        异常:
+            ValueError: 空列表、跨 owner、字段校验失败或优先级冲突。
+            RuntimeError: VPN_FORWARD 刷新失败，已按现有回滚策略恢复 JSON。
+        """
+        if not rule_payloads:
+            raise ValueError("批量创建规则不能为空")
+
+        rules_to_add: list[dict] = []
+        owner_id = ""
+        incoming_priorities: set[int] = set()
+        for idx, raw in enumerate(rule_payloads, start=1):
+            payload = dict(raw)
+            source_subnet = payload.get("source_subnet")
+            if source_subnet and not validate_cidr(source_subnet):
+                raise ValueError(f"第 {idx} 条规则源子网 CIDR 无效: {source_subnet}")
+            if "id" not in payload:
+                payload["id"] = str(uuid.uuid4())
+            rule = FirewallRule(**payload)
+            self._validate_json_rule_addr_fields(rule)
+            if not owner_id:
+                owner_id = rule.owner_id
+            elif owner_id != rule.owner_id:
+                raise ValueError("批量创建规则必须属于同一归属")
+            if rule.priority in incoming_priorities:
+                raise ValueError(f"批量数据中优先级重复: {rule.priority}")
+            incoming_priorities.add(rule.priority)
+            rules_to_add.append(rule.model_dump())
+
+        existing_rules = self._load_rules(owner_id)
+        had_main = self._get_rules_path(owner_id).is_file()
+        existing_ids = {str(r.get("id") or "") for r in existing_rules}
+        incoming_ids = {str(r.get("id") or "") for r in rules_to_add}
+        if existing_ids & incoming_ids:
+            raise ValueError("批量数据中存在已落库的规则 ID")
+
+        all_rules = self.list_all_flat()
+        all_priorities = {int(r.get("priority", 0) or 0) for r in all_rules}
+        duplicated = sorted(incoming_priorities & all_priorities)
+        if duplicated:
+            raise ValueError(f"优先级已被占用: {duplicated}")
+
+        if had_main:
+            self._backup_center_rules_before_mutation(owner_id)
+        merged_rules = existing_rules + rules_to_add
+        self._save_rules(owner_id, merged_rules)
+        try:
+            self._refresh_vpn_forward_only()
+        except Exception:
+            self._rollback_center_json_after_rebuild_fail(owner_id, had_main)
+            raise
+        if had_main:
+            self._clear_center_prepush_backup(owner_id)
+
+        self.audit.log(
+            action="create_firewall_rules_batch",
+            target_type="firewall_rule",
+            target_id=owner_id,
+            detail=f"批量创建防火墙规则 {len(rules_to_add)} 条",
+            result="success",
+        )
+        logger.info("已批量创建防火墙规则 owner=%s count=%s", owner_id, len(rules_to_add))
+        return rules_to_add
 
     def update_by_id(self, rule_id: str, rule_data: dict) -> dict:
         """原地更新一条规则并仅刷新 ``VPN_FORWARD``；校验同 :meth:`create`，但优先级允许与**自身**相同。

@@ -16,7 +16,7 @@ from app.core.constants import (
     OPENVPN_DEFAULT_MAX_CLIENTS,
 )
 from app.utils.posix_data_perms import (
-    ensure_device_bind_log_file,
+    ensure_openvpn_audit_log_files,
     sync_openvpn_runtime_permissions_from_config,
 )
 from app.services.openvpn.detector import detect_openvpn, find_easyrsa
@@ -359,7 +359,7 @@ class InitWizard:
             sync_packaged_openvpn_scripts(ovpn_base)
 
             conf_path = write_server_conf(instance_name, conf_config, conf_dir=ovpn_base)
-            ensure_device_bind_log_file()
+            ensure_openvpn_audit_log_files()
 
             success = start_instance(instance_name)
             if success:
@@ -418,7 +418,7 @@ class InitWizard:
                                 "priority": 10,
                                 "enabled": True,
                                 "description": "初始化默认放行",
-                            })
+                            }, refresh_kernel=False)
                             logger.info(
                                 "已为默认组创建占位防火墙规则: group_id=%s",
                                 default_group["id"],
