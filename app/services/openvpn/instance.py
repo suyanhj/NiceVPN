@@ -14,6 +14,7 @@ from app.core.constants import (
     OPENVPN_DAEMON_LOG_DIR,
     OPENVPN_DEFAULT_MAX_CLIENTS,
     OPENVPN_ETC_DIR,
+    OPENVPN_MIN_VERSION,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,22 @@ def _format_push_lan_routes_block(routes: list | None) -> str:
     return "\n" + header + "\n" + "\n".join(lines_out) + "\n"
 
 
+def _openvpn_supports_tls_crypt_v2_max_age() -> bool:
+    """tls-crypt-v2-max-age 自 OpenVPN 2.7.0 起可用。"""
+    from packaging.version import Version
+
+    from app.services.openvpn.detector import detect_openvpn
+
+    detected = detect_openvpn()
+    version = detected.get("version")
+    if not version:
+        return False
+    try:
+        return Version(version) >= Version(OPENVPN_MIN_VERSION)
+    except Exception:
+        return False
+
+
 def generate_server_conf(instance_name: str, config: dict) -> str:
     """
     生成完整的 OpenVPN server.conf 配置文件内容。
@@ -89,6 +106,14 @@ def generate_server_conf(instance_name: str, config: dict) -> str:
     sn = str(config.get("server_network", "10.8.0.0"))
     sm = str(config.get("server_mask", "255.255.0.0"))
     push_block = _format_push_lan_routes_block(config.get("push_lan_routes"))
+    tls_max_age_line = (
+        "tls-crypt-v2-max-age 3650\n" if _openvpn_supports_tls_crypt_v2_max_age() else ""
+    )
+    if not tls_max_age_line:
+        logger.warning(
+            "当前 OpenVPN 版本低于 %s，server.conf 省略 tls-crypt-v2-max-age",
+            OPENVPN_MIN_VERSION,
+        )
 
     conf = f"""# OpenVPN 服务端配置 — 实例 {instance_name}
 # 由 OpenVPN 管理系统自动生成，请勿手动修改
@@ -109,8 +134,7 @@ key {pki_dir}/private/{instance_name}.key
 dh {pki_dir}/dh.pem
 
 tls-crypt-v2 {base_dir}/tc2-server.key
-tls-crypt-v2-max-age 3650
-tls-version-min 1.2
+{tls_max_age_line}tls-version-min 1.2
 data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
 cipher AES-256-GCM
 auth SHA512
@@ -262,10 +286,10 @@ def regenerate_all_server_confs() -> None:
 
 
 def start_instance(name: str) -> bool:
-    """启动指定 OpenVPN 实例"""
+    """启动指定 OpenVPN 实例并设置开机自启"""
     try:
         subprocess.run(
-            ["systemctl", "start", f"openvpn-server@{name}"],
+            ["systemctl", "enable", "--now", f"openvpn-server@{name}"],
             check=True, capture_output=True, text=True
         )
         return True

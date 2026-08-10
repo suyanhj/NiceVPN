@@ -3,8 +3,9 @@
 
 from app.services.openvpn.detector import detect_distro_family, parse_os_release_text
 from app.services.openvpn.installer import (
-    _download_file,
+    _INSTALL_SCRIPTS_DIR,
     _parse_openvpn_version_parts,
+    _read_install_script_text,
     _render_openvpn_systemd_unit_from_source,
     build_peer_openvpn_install_script,
 )
@@ -24,28 +25,40 @@ PRETTY_NAME="Ubuntu 22.04"
     assert detect_distro_family(d) == "debian"
 
 
+def test_install_script_files_exist() -> None:
+    for name in (
+        "openvpn-install-common.sh",
+        "openvpn-install-debian.sh",
+        "openvpn-install-rhel.sh",
+    ):
+        assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
+
+
 def test_build_peer_script_debian_ubuntu() -> None:
     s = build_peer_openvpn_install_script("debian", "22.04")
-    assert "apt-get update" in s
-    assert "apt-get install -y openvpn" in s
+    assert "export DEBIAN_CODENAME=jammy" in s
+    assert "export OPENVPN_MIN_VERSION=2.7.0" in s
+    assert "version_ge()" in s
+    assert "apt install -y" in s and "openvpn" in s
+    assert "openvpn_compile_install" in s
     assert "build.openvpn.net/debian" in s
-    assert "easy-rsa" not in s
+    assert "export INSTALL_EASYRSA=0" in s
 
 
 def test_build_peer_script_rhel() -> None:
     s = build_peer_openvpn_install_script("rhel", "9")
-    assert "openvpn" in s
-    assert "dnf" in s or "yum" in s
+    assert "export OPENVPN_MIN_VERSION=2.7.0" in s
     assert "info openvpn" in s
-    assert "OPENVPN_MIN_TLS_CRYPT_V2='2.5.0'" in s
-    assert "低于 ${OPENVPN_MIN_TLS_CRYPT_V2}" in s
-    assert "OVPN_URLS" in s
-    assert "https://github.com/OpenVPN/openvpn/releases/download/v2.7.0/openvpn-2.7.0.tar.gz" in s
-    assert "复用 OpenVPN 源码缓存" in s
-    assert "下载 OpenVPN 源码包" in s
-    assert "./configure" in s
-    assert "/opt/openvpn" in s
+    assert "openvpn_compile_install" in s
     assert "openvpn-client@.service" in s
+    assert "INSTALL_CLIENT_SYSTEMD" in _read_install_script_text("openvpn-install-common.sh")
+
+
+def test_common_script_has_shared_helpers() -> None:
+    common = _read_install_script_text("openvpn-install-common.sh")
+    assert "openvpn_download_source()" in common
+    assert "easyrsa_download_and_install()" in common
+    assert "openvpn_install_server_systemd_from_src()" in common
 
 
 def test_render_openvpn_systemd_unit_from_source_uses_official_template(tmp_path):
@@ -81,21 +94,3 @@ WantedBy=multi-user.target
 def test_parse_openvpn_version_parts():
     assert _parse_openvpn_version_parts("v2.7.0") == ("2", "7")
     assert _parse_openvpn_version_parts("bad") == ("2", "6")
-
-
-def test_download_file_reuses_existing_archive_cache(monkeypatch, tmp_path):
-    """缓存源码包存在且校验通过时，不应再次触发 curl 下载。"""
-    archive = tmp_path / "openvpn-2.7.0.tar.gz"
-    archive.write_bytes(b"cached")
-    commands = []
-
-    def fake_run_command(cmd, on_output, cwd=None):
-        commands.append(cmd)
-
-    monkeypatch.setattr("app.services.openvpn.installer._run_command", fake_run_command)
-    monkeypatch.setattr("app.services.openvpn.installer._validate_archive_file", lambda path, on_output: None)
-
-    _download_file("https://github.com/OpenVPN/openvpn/releases/download/v2.7.0/openvpn-2.7.0.tar.gz", archive, None)
-
-    assert archive.read_bytes() == b"cached"
-    assert not any(cmd and cmd[0] == "curl" for cmd in commands)

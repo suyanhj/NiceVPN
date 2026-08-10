@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
 # 安装系统依赖（iptables、ipset、OpenVPN 将在容器内由系统自动安装）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt update && apt install -y --no-install-recommends \
     iptables \
     ipset \
     && rm -rf /var/lib/apt/lists/*
