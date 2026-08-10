@@ -39,6 +39,19 @@ def test_get_status_comma_delimited(monkeypatch, tmp_path: Path):
     assert out["total_bytes_sent"] == 11774
 
 
+def test_generate_server_conf_omits_tls_crypt_v2_max_age_on_old_openvpn(monkeypatch):
+    """OpenVPN < 2.7.0 时不写入 tls-crypt-v2-max-age。"""
+    from app.services.openvpn.instance import generate_server_conf
+
+    monkeypatch.setattr(
+        "app.services.openvpn.instance._openvpn_supports_tls_crypt_v2_max_age",
+        lambda: False,
+    )
+    text = generate_server_conf("srv1", {"openvpn_conf_dir": "/etc/openvpn", "pki_dir": "/etc/openvpn/pki"})
+    assert "tls-crypt-v2 " in text
+    assert "tls-crypt-v2-max-age" not in text
+
+
 def test_generate_server_conf_has_client_hooks():
     """生成的 server.conf 含连接和断开钩子；全局池路由由 CCD ifconfig 掩码与 server 一致实现。"""
     from app.services.openvpn.instance import generate_server_conf
@@ -126,4 +139,4 @@ def test_start_instance_uses_openvpn_server_unit(monkeypatch):
     monkeypatch.setattr(inst.subprocess, "run", fake_run)
 
     assert inst.start_instance("srv1") is True
-    assert calls[0] == ["systemctl", "start", "openvpn-server@srv1"]
+    assert calls[0] == ["systemctl", "enable", "--now", "openvpn-server@srv1"]

@@ -1,62 +1,34 @@
 # -*- coding: utf-8 -*-
-"""OpenVPN 自动安装服务"""
+"""OpenVPN 自动安装服务 — 本机与对端 SSH 共用 ``app/scripts/install/`` 下 shell 脚本。"""
 import json
 import logging
 import os
-import shutil
+import shlex
 import subprocess
-import tempfile
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
-from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_INSTALL_PREFIX
+from app.core.constants import OPENVPN_MIN_VERSION
 
 log = logging.getLogger(__name__)
 
+_INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
+
 _APT_KEY_URL = "https://swupdate.openvpn.net/repos/repo-public.gpg"
-_APT_KEYRING = "/usr/share/keyrings/openvpn-archive-keyring.gpg"
 _GITHUB_API_LATEST = "https://api.github.com/repos/{repo}/releases/latest"
 
 _OPENVPN_FALLBACK_TAG = "v2.7.0"
 _OPENVPN_FALLBACK_ASSET = "openvpn-2.7.0.tar.gz"
-_OPENVPN_TLS_CRYPT_V2_MIN_VERSION = "2.5.0"
 _EASYRSA_FALLBACK_TAG = "v3.2.4"
 _EASYRSA_FALLBACK_ASSET = "EasyRSA-3.2.4.tgz"
-_SOURCE_ARCHIVE_CACHE_DIR = Path("/tmp")
-
-_RHEL_BUILD_DEPS = [
-    "gcc",
-    "gcc-c++",
-    "make",
-    "tar",
-    "gzip",
-    "curl",
-    "ca-certificates",
-    "pkgconfig",
-    "autoconf",
-    "automake",
-    "libtool",
-    "openssl-devel",
-    "libnl3-devel",
-    "pam-devel",
-    "libcap-ng-devel",
-    "lzo-devel",
-    "lz4-devel",
-    "pkcs11-helper-devel",
-    "systemd-devel",
-    "which",
-]
-_RHEL_RUNTIME_DEPS = [
-    "conntrack-tools",
-]
 
 
 def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
-    """生成在 **对端** 以 root/sudo 执行的 bash 脚本。
+    """生成在 **对端** 以 root/sudo 执行的 bash 脚本（内联 install/*.sh 内容）。
 
-    与 ``InitWizard._install_openvpn`` 同源策略：**Debian 系** 使用官方 OpenVPN apt 源（同 ``_install_debian``，仅装 ``openvpn`` 不装 easy-rsa）；**RHEL 系** 先查询仓库版本，低于 tls-crypt-v2 支持版本时才源码编译。
+    与 ``install_openvpn`` 同源：Debian/RHEL 安装逻辑均来自 ``app/scripts/install/``。
 
     Args:
         distro: ``detect_distro_family`` 返回值 ``debian`` / ``rhel``
@@ -65,92 +37,16 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
     Raises:
         ValueError: 不支持的族或 Debian 版本映射缺失
     """
-    distro = distro.lower().strip()
-    vid = str(version_id or "").strip().strip('"').strip("'")
-    if distro == "debian":
-        codename = _get_codename(vid)
-        return (
-            "set -eux\n"
-            f"curl -fsSL {_APT_KEY_URL} | gpg --dearmor -o {_APT_KEYRING}\n"
-            f"echo 'deb [signed-by={_APT_KEYRING}] "
-            f"https://build.openvpn.net/debian/openvpn/release/{codename} {codename} main' "
-            f"> /etc/apt/sources.list.d/openvpn.list\n"
-            "export DEBIAN_FRONTEND=noninteractive\n"
-            "apt-get update -y\n"
-            "apt-get install -y openvpn conntrack\n"
-        )
-    if distro == "rhel":
-        deps = " ".join(_RHEL_BUILD_DEPS)
-        archive_url = f"https://github.com/OpenVPN/openvpn/releases/download/{_OPENVPN_FALLBACK_TAG}/{_OPENVPN_FALLBACK_ASSET}"
-        archive_urls = "\n".join(_build_github_candidate_urls(archive_url))
-        return (
-            "set -eux\n"
-            f"OPENVPN_TAG='{_OPENVPN_FALLBACK_TAG}'\n"
-            f"OPENVPN_ASSET='{_OPENVPN_FALLBACK_ASSET}'\n"
-            f"OPENVPN_MIN_TLS_CRYPT_V2='{_OPENVPN_TLS_CRYPT_V2_MIN_VERSION}'\n"
-            "OPENVPN_PREFIX='/opt/openvpn'\n"
-            "OPENVPN_CACHE=\"/tmp/${OPENVPN_ASSET}\"\n"
-            "OPENVPN_SRC_ROOT='/tmp/ovpn-mgmt-openvpn-src'\n"
-            "OPENVPN_SRC_DIR=\"${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}\"\n"
-            "version_ge() {\n"
-            "  [ \"$(printf '%s\\n%s\\n' \"$2\" \"$1\" | sort -V | head -n 1)\" = \"$2\" ]\n"
-            "}\n"
-            "if command -v dnf >/dev/null 2>&1; then\n"
-            "  PM=dnf\n"
-            "elif command -v yum >/dev/null 2>&1; then\n"
-            "  PM=yum\n"
-            "else\n"
-            "  echo '未找到 dnf/yum' >&2\n"
-            "  exit 1\n"
-            "fi\n"
-            "PKG_VERSION=\"$(${PM} -q info openvpn 2>/dev/null "
-            "| awk -F: '/^Version[[:space:]]*:/ {gsub(/^[ \\t]+|[ \\t]+$/, \"\", $2); print $2}' "
-            "| sort -V | tail -n 1)\"\n"
-            "if [ -n \"${PKG_VERSION}\" ] && version_ge \"${PKG_VERSION}\" \"${OPENVPN_MIN_TLS_CRYPT_V2}\"; then\n"
-            "  echo \"仓库 openvpn ${PKG_VERSION} 支持 tls-crypt-v2，使用系统包安装\"\n"
-            "  ${PM} install -y openvpn conntrack-tools\n"
-            "  exit 0\n"
-            "fi\n"
-            "echo \"仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_TLS_CRYPT_V2}，改为源码编译安装\"\n"
-            f"${{PM}} install -y {deps} {' '.join(_RHEL_RUNTIME_DEPS)}\n"
-            "if [ ! -s \"${OPENVPN_CACHE}\" ]; then\n"
-            "  ok=0\n"
-            "  while IFS= read -r url; do\n"
-            "    [ -n \"${url}\" ] || continue\n"
-            "    echo \"下载 OpenVPN 源码包: ${url}\"\n"
-            "    if curl -fL --retry 3 --retry-delay 2 \"${url}\" -o \"${OPENVPN_CACHE}.part\" "
-            "&& tar -tzf \"${OPENVPN_CACHE}.part\" >/dev/null; then\n"
-            "      mv -f \"${OPENVPN_CACHE}.part\" \"${OPENVPN_CACHE}\"\n"
-            "      ok=1\n"
-            "      break\n"
-            "    fi\n"
-            "    rm -f \"${OPENVPN_CACHE}.part\"\n"
-            "  done <<'OVPN_URLS'\n"
-            f"{archive_urls}\n"
-            "OVPN_URLS\n"
-            "  [ \"${ok}\" = \"1\" ] || { echo '下载 OpenVPN 源码包失败' >&2; exit 1; }\n"
-            "else\n"
-            "  echo \"复用 OpenVPN 源码缓存: ${OPENVPN_CACHE}\"\n"
-            "  tar -tzf \"${OPENVPN_CACHE}\" >/dev/null\n"
-            "fi\n"
-            "rm -rf \"${OPENVPN_SRC_ROOT}\"\n"
-            "mkdir -p \"${OPENVPN_SRC_ROOT}\"\n"
-            "tar -xzf \"${OPENVPN_CACHE}\" -C \"${OPENVPN_SRC_ROOT}\"\n"
-            "cd \"${OPENVPN_SRC_DIR}\"\n"
-            "./configure --prefix=\"${OPENVPN_PREFIX}\" --enable-async-push --enable-systemd\n"
-            "make -j\"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)\"\n"
-            "make install\n"
-            "ln -sfn \"${OPENVPN_PREFIX}/sbin/openvpn\" /usr/local/sbin/openvpn\n"
-            "if [ -f distro/systemd/openvpn-client@.service.in ]; then\n"
-            "  sed "
-            "-e \"s#@sbindir@#${OPENVPN_PREFIX}/sbin#g\" "
-            "-e 's#@OPENVPN_VERSION_MAJOR@#2#g' "
-            "-e 's#@OPENVPN_VERSION_MINOR@#7#g' "
-            "distro/systemd/openvpn-client@.service.in > /etc/systemd/system/openvpn-client@.service\n"
-            "  systemctl daemon-reload\n"
-            "fi\n"
-        )
-    raise ValueError(f"不支持的发行版族: {distro}")
+    env = _build_install_env(
+        distro,
+        version_id,
+        install_easyrsa=False,
+        install_server_systemd=False,
+        install_client_systemd=True,
+        install_server_override=False,
+        on_output=None,
+    )
+    return _render_remote_install_script(distro, env)
 
 
 def install_openvpn(
@@ -158,16 +54,22 @@ def install_openvpn(
     version_id: str,
     on_output: Callable[[str], None] | None = None,
 ) -> bool:
-    """按发行版自动安装 OpenVPN。"""
+    """按发行版自动安装 OpenVPN（执行本地 install 入口脚本）。"""
     distro = distro.lower().strip()
 
     try:
-        if distro == "debian":
-            _install_debian(version_id, on_output)
-        elif distro == "rhel":
-            _install_rhel_from_source(version_id, on_output)
-        else:
-            raise ValueError(f"不支持的发行版类型: {distro}")
+        env = _build_install_env(
+            distro,
+            version_id,
+            install_easyrsa=True,
+            install_server_systemd=True,
+            install_client_systemd=False,
+            install_server_override=True,
+            on_output=on_output,
+        )
+        script_path = _install_script_path(distro)
+        _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
+        _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
     except Exception as exc:
         _emit(on_output, f"[错误] 安装 OpenVPN 失败: {exc}")
         log.exception("安装 OpenVPN 失败")
@@ -177,38 +79,27 @@ def install_openvpn(
     return True
 
 
-def _install_debian(version_id: str, on_output: Callable[[str], None] | None) -> None:
-    """Debian 系通过官方仓库安装。"""
-    codename = _get_codename(version_id)
-    commands = [
-        ["bash", "-lc", f"curl -fsSL {_APT_KEY_URL} | gpg --dearmor -o {_APT_KEYRING}"],
-        [
-            "bash", "-lc",
-            "echo 'deb [signed-by={keyring}] https://build.openvpn.net/debian/openvpn/release/{code} "
-            "{code} main' > /etc/apt/sources.list.d/openvpn.list".format(
-                keyring=_APT_KEYRING,
-                code=codename,
-            ),
-        ],
-        ["apt-get", "update", "-y"],
-        ["apt-get", "install", "-y", "openvpn", "easy-rsa", "conntrack"],
-    ]
-
-    _emit(on_output, f"[信息] 开始为 debian {version_id} 安装 OpenVPN ...")
-    for cmd in commands:
-        _run_command(cmd, on_output)
-    _install_openvpn_server_systemd_override(on_output)
+def _install_script_path(distro: str) -> Path:
+    """返回发行版对应的安装入口脚本路径。"""
+    distro = distro.lower().strip()
+    script_path = _INSTALL_SCRIPTS_DIR / f"openvpn-install-{distro}.sh"
+    if not script_path.is_file():
+        raise ValueError(f"不支持的发行版类型: {distro}")
+    return script_path
 
 
-def _install_rhel_from_source(version_id: str, on_output: Callable[[str], None] | None) -> None:
-    """红帽系通过源码编译安装 OpenVPN，并安装 Easy-RSA。"""
-    major = _parse_major_version(version_id)
-    package_manager = "yum" if major is not None and major <= 7 else "dnf"
-
-    _emit(on_output, f"[信息] 开始为 rhel {version_id} 编译安装 OpenVPN ...")
-    _run_command([package_manager, "install", "-y", *_RHEL_BUILD_DEPS], on_output)
-    _run_command([package_manager, "install", "-y", *_RHEL_RUNTIME_DEPS], on_output)
-
+def _build_install_env(
+    distro: str,
+    version_id: str,
+    *,
+    install_easyrsa: bool,
+    install_server_systemd: bool,
+    install_client_systemd: bool,
+    install_server_override: bool,
+    on_output: Callable[[str], None] | None,
+) -> dict[str, str]:
+    """构造传给安装 shell 脚本的环境变量。"""
+    distro = distro.lower().strip()
     openvpn_release = _resolve_latest_release_asset(
         repo="OpenVPN/openvpn",
         asset_prefix="openvpn-",
@@ -217,46 +108,88 @@ def _install_rhel_from_source(version_id: str, on_output: Callable[[str], None] 
         fallback_asset=_OPENVPN_FALLBACK_ASSET,
         on_output=on_output,
     )
-    easyrsa_release = _resolve_latest_release_asset(
-        repo="OpenVPN/easy-rsa",
-        asset_prefix="EasyRSA-",
-        asset_suffixes=(".tar.gz", ".tgz"),
-        fallback_tag=_EASYRSA_FALLBACK_TAG,
-        fallback_asset=_EASYRSA_FALLBACK_ASSET,
-        on_output=on_output,
+    env: dict[str, str] = {
+        "OPENVPN_MIN_VERSION": OPENVPN_MIN_VERSION,
+        "OPENVPN_TAG": openvpn_release["tag_name"],
+        "OPENVPN_ASSET": openvpn_release["asset_name"],
+        "OPENVPN_DOWNLOAD_URLS": "\n".join(
+            _build_github_candidate_urls(openvpn_release["download_url"])
+        ),
+        "INSTALL_EASYRSA": "1" if install_easyrsa else "0",
+        "INSTALL_SERVER_SYSTEMD": "1" if install_server_systemd else "0",
+        "INSTALL_CLIENT_SYSTEMD": "1" if install_client_systemd else "0",
+        "INSTALL_SERVER_OVERRIDE": "1" if install_server_override else "0",
+        "APT_KEY_URL": _APT_KEY_URL,
+    }
+    if install_easyrsa:
+        easyrsa_release = _resolve_latest_release_asset(
+            repo="OpenVPN/easy-rsa",
+            asset_prefix="EasyRSA-",
+            asset_suffixes=(".tar.gz", ".tgz"),
+            fallback_tag=_EASYRSA_FALLBACK_TAG,
+            fallback_asset=_EASYRSA_FALLBACK_ASSET,
+            on_output=on_output,
+        )
+        env["EASYRSA_TAG"] = easyrsa_release["tag_name"]
+        env["EASYRSA_ASSET"] = easyrsa_release["asset_name"]
+        env["EASYRSA_DOWNLOAD_URLS"] = "\n".join(
+            _build_github_candidate_urls(easyrsa_release["download_url"])
+        )
+    if distro == "debian":
+        env["DEBIAN_CODENAME"] = _get_codename(version_id)
+    elif distro != "rhel":
+        raise ValueError(f"不支持的发行版族: {distro}")
+    return env
+
+
+def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
+    """将对端安装脚本打包为单段 bash（export 环境变量 + 内联 common + 入口逻辑）。"""
+    lines = ["set -eux"]
+    for key, value in env.items():
+        lines.append(f"export {key}={shlex.quote(value)}")
+
+    common_text = _read_install_script_text("openvpn-install-common.sh")
+    entry_text = _strip_entry_script_wrapper(
+        _read_install_script_text(f"openvpn-install-{distro}.sh")
     )
+    return "\n".join(lines) + "\n" + common_text + "\n" + entry_text
 
-    with tempfile.TemporaryDirectory(prefix="openvpn-build-") as temp_dir:
-        temp_path = Path(temp_dir)
 
-        openvpn_archive = _SOURCE_ARCHIVE_CACHE_DIR / openvpn_release["asset_name"]
-        easyrsa_archive = _SOURCE_ARCHIVE_CACHE_DIR / easyrsa_release["asset_name"]
+def _read_install_script_text(name: str) -> str:
+    """读取 install 目录下的 shell 脚本正文。"""
+    path = _INSTALL_SCRIPTS_DIR / name
+    if not path.is_file():
+        raise FileNotFoundError(f"安装脚本不存在: {path}")
+    return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
-        _download_file(openvpn_release["download_url"], openvpn_archive, on_output)
-        _download_file(easyrsa_release["download_url"], easyrsa_archive, on_output)
 
-        openvpn_src_dir = _extract_archive(openvpn_archive, temp_path / "openvpn-src", on_output)
-        easyrsa_src_dir = _extract_archive(easyrsa_archive, temp_path / "easyrsa-src", on_output)
+def _strip_entry_script_wrapper(text: str) -> str:
+    """去掉入口脚本的 shebang、set -euo、source common 行，保留业务逻辑。"""
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append(line)
+            continue
+        if stripped.startswith("#!"):
+            continue
+        if stripped == "set -euo pipefail":
+            continue
+        if stripped.startswith("SCRIPT_DIR="):
+            continue
+        if "source " in stripped and "openvpn-install-common.sh" in stripped:
+            continue
+        if stripped.startswith("# shellcheck"):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines).strip() + "\n"
 
-        configure_cmd = [
-            "./configure",
-            f"--prefix={OPENVPN_INSTALL_PREFIX}",
-            "--enable-async-push",
-            "--enable-systemd",
-        ]
-        _run_command(configure_cmd, on_output, cwd=openvpn_src_dir)
-        _run_command(["make", f"-j{max(1, os.cpu_count() or 1)}"], on_output, cwd=openvpn_src_dir)
-        _run_command(["make", "install"], on_output, cwd=openvpn_src_dir)
 
-        _install_easyrsa(easyrsa_src_dir, easyrsa_release["tag_name"], on_output)
-        _install_systemd_unit(openvpn_src_dir, openvpn_release["tag_name"], on_output)
-        _install_openvpn_server_systemd_override(on_output)
-
-    _install_openvpn_symlink(on_output)
-    _emit(
-        on_output,
-        f"[信息] 已安装 OpenVPN 到 {OPENVPN_INSTALL_PREFIX}，Easy-RSA 到 {EASYRSA_INSTALL_DIR}",
-    )
+def _subprocess_env(extra: dict[str, str]) -> dict[str, str]:
+    """合并当前进程环境与安装脚本专用变量。"""
+    merged = dict(os.environ)
+    merged.update(extra)
+    return merged
 
 
 def _resolve_latest_release_asset(
@@ -312,186 +245,13 @@ def _resolve_latest_release_asset(
     }
 
 
-def _download_file(
-    url: str,
-    output_path: Path,
-    on_output: Callable[[str], None] | None,
-) -> None:
-    """下载文件到指定路径；若 /tmp 缓存文件可用则直接复用。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.exists():
-        _emit(on_output, f"[缓存] 发现已下载源码包，直接复用: {output_path}")
-        try:
-            _validate_archive_file(output_path, on_output)
-            return
-        except Exception as exc:
-            _emit(on_output, f"[警告] 缓存源码包校验失败，将重新下载: {exc}")
-            output_path.unlink()
-
-    partial_path = output_path.with_name(f"{output_path.name}.part")
-    last_error: Exception | None = None
-    for candidate_url in _build_github_candidate_urls(url):
-        _emit(on_output, f"[下载] {candidate_url}")
-        try:
-            _run_command(
-                [
-                    "curl",
-                    "--location",
-                    "--fail",
-                    "--silent",
-                    "--show-error",
-                    "--retry",
-                    "3",
-                    "--retry-delay",
-                    "2",
-                    "--continue-at",
-                    "-",
-                    "--connect-timeout",
-                    "15",
-                    "--max-time",
-                    "1800",
-                    "--output",
-                    str(partial_path),
-                    candidate_url,
-                ],
-                on_output,
-            )
-            _validate_archive_file(partial_path, on_output)
-            partial_path.replace(output_path)
-            _emit(on_output, f"[缓存] 源码包已保存: {output_path}")
-            return
-        except Exception as exc:
-            last_error = exc
-            try:
-                if partial_path.exists():
-                    partial_path.unlink()
-            except OSError as unlink_exc:
-                raise RuntimeError(f"删除失败的临时下载文件失败: {partial_path}") from unlink_exc
-            continue
-
-    raise RuntimeError(f"下载失败: {url}，最后错误: {last_error}")
-
-
-def _extract_archive(
-    archive_path: Path,
-    target_dir: Path,
-    on_output: Callable[[str], None] | None,
-) -> Path:
-    """解压 tar 包并返回根目录路径。"""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    _run_command(
-        [
-            "tar",
-            "-xzf",
-            str(archive_path),
-            "-C",
-            str(target_dir),
-        ],
-        on_output,
-    )
-
-    children = [item for item in target_dir.iterdir() if item.is_dir()]
-    if not children:
-        raise RuntimeError(f"解压失败，未找到目录: {archive_path}")
-    return children[0]
-
-
-def _validate_archive_file(
-    archive_path: Path,
-    on_output: Callable[[str], None] | None,
-) -> None:
-    """校验下载后的归档文件是否存在且可正常列出内容。"""
-    if not archive_path.exists():
-        raise RuntimeError(f"下载文件不存在: {archive_path}")
-
-    if archive_path.stat().st_size <= 0:
-        raise RuntimeError(f"下载文件为空: {archive_path}")
-
-    _run_command(["file", str(archive_path)], on_output)
-    _run_command(["tar", "-tzf", str(archive_path)], on_output)
-
-
-def _install_easyrsa(
-    extracted_dir: Path,
-    tag_name: str,
-    on_output: Callable[[str], None] | None,
-) -> None:
-    """安装 Easy-RSA 到固定目录。"""
-    source_dir = extracted_dir / "easyrsa3"
-    if not source_dir.is_dir():
-        source_dir = extracted_dir
-
-    version_name = tag_name.lstrip("v") or "latest"
-    releases_dir = Path(EASYRSA_INSTALL_DIR) / "releases"
-    install_dir = releases_dir / version_name
-    current_link = Path(EASYRSA_INSTALL_DIR) / "current"
-
-    releases_dir.mkdir(parents=True, exist_ok=True)
-    if install_dir.exists():
-        shutil.rmtree(install_dir)
-    shutil.copytree(source_dir, install_dir)
-
-    if current_link.is_symlink() or current_link.exists():
-        if current_link.is_dir() and not current_link.is_symlink():
-            shutil.rmtree(current_link)
-        else:
-            current_link.unlink()
-    current_link.symlink_to(install_dir, target_is_directory=True)
-
-    easyrsa_bin = install_dir / "easyrsa"
-    if not easyrsa_bin.is_file():
-        raise RuntimeError(f"Easy-RSA 安装失败，未找到 easyrsa: {easyrsa_bin}")
-
-    bin_link = Path("/usr/local/bin/easyrsa")
-    if bin_link.is_symlink() or bin_link.exists():
-        bin_link.unlink()
-    bin_link.symlink_to(easyrsa_bin)
-    _emit(on_output, f"[信息] Easy-RSA 已安装到 {install_dir}")
-
-
-def _install_openvpn_symlink(on_output: Callable[[str], None] | None) -> None:
-    """创建 OpenVPN 兼容软链接，避免 PATH 检测失败。"""
-    source = Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"
-    if not source.is_file():
-        raise RuntimeError(f"未找到 OpenVPN 可执行文件: {source}")
-
-    target = Path("/usr/local/sbin/openvpn")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() or target.exists():
-        target.unlink()
-    target.symlink_to(source)
-    _emit(on_output, f"[信息] 已创建 OpenVPN 软链接: {target} -> {source}")
-
-
-def _install_systemd_unit(
-    openvpn_src_dir: Path,
-    tag_name: str,
-    on_output: Callable[[str], None] | None,
-) -> None:
-    """基于 OpenVPN 源码官方 server 模板安装项目兼容的 systemd 单元。"""
-    unit_path = Path("/etc/systemd/system/openvpn-server@.service")
-    unit_content = _render_openvpn_systemd_unit_from_source(openvpn_src_dir, tag_name)
-    unit_path.parent.mkdir(parents=True, exist_ok=True)
-    unit_path.write_text(unit_content, encoding="utf-8")
-    _run_command(["systemctl", "daemon-reload"], on_output)
-    _emit(on_output, f"[信息] 已基于 OpenVPN 源码官方模板安装 systemd 单元文件: {unit_path}")
-
-
-def _install_openvpn_server_systemd_override(on_output: Callable[[str], None] | None) -> None:
-    """安装服务端 systemd drop-in，允许官方 unit 写入项目运行时目录。"""
-    override_dir = Path("/etc/systemd/system/openvpn-server@.service.d")
-    override_path = override_dir / "10-ovpn-mgmt.conf"
-    override_content = """[Service]
-ReadWritePaths=/etc/openvpn
-"""
-    override_dir.mkdir(parents=True, exist_ok=True)
-    override_path.write_text(override_content, encoding="utf-8")
-    _run_command(["systemctl", "daemon-reload"], on_output)
-    _emit(on_output, f"[信息] 已安装 OpenVPN server systemd override: {override_path}")
-
-
 def _render_openvpn_systemd_unit_from_source(openvpn_src_dir: Path, tag_name: str) -> str:
-    """读取源码 ``distro/systemd/openvpn-server@.service.in`` 并适配项目运行时路径。"""
+    """读取源码 ``distro/systemd/openvpn-server@.service.in`` 并适配项目运行时路径。
+
+    保留供单元测试；实际安装由 ``openvpn-install-common.sh`` 完成。
+    """
+    from app.core.constants import OPENVPN_INSTALL_PREFIX
+
     template_path = openvpn_src_dir / "distro" / "systemd" / "openvpn-server@.service.in"
     if not template_path.is_file():
         raise RuntimeError(f"OpenVPN 源码缺少官方 systemd server 模板: {template_path}")
@@ -500,14 +260,12 @@ def _render_openvpn_systemd_unit_from_source(openvpn_src_dir: Path, tag_name: st
     text = text.replace("@sbindir@", f"{OPENVPN_INSTALL_PREFIX}/sbin")
     text = text.replace("@OPENVPN_VERSION_MAJOR@", major)
     text = text.replace("@OPENVPN_VERSION_MINOR@", minor)
-    # 项目在 server.conf 内维护 status/log 路径；避免 unit 命令行覆盖配置。
     text = text.replace(
         f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn "
         "--status %t/openvpn-server/status-%i.log --status-version 2 "
         "--suppress-timestamps --config %i.conf",
         f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn --suppress-timestamps --config %i.conf",
     )
-    # 项目运行时会在 /etc/openvpn 写 ipp 与日志，保留官方保护并显式放行该目录。
     text = text.replace("ProtectSystem=true\n", "ProtectSystem=true\nReadWritePaths=/etc/openvpn\n")
     return text
 
@@ -523,6 +281,7 @@ def _parse_openvpn_version_parts(tag_name: str) -> tuple[str, str]:
 
 def _get_codename(version_id: str) -> str:
     """将 Debian 系版本号映射为 apt 源代号。"""
+    vid = str(version_id or "").strip().strip('"').strip("'")
     codename_map: dict[str, str] = {
         "11": "bullseye",
         "12": "bookworm",
@@ -532,26 +291,20 @@ def _get_codename(version_id: str) -> str:
         "24.04": "noble",
     }
 
-    codename = codename_map.get(version_id)
+    codename = codename_map.get(vid)
     if not codename:
         raise ValueError(
-            f"不支持的 debian 系版本: {version_id}，"
+            f"不支持的 debian 系版本: {vid}，"
             f"支持的版本: {', '.join(codename_map.keys())}"
         )
     return codename
 
 
-def _parse_major_version(version_id: str) -> int | None:
-    """提取版本号主版本。"""
-    try:
-        return int(version_id.split(".")[0])
-    except (ValueError, IndexError):
-        return None
-
-
 def _run_command(
     cmd: list[str],
     on_output: Callable[[str], None] | None,
+    *,
+    env: dict[str, str] | None = None,
     cwd: Path | None = None,
 ) -> None:
     """执行命令并实时输出日志。"""
@@ -560,6 +313,7 @@ def _run_command(
         proc = subprocess.Popen(
             cmd,
             cwd=str(cwd) if cwd else None,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -611,7 +365,6 @@ def _build_github_candidate_urls(url: str) -> list[str]:
     for prefix in normalized_proxies:
         candidates.append(prefix + url)
 
-    # 原始 GitHub 地址放到最后，作为兜底。
     candidates.append(url)
 
     deduped: list[str] = []
