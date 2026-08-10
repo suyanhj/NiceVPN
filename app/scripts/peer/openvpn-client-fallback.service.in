@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenVPN client (ovpn-mgmt)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@OPENVPN_BIN@ --config @CONFIG_PATH@
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

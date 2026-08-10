@@ -6,6 +6,9 @@ from unittest.mock import patch
 import pytest
 
 from app.services.peer_instance.remote_peer_ovpn import (
+    _PEER_SCRIPTS_DIR,
+    _bundle_peer_script,
+    _render_fallback_unit_template,
     control_openvpn_client_service_via_ssh,
     deploy_openvpn_client_systemd_via_ssh,
     default_remote_ovpn_path,
@@ -13,6 +16,32 @@ from app.services.peer_instance.remote_peer_ovpn import (
     fetch_openvpn_client_service_status_via_ssh,
     _render_remote_peer_client_config,
 )
+
+
+def test_peer_client_script_files_exist() -> None:
+    for name in (
+        "openvpn-client-log-setup.sh",
+        "openvpn-client-install-fallback.sh",
+        "openvpn-client-fallback.service.in",
+    ):
+        assert (_PEER_SCRIPTS_DIR / name).is_file(), name
+
+
+def test_bundle_peer_log_setup_script() -> None:
+    s = _bundle_peer_script(
+        "openvpn-client-log-setup.sh",
+        {"SERVICE_NAME": "openvpn-client@client.service", "LOG_ROTATE_DAYS": "7"},
+    )
+    assert "export SERVICE_NAME=" in s
+    assert "systemctl daemon-reload" in s
+    assert "10-ovpn-mgmt-log.conf" in s
+
+
+def test_fallback_unit_template_has_placeholders() -> None:
+    text = _render_fallback_unit_template()
+    assert "@OPENVPN_BIN@" in text
+    assert "@CONFIG_PATH@" in text
+    assert "WantedBy=multi-user.target" in text
 
 
 class _FakeChannel:
@@ -80,7 +109,7 @@ def test_deploy_openvpn_client_systemd_uses_official_template() -> None:
         [
             ("", "", 0),  # sudo -n
             ("", "", 0),  # systemctl cat openvpn-client@.service
-            ("", "", 0),  # log drop-in + daemon-reload
+            ("", "", 0),  # openvpn-client-log-setup.sh (bundled)
             ("", "", 0),  # enable
             ("", "", 0),  # restart
         ]
@@ -96,6 +125,7 @@ def test_deploy_openvpn_client_systemd_uses_official_template() -> None:
     assert ret["service"] == "openvpn-client@client.service"
     assert ret["instance_config_path"] == "/etc/openvpn/client/client.conf"
     assert client.sftp.putfo_calls == 0
+    assert any("bash -lc" in c and "10-ovpn-mgmt-log.conf" in c for c in client.commands)
     assert not any("ln -sfn" in c for c in client.commands)
     assert client.closed is True
 
@@ -106,8 +136,8 @@ def test_deploy_openvpn_client_systemd_generates_fallback_without_official_templ
             ("", "", 0),  # sudo -n
             ("", "", 1),  # systemctl cat openvpn-client@.service
             ("/usr/sbin/openvpn\n", "", 0),  # command -v openvpn
-            ("", "", 0),  # install unit
-            ("", "", 0),  # log drop-in + daemon-reload
+            ("", "", 0),  # openvpn-client-install-fallback.sh (bundled)
+            ("", "", 0),  # openvpn-client-log-setup.sh (bundled)
             ("", "", 0),  # enable
             ("", "", 0),  # restart
         ]
@@ -122,8 +152,9 @@ def test_deploy_openvpn_client_systemd_generates_fallback_without_official_templ
     assert ret["unit_source"] == "generated"
     assert ret["service"] == "openvpn-client.service"
     assert ret["unit_path"] == "/etc/systemd/system/openvpn-client.service"
-    assert client.sftp.putfo_calls == 1
-    assert any("systemctl daemon-reload" in c for c in client.commands)
+    assert client.sftp.putfo_calls == 0
+    assert any("bash -lc" in c and "ovpn-mgmt-unit" in c for c in client.commands)
+    assert any("bash -lc" in c and "10-ovpn-mgmt-log.conf" in c for c in client.commands)
     assert client.closed is True
 
 

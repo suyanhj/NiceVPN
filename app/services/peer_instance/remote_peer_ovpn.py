@@ -13,6 +13,8 @@ from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_
 
 logger = logging.getLogger("peer.remote")
 
+_PEER_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "peer"
+
 
 def _exec_ssh(client, command: str, *, timeout: int) -> tuple[str, str, int]:
     _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
@@ -92,37 +94,109 @@ def _render_remote_peer_client_config(content: str) -> str:
     return "\n".join(filtered[:insert_at] + logging_lines + filtered[insert_at:]).rstrip() + "\n"
 
 
+def _read_peer_script_text(name: str) -> str:
+    """读取 ``app/scripts/peer/`` 下脚本或模板正文。"""
+    path = _PEER_SCRIPTS_DIR / name
+    if not path.is_file():
+        raise FileNotFoundError(f"对端脚本不存在: {path}")
+    return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def _strip_peer_script_wrapper(text: str) -> str:
+    """去掉入口脚本的 shebang、set -euo、SCRIPT_DIR、source 行，保留业务逻辑。"""
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append(line)
+            continue
+        if stripped.startswith("#!"):
+            continue
+        if stripped == "set -euo pipefail":
+            continue
+        if stripped.startswith("SCRIPT_DIR="):
+            continue
+        if stripped.startswith("# shellcheck"):
+            continue
+        if "source " in stripped and ".sh" in stripped:
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines).strip() + "\n"
+
+
+def _bundle_peer_script(script_name: str, env: dict[str, str]) -> str:
+    """将对端脚本与环境变量打包为可在 SSH 上执行的 bash。"""
+    lines = ["set -eux"]
+    for key, value in env.items():
+        lines.append(f"export {key}={shlex.quote(str(value))}")
+    body = _strip_peer_script_wrapper(_read_peer_script_text(script_name))
+    return "\n".join(lines) + "\n" + body
+
+
+def _exec_bundled_peer_script(
+    client,
+    sp: str,
+    script_name: str,
+    env: dict[str, str],
+    *,
+    timeout: int,
+    error_hint: str,
+) -> None:
+    """经 SSH 执行打包后的对端 shell 脚本。"""
+    wrapped = f"{sp}bash -lc {shlex.quote(_bundle_peer_script(script_name, env))}"
+    _, err, code = _exec_ssh(client, wrapped, timeout=timeout)
+    if code != 0:
+        raise RuntimeError(f"{error_hint}: {err.strip()}")
+
+
+def _client_log_setup_env(service: str) -> dict[str, str]:
+    """构造 ``openvpn-client-log-setup.sh`` 所需环境变量。"""
+    return {
+        "SERVICE_NAME": service,
+        "CLIENT_LOG_DIR": PEER_REMOTE_CLIENT_LOG_DIR,
+        "LOG_ROTATE_DAYS": str(int(LOG_RETENTION_DAYS)),
+    }
+
+
+def _render_fallback_unit_template() -> str:
+    """读取兜底 systemd unit 模板（占位符由 shell 脚本 sed 替换）。"""
+    return _read_peer_script_text("openvpn-client-fallback.service.in")
+
+
 def _install_client_log_systemd_override(client, sp: str, service: str, *, timeout: int) -> None:
     """安装 client service drop-in 与 logrotate，允许写入并滚动 /etc/openvpn/log。"""
-    override_dir = (
-        "/etc/systemd/system/openvpn-client@.service.d"
-        if service == OFFICIAL_OPENVPN_CLIENT_SERVICE
-        else f"/etc/systemd/system/{service}.d"
+    _exec_bundled_peer_script(
+        client,
+        sp,
+        "openvpn-client-log-setup.sh",
+        _client_log_setup_env(service),
+        timeout=timeout,
+        error_hint="写入 OpenVPN client 日志 drop-in 失败",
     )
-    override_path = f"{override_dir}/10-ovpn-mgmt-log.conf"
-    content = "[Service]\nReadWritePaths=/etc/openvpn/log\n"
-    rotate_conf = (
-        f"{PEER_REMOTE_CLIENT_LOG_DIR}/client.log {{\n"
-        "    daily\n"
-        f"    rotate {int(LOG_RETENTION_DAYS)}\n"
-        "    missingok\n"
-        "    notifempty\n"
-        "    compress\n"
-        "    copytruncate\n"
-        "}\n"
+
+
+def _install_fallback_client_systemd_unit(
+    client,
+    sp: str,
+    *,
+    openvpn_bin: str,
+    config_path: str,
+    timeout: int,
+) -> None:
+    """写入兜底 openvpn-client.service unit 并 daemon-reload。"""
+    _exec_bundled_peer_script(
+        client,
+        sp,
+        "openvpn-client-install-fallback.sh",
+        {
+            "OPENVPN_BIN": openvpn_bin,
+            "CONFIG_PATH": config_path,
+            "SERVICE_NAME": FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT,
+            "UNIT_TEMPLATE": _render_fallback_unit_template(),
+        },
+        timeout=timeout,
+        error_hint="写入兜底 OpenVPN client systemd unit 失败",
     )
-    rotate_path = "/etc/logrotate.d/ovpn-mgmt-openvpn-client"
-    cmd = (
-        f"{sp}mkdir -p {shlex.quote(PEER_REMOTE_CLIENT_LOG_DIR)} {shlex.quote(override_dir)} && "
-        f"printf %s {shlex.quote(content)} | {sp}tee {shlex.quote(override_path)} >/dev/null && "
-        f"if command -v logrotate >/dev/null 2>&1; then "
-        f"printf %s {shlex.quote(rotate_conf)} | {sp}tee {shlex.quote(rotate_path)} >/dev/null; "
-        f"fi && "
-        f"{sp}systemctl daemon-reload"
-    )
-    _, err, code = _exec_ssh(client, cmd, timeout=timeout)
-    if code != 0:
-        raise RuntimeError(f"写入 OpenVPN client 日志 drop-in 失败: {err.strip()}")
 
 
 def _resolve_openvpn_client_service_remote(client, *, timeout: int = 30) -> dict[str, str | bool]:
@@ -349,36 +423,19 @@ def deploy_openvpn_client_systemd_via_ssh(
             }
 
         ov_bin = _resolve_openvpn_binary_remote(row, client, sp, timeout=30)
-        unit = (
-            "[Unit]\n"
-            "Description=OpenVPN client (ovpn-mgmt)\n"
-            "After=network-online.target\n"
-            "Wants=network-online.target\n"
-            "\n"
-            "[Service]\n"
-            "Type=simple\n"
-            f"ExecStart={ov_bin} --config {rpath}\n"
-            "Restart=on-failure\n"
-            "RestartSec=5\n"
-            "\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n"
+        _install_fallback_client_systemd_unit(
+            client,
+            sp,
+            openvpn_bin=ov_bin,
+            config_path=rpath,
+            timeout=exec_timeout,
         )
-        unit_path = f"/etc/systemd/system/{FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT}"
-        tmp_unit = f"/tmp/ovpn-mgmt-unit-{uuid.uuid4().hex[:12]}.service"
-        sftp = client.open_sftp()
-        try:
-            sftp.putfo(io.BytesIO(unit.encode("utf-8")), tmp_unit)
-        finally:
-            sftp.close()
-        inst = (
-            f"{sp}install -m 0644 -T {shlex.quote(tmp_unit)} {shlex.quote(unit_path)} && "
-            f"{sp}rm -f {shlex.quote(tmp_unit)}"
+        logger.info(
+            "已写入远端兜底 systemd unit service=%s openvpn=%s config=%s",
+            FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT,
+            ov_bin,
+            rpath,
         )
-        _, err_w, cw = _exec_ssh(client, inst, timeout=exec_timeout)
-        if cw != 0:
-            raise RuntimeError(f"写入 systemd unit 失败: {err_w.strip()}")
-        logger.info("已写入远端 systemd unit path=%s openvpn=%s config=%s", unit_path, ov_bin, rpath)
         _install_client_log_systemd_override(
             client,
             sp,
@@ -397,7 +454,7 @@ def deploy_openvpn_client_systemd_via_ssh(
         return {
             "ok": True,
             "unit_source": "generated",
-            "unit_path": unit_path,
+            "unit_path": f"/etc/systemd/system/{FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT}",
             "openvpn_binary": ov_bin,
             "config_path": rpath,
             "service": FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT,
