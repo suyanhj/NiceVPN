@@ -3729,6 +3729,29 @@ _THEME_STYLE = """
     border: 1px solid rgba(148, 163, 184, 0.12);
   }
 
+  /* 用户组选择：保留正常选项高度，超过约四项时在菜单内滚动 */
+  .q-menu.vpn-group-select-menu {
+    max-height: min(216px, 50vh) !important;
+    overflow-y: auto !important;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+  }
+
+  .q-menu.vpn-group-select-menu::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .q-menu.vpn-group-select-menu::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .q-menu.vpn-group-select-menu::-webkit-scrollbar-thumb {
+    border: 2px solid #1e293b;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.45);
+  }
+
   .q-item {
     color: var(--vpn-text) !important;
   }

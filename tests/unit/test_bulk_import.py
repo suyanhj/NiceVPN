@@ -28,6 +28,31 @@ class TestParseFile:
         assert rows[0] == {"username": "alice", "group": "dev"}
         assert rows[1] == {"username": "bob", "group": "ops"}
 
+    def test_txt_quantity_expands_suffixes(self, service):
+        """测试数量列按新建用户规则展开后缀"""
+        rows = service.parse_file(b"alice dev 3\n", "users.txt")
+        assert rows == [
+            {"username": "alice", "group": "dev"},
+            {"username": "alice_1", "group": "dev"},
+            {"username": "alice_2", "group": "dev"},
+        ]
+
+    def test_csv_optional_quantity(self, service):
+        """测试 CSV 可选 quantity 列"""
+        csv_content = "username,group,quantity\nalice,dev,2\nbob,ops,1\n"
+        rows = service.parse_file(csv_content.encode("utf-8"), "users.csv")
+        assert rows == [
+            {"username": "alice", "group": "dev"},
+            {"username": "alice_1", "group": "dev"},
+            {"username": "bob", "group": "ops"},
+        ]
+
+    @pytest.mark.parametrize("quantity", ["0", "501", "1.5", "many"])
+    def test_invalid_quantity(self, service, quantity):
+        """测试非法数量明确拒绝并报告行号"""
+        with pytest.raises(ValueError, match="第 1 行数量"):
+            service.parse_text(f"alice dev {quantity}\n")
+
     def test_invalid_encoding(self, service):
         """测试非 UTF-8 编码应抛出 ValueError"""
         # 使用 GBK 编码的中文内容
@@ -105,3 +130,16 @@ class TestValidateAll:
         result = service.validate_all(rows, existing_groups, existing_users)
         assert result.valid is False
         assert any("重复" in e for e in result.errors)
+
+    def test_expanded_username_collision(self, service, existing_groups, existing_users):
+        """测试数量展开后的用户名冲突会整批拒绝"""
+        rows = service.parse_text("alice dev 2\nalice_1 ops\n")
+        result = service.validate_all(rows, existing_groups, existing_users)
+        assert result.valid is False
+        assert any("alice_1" in error and "重复" in error for error in result.errors)
+
+    def test_group_id_reference(self, service, existing_users):
+        """测试组 ID 可作为组引用参与预检查"""
+        rows = service.parse_text("alice grp-001 2\n")
+        result = service.validate_all(rows, {"grp-001": "grp-001"}, existing_users)
+        assert result.valid is True

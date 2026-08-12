@@ -2,6 +2,7 @@
 """组管理页面。"""
 
 from nicegui import ui
+from nicegui.elements.checkbox import Checkbox
 
 from app.ui.copy_clipboard import copy_text_to_clipboard
 
@@ -9,6 +10,11 @@ from app.core.config import load_config
 from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
+from app.ui.components.list_selection import (
+    apply_row_checkboxes,
+    sync_select_all_checkbox,
+    update_visible_selection,
+)
 
 
 class GroupsPage:
@@ -17,6 +23,9 @@ class GroupsPage:
     def __init__(self):
         self.group_service = GroupService()
         self.selected_ids: set[str] = set()
+        self.select_all_checkbox = None
+        self.visible_group_ids: list[str] = []
+        self.group_checkboxes: dict[str, Checkbox] = {}
 
     def render(self):
         """渲染组管理页面。"""
@@ -45,15 +54,23 @@ class GroupsPage:
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center"):
+                    with ui.row().classes("items-center gap-2"):
+                        self.select_all_checkbox = ui.checkbox(
+                            value=False,
+                            on_change=lambda e: self._toggle_select_all(e.value),
+                        ).classes("mgmt-checkbox").tooltip("选择全部组")
                         ui.label("分组列表").classes("mgmt-kicker")
                     ui.label(f"共 {len(groups)} 个组").classes("group-list-count")
 
-                self._render_group_list(groups)
+                with ui.column().classes("w-full"):
+                    self._render_group_list(groups)
 
     def _render_group_list(self, groups: list[dict]):
         """渲染分组列表。"""
+        self.visible_group_ids = [group["id"] for group in groups]
+        self.group_checkboxes.clear()
         if not groups:
+            self._sync_select_all()
             ui.label("暂无分组，点「新建组」添加。").classes("empty-state")
             return
 
@@ -61,6 +78,7 @@ class GroupsPage:
         with ui.element("div").classes("mgmt-record-list"):
             for group in groups:
                 self._render_group_card(group, is_root=(group["id"] == root_id))
+        self._sync_select_all()
 
     def _render_group_card(self, group: dict, is_root: bool = False):
         """渲染单个分组卡片。"""
@@ -72,7 +90,7 @@ class GroupsPage:
 
         with ui.element("div").classes("mgmt-record-card"):
             with ui.element("div").classes("mgmt-record-main"):
-                ui.checkbox(
+                self.group_checkboxes[group_id] = ui.checkbox(
                     value=group_id in self.selected_ids,
                     on_change=lambda e, gid=group_id: self._toggle_select(gid, e.value),
                 ).classes("mgmt-checkbox")
@@ -133,6 +151,22 @@ class GroupsPage:
             self.selected_ids.add(group_id)
         else:
             self.selected_ids.discard(group_id)
+        self._sync_select_all()
+
+    def _toggle_select_all(self, selected: bool):
+        """选择或取消选择全部可见组。"""
+        update_visible_selection(self.selected_ids, self.visible_group_ids, selected)
+        apply_row_checkboxes(self.group_checkboxes, self.selected_ids)
+        self._sync_select_all()
+
+    def _sync_select_all(self):
+        """同步组列表全选复选框。"""
+        if self.select_all_checkbox is not None:
+            sync_select_all_checkbox(
+                self.select_all_checkbox,
+                self.visible_group_ids,
+                self.selected_ids,
+            )
 
     def _copy_group_id(self, group_id: str):
         """复制完整组 ID。"""

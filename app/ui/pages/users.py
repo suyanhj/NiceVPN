@@ -7,13 +7,20 @@ import re
 from datetime import datetime
 
 from nicegui import ui
+from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
 
 from app.core.config import load_config
 from app.services.openvpn.instance import get_status
+from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
+from app.ui.components.list_selection import (
+    apply_row_checkboxes,
+    sync_select_all_checkbox,
+    update_visible_selection,
+)
 from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.services.user.crud import UserService
 
@@ -27,6 +34,9 @@ class UsersPage:
         self.list_container = None
         self.pagination_container = None
         self.search_input = None
+        self.select_all_checkbox = None
+        self.visible_usernames: list[str] = []
+        self.user_checkboxes: dict[str, Checkbox] = {}
         self._create_running = False
         self._create_result: dict | None = None
         self._create_timer = None
@@ -71,7 +81,12 @@ class UsersPage:
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    ui.label("用户列表").classes("mgmt-kicker")
+                    with ui.row().classes("items-center gap-2"):
+                        self.select_all_checkbox = ui.checkbox(
+                            value=False,
+                            on_change=lambda e: self._toggle_select_all(e.value),
+                        ).classes("mgmt-checkbox").tooltip("选择当前页")
+                        ui.label("用户列表").classes("mgmt-kicker")
 
                 self.list_container = ui.column().classes("w-full")
                 self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
@@ -112,7 +127,10 @@ class UsersPage:
         ccd_vip_map: dict[str, str],
     ):
         """渲染用户列表容器。"""
+        self.user_checkboxes.clear()
         if not users:
+            self.visible_usernames = []
+            self._sync_select_all()
             with self.list_container:
                 ui.label("暂无用户，点「新建用户」添加。").classes("empty-state")
             return
@@ -124,6 +142,7 @@ class UsersPage:
 
         start_idx = (self.page - 1) * self.page_size
         page_users = users[start_idx : start_idx + self.page_size]
+        self.visible_usernames = [item["username"] for item in page_users]
 
         with self.list_container:
             with ui.element("div").classes("mgmt-record-list"):
@@ -135,6 +154,7 @@ class UsersPage:
                         binding_aux.get(uname) or {},
                         (ccd_vip_map.get(uname) or "").strip(),
                     )
+        self._sync_select_all()
 
         if self.pagination_container is not None:
             with self.pagination_container:
@@ -181,7 +201,7 @@ class UsersPage:
 
         with ui.element("div").classes("mgmt-record-card"):
             with ui.element("div").classes("mgmt-record-main"):
-                ui.checkbox(
+                self.user_checkboxes[username] = ui.checkbox(
                     value=username in self.selected_users,
                     on_change=lambda e, current=username: self._toggle_select(current, e.value),
                 ).classes("mgmt-checkbox")
@@ -392,7 +412,9 @@ class UsersPage:
             ui.label("切换后会重新分配虚拟 IP，并立即踢下线，用户重连后生效。").classes(
                 "text-caption text-grey"
             )
-            group_select = ui.select(group_options, label="目标组").classes("w-full")
+            group_select = ui.select(group_options, label="目标组").classes("w-full").props(
+                'behavior=menu popup-content-class="vpn-group-select-menu"'
+            )
 
             with ui.row().classes("justify-end q-mt-md"):
                 ui.button("取消", on_click=dialog.close).props("flat")
@@ -493,6 +515,22 @@ class UsersPage:
             self.selected_users.add(username)
         else:
             self.selected_users.discard(username)
+        self._sync_select_all()
+
+    def _toggle_select_all(self, selected: bool):
+        """选择或取消选择当前页全部用户。"""
+        update_visible_selection(self.selected_users, self.visible_usernames, selected)
+        apply_row_checkboxes(self.user_checkboxes, self.selected_users)
+        self._sync_select_all()
+
+    def _sync_select_all(self):
+        """同步用户列表全选复选框。"""
+        if self.select_all_checkbox is not None:
+            sync_select_all_checkbox(
+                self.select_all_checkbox,
+                self.visible_usernames,
+                self.selected_users,
+            )
 
     def _confirm_reset_binding(self, username: str):
         """单用户重置设备绑定确认。"""
@@ -547,7 +585,9 @@ class UsersPage:
             ui.label("数量>1 时自动生成后缀：lisi、lisi_1、lisi_2 …").classes("text-caption text-grey")
 
             group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
-            group_select = ui.select(group_options, label="所属组").classes("w-full")
+            group_select = ui.select(group_options, label="所属组").classes("w-full").props(
+                'behavior=menu popup-content-class="vpn-group-select-menu"'
+            )
 
             password_enabled = ui.checkbox("启用账号密码")
             password_input = ui.input("密码", password=True).classes("w-full")
@@ -757,25 +797,25 @@ class UsersPage:
             ui.notify("没有可下载的文件", type="negative")
 
     def _show_import_dialog(self):
-        """显示批量导入弹窗：支持 CSV/TXT 文件，格式为 用户名 组名 或 用户名,组名。"""
+        """显示批量导入弹窗：支持 CSV/TXT 文件及可选创建数量。"""
         from app.services.group.crud import GroupService
 
         with ui.dialog() as dialog, ui.card().classes("min-w-[480px]"):
             ui.label("批量导入用户").classes("text-h6")
             ui.label(
-                "每行：用户名 + 空格或逗号 + 组名（CSV/TXT 均可）。组须事先存在，否则整批不导入。"
+                "每行：用户名 + 组名 + 可选数量，空格或逗号分隔。数量省略时为 1，组不存在则整批不导入。"
             ).classes("section-caption")
 
             textarea = ui.textarea(
                 label="粘贴内容（或上传文件后自动填入）",
-                placeholder="zhangsan default_group\nlisi dev_group",
+                placeholder="zhangsan default_group\nlisi dev_group 3",
             ).classes("w-full").props('rows="8"')
 
             async def handle_upload(e):
                 # NiceGUI 3.x：上传内容为 e.file（FileUpload），read/text 为异步
                 try:
                     data = await e.file.read()
-                    content = data.decode("utf-8", errors="replace")
+                    content = data.decode("utf-8")
                     textarea.set_value(content)
                     ui.notify(f"已载入文件: {e.file.name}", type="positive")
                 except Exception as exc:
@@ -801,73 +841,67 @@ class UsersPage:
         dialog.open()
 
     def _do_import(self, dialog, raw_text: str, group_service):
-        """解析并批量导入用户，预检查所有组是否存在。"""
+        """展开并预检查全部导入用户，通过后执行创建。"""
         if not raw_text or not raw_text.strip():
             ui.notify("导入内容为空", type="warning")
             return
 
-        # 解析每一行
-        entries: list[tuple[str, str]] = []
-        for line_num, line in enumerate(raw_text.strip().splitlines(), 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # 逗号或空格分隔
-            if "," in line:
-                parts = [p.strip() for p in line.split(",", 1)]
-            else:
-                parts = line.split(None, 1)
-            if len(parts) < 2:
-                ui.notify(f"第 {line_num} 行格式错误（需要 用户名 组名）: {line}", type="negative")
-                return
-            entries.append((parts[0], parts[1]))
-
-        if not entries:
-            ui.notify("没有解析到有效记录", type="warning")
+        service = BulkImportService()
+        try:
+            rows = service.parse_text(raw_text)
+        except ValueError as exc:
+            logger.error("批量导入内容解析失败: %s", exc)
+            ui.notify(str(exc), type="negative")
             return
 
-        # 预检查：收集所有引用的组名，验证是否存在
         all_groups = group_service.list_all()
-        group_name_to_id = {g["name"]: g["id"] for g in all_groups}
-        group_id_map = {g["id"]: g["id"] for g in all_groups}
-        missing_groups = set()
-        resolved: list[tuple[str, str]] = []
-        for username, group_ref in entries:
-            gid = group_name_to_id.get(group_ref) or group_id_map.get(group_ref)
-            if not gid:
-                missing_groups.add(group_ref)
-            else:
-                resolved.append((username, gid))
-
-        if missing_groups:
-            ui.notify(
-                f"以下组不存在，整批拒绝导入: {', '.join(sorted(missing_groups))}",
-                type="negative",
-            )
+        group_ref_to_id = {group["name"]: group["id"] for group in all_groups}
+        group_ref_to_id.update({group["id"]: group["id"] for group in all_groups})
+        existing_users = {
+            user["username"]
+            for user in self.user_service.list_all()
+        }
+        validation = service.validate_all(rows, group_ref_to_id, existing_users)
+        if not validation.valid:
+            logger.error("批量导入预检查失败 errors=%s", validation.errors)
+            for error in validation.errors[:5]:
+                ui.notify(error, type="negative")
+            if len(validation.errors) > 5:
+                ui.notify(
+                    f"还有 {len(validation.errors) - 5} 条错误未显示",
+                    type="warning",
+                )
             return
 
-        # 检查用户名重复
-        usernames = [r[0] for r in resolved]
-        dup = set(u for u in usernames if usernames.count(u) > 1)
-        if dup:
-            ui.notify(f"导入数据中存在重复用户名: {', '.join(sorted(dup))}", type="negative")
-            return
-
-        # 逐一创建
-        created, errors = [], []
-        for username, group_id in resolved:
+        created: list[str] = []
+        for row in rows:
+            username = row["username"]
             try:
-                self.user_service.create(username=username, group_id=group_id)
+                self.user_service.create(
+                    username=username,
+                    group_id=group_ref_to_id[row["group"]],
+                )
                 created.append(username)
             except Exception as exc:
-                errors.append(f"{username}: {exc}")
+                logger.exception(
+                    "批量导入用户创建失败 user=%s created_count=%s",
+                    username,
+                    len(created),
+                )
+                ui.notify(
+                    f"创建 {username} 失败，已创建 {len(created)} 个用户: {exc}",
+                    type="negative",
+                )
+                raise RuntimeError(f"批量导入在创建 {username} 时失败") from exc
 
         dialog.close()
-        if created:
-            ui.notify(f"成功导入 {len(created)} 个用户", type="positive")
-        if errors:
-            for err in errors[:5]:
-                ui.notify(f"导入失败 - {err}", type="negative")
-            if len(errors) > 5:
-                ui.notify(f"还有 {len(errors) - 5} 条错误未显示", type="warning")
+        logger.info(
+            "批量导入用户完成 created_count=%s first_user=%s",
+            len(created),
+            created[0],
+        )
+        ui.notify(
+            f"成功导入 {len(created)} 个用户",
+            type="positive",
+        )
         ui.navigate.to("/users")
