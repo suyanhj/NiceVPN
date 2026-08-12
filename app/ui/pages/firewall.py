@@ -46,6 +46,11 @@ from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
 from app.ui.components import confirm_dialog
+from app.ui.components.list_selection import (
+    apply_row_checkboxes,
+    sync_select_all_checkbox,
+    update_visible_selection,
+)
 from app.utils.cidr import validate_cidr
 
 logger = logging.getLogger(__name__)
@@ -221,6 +226,12 @@ class FirewallPage:
         self.selected_rule_ids: set = set()
         # 对端链 ``rows`` 下标，与中心 ``selected_rule_ids`` 互斥使用（按页签清理）
         self._selected_remote_indices: set[int] = set()
+        self._center_select_all_checkbox = None
+        self._remote_select_all_checkbox = None
+        self._visible_center_rule_ids: list[str] = []
+        self._visible_remote_indices: list[int] = []
+        self._center_rule_checkboxes: dict[str, Any] = {}
+        self._remote_row_checkboxes: dict[int, Any] = {}
         # 与 ``list_unified_flat`` 的全局排序一致：留空 = 全量
         self._is_unified_list: bool = True
         self._center_tab_active: bool = True
@@ -700,6 +711,26 @@ class FirewallPage:
             self._selected_remote_indices.add(int(idx))
         else:
             self._selected_remote_indices.discard(int(idx))
+        self._sync_remote_select_all()
+
+    def _toggle_remote_select_all(self, checked: bool) -> None:
+        """选择或取消选择当前对端的全部可见规则。"""
+        update_visible_selection(
+            self._selected_remote_indices,
+            self._visible_remote_indices,
+            checked,
+        )
+        apply_row_checkboxes(self._remote_row_checkboxes, self._selected_remote_indices)
+        self._sync_remote_select_all()
+
+    def _sync_remote_select_all(self) -> None:
+        """同步对端规则列表全选复选框。"""
+        if self._remote_select_all_checkbox is not None:
+            sync_select_all_checkbox(
+                self._remote_select_all_checkbox,
+                self._visible_remote_indices,
+                self._selected_remote_indices,
+            )
 
     def _schedule_remote_coro(self, coro) -> None:
         try:
@@ -711,6 +742,9 @@ class FirewallPage:
         if not self._remote_list_container:
             return
         self._remote_list_container.clear()
+        self._remote_select_all_checkbox = None
+        self._visible_remote_indices = []
+        self._remote_row_checkboxes.clear()
         pid = self._active_remote_peer_id()
         with self._remote_list_container:
             if not pid:
@@ -724,6 +758,7 @@ class FirewallPage:
                 return
             cache = remote_chain_cache.read_remote_chain_cache(pid)
             rows = list(cache.get("rows") or []) if cache else []
+            self._visible_remote_indices = list(range(len(rows)))
             if cache and cache.get("rows") is not None:
                 n = len(cache.get("rows") or [])
                 self._selected_remote_indices = {i for i in self._selected_remote_indices if 0 <= i < n}
@@ -751,14 +786,20 @@ class FirewallPage:
             t_sync = _format_peer_cache_timestamp(str(cache.get("last_pushed_at") or "") or None)
             with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    with ui.column().classes("gap-1"):
-                        ui.label("规则顺序").classes("mgmt-section-title")
-                        ui.label(f"拉取：{t_pull}  同步：{t_sync}").classes("mgmt-section-sub")
+                    with ui.row().classes("items-center gap-2"):
+                        self._remote_select_all_checkbox = ui.checkbox(
+                            value=False,
+                            on_change=lambda e: self._toggle_remote_select_all(e.value),
+                        ).classes("mgmt-checkbox").tooltip("选择当前对端全部规则")
+                        with ui.column().classes("gap-1"):
+                            ui.label("规则顺序").classes("mgmt-section-title")
+                            ui.label(f"拉取：{t_pull}  同步：{t_sync}").classes("mgmt-section-sub")
                     ui.label(f"对端: {peer_badge}").classes("meta-badge")
                 list_id = "firewall-remote-rule-list"
                 with ui.element("div").classes("mgmt-panel-scroll flex-1").props(f'id="{list_id}"'):
                     for i, row in enumerate(rows):
                         self._render_remote_rule_card(i, row, row_index_1based=i + 1, n_rows=len(rows))
+                self._sync_remote_select_all()
         self._run_javascript_in_page_client(
             """
             if (typeof Sortable !== 'undefined') {
@@ -854,7 +895,7 @@ class FirewallPage:
         ).props(f'data-remote-row-index="{idx}"'):
             with ui.element("div").classes("firewall-rule-card-head"):
                 with ui.row().classes("items-center gap-2 flex-1 min-w-0"):
-                    ui.checkbox(
+                    self._remote_row_checkboxes[idx] = ui.checkbox(
                         value=idx in self._selected_remote_indices,
                         on_change=lambda e, j=idx: self._toggle_remote_row_selection(j, e.value),
                     ).classes("mgmt-checkbox")
@@ -1136,6 +1177,9 @@ class FirewallPage:
         if not self._center_tab_active:
             return
         self.rules_container.clear()
+        self._center_select_all_checkbox = None
+        self._visible_center_rule_ids = []
+        self._center_rule_checkboxes.clear()
         self._is_unified_list = not (self.current_owner_id or "").strip()
         with self.rules_container:
             if self._is_unified_list:
@@ -1150,6 +1194,7 @@ class FirewallPage:
                 show_owner = False
 
             n_rules = len(rules)
+            self._visible_center_rule_ids = [str(rule["id"]) for rule in rules]
             if self._rules_total_footer is not None:
                 self._rules_total_footer.set_text(f"{n_rules} RULES TOTAL")
 
@@ -1158,16 +1203,22 @@ class FirewallPage:
                 return
             with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    with ui.column().classes("gap-1"):
-                        ui.label("规则顺序").classes("mgmt-section-title")
-                        if sub_hint:
-                            ui.label(sub_hint).classes("mgmt-section-sub")
+                    with ui.row().classes("items-center gap-2"):
+                        self._center_select_all_checkbox = ui.checkbox(
+                            value=False,
+                            on_change=lambda e: self._toggle_center_select_all(e.value),
+                        ).classes("mgmt-checkbox").tooltip("选择当前列表全部规则")
+                        with ui.column().classes("gap-1"):
+                            ui.label("规则顺序").classes("mgmt-section-title")
+                            if sub_hint:
+                                ui.label(sub_hint).classes("mgmt-section-sub")
                     if scope_title:
                         ui.label(scope_title).classes("meta-badge")
                 list_id = "firewall-rule-list"
                 with ui.element("div").classes("mgmt-panel-scroll flex-1").props(f'id="{list_id}"'):
                     for rule in rules:
                         self._render_rule_card(rule, show_owner=show_owner)
+                self._sync_center_select_all()
             self._run_javascript_in_page_client(
                 """
                 if (typeof Sortable !== 'undefined') {
@@ -1273,7 +1324,7 @@ class FirewallPage:
         ):
             with ui.element("div").classes("firewall-rule-card-head"):
                 with ui.row().classes("items-center gap-2 flex-1 min-w-0"):
-                    ui.checkbox(
+                    self._center_rule_checkboxes[str(rid)] = ui.checkbox(
                         value=rid in self.selected_rule_ids,
                         on_change=lambda e, r=rid: self._toggle_selection(r, e.value),
                     ).classes("mgmt-checkbox")
@@ -2420,6 +2471,26 @@ class FirewallPage:
             self.selected_rule_ids.add(rule_id)
         else:
             self.selected_rule_ids.discard(rule_id)
+        self._sync_center_select_all()
+
+    def _toggle_center_select_all(self, checked: bool) -> None:
+        """选择或取消选择当前中心规则列表。"""
+        update_visible_selection(
+            self.selected_rule_ids,
+            self._visible_center_rule_ids,
+            checked,
+        )
+        apply_row_checkboxes(self._center_rule_checkboxes, self.selected_rule_ids)
+        self._sync_center_select_all()
+
+    def _sync_center_select_all(self) -> None:
+        """同步中心规则列表全选复选框。"""
+        if self._center_select_all_checkbox is not None:
+            sync_select_all_checkbox(
+                self._center_select_all_checkbox,
+                self._visible_center_rule_ids,
+                self.selected_rule_ids,
+            )
 
     def _batch_delete(self) -> None:
         if self._center_tab_active:

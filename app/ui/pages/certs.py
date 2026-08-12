@@ -6,11 +6,17 @@ import re
 from datetime import datetime, timezone
 
 from nicegui import ui
+from nicegui.elements.checkbox import Checkbox
 
 from app.ui.copy_clipboard import copy_text_to_clipboard
 
 from app.services.cert.cert_service import CertService
 from app.ui.components import alert_card, confirm_dialog
+from app.ui.components.list_selection import (
+    apply_row_checkboxes,
+    sync_select_all_checkbox,
+    update_visible_selection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,9 @@ class CertsPage:
         self.search_input = None
         self.list_container = None
         self.pagination_container = None
+        self.select_all_checkbox = None
+        self.visible_cert_names: list[str] = []
+        self.cert_checkboxes: dict[str, Checkbox] = {}
         self.selected_certs: set = set()
         self.page = 1
         self.page_size = 50
@@ -66,7 +75,12 @@ class CertsPage:
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    ui.label("证书库").classes("mgmt-kicker")
+                    with ui.row().classes("items-center gap-2"):
+                        self.select_all_checkbox = ui.checkbox(
+                            value=False,
+                            on_change=lambda e: self._toggle_select_all(e.value),
+                        ).classes("mgmt-checkbox").tooltip("选择当前页")
+                        ui.label("证书库").classes("mgmt-kicker")
                 self.list_container = ui.column().classes("w-full")
                 self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
                 self._refresh_cert_list()
@@ -129,8 +143,11 @@ class CertsPage:
             pat = re.compile(".*" + re.escape(q) + ".*", re.IGNORECASE)
             certs = [c for c in certs if pat.search(c.get("common_name", ""))]
         now = datetime.now(timezone.utc)
+        self.cert_checkboxes.clear()
 
         if not certs:
+            self.visible_cert_names = []
+            self._sync_select_all()
             with self.list_container:
                 ui.label("暂无证书。").classes("empty-state")
             return
@@ -142,6 +159,7 @@ class CertsPage:
 
         start_idx = (self.page - 1) * self.page_size
         page_certs = certs[start_idx : start_idx + self.page_size]
+        self.visible_cert_names = [cert["common_name"] for cert in page_certs]
 
         with self.list_container:
             with ui.element("div").classes("mgmt-record-list"):
@@ -159,6 +177,7 @@ class CertsPage:
 
                     style = self._STATUS_STYLES.get(display_status, self._STATUS_STYLES["valid"])
                     self._render_cert_row(cert, style)
+        self._sync_select_all()
 
         if self.pagination_container is not None:
             with self.pagination_container:
@@ -183,7 +202,7 @@ class CertsPage:
 
         with ui.element("div").classes(row_classes):
             with ui.element("div").classes("mgmt-record-main"):
-                ui.checkbox(
+                self.cert_checkboxes[common_name] = ui.checkbox(
                     value=common_name in self.selected_certs,
                     on_change=lambda e, cn=common_name: self._toggle_cert_selection(cn, e.value),
                 ).classes("mgmt-checkbox")
@@ -335,6 +354,22 @@ class CertsPage:
             self.selected_certs.add(common_name)
         else:
             self.selected_certs.discard(common_name)
+        self._sync_select_all()
+
+    def _toggle_select_all(self, checked: bool):
+        """选择或取消选择当前页全部证书。"""
+        update_visible_selection(self.selected_certs, self.visible_cert_names, checked)
+        apply_row_checkboxes(self.cert_checkboxes, self.selected_certs)
+        self._sync_select_all()
+
+    def _sync_select_all(self):
+        """同步证书列表全选复选框。"""
+        if self.select_all_checkbox is not None:
+            sync_select_all_checkbox(
+                self.select_all_checkbox,
+                self.visible_cert_names,
+                self.selected_certs,
+            )
 
     def _batch_renew(self):
         """批量续签选中的证书。"""
