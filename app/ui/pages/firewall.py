@@ -43,6 +43,7 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
+from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
 from app.ui.adapters.firewall import (
@@ -65,6 +66,7 @@ from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
@@ -240,6 +242,15 @@ class FirewallPage:
         self._center_reorder_allowed = False
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
+        self._remote_fetch_error_by_peer: dict[str, str] = {}
+        self._remote_push_running_peer: str | None = None
+        self._remote_status_container = None
+        self._remote_cache_status_container = None
+        self._remote_cache_meta_label = None
+        self._remote_pull_button = None
+        self._remote_push_button = None
+        self._remote_grid_view = None
+        self._remote_grid_rows: list[dict[str, Any]] = []
 
     def _page_client(self) -> Any:
         """当前页面浏览器会话。优先 render 时缓存的 client，否则从列表区容器解析。"""
@@ -475,6 +486,8 @@ class FirewallPage:
         self._remote_fetch_generation += 1
         generation = self._remote_fetch_generation
         self._remote_fetch_running_peer = target
+        self._remote_fetch_error_by_peer.pop(target, None)
+        self._refresh_remote_toolbar_state()
         try:
             background_tasks.create(
                 self._remote_fetch_chain_via_ssh(target, generation),
@@ -483,6 +496,7 @@ class FirewallPage:
         except RuntimeError:
             if self._remote_fetch_running_peer == target:
                 self._remote_fetch_running_peer = None
+            self._refresh_remote_toolbar_state()
             return
 
     async def _remote_fetch_chain_via_ssh(self, target: str, generation: int) -> None:
@@ -497,14 +511,18 @@ class FirewallPage:
             if self._center_tab_active or generation != self._remote_fetch_generation:
                 return
             logger.error("SSH 拉取对端链失败 peer=%s: %s", target, exc)
+            self._remote_fetch_error_by_peer[target] = str(exc)
             self._notify_for_page(f"从对端拉取失败: {exc}", type="negative")
+            self._refresh_remote_toolbar_state()
             return
         finally:
             if self._remote_fetch_running_peer == target:
                 self._remote_fetch_running_peer = None
+            self._refresh_remote_toolbar_state()
         if self._center_tab_active or generation != self._remote_fetch_generation:
             return
         remote_chain_cache.record_from_fetch(snap, target)
+        self._remote_fetch_error_by_peer.pop(target, None)
         show = target[:8] if len(target) > 8 else target
         logger.debug("对端链已拉取并落库 peer=%s", show)
         if self._active_remote_peer_id() != target:
@@ -512,34 +530,183 @@ class FirewallPage:
         self._refresh_remote_view()
 
     def _build_remote_tab_static(self) -> None:
-        """渲染对端区静态壳层；有对端时默认选第一项。进入本 Tab 时由 :meth:`_on_enter_remote_tab` 先拉后显。"""
+        """构建对端选择、SSH/缓存状态、拉取推送工具栏和规则视图容器。"""
+
         opts = self._peer_options_for_select()
-        with ui.element("div").classes("firewall-search-row w-full"):
-            with ui.element("div").classes("w-full min-w-0"):
+
+        with ui.element("section").classes("mgmt-panel w-full"):
+            with ui.row().classes("w-full items-end gap-3 flex-wrap"):
                 if opts:
                     first_id = next(iter(opts))
-                    self._remote_peer_select = ui.select(
-                        opts,
-                        label="对端节点",
-                        value=first_id,
-                        with_input=True,
-                    ).classes("w-full").props("outlined dense")
+                    self._remote_peer_select = (
+                        ui.select(
+                            opts,
+                            label="对端节点",
+                            value=first_id,
+                            with_input=True,
+                        )
+                        .classes("min-w-[18rem] flex-1")
+                        .props("outlined dense")
+                    )
                     self._remote_peer_select.on_value_change(
-                        lambda _: self._on_remote_peer_select_change()
+                        lambda _event: self._on_remote_peer_select_change()
                     )
                 else:
                     self._remote_peer_select = None
-                    ui.label("无对端，请先在「对端站点」添加。").classes("text-grey")
-        self._remote_list_container = ui.column().classes("firewall-remote-list-stretch w-full min-h-0 gap-0 h-full")
-        with self._remote_list_container:
-            pass
+                    ui.label("暂无对端站点").classes("mgmt-section-title")
 
-        with ui.element("div").classes("mgmt-page-foot w-full mt-auto flex-shrink-0"):
-            with ui.row().classes("mgmt-page-footer-row w-full items-center justify-between text-grey-6"):
-                ui.label("DRAG TO CHANGE PRIORITY").classes("uppercase tracking-widest")
-                self._remote_rules_total_footer = ui.label("0 RULES TOTAL").classes(
-                    "uppercase tracking-widest"
+                self._remote_status_container = ui.row().classes(
+                    "items-center gap-2"
                 )
+                self._remote_cache_status_container = ui.row().classes(
+                    "items-center gap-2"
+                )
+
+                self._remote_pull_button = secondary_action(
+                    "从对端拉取",
+                    icon="cloud_download",
+                    on_click=self._schedule_remote_fetch_via_ssh,
+                    disabled=not bool(opts),
+                )
+                self._remote_push_button = primary_action(
+                    "推送到对端",
+                    icon="cloud_upload",
+                    on_click=lambda: self._schedule_remote_coro(
+                        self._on_remote_push()
+                    ),
+                    disabled=True,
+                )
+
+            self._remote_cache_meta_label = ui.label(
+                "拉取：— · 推送：—"
+            ).classes("section-caption q-mt-sm")
+
+        self._remote_list_container = ui.column().classes(
+            "firewall-remote-list-stretch w-full min-h-0 gap-0 h-full"
+        )
+
+        with ui.element("div").classes(
+            "mgmt-page-foot w-full mt-auto flex-shrink-0"
+        ):
+            with ui.row().classes(
+                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+            ):
+                ui.label(
+                    "远端链以 SSH 真值为准；修改后立即写回"
+                ).classes("uppercase tracking-widest")
+                self._remote_rules_total_footer = ui.label(
+                    "0 RULES TOTAL"
+                ).classes("uppercase tracking-widest")
+
+        self._refresh_remote_toolbar_state()
+
+    def _selected_remote_peer_row(self) -> dict[str, Any] | None:
+        """返回当前对端记录。"""
+
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            return None
+        try:
+            row = self._peer_service.get(peer_id)
+        except Exception:
+            logger.exception("读取当前对端失败 peer=%s", peer_id)
+            return None
+        return dict(row) if row else None
+
+    def _refresh_remote_toolbar_state(self) -> None:
+        """按 SSH 条件、拉取忙碌和缓存状态刷新远端工具栏。"""
+
+        peer_id = self._active_remote_peer_id()
+        peer = self._selected_remote_peer_row()
+        fetch_running = bool(
+            peer_id and self._remote_fetch_running_peer == peer_id
+        )
+        try:
+            has_auth = bool(
+                peer and peer_row_has_usable_ssh_auth(peer)
+            )
+        except Exception:
+            logger.exception("判断对端 SSH 凭据失败 peer=%s", peer_id)
+            has_auth = False
+
+        capability = adapt_remote_peer_capability(
+            peer,
+            has_ssh_auth=has_auth,
+            fetch_running=fetch_running,
+        )
+        cache = (
+            remote_chain_cache.read_remote_chain_cache(peer_id)
+            if peer_id
+            else None
+        )
+        cache_view = adapt_remote_cache_status(
+            cache,
+            fetch_running=fetch_running,
+        )
+        fetch_error = str(
+            self._remote_fetch_error_by_peer.get(peer_id, "")
+        ).strip()
+
+        if self._remote_status_container is not None:
+            self._remote_status_container.clear()
+            with self._remote_status_container:
+                status_badge(
+                    (
+                        "failed"
+                        if fetch_error
+                        else str(capability["status_tone"])
+                    ),
+                    label=(
+                        "拉取失败"
+                        if fetch_error
+                        else str(capability["status_label"])
+                    ),
+                    tooltip=fetch_error or str(capability["reason"] or ""),
+                )
+
+        if self._remote_cache_status_container is not None:
+            self._remote_cache_status_container.clear()
+            with self._remote_cache_status_container:
+                status_badge(
+                    str(cache_view["status_tone"]),
+                    label=str(cache_view["status_label"]),
+                    tooltip=str(cache_view["last_sync_error"] or ""),
+                )
+
+        if self._remote_cache_meta_label is not None:
+            self._remote_cache_meta_label.text = (
+                f"拉取：{cache_view['last_pulled_at']} · "
+                f"推送：{cache_view['last_pushed_at']} · "
+                f"本地 {cache_view['row_count']} 条"
+            )
+
+        if self._remote_pull_button is not None:
+            if capability["can_fetch"]:
+                self._remote_pull_button.enable()
+            else:
+                self._remote_pull_button.disable()
+            if fetch_running:
+                self._remote_pull_button.props(add="loading")
+            else:
+                self._remote_pull_button.props(remove="loading")
+
+        if self._remote_push_button is not None:
+            push_running = bool(
+                peer_id and self._remote_push_running_peer == peer_id
+            )
+            can_push = (
+                bool(capability["can_push"])
+                and bool(cache_view["can_push"])
+                and not push_running
+            )
+            if can_push:
+                self._remote_push_button.enable()
+            else:
+                self._remote_push_button.disable()
+            if push_running:
+                self._remote_push_button.props(add="loading")
+            else:
+                self._remote_push_button.props(remove="loading")
 
     def _active_remote_peer_id(self) -> str:
         if not self._remote_peer_select:
