@@ -4,6 +4,7 @@
 import json
 import pytest
 
+from app.services.firewall.iptables_mgr import IptablesManager
 from app.ui.pages.firewall import FirewallPage
 
 _CHAIN = "VPN_PEER_abc123456789"
@@ -136,8 +137,9 @@ def test_prepare_remote_import_classifies_backup_iptables_and_mixed():
     assert prepared_backup["kind"] == "backup"
     assert prepared_backup["count"] == 1
 
+    current_chain = IptablesManager.peer_chain_name_for_id("peer-a")
     prepared_iptables = page._prepare_remote_import(
-        f"-A {_CHAIN} -j ACCEPT\n",
+        f"-A {current_chain} -j ACCEPT\n",
         peer_id="peer-a",
     )
     assert prepared_iptables["kind"] == "iptables"
