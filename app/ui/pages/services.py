@@ -442,14 +442,19 @@ class ServicesPage:
                 header_ctrl.on_value_change(lambda _: do_manual_refresh())
                 do_refresh()
 
-            def close_log_dialog() -> None:
+            def cleanup_log_dialog() -> None:
                 if poll_timer is not None:
                     poll_timer.deactivate()
+
+            def close_log_dialog() -> None:
+                cleanup_log_dialog()
                 dialog.close()
 
+            dialog.on("hide", lambda _event: cleanup_log_dialog())
+
             with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
-                ui.button("刷新", icon="refresh", on_click=do_manual_refresh).props("outline")
-                ui.button("关闭", on_click=close_log_dialog).props("flat")
+                secondary_action("刷新", icon="refresh", on_click=do_manual_refresh)
+                secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
 
     def _resolve_instance_daemon_log_path(self, name: str) -> Path:
