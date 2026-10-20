@@ -271,6 +271,7 @@ class FirewallPage:
         self._center_all_rows: list[dict[str, Any]] = []
         self._center_display_rows: list[dict[str, Any]] = []
         self._center_raw_by_id: dict[str, dict[str, Any]] = {}
+        self._center_reorder_allowed = False
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
 
@@ -1212,7 +1213,7 @@ class FirewallPage:
         self._refresh_rules()
 
     @staticmethod
-    def _center_grid_columns() -> list[dict[str, Any]]:
+    def _center_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
         """中心策略核心列定义。"""
 
         return [
@@ -1223,7 +1224,7 @@ class FirewallPage:
                 "pinned": "left",
                 "checkboxSelection": True,
                 "headerCheckboxSelection": True,
-                "sort": "asc",
+                "rowDrag": bool(can_reorder),
             },
             {
                 "field": "status_label",
@@ -1278,6 +1279,14 @@ class FirewallPage:
                 "field": "id",
                 "headerName": "规则 ID",
                 "minWidth": 210,
+            },
+            {
+                "field": "actions",
+                "headerName": "操作",
+                "width": 100,
+                "sortable": False,
+                "filter": False,
+                "pinned": "right",
             },
         ]
 
@@ -1395,6 +1404,19 @@ class FirewallPage:
         self._sync_center_owner_options(all_rows)
         rows = self._filter_center_rows(all_rows)
         self._center_display_rows = rows
+        query = (
+            str(self._center_search_input.value or "").strip()
+            if self._center_search_input is not None
+            else ""
+        )
+        owner_filter = (
+            str(self._center_owner_filter.value or "").strip()
+            if self._center_owner_filter is not None
+            else ""
+        )
+        self._center_reorder_allowed = not bool(query or owner_filter)
+        for row in rows:
+            row["actions"] = "操作"
 
         visible_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
         self._visible_center_rule_ids = visible_ids
@@ -1428,7 +1450,7 @@ class FirewallPage:
                 return
 
             self._center_grid_view = render_data_grid(
-                self._center_grid_columns(),
+                self._center_grid_columns(can_reorder=self._center_reorder_allowed),
                 rows,
                 row_id="id",
                 page_size=50,
@@ -1440,6 +1462,14 @@ class FirewallPage:
                 "selectionChanged",
                 self._on_center_grid_selection_changed,
             )
+            if self._center_reorder_allowed:
+                self._center_grid_view.grid.options["rowDragManaged"] = True
+                self._center_grid_view.grid.options["suppressMoveWhenRowDragging"] = False
+                self._center_grid_view.grid.on(
+                    "rowDragEnd",
+                    self._on_center_grid_row_drag_end,
+                )
+                self._center_grid_view.grid.update()
 
     def _clear_center_filters(self) -> None:
         if self._center_search_input is not None:
@@ -1463,7 +1493,7 @@ class FirewallPage:
         }
 
     async def _on_center_grid_cell_click(self, event) -> None:
-        """点击结构化字段时复制其展示值。"""
+        """复制结构化字段；点击“操作”列打开单项操作。"""
 
         args = getattr(event, "args", None) or {}
         if not isinstance(args, dict):
@@ -1472,15 +1502,153 @@ class FirewallPage:
         if not isinstance(data, dict):
             return
         col_id = str(args.get("colId") or "")
+        rule_id = str(data.get("id") or "").strip()
+
+        if col_id == "actions" and rule_id:
+            self._show_center_rule_actions(rule_id)
+            return
+
         value = ""
         if col_id == "id":
-            value = str(data.get("id") or "")
+            value = rule_id
         elif col_id == "owner_label":
             value = str(data.get("owner_id") or data.get("owner_label") or "")
         elif col_id in {"source", "dest", "dest_port"}:
             value = str(data.get(col_id) or "")
         if value and value not in {"—", "*"}:
             await self._copy_text_to_clipboard(value)
+
+    def _show_center_rule_actions(self, rule_id: str) -> None:
+        """打开单条中心规则操作面板。"""
+
+        raw = self._center_raw_by_id.get(str(rule_id))
+        if not raw:
+            self._notify_for_page("规则已变化，请刷新后重试", type="warning")
+            return
+        enabled = bool(raw.get("enabled", True))
+        is_center_peer = (
+            str(rule_id).startswith(CE_PEER_RULE_PREFIX)
+            or raw.get("_row_kind") == "center_peer"
+        )
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+            ui.label("规则操作").classes("text-h6")
+            ui.label(str(rule_id)).classes("font-mono text-caption break-all")
+            if is_center_peer:
+                ui.label(
+                    "这是对端在中心 VPN_FORWARD 的虚拟放行行；删除会清空该对端 LAN。"
+                ).classes("section-caption")
+
+            with ui.column().classes("w-full gap-2 q-mt-sm"):
+                secondary_action(
+                    "编辑",
+                    icon="edit",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._show_edit_dialog(dict(raw)),
+                    ),
+                )
+                secondary_action(
+                    "停用" if enabled else "启用",
+                    icon="pause_circle" if enabled else "play_circle",
+                    on_click=lambda: self._toggle_center_rule_enabled(
+                        str(rule_id),
+                        not enabled,
+                        dialog=dialog,
+                    ),
+                )
+                secondary_action(
+                    "复制规则 JSON",
+                    icon="content_copy",
+                    on_click=lambda: self._schedule_center_rule_copy(dict(raw)),
+                )
+                danger_action(
+                    "删除",
+                    icon="delete",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._confirm_delete(str(rule_id)),
+                    ),
+                )
+            secondary_action("关闭", on_click=dialog.close)
+
+        dialog.open()
+
+    def _schedule_center_rule_copy(self, raw: dict[str, Any]) -> None:
+        """复制单条规则 JSON；从同步按钮安全调度异步剪贴板。"""
+
+        try:
+            background_tasks.create(
+                self._copy_text_to_clipboard(
+                    json.dumps(raw, ensure_ascii=False, indent=2)
+                ),
+                name="firewall-copy-rule",
+            )
+        except RuntimeError as exc:
+            logger.error("调度规则复制失败: %s", exc)
+            self._notify_for_page("复制任务未能启动", type="negative")
+
+    def _toggle_center_rule_enabled(
+        self,
+        rule_id: str,
+        enabled: bool,
+        *,
+        dialog=None,
+    ) -> bool:
+        """单条规则启停并刷新。"""
+
+        try:
+            self.rule_service.set_enabled(rule_id, enabled)
+        except Exception as exc:
+            logger.error("切换中心规则状态失败 rule=%s: %s", rule_id, exc)
+            self._notify_for_page(str(exc), type="negative")
+            return False
+        if dialog is not None:
+            dialog.close()
+        self._notify_for_page("已启用" if enabled else "已停用", type="positive")
+        self._refresh_rules()
+        return True
+
+    def _on_center_grid_row_drag_end(self, event) -> None:
+        """AG Grid 拖动结束后持久化全局优先级顺序。"""
+
+        if not self._center_reorder_allowed:
+            self._notify_for_page("搜索或归属筛选状态下不能调整优先级", type="warning")
+            self._refresh_rules()
+            return
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            self._refresh_rules()
+            return
+        data = args.get("data")
+        if not isinstance(data, dict):
+            node = args.get("node")
+            data = node.get("data") if isinstance(node, dict) else None
+        rule_id = str((data or {}).get("id") or "").strip()
+        if not rule_id or rule_id not in self._visible_center_rule_ids:
+            self._refresh_rules()
+            return
+
+        old_index = self._visible_center_rule_ids.index(rule_id)
+        try:
+            new_index = int(args.get("overIndex", args.get("rowIndex", old_index)))
+        except (TypeError, ValueError):
+            new_index = old_index
+        if new_index < 0:
+            new_index = 0
+        if new_index >= len(self._visible_center_rule_ids):
+            new_index = len(self._visible_center_rule_ids) - 1
+
+        new_order = self._move_order(
+            self._visible_center_rule_ids,
+            old_index,
+            new_index,
+        )
+        if new_order and new_order != self._visible_center_rule_ids:
+            self._handle_reorder(new_order)
+        else:
+            self._refresh_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
@@ -2349,8 +2517,21 @@ class FirewallPage:
             self._refresh_rules()
 
     def _confirm_delete(self, rule_id: str) -> None:
+        raw = self._center_raw_by_id.get(str(rule_id), {})
+        is_center_peer = (
+            str(rule_id).startswith(CE_PEER_RULE_PREFIX)
+            or raw.get("_row_kind") == "center_peer"
+        )
+        impact = (
+            "会清空该对端的 LAN CIDR，并移除中心 VPN_FORWARD 对端放行。"
+            if is_center_peer
+            else "会删除该规则并立即刷新中心 VPN_FORWARD。"
+        )
         confirm_dialog.show(
-            f"删除规则 {str(rule_id)[:8]}…？（对端行会清该对端 LAN）",
+            f"确定删除规则 {str(rule_id)[:12]}？",
+            impact=impact,
+            object_count=1,
+            danger_level="danger",
             on_confirm=lambda: self._do_delete(rule_id),
         )
 
@@ -2749,7 +2930,14 @@ class FirewallPage:
             if not self.selected_rule_ids:
                 self._notify_for_page("未勾选", type="warning")
                 return
-            confirm_dialog.show("批量删除所选中心规则？", on_confirm=self._do_batch_delete_center)
+            count = len(self.selected_rule_ids)
+            confirm_dialog.show(
+                f"批量删除所选 {count} 条中心规则？",
+                impact="删除后会逐条刷新中心策略；若其中某条失败，其余成功项不会自动回滚。",
+                object_count=count,
+                danger_level="danger",
+                on_confirm=self._do_batch_delete_center,
+            )
             return
         if not self._require_remote_strategy_tab():
             return
@@ -2766,12 +2954,23 @@ class FirewallPage:
         )
 
     def _do_batch_delete_center(self) -> None:
+        success = 0
+        failed = 0
         for rid in list(self.selected_rule_ids):
             try:
                 self.rule_service.delete(rid)
+                success += 1
             except Exception as exc:
-                self._notify_for_page(str(exc), type="negative")
+                failed += 1
+                logger.error("批量删除中心规则失败 rule=%s: %s", rid, exc)
         self.selected_rule_ids.clear()
+        if failed:
+            self._notify_for_page(
+                f"批量删除完成：成功 {success}，失败 {failed}",
+                type="warning" if success else "negative",
+            )
+        else:
+            self._notify_for_page(f"已删除 {success} 条规则", type="positive")
         self._refresh_rules()
 
     async def _do_batch_remote_delete_async(self) -> None:
@@ -2809,12 +3008,37 @@ class FirewallPage:
         if self._center_tab_active:
             if not self._require_center_strategy_tab():
                 return
+            if not self.selected_rule_ids:
+                self._notify_for_page("未勾选", type="warning")
+                return
+            success = 0
+            skipped = 0
+            failed = 0
             for rid in list(self.selected_rule_ids):
+                raw = self._center_raw_by_id.get(str(rid), {})
+                if raw and bool(raw.get("enabled", True)) == bool(en):
+                    skipped += 1
+                    continue
                 try:
                     self.rule_service.set_enabled(rid, en)
+                    success += 1
                 except Exception as exc:
-                    self._notify_for_page(str(exc), type="negative")
+                    failed += 1
+                    logger.error(
+                        "批量切换中心规则状态失败 rule=%s enabled=%s: %s",
+                        rid,
+                        en,
+                        exc,
+                    )
             self.selected_rule_ids.clear()
+            label = "启用" if en else "停用"
+            message = (
+                f"批量{label}完成：成功 {success}，跳过 {skipped}，失败 {failed}"
+            )
+            self._notify_for_page(
+                message,
+                type="warning" if failed else "positive",
+            )
             self._refresh_rules()
             return
         if not self._require_remote_strategy_tab():
