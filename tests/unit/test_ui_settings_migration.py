@@ -716,11 +716,11 @@ def test_settings_page_supports_initial_tab_and_switching(
         ) as user:
             await user.open("/")
             assert page._settings_tabs.value == "notify"
-            await user.should_see("通知设置")
+            await user.should_see("通知推送")
 
             page._settings_tabs.set_value("server")
             assert page._settings_tabs.value == "server"
-            await user.should_see("服务端连接")
+            await user.should_see("服务端连接配置")
 
     asyncio.run(verify())
 
