@@ -32,6 +32,7 @@ from app.ui.components.actions import primary_action, secondary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
 from app.ui.components.page_header import render_page_header
+from app.ui.components.states import error_state
 
 _EASYRSA_TEST_URL = "https://github.com/OpenVPN/easy-rsa/releases/download/v3.2.4/EasyRSA-3.2.4.tgz"
 
@@ -40,14 +41,40 @@ class SettingsPage:
     """系统设置页面。"""
 
     def __init__(self):
-        self.config = load_config()
+        try:
+            self.config = load_config()
+            self._config_load_error: Exception | None = None
+        except Exception as exc:
+            logger.exception("读取系统设置配置失败")
+            self.config = None
+            self._config_load_error = exc
         self._proxy_test_running = False
         self._notify_test_running = False
 
     def render(self, *, initial_tab: str = "openvpn") -> None:
         """渲染系统设置页；支持调用方指定初始页签。"""
 
-        self.config = load_config()
+        try:
+            self.config = load_config()
+            self._config_load_error = None
+        except Exception as exc:
+            logger.exception("读取系统设置配置失败")
+            self.config = None
+            self._config_load_error = exc
+            with ui.column().classes(
+                "page-shell mgmt-page w-full min-h-0 page-shell--settings"
+            ):
+                render_page_header(
+                    "系统设置",
+                    description="集中配置 OpenVPN、服务端、设备策略、SSH、下载与通知能力。",
+                )
+                error_state(
+                    str(exc),
+                    title="系统设置加载失败",
+                    on_retry=lambda: ui.navigate.to("/settings"),
+                )
+            return
+
         allowed_tabs = {
             "openvpn",
             "server",
