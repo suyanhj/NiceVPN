@@ -16,6 +16,12 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
+from app.ui.adapters.users import build_user_rows
+from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components.data_grid import render_data_grid
+from app.ui.components.page_header import render_page_header
+from app.ui.components.states import empty_state, no_match_state
+from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -33,6 +39,9 @@ class UsersPage:
         self.selected_users: set[str] = set()
         self.list_container = None
         self.pagination_container = None
+        self.grid_container = None
+        self.data_grid = None
+        self.bulk_bar = None
         self.search_input = None
         self.select_all_checkbox = None
         self.visible_usernames: list[str] = []
@@ -44,80 +53,219 @@ class UsersPage:
         self.page_size = 50
 
     def render(self):
-        """渲染用户管理页面。"""
-        users = self.user_service.list_all()
-        live_sessions = self._load_live_sessions()
-        binding_aux = DeviceBindingService().build_user_binding_aux()
-        ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
+        """使用统一后台组件渲染用户管理页。"""
 
         with ui.column().classes("page-shell mgmt-page"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.element("div").classes("mgmt-header-row"):
-                    with ui.element("div").classes("mgmt-header-copy"):
-                        ui.label("用户管理").classes("mgmt-title")
-                        ui.label("查看在线与证书、流量与虚拟 IP；可下发配置与链接。").classes("mgmt-desc")
+            render_page_header(
+                "用户管理",
+                description="查看在线状态、证书、流量、虚拟 IP 与设备绑定；支持创建、批量分发和账号维护。",
+            )
 
-                    with ui.element("div").classes("mgmt-toolbar"):
-                        self.search_input = ui.input(
-                            placeholder="搜索用户名",
-                        ).classes("mgmt-search-input").on("keydown.enter", self._handle_search)
-                        ui.button("搜索", icon="search", on_click=self._handle_search).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline mgmt-search-btn")
-                        ui.button("新建用户", icon="person_add", on_click=self._show_create_dialog).props(
-                            "unelevated no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-primary")
-                        ui.button("批量导入", icon="upload_file", on_click=self._show_import_dialog).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline")
-                        ui.button("批量下载", icon="download", on_click=self._batch_download).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline")
-                        ui.button(
-                            "批量重置绑定",
-                            icon="phonelink_erase",
-                            on_click=self._batch_reset_binding_confirm,
-                        ).props("outline no-caps no-ripple").classes("mgmt-toolbar-btn is-outline")
+            def render_search() -> None:
+                self.search_input = (
+                    ui.input(placeholder="搜索用户名")
+                    .props("outlined dense clearable")
+                    .classes("w-full")
+                    .on("keydown.enter", self._handle_search)
+                )
+                self.search_input.on("clear", self._handle_search)
+                secondary_action("搜索", icon="search", on_click=self._handle_search)
 
-            with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self.select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前页")
-                        ui.label("用户列表").classes("mgmt-kicker")
+            def render_primary() -> None:
+                primary_action("新建用户", icon="person_add", on_click=self._show_create_dialog)
 
-                self.list_container = ui.column().classes("w-full")
-                self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
-                self._refresh_user_list()
+            def render_secondary() -> None:
+                secondary_action("批量导入", icon="upload_file", on_click=self._show_import_dialog)
 
-    def _handle_search(self):
-        """执行搜索并重置到第一页。"""
-        self.page = 1
-        self._refresh_user_list()
+            render_page_toolbar(
+                search=render_search,
+                primary=render_primary,
+                secondary=render_secondary,
+            )
 
-    def _on_page_change(self, new_page: int):
-        if self.page != new_page:
-            self.page = new_page
+            self.bulk_bar = render_bulk_action_bar(
+                0,
+                actions=self._render_grid_bulk_actions,
+            )
+
+            self.grid_container = ui.column().classes("w-full")
             self._refresh_user_list()
 
-    def _refresh_user_list(self):
-        """按搜索条件刷新列表。"""
+    def _handle_search(self, *_args):
+        """执行搜索；AG Grid 自己负责分页。"""
+
+        self._refresh_user_list()
+
+    def _render_grid_bulk_actions(self) -> None:
+        """渲染依赖 AG Grid 选中行的批量操作。"""
+
+        secondary_action("批量下载", icon="download", on_click=self._batch_download)
+        secondary_action(
+            "批量重置绑定",
+            icon="phonelink_erase",
+            on_click=self._batch_reset_binding_confirm,
+        )
+
+    def _build_user_rows(self) -> list[dict]:
+        """收集业务数据并转换为稳定的 AG Grid 行模型。"""
+
+        from app.services.group.crud import GroupService
+
         users = self.user_service.list_all()
-        q = (self.search_input.value or "").strip() if self.search_input else ""
-        if q:
-            pat = re.compile(".*" + re.escape(q) + ".*", re.IGNORECASE)
-            users = [u for u in users if pat.search(u.get("username", ""))]
         live_sessions = self._load_live_sessions()
         binding_aux = DeviceBindingService().build_user_binding_aux()
         ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
-        if self.list_container is None:
+        groups = {
+            str(group.get("id") or ""): str(group.get("name") or "")
+            for group in GroupService().list_all()
+        }
+        return build_user_rows(
+            users,
+            sessions=live_sessions,
+            bindings=binding_aux,
+            ccd_virtual_ips=ccd_vip_map,
+            groups=groups,
+        )
+
+    @staticmethod
+    def _user_grid_columns() -> list[dict]:
+        """用户核心字段列定义。"""
+
+        return [
+            {
+                "field": "username",
+                "headerName": "用户名",
+                "minWidth": 150,
+                "flex": 1,
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "pinned": "left",
+            },
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "minWidth": 120,
+                "filter": True,
+            },
+            {
+                "field": "group_name",
+                "headerName": "用户组",
+                "minWidth": 140,
+                "flex": 1,
+            },
+            {
+                "field": "virtual_ip",
+                "headerName": "虚拟 IP",
+                "minWidth": 135,
+            },
+            {
+                "field": "traffic_received",
+                "headerName": "下行",
+                "minWidth": 105,
+                "filter": False,
+            },
+            {
+                "field": "traffic_sent",
+                "headerName": "上行",
+                "minWidth": 105,
+                "filter": False,
+            },
+            {
+                "field": "connection_duration",
+                "headerName": "连接时长",
+                "minWidth": 125,
+                "filter": False,
+            },
+            {
+                "field": "real_address",
+                "headerName": "来源地址",
+                "minWidth": 180,
+                "flex": 1,
+            },
+            {
+                "field": "device_label",
+                "headerName": "设备",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "cert_serial_short",
+                "headerName": "证书序列号",
+                "minWidth": 190,
+            },
+            {
+                "field": "created_date",
+                "headerName": "创建日期",
+                "minWidth": 120,
+            },
+        ]
+
+    def _refresh_user_list(self):
+        """刷新 AG Grid，并区分空数据与搜索无匹配状态。"""
+
+        if self.grid_container is None:
             return
-        self.list_container.clear()
-        if self.pagination_container is not None:
-            self.pagination_container.clear()
-        self._render_user_list(users, live_sessions, binding_aux, ccd_vip_map)
+
+        all_rows = self._build_user_rows()
+        query = (self.search_input.value or "").strip() if self.search_input else ""
+        rows = all_rows
+        if query:
+            needle = query.casefold()
+            rows = [
+                row
+                for row in all_rows
+                if needle in str(row.get("username") or "").casefold()
+            ]
+
+        self.grid_container.clear()
+        self.data_grid = None
+        self.selected_users.clear()
+        if self.bulk_bar is not None:
+            self.bulk_bar.set_selected_count(0)
+
+        with self.grid_container:
+            if not all_rows:
+                empty_state(
+                    "暂无用户",
+                    description="创建用户后会显示在这里。",
+                    action_label="新建用户",
+                    on_action=self._show_create_dialog,
+                )
+                return
+            if not rows:
+                no_match_state(on_clear=self._clear_user_search)
+                return
+
+            self.data_grid = render_data_grid(
+                self._user_grid_columns(),
+                rows,
+                row_id="username",
+                page_size=self.page_size,
+                selectable=True,
+            )
+            self.data_grid.grid.on("selectionChanged", self._on_grid_selection_changed)
+
+    def _clear_user_search(self) -> None:
+        """清除用户搜索条件并恢复完整列表。"""
+
+        if self.search_input is not None:
+            self.search_input.set_value("")
+        self._refresh_user_list()
+
+    async def _on_grid_selection_changed(self, *_args) -> None:
+        """同步 AG Grid 选中状态到既有批量业务方法。"""
+
+        if self.data_grid is None:
+            self.selected_users.clear()
+        else:
+            selected = await self.data_grid.get_selected_rows()
+            self.selected_users = {
+                str(row.get("username") or "").strip()
+                for row in selected
+                if str(row.get("username") or "").strip()
+            }
+        if self.bulk_bar is not None:
+            self.bulk_bar.set_selected_count(len(self.selected_users))
 
     def _render_user_list(
         self,
