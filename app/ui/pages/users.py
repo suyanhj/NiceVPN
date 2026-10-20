@@ -6,7 +6,7 @@ import threading
 import re
 from datetime import datetime
 
-from nicegui import ui
+from nicegui import background_tasks, ui
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
@@ -958,7 +958,10 @@ class UsersPage:
     def _confirm_reset_binding(self, username: str):
         """单用户重置设备绑定确认。"""
         confirm_dialog.show(
-            f"重置后 {username} 下次接入视为新设备。确定重置绑定？",
+            f"确定重置 {username} 的设备绑定？",
+            impact="重置后该用户下次接入会被视为新设备，需要重新建立绑定。",
+            object_count=1,
+            danger_level="warning",
             on_confirm=lambda: self._do_reset_binding(username),
             title="重置设备绑定",
         )
@@ -977,7 +980,10 @@ class UsersPage:
             ui.notify("请先勾选用户", type="warning")
             return
         confirm_dialog.show(
-            f"确定重置已选 {len(self.selected_users)} 个用户的设备绑定？",
+            "确定重置所选用户的设备绑定？",
+            impact="重置后这些用户下次接入会被视为新设备。",
+            object_count=len(self.selected_users),
+            danger_level="warning",
             on_confirm=self._batch_reset_binding,
             title="批量重置绑定",
         )
@@ -1156,13 +1162,16 @@ class UsersPage:
         return url
 
     def _copy_download_link(self, username: str):
-        """生成一次性链接并写入剪贴板，不弹窗。"""
+        """生成一次性链接并通过统一剪贴板辅助复制。"""
         url = self._ensure_one_time_download_url(username)
         if not url:
             return
-        self._copy_text(
-            url,
-            "下载链接已复制（约 1 小时内有效，仅可下载一次）",
+        background_tasks.create(
+            self._copy_text(
+                url,
+                "下载链接已复制（约 1 小时内有效，仅可下载一次）",
+            ),
+            name=f"copy download link {username}",
         )
 
     def _push_download_link_notify(self, username: str):
@@ -1185,9 +1194,12 @@ class UsersPage:
             logger.warning("notify 下载链接推送失败 user=%s（详情见审计日志）", username)
 
     def _confirm_delete(self, username: str):
-        """删除用户前的二次确认。"""
+        """删除用户前明确证书和配置影响。"""
         confirm_dialog.show(
-            f"删除将吊销证书并清空配置，不可恢复。确定删除 {username}？",
+            f"确定删除用户 {username}？",
+            impact="删除会吊销该用户证书、清理 CCD 与配置文件，操作不可恢复。",
+            object_count=1,
+            danger_level="danger",
             on_confirm=lambda: self._do_delete(username),
         )
 
