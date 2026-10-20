@@ -435,7 +435,7 @@ def test_remote_create_shared_form_keeps_source_priority_and_enabled_fields(
             await user.should_see("新建对端规则")
             await user.should_see("来源类型")
             await user.should_see("选择组")
-            await user.should_see("选择用户（多选）")
+            # 默认来源类型为“组”，用户多选控件此时按设计隐藏。
             await user.should_see("源用本组子网")
             await user.should_see("对端内网 CIDR（可选）")
             await user.should_see("源地址")
