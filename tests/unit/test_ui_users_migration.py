@@ -215,3 +215,110 @@ def test_progress_dialog_reports_progress_and_final_summary() -> None:
     refs = state["refs"]
     assert refs["progress"].value == pytest.approx(0.5)
     assert refs["close"].visible is True
+
+
+def test_change_group_uses_refresh_and_reports_virtual_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """切组成功后保留用户页上下文并刷新 Grid。"""
+
+    page = UsersPage()
+    refreshed: list[bool] = []
+    messages: list[tuple[str, str]] = []
+
+    class Service:
+        def change_group(self, username: str, group_id: str):
+            assert username == "alice"
+            assert group_id == "group-new"
+            return {
+                "changed": True,
+                "old_virtual_ip": "10.8.0.8",
+                "new_virtual_ip": "10.8.1.8",
+            }
+
+    page.user_service = Service()
+    monkeypatch.setattr(page, "_refresh_user_list", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        "app.ui.pages.users.ui.notify",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    assert page._change_group("alice", "group-new") is True
+    assert refreshed == [True]
+    assert messages[-1] == (
+        "已切换 alice 的用户组，虚拟 IP: 10.8.0.8 -> 10.8.1.8",
+        "positive",
+    )
+
+
+def test_delete_online_user_disconnects_then_refreshes_without_navigation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """删除已知在线用户前先踢会话，完成后刷新 Grid 而非整页跳转。"""
+
+    page = UsersPage()
+    page.all_grid_rows = [{"username": "alice", "_online": True}]
+    page.selected_users = {"alice"}
+    calls: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    navigated: list[str] = []
+
+    class Service:
+        def kick_offline(self, username: str):
+            calls.append(("kick", username))
+            return True
+
+        def delete(self, username: str):
+            calls.append(("delete", username))
+            return True
+
+    page.user_service = Service()
+    monkeypatch.setattr(page, "_refresh_user_list", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        "app.ui.pages.users.ui.notify",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.users.ui.navigate.to",
+        lambda target: navigated.append(str(target)),
+    )
+
+    page._do_delete("alice")
+
+    assert calls == [("kick", "alice"), ("delete", "alice")]
+    assert "alice" not in page.selected_users
+    assert refreshed == [True]
+    assert navigated == []
+
+
+def test_batch_delete_disconnects_only_known_online_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """批量删除只对当前快照中在线用户执行预断开。"""
+
+    page = UsersPage()
+    page.all_grid_rows = [
+        {"username": "alice", "_online": True},
+        {"username": "bob", "_online": False},
+    ]
+    page.selected_users = {"alice", "bob"}
+    calls: list[tuple[str, str]] = []
+
+    class Service:
+        def kick_offline(self, username: str):
+            calls.append(("kick", username))
+            return True
+
+        def delete(self, username: str):
+            calls.append(("delete", username))
+            return True
+
+    page.user_service = Service()
+    monkeypatch.setattr(page, "_refresh_user_list", lambda: None)
+    monkeypatch.setattr("app.ui.pages.users.ui.notify", lambda *_args, **_kwargs: None)
+
+    page._batch_delete()
+
+    assert ("kick", "alice") in calls
+    assert ("kick", "bob") not in calls
+    assert ("delete", "alice") in calls
+    assert ("delete", "bob") in calls
+    assert page.selected_users == set()
