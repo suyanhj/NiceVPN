@@ -69,9 +69,36 @@ CENTER_RULES = [
 class FakeRuleService:
     def __init__(self, rows=None):
         self.rows = list(CENTER_RULES if rows is None else rows)
+        self.enabled_calls: list[tuple[str, bool]] = []
+        self.delete_calls: list[str] = []
+        self.reorder_calls: list[tuple[str, list[str]]] = []
 
     def list_unified_flat(self):
         return [dict(row) for row in self.rows]
+
+    def set_enabled(self, rule_id: str, enabled: bool):
+        self.enabled_calls.append((rule_id, enabled))
+        for row in self.rows:
+            if str(row.get("id")) == rule_id:
+                row["enabled"] = enabled
+                return True
+        raise ValueError(f"规则不存在: {rule_id}")
+
+    def delete(self, rule_id: str):
+        self.delete_calls.append(rule_id)
+        before = len(self.rows)
+        self.rows = [row for row in self.rows if str(row.get("id")) != rule_id]
+        if len(self.rows) == before:
+            raise ValueError(f"规则不存在: {rule_id}")
+        return True
+
+    def reorder(self, owner_id: str, order: list[str]):
+        self.reorder_calls.append((owner_id, list(order)))
+        mapping = {str(row["id"]): row for row in self.rows}
+        reordered = [mapping[rid] for rid in order if rid in mapping]
+        reordered.extend(row for row in self.rows if str(row["id"]) not in set(order))
+        self.rows = reordered
+        return True
 
 
 class FakePeerService:
@@ -210,6 +237,7 @@ def test_center_grid_columns_keep_priority_owner_flow_and_id() -> None:
         "dest_port",
         "description",
         "id",
+        "actions",
     ]
     first = FirewallPage._center_grid_columns()[0]
     assert first["pinned"] == "left"
@@ -228,3 +256,150 @@ def test_center_grid_selection_syncs_existing_batch_state() -> None:
     asyncio.run(page._on_center_grid_selection_changed())
 
     assert page.selected_rule_ids == {"rule-accept", "rule-drop"}
+
+
+def test_center_grid_row_drag_enabled_only_without_filters() -> None:
+    plain = FirewallPage._center_grid_columns(can_reorder=True)
+    filtered = FirewallPage._center_grid_columns(can_reorder=False)
+
+    assert plain[0]["rowDrag"] is True
+    assert filtered[0]["rowDrag"] is False
+
+
+def test_center_grid_drag_persists_global_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    page._center_reorder_allowed = True
+    page._is_unified_list = True
+    page._visible_center_rule_ids = [
+        "rule-accept",
+        "rule-drop",
+        "ce-peer-peer-001",
+    ]
+    monkeypatch.setattr(page, "_refresh_rules", lambda: None)
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    class Event:
+        args = {
+            "data": {"id": "rule-accept"},
+            "overIndex": 2,
+        }
+
+    page._on_center_grid_row_drag_end(Event())
+
+    assert service.reorder_calls == [
+        (
+            "",
+            ["rule-drop", "ce-peer-peer-001", "rule-accept"],
+        )
+    ]
+
+
+def test_center_grid_drag_is_blocked_while_filtered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_reorder_allowed = False
+    messages: list[str] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, **_kwargs: messages.append(str(message)),
+    )
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+
+    class Event:
+        args = {"data": {"id": "rule-accept"}, "overIndex": 1}
+
+    page._on_center_grid_row_drag_end(Event())
+
+    assert messages == ["搜索或归属筛选状态下不能调整优先级"]
+    assert refreshed == [True]
+
+
+def test_center_batch_enable_summarizes_success_and_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    page._center_tab_active = True
+    page.selected_rule_ids = {"rule-accept", "rule-drop"}
+    page._center_raw_by_id = {
+        str(row["id"]): dict(row)
+        for row in CENTER_RULES
+    }
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(page, "_refresh_rules", lambda: None)
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    page._batch_set_enabled(True)
+
+    assert service.enabled_calls == [("rule-drop", True)]
+    assert page.selected_rule_ids == set()
+    assert messages[-1] == (
+        "批量启用完成：成功 1，跳过 1，失败 0",
+        "positive",
+    )
+
+
+def test_center_batch_delete_reports_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+
+    class PartialService(FakeRuleService):
+        def delete(self, rule_id: str):
+            if rule_id == "rule-drop":
+                raise RuntimeError("iptables failed")
+            return super().delete(rule_id)
+
+    service = PartialService()
+    page.rule_service = service
+    page.selected_rule_ids = {"rule-accept", "rule-drop"}
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(page, "_refresh_rules", lambda: None)
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    page._do_batch_delete_center()
+
+    assert service.delete_calls == ["rule-accept"]
+    assert page.selected_rule_ids == set()
+    assert messages[-1] == (
+        "批量删除完成：成功 1，失败 1",
+        "warning",
+    )
+
+
+def test_center_delete_confirmation_describes_peer_virtual_row_impact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_raw_by_id = {
+        "ce-peer-peer-001": dict(CENTER_RULES[2]),
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.confirm_dialog.show",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+
+    page._confirm_delete("ce-peer-peer-001")
+
+    assert captured["danger_level"] == "danger"
+    assert captured["object_count"] == 1
+    assert "清空该对端的 LAN CIDR" in str(captured["impact"])
