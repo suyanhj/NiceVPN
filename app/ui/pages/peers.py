@@ -12,13 +12,26 @@ from typing import Any
 from nicegui import context, ui, run
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
+from app.core.config import load_config
 from app.core.constants import LOGS_DIR, OPENVPN_MIN_VERSION, OVPN_PROFILES_DIR
 from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
 from app.services.group.crud import GroupService
 from app.services.peer_instance.remote_peer_ovpn import default_remote_ovpn_path
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
+from app.ui.adapters.peers import adapt_peer_view
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import (
+    MenuAction,
+    danger_action,
+    more_actions,
+    primary_action,
+    secondary_action,
+)
+from app.ui.components.page_header import render_page_header
+from app.ui.components.states import empty_state, error_state
+from app.ui.components.status import status_badge, structured_value
+from app.ui.components.toolbars import render_page_toolbar
 from app.ui.copy_clipboard import copy_text_to_clipboard
 
 logger = logging.getLogger(__name__)
@@ -46,6 +59,7 @@ class PeersPage:
         self._peers_total_label: ui.label | None = None
         self._busy_peer_ids: set[str] = set()
         self._ng_client: Any = None
+        self._mesh_sync_running = False
 
     def _notify_for_page(
         self,
@@ -86,44 +100,49 @@ class PeersPage:
         self._refresh_list()
 
     def render(self) -> None:
-        """渲染页面。"""
+        """使用共享后台外壳渲染对端站点主页。"""
+
         try:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
-        peers = self.peer_service.list_all()
+
+        def primary_region() -> None:
+            primary_action("新建对端", icon="hub", on_click=self._show_create_dialog)
+
+        def secondary_region() -> None:
+            secondary_action(
+                "刷新 Mesh 路由",
+                icon="sync",
+                on_click=self._sync_mesh_ccd_only,
+            )
+            secondary_action(
+                "帮助",
+                icon="help_outline",
+                on_click=self._show_peers_help_dialog,
+            )
 
         with ui.column().classes("page-shell mgmt-page"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.element("div").classes("mgmt-header-row"):
-                    with ui.element("div").classes("mgmt-header-copy"):
-                        with ui.row().classes("items-center gap-xs"):
-                            ui.label("对端管理").classes("mgmt-title")
-                            ui.button(
-                                icon="help_outline",
-                                on_click=self._show_peers_help_dialog,
-                            ).props("flat round dense no-caps no-ripple").tooltip("绑定与运维要点")
-                    with ui.element("div").classes("mgmt-toolbar"):
-                        ui.button("刷新 Mesh 路由", icon="sync", on_click=self._sync_mesh_ccd_only).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline")
-                        ui.button("新建对端", icon="hub", on_click=self._show_create_dialog).props(
-                            "unelevated no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-primary")
+            render_page_header(
+                "对端站点",
+                description="管理站点绑定、后方 LAN、Mesh 路由与远程 OpenVPN 运维能力。",
+            )
+            render_page_toolbar(
+                primary=primary_region,
+                secondary=secondary_region,
+            )
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center"):
-                        ui.label("对端列表").classes("mgmt-kicker")
-                    self._peers_total_label = ui.label(f"共 {len(peers)} 个").classes("group-list-count")
-
+                    ui.label("对端列表").classes("mgmt-kicker")
+                    self._peers_total_label = ui.label("共 0 个").classes("group-list-count")
                 self.list_container = ui.column().classes("w-full")
-                with self.list_container:
-                    self._render_peer_list(peers)
 
             ui.label(
-                "改配置后请让对端 **重连 OpenVPN**，Mesh / 客户端路由才会对齐。"
-            ).classes("text-caption text-grey q-mt-md mgmt-page-foot")
+                "修改 LAN、Mesh 或用户归属后，需要让对端重新连接 OpenVPN 才会完全生效。"
+            ).classes("section-caption mgmt-page-foot")
+
+        self._refresh_list()
 
     def _active_usernames(self) -> list[str]:
         users = self.user_service.list_all()
@@ -662,12 +681,20 @@ class PeersPage:
         self._notify_for_page(f"SNAT 策略{status}", type="positive")
 
     def _sync_mesh_ccd_only(self) -> None:
+        """手动刷新 Mesh CCD，并阻止重复点击。"""
+
+        if self._mesh_sync_running:
+            ui.notify("Mesh 路由正在刷新，请稍候", type="info")
+            return
+        self._mesh_sync_running = True
         try:
             self.peer_service.sync_all_mesh_push_routes_in_ccd()
         except RuntimeError as exc:
             logger.error("手动刷新 mesh CCD 失败: %s", exc)
             ui.notify(str(exc), type="negative")
             return
+        finally:
+            self._mesh_sync_running = False
         ui.notify("已重写各用户 CCD 中的 Mesh 路由", type="positive")
 
     def _show_peers_help_dialog(self) -> None:
@@ -706,10 +733,36 @@ class PeersPage:
                 ).classes("peers-help-jump-btn")
         dialog.open()
 
+    def _has_global_ssh_key(self) -> bool:
+        """是否配置了系统级 SSH 私钥；读取失败时按不可用处理。"""
+
+        try:
+            cfg = load_config()
+        except Exception:
+            logger.exception("读取全局 SSH 配置失败")
+            return False
+        return bool(str(cfg.get("global_ssh_private_key") or "").strip())
+
     def _refresh_list(self) -> None:
+        """刷新对端列表，并隔离列表读取异常。"""
+
         if self.list_container is None:
             return
-        peers = self.peer_service.list_all()
+        try:
+            peers = self.peer_service.list_all()
+        except Exception as exc:
+            logger.exception("加载对端列表失败")
+            if self._peers_total_label is not None:
+                self._peers_total_label.text = "加载失败"
+            self.list_container.clear()
+            with self.list_container:
+                error_state(
+                    str(exc),
+                    title="对端列表加载失败",
+                    on_retry=self._refresh_list,
+                )
+            return
+
         if self._peers_total_label is not None:
             self._peers_total_label.text = f"共 {len(peers)} 个"
         self.list_container.clear()
@@ -718,95 +771,136 @@ class PeersPage:
 
     def _render_peer_list(self, peers: list[dict]) -> None:
         if not peers:
-            ui.label("暂无对端，点「新建对端」。").classes("empty-state")
+            empty_state(
+                "暂无对端站点",
+                description="创建对端后，可以配置站点 LAN、Mesh 路由和远程 OpenVPN 运维。",
+                action_label="新建对端",
+                on_action=self._show_create_dialog,
+                icon="hub",
+            )
             return
+        group_names = self._group_id_to_name()
+        has_global_key = self._has_global_ssh_key()
         with ui.element("div").classes("mgmt-record-list"):
-            for row in sorted(peers, key=lambda r: (r.get("name") or "", r.get("id") or "")):
-                self._render_peer_card(row)
+            for row in sorted(peers, key=lambda item: (item.get("name") or "", item.get("id") or "")):
+                self._render_peer_card(
+                    row,
+                    group_names=group_names,
+                    has_global_ssh_key=has_global_key,
+                )
 
-    def _render_peer_card(self, row: dict) -> None:
-        pid = row.get("id") or ""
-        name = row.get("name") or pid
-        user = row.get("bound_username") or "—"
-        cidrs = row.get("lan_cidrs") or []
-        cidr_label = ", ".join(cidrs) if cidrs else "无内网"
-        vis = [str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()]
-        gmap = self._group_id_to_name()
-        if not vis:
-            mesh_label = "Mesh 路由: 全部组"
-        else:
-            short = "、".join((gmap.get(gid) or gid[:8]) for gid in vis[:3])
-            more = f" 等{len(vis)}组" if len(vis) > 3 else ""
-            mesh_label = f"Mesh 路由: {short}{more}"
+    def _render_peer_card(
+        self,
+        row: dict,
+        *,
+        group_names: dict[str, str] | None = None,
+        has_global_ssh_key: bool = False,
+    ) -> None:
+        """使用统一状态和操作层级渲染单个对端。"""
 
-        id_short = f"{pid[:8]}…" if len(str(pid)) > 8 else str(pid)
+        peer_id = str(row.get("id") or "")
+        view = adapt_peer_view(
+            row,
+            group_names=group_names or {},
+            has_global_ssh_key=has_global_ssh_key,
+            busy=peer_id in self._busy_peer_ids,
+        )
 
-        with ui.element("div").classes("mgmt-record-card mgmt-peer-row"):
+        with ui.element("article").classes("mgmt-record-card mgmt-peer-row"):
             with ui.element("div").classes("mgmt-record-main"):
                 with ui.element("div").classes("mgmt-peer-avatar"):
-                    if str(pid) in self._busy_peer_ids:
+                    if view["busy"]:
                         ui.spinner(size="28px", color="primary", thickness=2)
                     else:
                         ui.icon("settings_input_component", size="22px")
+
                 with ui.element("div").classes("mgmt-record-copy"):
-                    with ui.element("div").classes("mgmt-peer-title-row"):
-                        ui.label(name).classes("mgmt-peer-name")
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        ui.label(str(view["name"])).classes("mgmt-peer-name")
+                        status_badge(
+                            str(view["connection_tone"]),
+                            label=str(view["connection_label"]),
+                            icon="cloud_done" if view["remote_capable"] else "cloud_off",
+                        )
                     with ui.element("div").classes("mgmt-peer-meta-row"):
                         with ui.element("span").classes("mgmt-peer-meta-tag"):
                             ui.icon("person", size="14px")
-                            ui.label(user)
+                            ui.label(str(view["bound_username"]))
                         with ui.element("span").classes("mgmt-peer-meta-tag"):
                             ui.icon("lan", size="14px")
-                            ui.label(cidr_label)
+                            ui.label(str(view["lan_label"]))
                         with ui.element("span").classes("mgmt-peer-meta-tag"):
-                            ui.icon("filter_alt", size="14px")
-                            ui.label(mesh_label)
-                        with ui.element("span").classes("mgmt-peer-meta-tag"):
-                            ui.label(f"ID {id_short}")
+                            ui.icon("route", size="14px")
+                            ui.label(f"Mesh: {view['mesh_label']}")
+                    with ui.row().classes("items-center gap-2 flex-wrap q-mt-xs"):
+                        structured_value(
+                            peer_id or "—",
+                            kind="serial",
+                            copyable=bool(peer_id),
+                            copy_message="对端 ID 已复制",
+                            tooltip="完整对端 ID",
+                        )
+                        if view["ssh_host"]:
+                            ui.label(
+                                f"SSH {view['ssh_username']}@{view['ssh_host']}:{view['ssh_port']}"
+                            ).classes("section-caption")
 
-            with ui.element("div").classes("mgmt-peer-actions-rail"):
-                ui.button(
+            with ui.element("div").classes("mgmt-actions"):
+                secondary_action(
+                    "探测/安装",
                     icon="build",
-                    on_click=lambda r=row: self._show_peer_openvpn_setup_dialog(r),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip(
-                    "探测/安装并装配客户端"
-                )
-                ui.button(
-                    icon="dns",
-                    on_click=lambda p=pid: ui.navigate.to(f"/services?tab=peers&peer={p}"),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip(
-                    "服务管理 · 对端实例"
-                )
-                ui.button(
-                    icon="article",
-                    on_click=lambda r=row: self._show_peer_remote_log_dialog(r),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip(
-                    "SSH / 安装日志"
-                )
-                ui.button(
+                    on_click=lambda current=row: self._show_peer_openvpn_setup_dialog(current),
+                    disabled=not bool(view["can_install"]),
+                    tooltip=(
+                        str(view["connection_reason"])
+                        if not view["can_install"] and not view["busy"]
+                        else ("远程操作进行中" if view["busy"] else None)
+                    ),
+                ).props("dense")
+                secondary_action(
+                    "推送配置",
                     icon="cloud_upload",
-                    on_click=lambda r=row: self._show_peer_config_push_dialog(r),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip(
-                    "推送配置、service、iptables"
-                )
-                ui.button(
-                    icon="description",
-                    on_click=lambda p=pid: ui.navigate.to(f"/peers/manual?peer={p}"),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip(
-                    "部署说明（可复制命令）"
-                )
-                ui.element("div").classes("mgmt-peer-action-sep")
-                ui.button(
-                    icon="edit",
-                    on_click=lambda r=row: self._show_edit_dialog(r),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-edit").tooltip(
-                    "编辑"
-                )
-                ui.button(
-                    icon="delete_outline",
-                    on_click=lambda r=row: self._confirm_delete(r),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip(
-                    "删除"
+                    on_click=lambda current=row: self._show_peer_config_push_dialog(current),
+                    disabled=not bool(view["can_push"]),
+                    tooltip=(
+                        str(view["connection_reason"])
+                        if not view["can_push"] and not view["busy"]
+                        else ("远程操作进行中" if view["busy"] else None)
+                    ),
+                ).props("dense")
+                more_actions(
+                    (
+                        MenuAction(
+                            "服务管理",
+                            icon="dns",
+                            on_click=lambda pid=peer_id: ui.navigate.to(f"/services?tab=peers&peer={pid}"),
+                        ),
+                        MenuAction(
+                            "远程日志",
+                            icon="article",
+                            on_click=lambda current=row: self._show_peer_remote_log_dialog(current),
+                        ),
+                        MenuAction(
+                            "部署说明",
+                            icon="description",
+                            on_click=lambda pid=peer_id: ui.navigate.to(f"/peers/manual?peer={pid}"),
+                        ),
+                        MenuAction(
+                            "编辑",
+                            icon="edit",
+                            on_click=lambda current=row: self._show_edit_dialog(current),
+                            disabled=not bool(view["can_edit"]),
+                        ),
+                        MenuAction(
+                            "删除",
+                            icon="delete",
+                            danger=True,
+                            on_click=lambda current=row: self._confirm_delete(current),
+                            disabled=not bool(view["can_delete"]),
+                        ),
+                    ),
+                    label="更多",
+                    disabled=False,
                 )
 
     def _show_create_dialog(self) -> None:
@@ -1164,7 +1258,9 @@ class PeersPage:
 
         confirm_dialog.show(
             title="删除对端",
-            message=f"删除「{name}」？将清理 CCD 中该对端块及中心 VPN_PEER。",
+            message=f"确定删除对端「{name}」？",
+            impact="会清理 CCD 中该对端块、中心 VPN_PEER 转发关系，并尝试清理远端 iptables；操作后不可自动恢复。",
+            object_count=1,
+            danger_level="danger",
             on_confirm=do_delete,
-            confirm_color="negative",
         )
