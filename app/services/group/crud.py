@@ -182,6 +182,41 @@ class GroupService:
         )
         return data
 
+    def update_details(self, group_id: str, *, name: str, subnet: str) -> dict:
+        """同时更新组名称与子网；名称修改为增量能力，子网继续复用既有安全校验。"""
+
+        current = self._load_group_or_raise(group_id)
+        new_name = str(name).strip()
+        new_subnet = str(subnet).strip()
+        if not new_name:
+            raise ValueError("组名称不能为空")
+        if not new_subnet:
+            raise ValueError("子网不能为空")
+
+        for group in self.list_all():
+            if group.get("id") != group_id and group.get("name") == new_name:
+                raise ValueError(f"组名已存在: {new_name}")
+
+        if new_subnet != str(current.get("subnet") or ""):
+            self.update_subnet(group_id, new_subnet)
+            current = self._load_group_or_raise(group_id)
+
+        if new_name != str(current.get("name") or ""):
+            old_name = str(current.get("name") or "")
+            current["name"] = new_name
+            current["updated_at"] = datetime.now(timezone.utc).isoformat()
+            current = Group(**current).model_dump()
+            write_json_atomic(GROUPS_DIR / f"{group_id}.json", current)
+            self.audit.log(
+                "update_group_name",
+                "group",
+                group_id,
+                f"组名称从 {old_name} 变更为 {new_name}",
+                "success",
+            )
+
+        return current
+
     def _sync_global_subnet(self, root_group_id: str, old_subnet: str, new_subnet: str):
         """根组子网变更后，同步全局配置、实例元数据、server.conf 和默认防火墙规则。"""
         from ipaddress import IPv4Network
