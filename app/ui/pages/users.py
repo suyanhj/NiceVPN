@@ -1356,7 +1356,11 @@ class UsersPage:
         dialog.open()
 
     def _do_import(self, dialog, raw_text: str, group_service):
-        """展开并预检查全部导入用户，通过后执行创建。"""
+        """预检查全部导入数据，通过后在后台逐条创建并展示进度。"""
+
+        if self._import_running:
+            ui.notify("批量导入正在执行，请稍候", type="warning")
+            return
         if not raw_text or not raw_text.strip():
             ui.notify("导入内容为空", type="warning")
             return
@@ -1372,10 +1376,7 @@ class UsersPage:
         all_groups = group_service.list_all()
         group_ref_to_id = {group["name"]: group["id"] for group in all_groups}
         group_ref_to_id.update({group["id"]: group["id"] for group in all_groups})
-        existing_users = {
-            user["username"]
-            for user in self.user_service.list_all()
-        }
+        existing_users = {user["username"] for user in self.user_service.list_all()}
         validation = service.validate_all(rows, group_ref_to_id, existing_users)
         if not validation.valid:
             logger.error("批量导入预检查失败 errors=%s", validation.errors)
@@ -1388,35 +1389,95 @@ class UsersPage:
                 )
             return
 
-        created: list[str] = []
-        for row in rows:
-            username = row["username"]
+        dialog.close()
+        self._import_running = True
+        self._import_result = None
+        self._import_progress = {
+            "done": 0,
+            "total": len(rows),
+            "current": str(rows[0].get("username") or "") if rows else "",
+        }
+        self._import_progress_ui = self._open_progress_dialog("批量导入用户", len(rows))
+
+        def worker() -> None:
+            created: list[str] = []
+            current_name = ""
             try:
-                self.user_service.create(
-                    username=username,
-                    group_id=group_ref_to_id[row["group"]],
-                )
-                created.append(username)
+                for index, row in enumerate(rows, start=1):
+                    current_name = str(row["username"])
+                    self._import_progress = {
+                        "done": len(created),
+                        "total": len(rows),
+                        "current": current_name,
+                    }
+                    self.user_service.create(
+                        username=current_name,
+                        group_id=group_ref_to_id[row["group"]],
+                    )
+                    created.append(current_name)
+                    self._import_progress = {
+                        "done": index,
+                        "total": len(rows),
+                        "current": current_name,
+                    }
+                self._import_result = {"ok": True, "created": created}
             except Exception as exc:
                 logger.exception(
                     "批量导入用户创建失败 user=%s created_count=%s",
-                    username,
+                    current_name,
                     len(created),
                 )
-                ui.notify(
-                    f"创建 {username} 失败，已创建 {len(created)} 个用户: {exc}",
-                    type="negative",
-                )
-                raise RuntimeError(f"批量导入在创建 {username} 时失败") from exc
+                self._import_result = {
+                    "ok": False,
+                    "created": created,
+                    "error": f"创建 {current_name} 失败: {exc}",
+                }
 
-        dialog.close()
-        logger.info(
-            "批量导入用户完成 created_count=%s first_user=%s",
-            len(created),
-            created[0],
+        threading.Thread(target=worker, daemon=True, name="user-import-worker").start()
+        self._import_timer = ui.timer(0.3, self._poll_import_progress)
+
+    def _poll_import_progress(self) -> None:
+        """轮询批量导入进度并汇总成功、部分成功与失败。"""
+
+        progress = self._import_progress
+        self._update_progress_dialog(
+            self._import_progress_ui,
+            done=int(progress.get("done") or 0),
+            total=int(progress.get("total") or 0),
+            current=str(progress.get("current") or ""),
         )
-        ui.notify(
-            f"成功导入 {len(created)} 个用户",
-            type="positive",
+        if self._import_result is None:
+            return
+
+        if self._import_timer is not None:
+            if hasattr(self._import_timer, "deactivate"):
+                self._import_timer.deactivate()
+            elif hasattr(self._import_timer, "active"):
+                self._import_timer.active = False
+            self._import_timer = None
+
+        self._import_running = False
+        result = self._import_result
+        self._import_result = None
+        created = list(result.get("created") or [])
+        total = int(progress.get("total") or len(created))
+
+        if result.get("ok"):
+            summary = f"导入完成：成功 {len(created)}，失败 0"
+            ui.notify(summary, type="positive")
+        else:
+            summary = (
+                f"导入中断：成功 {len(created)}，失败 {max(1, total - len(created))}。"
+                f"{result.get('error') or '导入失败'}"
+            )
+            ui.notify(summary, type="warning")
+
+        self._update_progress_dialog(
+            self._import_progress_ui,
+            done=len(created),
+            total=total,
+            current="",
+            result=summary,
         )
-        ui.navigate.to("/users")
+        self._refresh_user_list()
+
