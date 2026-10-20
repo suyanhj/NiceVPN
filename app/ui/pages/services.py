@@ -515,26 +515,57 @@ class ServicesPage:
         )
 
     def _refresh_peer_client_list(self) -> None:
-        """刷新对端客户端实例列表（不主动 SSH 扫描，避免打开页面阻塞）。"""
+        """刷新对端客户端实例列表，并保持并发限制与代次保护。"""
+
         if self._peer_list_container is None:
             return
         self._peer_refresh_running = True
         self._set_refresh_button_busy(True)
-        peers = self._peer_service.list_all()
+
+        try:
+            peers = self._peer_service.list_all()
+        except Exception as exc:
+            logger.exception("读取对端服务列表失败")
+            self._peer_refresh_running = False
+            self._set_refresh_button_busy(False)
+            if self._peer_total_chip is not None:
+                self._peer_total_chip.text = "加载失败"
+            self._peer_list_container.clear()
+            with self._peer_list_container:
+                error_state(
+                    str(exc),
+                    title="对端服务列表加载失败",
+                    on_retry=self._refresh_peer_client_list,
+                )
+            return
+
         if self._peer_total_chip is not None:
-            self._peer_total_chip.text = f"{len(peers)} PEERS"
+            self._peer_total_chip.text = f"{len(peers)} 个"
+
         self._peer_list_container.clear()
         self._peer_refresh_generation += 1
         refresh_generation = self._peer_refresh_generation
         self._peer_status_refreshers = []
+
         if not peers:
             self._peer_refresh_running = False
             self._set_refresh_button_busy(False)
             with self._peer_list_container:
-                ui.label("无对端，请先在「对端站点」添加。").classes("service-empty")
+                empty_state(
+                    "暂无对端服务",
+                    description="请先在“对端站点”创建对端并配置 SSH。",
+                    icon="hub",
+                )
             return
+
         focus = self._focus_peer_id
-        rows = sorted(peers, key=lambda p: (0 if str(p.get("id") or "") == focus else 1, p.get("name") or ""))
+        rows = sorted(
+            peers,
+            key=lambda peer: (
+                0 if str(peer.get("id") or "") == focus else 1,
+                str(peer.get("name") or ""),
+            ),
+        )
         with self._peer_list_container:
             for peer in rows:
                 self._peer_status_refreshers.append(self._render_peer_client_row(peer))
@@ -543,15 +574,24 @@ class ServicesPage:
             semaphore = asyncio.Semaphore(self._peer_refresh_concurrency)
 
             async def refresh_one(ref: Callable[[], Any]) -> None:
-                if self._active_tab != "peers" or refresh_generation != self._peer_refresh_generation:
+                if (
+                    self._active_tab != "peers"
+                    or refresh_generation != self._peer_refresh_generation
+                ):
                     return
                 async with semaphore:
-                    if self._active_tab != "peers" or refresh_generation != self._peer_refresh_generation:
+                    if (
+                        self._active_tab != "peers"
+                        or refresh_generation != self._peer_refresh_generation
+                    ):
                         return
                     await ref()
 
             try:
-                await asyncio.gather(*(refresh_one(ref) for ref in self._peer_status_refreshers), return_exceptions=True)
+                await asyncio.gather(
+                    *(refresh_one(ref) for ref in self._peer_status_refreshers),
+                    return_exceptions=True,
+                )
             finally:
                 if refresh_generation == self._peer_refresh_generation:
                     self._peer_refresh_running = False
@@ -560,147 +600,191 @@ class ServicesPage:
         ui.timer(0.1, refresh_all_peer_rows, once=True)
 
     def _render_peer_client_row(self, peer: dict) -> Callable[[], Any]:
-        """渲染一个对端客户端 systemd 实例卡片。"""
-        pid = str(peer.get("id") or "").strip()
-        name = str(peer.get("name") or pid)
-        host = str(peer.get("ssh_host") or "未配 SSH")
-        user = str(peer.get("ssh_username") or "—")
-        bound = str(peer.get("bound_username") or "—")
-        status_ref: dict[str, Any] = {"active": "unknown", "enabled": "unknown"}
-        controls_ref: dict[str, Any] = {"power": None, "boot": None}
+        """渲染对端客户端服务，并按远端状态动态更新操作能力。"""
 
-        with ui.element("div").classes("mgmt-record-card"):
+        peer_id = str(peer.get("id") or "").strip()
+        initial_view = adapt_peer_service_view(
+            peer,
+            busy=peer_id in self._peer_action_busy,
+        )
+        refs: dict[str, Any] = {}
+
+        with ui.element("article").classes("mgmt-record-card"):
             with ui.element("div").classes("mgmt-record-main"):
                 with ui.element("div").classes("service-status-shell"):
-                    status_ref["dot"] = ui.element("span").classes("service-status-dot is-offline")
+                    ui.icon("cloud", size="22px").classes("text-primary")
+
                 with ui.element("div").classes("mgmt-record-copy"):
-                    with ui.element("div").classes("service-name-row"):
-                        ui.label(name).classes("service-name")
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        ui.label(str(initial_view["name"])).classes("service-name")
                         ui.label("PEER").classes("service-proto")
+                        refs["status_box"] = ui.row().classes("items-center")
+
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("dns", size="12px")
-                            ui.label(f"{user}@{host}")
+                            refs["endpoint"] = ui.label(
+                                f"{initial_view['ssh_username']}@{initial_view['host']}"
+                            )
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="12px")
-                            ui.label(f"绑 {bound}")
-                        with ui.element("span").classes("mgmt-meta-item"):
-                            status_ref["service"] = ui.label("服务: …")
-                        with ui.element("span").classes("mgmt-meta-item"):
-                            status_ref["state"] = ui.label("状态: …")
-
-            def update_action_buttons() -> None:
-                power_btn = controls_ref.get("power")
-                boot_btn = controls_ref.get("boot")
-                active = str(status_ref.get("active") or "unknown")
-                enabled = str(status_ref.get("enabled") or "unknown")
-                if power_btn is not None:
-                    if active == "active":
-                        power_btn.props("flat round dense no-caps no-ripple icon=stop")
-                        power_btn.classes(replace="mgmt-icon-btn is-stop")
-                    else:
-                        power_btn.props("flat round dense no-caps no-ripple icon=play_arrow")
-                        power_btn.classes(replace="mgmt-icon-btn is-start")
-                if boot_btn is not None:
-                    if enabled.startswith("enabled"):
-                        boot_btn.props("flat round dense no-caps no-ripple icon=block")
-                        boot_btn.classes(replace="mgmt-icon-btn is-neutral")
-                    else:
-                        boot_btn.props("flat round dense no-caps no-ripple icon=done_all")
-                        boot_btn.classes(replace="mgmt-icon-btn is-start")
-
-            async def refresh_status() -> None:
-                if not pid:
-                    status_ref["service"].text = "服务: 失败"
-                    status_ref["state"].text = "状态: 无 ID"
-                    status_ref["active"] = "unknown"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                if self._active_tab != "peers":
-                    return
-                status_ref["state"].text = "状态: 查询…"
-                try:
-                    data = await run.io_bound(self._peer_service.fetch_peer_client_service_status_via_ssh, pid)
-                except Exception as exc:
-                    if self._active_tab != "peers":
-                        return
-                    logger.error("查询对端客户端实例失败 peer=%s: %s", pid, exc)
-                    status_ref["service"].text = "服务: 失败"
-                    status_ref["state"].text = f"状态: {exc}"
-                    status_ref["dot"].classes(replace="service-status-dot is-offline")
-                    status_ref["active"] = "unknown"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                if self._active_tab != "peers":
-                    return
-                if not data.get("exists"):
-                    status_ref["service"].text = "服务: 未装"
-                    status_ref["state"].text = "状态: not-found"
-                    status_ref["dot"].classes(replace="service-status-dot is-offline")
-                    status_ref["active"] = "not-found"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                service = str(data.get("service") or "—")
-                active = str(data.get("active_state") or data.get("is_active") or "unknown")
-                enabled = str(data.get("unit_file_state") or data.get("is_enabled") or "unknown")
-                config = "config ok" if data.get("config_exists") else "config missing"
-                status_ref["service"].text = f"服务: {service}"
-                status_ref["state"].text = f"状态: {active} / {enabled} / {config}"
-                status_ref["active"] = active
-                status_ref["enabled"] = enabled
-                dot_class = "service-status-dot is-online" if active == "active" else "service-status-dot is-offline"
-                status_ref["dot"].classes(replace=dot_class)
-                update_action_buttons()
-
-            async def do_action(action: str) -> None:
-                if not pid:
-                    ui.notify("缺少对端 ID", type="negative")
-                    return
-                try:
-                    await run.io_bound(lambda: self._peer_service.control_peer_client_service_via_ssh(pid, action))
-                except Exception as exc:
-                    logger.error("对端客户端实例操作失败 peer=%s action=%s: %s", pid, action, exc)
-                    ui.notify(f"{action} 失败: {exc}", type="negative")
-                    return
-                ui.notify(f"已执行 {action}", type="positive")
-                await refresh_status()
-
-            async def do_toggle_power() -> None:
-                action = "stop" if str(status_ref.get("active") or "") == "active" else "start"
-                await do_action(action)
-
-            async def do_restart() -> None:
-                await do_action("restart")
-
-            async def do_toggle_boot() -> None:
-                enabled = str(status_ref.get("enabled") or "")
-                action = "disable" if enabled.startswith("enabled") else "enable"
-                await do_action(action)
+                            ui.label(f"绑 {initial_view['bound_username']}")
+                        refs["service"] = ui.label("服务: 待查询").classes("mgmt-meta-item")
+                        refs["detail"] = ui.label("状态: 待查询").classes("mgmt-meta-item")
 
             with ui.element("div").classes("mgmt-actions"):
-                ui.button(
-                    icon="article",
-                    on_click=lambda p=pid, n=name: self._show_peer_client_file_log_viewer(p, n),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip(
-                    "客户端日志"
-                )
-                controls_ref["power"] = ui.button(
+                refs["power"] = secondary_action(
+                    "启动",
                     icon="play_arrow",
-                    on_click=do_toggle_power,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-start").tooltip("启停")
-                ui.button(
+                    on_click=lambda: do_toggle_power(),
+                    disabled=True,
+                )
+                refs["restart"] = secondary_action(
+                    "重启",
                     icon="restart_alt",
-                    on_click=do_restart,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-restart").tooltip("重启")
-                controls_ref["boot"] = ui.button(
+                    on_click=lambda: do_action("restart"),
+                    disabled=True,
+                )
+                refs["boot"] = secondary_action(
+                    "启用自启",
                     icon="done_all",
-                    on_click=do_toggle_boot,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-start").tooltip("自启开关")
-            update_action_buttons()
-            return refresh_status
+                    on_click=lambda: do_toggle_boot(),
+                    disabled=True,
+                )
+                refs["log"] = secondary_action(
+                    "日志",
+                    icon="article",
+                    on_click=lambda p=peer_id, n=str(initial_view["name"]): self._show_peer_client_file_log_viewer(p, n),
+                    disabled=True,
+                )
+
+        state: dict[str, Any] = {"view": initial_view}
+
+        def render_status(view: dict[str, Any]) -> None:
+            state["view"] = view
+            refs["status_box"].clear()
+            with refs["status_box"]:
+                status_badge(
+                    str(view["status_tone"]),
+                    label=str(view["status_label"]),
+                    tooltip=str(view["detail"] or view["error"] or ""),
+                )
+            refs["service"].text = f"服务: {view['service']}"
+            refs["detail"].text = f"状态: {view['detail'] or view['status_label']}"
+
+            power = refs["power"]
+            if view["can_stop"]:
+                power.set_text("停止")
+                power.props("icon=stop")
+                power.enable()
+            elif view["can_start"]:
+                power.set_text("启动")
+                power.props("icon=play_arrow")
+                power.enable()
+            else:
+                power.disable()
+
+            restart = refs["restart"]
+            if view["can_restart"]:
+                restart.enable()
+            else:
+                restart.disable()
+
+            boot = refs["boot"]
+            if view["can_disable"]:
+                boot.set_text("禁用自启")
+                boot.props("icon=block")
+                boot.enable()
+            elif view["can_enable"]:
+                boot.set_text("启用自启")
+                boot.props("icon=done_all")
+                boot.enable()
+            else:
+                boot.disable()
+
+            if view["can_view_logs"]:
+                refs["log"].enable()
+            else:
+                refs["log"].disable()
+
+        render_status(initial_view)
+
+        async def refresh_status() -> None:
+            if not peer_id or self._active_tab != "peers":
+                return
+            render_status(
+                adapt_peer_service_view(
+                    peer,
+                    busy=peer_id in self._peer_action_busy,
+                )
+            )
+            try:
+                data = await run.io_bound(
+                    self._peer_service.fetch_peer_client_service_status_via_ssh,
+                    peer_id,
+                )
+            except Exception as exc:
+                if self._active_tab != "peers":
+                    return
+                logger.error("查询对端客户端实例失败 peer=%s: %s", peer_id, exc)
+                render_status(adapt_peer_service_view(peer, error=str(exc)))
+                return
+            if self._active_tab != "peers":
+                return
+            render_status(adapt_peer_service_view(peer, data))
+
+        async def do_action(action: str) -> None:
+            if not peer_id:
+                ui.notify("缺少对端 ID", type="negative")
+                return
+            if peer_id in self._peer_action_busy:
+                ui.notify("该对端已有服务操作执行中，请稍候", type="info")
+                return
+
+            self._peer_action_busy.add(peer_id)
+            render_status(
+                adapt_peer_service_view(
+                    peer,
+                    {
+                        "exists": state["view"]["exists"],
+                        "active_state": state["view"]["active_state"],
+                        "unit_file_state": state["view"]["enabled_state"],
+                        "config_exists": state["view"]["config_exists"],
+                        "service": state["view"]["service"],
+                    },
+                    busy=True,
+                )
+            )
+            try:
+                await run.io_bound(
+                    lambda: self._peer_service.control_peer_client_service_via_ssh(
+                        peer_id,
+                        action,
+                    )
+                )
+            except Exception as exc:
+                logger.error(
+                    "对端客户端实例操作失败 peer=%s action=%s: %s",
+                    peer_id,
+                    action,
+                    exc,
+                )
+                ui.notify(f"{action} 失败: {exc}", type="negative")
+            else:
+                ui.notify(f"已执行 {action}", type="positive")
+            finally:
+                self._peer_action_busy.discard(peer_id)
+            await refresh_status()
+
+        async def do_toggle_power() -> None:
+            action = "stop" if bool(state["view"].get("can_stop")) else "start"
+            await do_action(action)
+
+        async def do_toggle_boot() -> None:
+            action = "disable" if bool(state["view"].get("can_disable")) else "enable"
+            await do_action(action)
+
+        return refresh_status
 
     def _show_peer_client_file_log_viewer(self, peer_id: str, peer_name: str) -> None:
         """查看对端 openvpn-client 文件日志。"""
