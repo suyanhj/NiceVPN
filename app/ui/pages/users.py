@@ -16,6 +16,19 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import (
+    MenuAction,
+    danger_action,
+    more_actions,
+    primary_action,
+    secondary_action,
+)
+from app.ui.components.data_grid import render_data_grid
+from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.page_header import render_page_header
+from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.status import status_badge, structured_value
+from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -31,12 +44,23 @@ class UsersPage:
     def __init__(self):
         self.user_service = UserService()
         self.selected_users: set[str] = set()
+        self.search_input = None
+        self.data_container = None
+        self.search_state_container = None
+        self.grid_view = None
+        self.all_grid_rows: list[dict] = []
+        self.bulk_bar = None
+        self.bulk_download_button = None
+        self.bulk_enable_button = None
+        self.bulk_more_menu = None
+
+        # 兼容旧列表选择辅助与既有测试；AG Grid 迁移后不再作为主视图。
         self.list_container = None
         self.pagination_container = None
-        self.search_input = None
         self.select_all_checkbox = None
         self.visible_usernames: list[str] = []
         self.user_checkboxes: dict[str, Checkbox] = {}
+
         self._create_running = False
         self._create_result: dict | None = None
         self._create_timer = None
@@ -44,256 +68,655 @@ class UsersPage:
         self.page_size = 50
 
     def render(self):
-        """渲染用户管理页面。"""
-        users = self.user_service.list_all()
-        live_sessions = self._load_live_sessions()
-        binding_aux = DeviceBindingService().build_user_binding_aux()
-        ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
+        """渲染用户管理页面；数据密集集合统一使用 AG Grid。"""
+
+        def search_region() -> None:
+            self.search_input = (
+                ui.input(placeholder="搜索用户名、虚拟 IP、组、证书或设备")
+                .props("clearable")
+                .classes("w-full")
+            )
+            self.search_input.on("keydown.enter", self._handle_search)
+            ui.button("搜索", icon="search", on_click=self._handle_search).props(
+                "outline no-caps color=primary"
+            )
+            ui.button("清除", icon="filter_alt_off", on_click=self._clear_search).props(
+                "flat no-caps color=primary"
+            )
+
+        def primary_region() -> None:
+            primary_action(
+                "新建用户",
+                icon="person_add",
+                on_click=self._show_create_dialog,
+            )
+
+        def secondary_region() -> None:
+            secondary_action(
+                "批量导入",
+                icon="upload_file",
+                on_click=self._show_import_dialog,
+            )
+            secondary_action(
+                "刷新",
+                icon="refresh",
+                on_click=self._refresh_user_list,
+            )
+
+        def bulk_actions() -> None:
+            disabled = not self.selected_users
+            self.bulk_download_button = secondary_action(
+                "批量下载",
+                icon="download",
+                on_click=self._batch_download,
+                disabled=disabled,
+                tooltip="请先选择用户" if disabled else None,
+            )
+            self.bulk_enable_button = secondary_action(
+                "批量启用",
+                icon="toggle_on",
+                on_click=lambda: self._batch_set_status(True),
+                disabled=disabled,
+                tooltip="请先选择用户" if disabled else None,
+            )
+            self.bulk_more_menu = more_actions(
+                (
+                    MenuAction("批量停用", icon="toggle_off", on_click=self._batch_disable_confirm),
+                    MenuAction("批量踢下线", icon="power_settings_new", on_click=self._batch_kick_offline),
+                    MenuAction("批量切换组", icon="drive_file_move", on_click=self._show_batch_change_group_dialog),
+                    MenuAction("批量重置绑定", icon="phonelink_erase", on_click=self._batch_reset_binding_confirm),
+                    MenuAction("批量删除", icon="delete", danger=True, on_click=self._batch_delete_confirm),
+                ),
+                disabled=disabled,
+                tooltip="请先选择用户" if disabled else "更多批量操作",
+            )
 
         with ui.column().classes("page-shell mgmt-page"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.element("div").classes("mgmt-header-row"):
-                    with ui.element("div").classes("mgmt-header-copy"):
-                        ui.label("用户管理").classes("mgmt-title")
-                        ui.label("查看在线与证书、流量与虚拟 IP；可下发配置与链接。").classes("mgmt-desc")
+            render_page_header(
+                "用户管理",
+                description="统一查看账号状态、在线会话、虚拟 IP、证书、流量与设备绑定，并执行配置和链接操作。",
+            )
+            render_page_toolbar(
+                search=search_region,
+                primary=primary_region,
+                secondary=secondary_region,
+            )
+            self.bulk_bar = render_bulk_action_bar(
+                len(self.selected_users),
+                actions=bulk_actions,
+            )
+            self.data_container = ui.column().classes("w-full")
 
-                    with ui.element("div").classes("mgmt-toolbar"):
-                        self.search_input = ui.input(
-                            placeholder="搜索用户名",
-                        ).classes("mgmt-search-input").on("keydown.enter", self._handle_search)
-                        ui.button("搜索", icon="search", on_click=self._handle_search).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline mgmt-search-btn")
-                        ui.button("新建用户", icon="person_add", on_click=self._show_create_dialog).props(
-                            "unelevated no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-primary")
-                        ui.button("批量导入", icon="upload_file", on_click=self._show_import_dialog).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline")
-                        ui.button("批量下载", icon="download", on_click=self._batch_download).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline")
-                        ui.button(
-                            "批量重置绑定",
-                            icon="phonelink_erase",
-                            on_click=self._batch_reset_binding_confirm,
-                        ).props("outline no-caps no-ripple").classes("mgmt-toolbar-btn is-outline")
-
-            with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self.select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前页")
-                        ui.label("用户列表").classes("mgmt-kicker")
-
-                self.list_container = ui.column().classes("w-full")
-                self.pagination_container = ui.element("div").classes("w-full").style("flex-shrink: 0")
-                self._refresh_user_list()
-
-    def _handle_search(self):
-        """执行搜索并重置到第一页。"""
-        self.page = 1
         self._refresh_user_list()
 
-    def _on_page_change(self, new_page: int):
-        if self.page != new_page:
-            self.page = new_page
-            self._refresh_user_list()
+    def _load_user_grid_rows(self) -> tuple[list[dict], list[str]]:
+        """聚合用户基础数据与可选运行数据，单个辅助数据源失败不阻断整页。"""
 
-    def _refresh_user_list(self):
-        """按搜索条件刷新列表。"""
         users = self.user_service.list_all()
-        q = (self.search_input.value or "").strip() if self.search_input else ""
-        if q:
-            pat = re.compile(".*" + re.escape(q) + ".*", re.IGNORECASE)
-            users = [u for u in users if pat.search(u.get("username", ""))]
-        live_sessions = self._load_live_sessions()
-        binding_aux = DeviceBindingService().build_user_binding_aux()
-        ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
-        if self.list_container is None:
-            return
-        self.list_container.clear()
-        if self.pagination_container is not None:
-            self.pagination_container.clear()
-        self._render_user_list(users, live_sessions, binding_aux, ccd_vip_map)
+        warnings: list[str] = []
 
-    def _render_user_list(
-        self,
-        users: list[dict],
-        live_sessions: dict[str, dict],
-        binding_aux: dict[str, dict[str, str]],
-        ccd_vip_map: dict[str, str],
-    ):
-        """渲染用户列表容器。"""
-        self.user_checkboxes.clear()
-        if not users:
-            self.visible_usernames = []
-            self._sync_select_all()
-            with self.list_container:
-                ui.label("暂无用户，点「新建用户」添加。").classes("empty-state")
-            return
+        try:
+            live_sessions = self._load_live_sessions()
+            live_available = True
+        except Exception as exc:
+            logger.exception("加载 OpenVPN 在线会话失败")
+            live_sessions = {}
+            live_available = False
+            warnings.append(f"在线会话不可用: {exc}")
 
-        total_count = len(users)
-        total_pages = (total_count + self.page_size - 1) // self.page_size
-        if self.page > total_pages and total_pages > 0:
-            self.page = total_pages
+        try:
+            binding_aux = DeviceBindingService().build_user_binding_aux()
+        except Exception as exc:
+            logger.exception("加载设备绑定辅助数据失败")
+            binding_aux = {}
+            warnings.append(f"设备绑定数据不可用: {exc}")
 
-        start_idx = (self.page - 1) * self.page_size
-        page_users = users[start_idx : start_idx + self.page_size]
-        self.visible_usernames = [item["username"] for item in page_users]
+        try:
+            ccd_vip_map = self.user_service.list_ccd_virtual_ipv4_by_username()
+        except Exception as exc:
+            logger.exception("加载 CCD 虚拟 IP 失败")
+            ccd_vip_map = {}
+            warnings.append(f"虚拟 IP 数据不可用: {exc}")
 
-        with self.list_container:
-            with ui.element("div").classes("mgmt-record-list"):
-                for item in page_users:
-                    uname = item["username"]
-                    self._render_user_card(
-                        item,
-                        live_sessions.get(uname),
-                        binding_aux.get(uname) or {},
-                        (ccd_vip_map.get(uname) or "").strip(),
-                    )
-        self._sync_select_all()
+        try:
+            from app.services.group.crud import GroupService
 
-        if self.pagination_container is not None:
-            with self.pagination_container:
-                with ui.row().classes("w-full justify-between items-center q-mt-md"):
-                    ui.label(f"共 {total_count} 个用户，第 {self.page} / {total_pages} 页").classes("text-caption text-grey")
-                    if total_pages > 1:
-                        ui.pagination(
-                            min=1, max=total_pages, value=self.page, on_change=lambda e: self._on_page_change(e.value)
-                        ).props("color=primary active-color=primary outline")
+            group_names = {
+                str(group.get("id") or ""): str(group.get("name") or "")
+                for group in GroupService().list_all()
+            }
+        except Exception as exc:
+            logger.exception("加载用户组名称失败")
+            group_names = {}
+            warnings.append(f"用户组名称不可用: {exc}")
 
-    def _render_user_card(
+        rows = [
+            self._build_user_grid_row(
+                user,
+                live_sessions.get(str(user.get("username") or "")),
+                binding_aux.get(str(user.get("username") or "")) or {},
+                str(ccd_vip_map.get(str(user.get("username") or "")) or "").strip(),
+                group_names,
+                live_available=live_available,
+            )
+            for user in users
+        ]
+        return rows, warnings
+
+    def _build_user_grid_row(
         self,
         user: dict,
         session: dict | None,
         binding_aux: dict[str, str],
         ccd_virtual_ip: str,
-    ):
-        """渲染单个用户卡片：虚拟 IP 以 CCD 固定分配为准（创建用户时写入），无 CCD 时在线才用 status。"""
-        username = user["username"]
-        group_id = user.get("group_id", "")
-        status = user.get("status", "active")
-        is_active = status == "active"
-        created_at = (user.get("created_at", "") or "")[:10] or "未知"
-        cert_serial = user.get("cert_serial", "—")
-        serial_short = self._short_serial(cert_serial)
-        group_short = group_id[:8] if group_id else ""
-        is_online = session is not None
-        bytes_received = session.get("bytes_received", 0) if session else 0
-        bytes_sent = session.get("bytes_sent", 0) if session else 0
-        br_label = self._format_bytes(bytes_received) if session else "—"
-        bs_label = self._format_bytes(bytes_sent) if session else "—"
-        connected_since_raw = session.get("connected_since", "") if session else ""
-        connected_since = self._format_connected_since(connected_since_raw) if session else "—"
-        connection_duration = self._format_connection_duration(connected_since_raw) if session else "—"
-        real_address = session.get("real_address", "—") if session else "—"
+        group_names: dict[str, str],
+        *,
+        live_available: bool,
+    ) -> dict:
+        """把既有用户、会话和绑定信息标准化为 AG Grid 行。"""
+
+        username = str(user.get("username") or "")
+        group_id = str(user.get("group_id") or "")
+        status = str(user.get("status") or "active")
+        is_online = session is not None if live_available else False
+        cert_serial = str(user.get("cert_serial") or "—")
+        created_at = str(user.get("created_at") or "")[:10] or "未知"
+
         if ccd_virtual_ip:
-            virtual_label = ccd_virtual_ip
+            virtual_ip = ccd_virtual_ip
         elif session:
-            virtual_label = (session.get("virtual_address") or "").strip() or "—"
+            virtual_ip = str(session.get("virtual_address") or "").strip() or "—"
         else:
-            virtual_label = "—"
-        client_device = (binding_aux.get("device_label") or "").strip()
-        last_conn_stored = (binding_aux.get("last_connected_since") or "").strip()
+            virtual_ip = "—"
 
-        with ui.element("div").classes("mgmt-record-card"):
-            with ui.element("div").classes("mgmt-record-main"):
-                self.user_checkboxes[username] = ui.checkbox(
-                    value=username in self.selected_users,
-                    on_change=lambda e, current=username: self._toggle_select(current, e.value),
-                ).classes("mgmt-checkbox")
+        bytes_received = int(session.get("bytes_received", 0) or 0) if session else 0
+        bytes_sent = int(session.get("bytes_sent", 0) or 0) if session else 0
+        traffic = (
+            f"↓{self._format_bytes(bytes_received)} ↑{self._format_bytes(bytes_sent)}"
+            if session
+            else "—"
+        )
+        connected_raw = str(session.get("connected_since") or "") if session else ""
+        connection = (
+            f"{self._format_connected_since(connected_raw)} · "
+            f"{self._format_connection_duration(connected_raw)}"
+            if session
+            else (
+                f"上次 {self._format_connected_since(str(binding_aux.get('last_connected_since') or ''))}"
+                if binding_aux.get("last_connected_since")
+                else "—"
+            )
+        )
+        real_address = str(session.get("real_address") or "—") if session else "—"
+        device = str(binding_aux.get("device_label") or "").strip() or "—"
+        group_name = group_names.get(group_id) or (group_id[:8] if group_id else "—")
 
-                with ui.element("div").classes("mgmt-record-copy" + (" is-muted" if not is_active else "")):
-                    with ui.row().classes("items-center gap-2"):
-                        ui.label(username).classes("mgmt-record-title")
-                        ui.label("在线" if is_online else "离线").classes(
-                            "user-session-badge" if is_online else "user-session-badge is-offline"
+        return {
+            "id": username,
+            "username": username,
+            "account_status": "启用" if status == "active" else "停用",
+            "session_status": (
+                "在线" if is_online else ("离线" if live_available else "未知")
+            ),
+            "virtual_ip": virtual_ip,
+            "group": group_name,
+            "group_id": group_id,
+            "cert_serial": cert_serial,
+            "cert_serial_display": self._short_serial(cert_serial),
+            "traffic": traffic,
+            "connection": connection,
+            "source": real_address,
+            "device": device,
+            "created_at": created_at,
+            "actions": "操作",
+            "_status": status,
+            "_online": is_online,
+            "_live_available": live_available,
+        }
+
+    @staticmethod
+    def _user_grid_columns() -> tuple[dict, ...]:
+        """用户表格列定义；原始敏感/长值保留在行对象但不强制全部展示。"""
+
+        return (
+            {"field": "username", "headerName": "用户名", "pinned": "left", "minWidth": 150},
+            {"field": "account_status", "headerName": "账号", "width": 92},
+            {"field": "session_status", "headerName": "会话", "width": 92},
+            {"field": "virtual_ip", "headerName": "虚拟 IP", "minWidth": 140, "cellClass": "vpn-grid-mono"},
+            {"field": "group", "headerName": "用户组", "minWidth": 120},
+            {"field": "cert_serial_display", "headerName": "证书序列号", "minWidth": 160, "cellClass": "vpn-grid-mono"},
+            {"field": "traffic", "headerName": "流量", "minWidth": 160, "cellClass": "vpn-grid-mono"},
+            {"field": "connection", "headerName": "连接时间", "minWidth": 190},
+            {"field": "source", "headerName": "来源地址", "minWidth": 170, "cellClass": "vpn-grid-mono"},
+            {"field": "device", "headerName": "设备", "minWidth": 140},
+            {"field": "created_at", "headerName": "创建日期", "width": 120},
+            {
+                "field": "actions",
+                "headerName": "操作",
+                "pinned": "right",
+                "width": 100,
+                "sortable": False,
+                "filter": False,
+                "cellClass": "vpn-grid-action-cell",
+            },
+        )
+
+    def _refresh_user_list(self):
+        """刷新用户数据，同时保留仍存在的选择和搜索上下文。"""
+
+        if self.data_container is None:
+            return
+        try:
+            rows, warnings = self._load_user_grid_rows()
+        except Exception as exc:
+            logger.exception("加载用户列表失败")
+            self.data_container.clear()
+            with self.data_container:
+                error_state(
+                    str(exc),
+                    title="用户列表加载失败",
+                    on_retry=self._refresh_user_list,
+                )
+            return
+
+        existing = {str(row.get("username") or "") for row in rows}
+        self.selected_users.intersection_update(existing)
+        self.all_grid_rows = rows
+
+        self.data_container.clear()
+        with self.data_container:
+            self._render_user_grid(rows, warnings)
+        self._sync_bulk_state()
+        self._handle_search()
+
+    def _render_user_grid(self, rows: list[dict], warnings: list[str]) -> None:
+        """构建用户数据区及局部状态。"""
+
+        if warnings:
+            with ui.row().classes("w-full items-start gap-2 vpn-data-warning"):
+                ui.icon("warning_amber", color="warning")
+                ui.label("；".join(warnings)).classes("section-caption")
+
+        if not rows:
+            self.grid_view = None
+            self.search_state_container = None
+            empty_state(
+                "暂无用户",
+                description="创建用户或批量导入后会显示在这里。",
+                action_label="新建用户",
+                on_action=self._show_create_dialog,
+                icon="person_off",
+            )
+            return
+
+        self.search_state_container = ui.column().classes("w-full")
+        self.grid_view = render_data_grid(
+            self._user_grid_columns(),
+            rows,
+            page_size=self.page_size,
+            selected_ids=self.selected_users,
+            on_cell_click=self._on_grid_cell_clicked,
+        )
+        self.grid_view.summary.text = f"共 {len(rows)} 个用户"
+        self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
+
+    def _handle_search(self):
+        """客户端快速筛选，同时在服务端镜像计算结果数与无匹配状态。"""
+
+        if self.grid_view is None:
+            return
+        query = str(self.search_input.value or "").strip() if self.search_input else ""
+        normalized = query.casefold()
+        matched = [
+            row
+            for row in self.all_grid_rows
+            if not normalized or self._row_matches_query(row, normalized)
+        ]
+
+        self.grid_view.grid.options["quickFilterText"] = query
+        self.grid_view.grid.update()
+        self.grid_view.summary.text = (
+            f"匹配 {len(matched)} / 共 {len(self.all_grid_rows)} 个用户"
+            if query
+            else f"共 {len(self.all_grid_rows)} 个用户"
+        )
+
+        if self.search_state_container is not None:
+            self.search_state_container.clear()
+            if query and not matched:
+                self.grid_view.container.set_visibility(False)
+                with self.search_state_container:
+                    no_match_state(
+                        description=f"没有用户匹配“{query}”。",
+                        on_clear=self._clear_search,
+                    )
+            else:
+                self.grid_view.container.set_visibility(True)
+
+    @staticmethod
+    def _row_matches_query(row: dict, query: str) -> bool:
+        fields = (
+            "username",
+            "virtual_ip",
+            "group",
+            "group_id",
+            "cert_serial",
+            "source",
+            "device",
+            "account_status",
+            "session_status",
+        )
+        return any(query in str(row.get(field) or "").casefold() for field in fields)
+
+    def _clear_search(self) -> None:
+        if self.search_input is not None:
+            self.search_input.set_value("")
+        self._handle_search()
+
+    async def _on_grid_selection_changed(self, _event=None) -> None:
+        """把 AG Grid 当前选择同步到批量操作状态。"""
+
+        if self.grid_view is None:
+            return
+        rows = await self.grid_view.get_selected_rows()
+        self.selected_users = {
+            str(row.get("username") or "")
+            for row in rows
+            if row.get("username")
+        }
+        self._sync_bulk_state()
+
+    def _sync_bulk_state(self) -> None:
+        if self.bulk_bar is not None:
+            self.bulk_bar.set_selected_count(len(self.selected_users))
+        enabled = bool(self.selected_users)
+        for button in (self.bulk_download_button, self.bulk_enable_button):
+            if button is None:
+                continue
+            if enabled:
+                button.enable()
+            else:
+                button.disable()
+        if self.bulk_more_menu is not None:
+            if enabled:
+                self.bulk_more_menu.button.enable()
+            else:
+                self.bulk_more_menu.button.disable()
+
+    def _on_grid_cell_clicked(self, event) -> None:
+        """点击固定操作列时打开当前用户操作面板。"""
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            return
+        column = args.get("colId")
+        if column is None and isinstance(args.get("column"), dict):
+            column = args["column"].get("colId")
+        if column != "actions":
+            return
+        row = args.get("data") or {}
+        if isinstance(row, dict) and row.get("username"):
+            self._show_user_actions(row)
+
+    def _show_user_actions(self, row: dict) -> None:
+        """集中承载单用户高频与低频操作，避免表格被按钮挤占。"""
+
+        username = str(row.get("username") or "")
+        is_active = str(row.get("_status") or "") == "active"
+        is_online = bool(row.get("_online"))
+
+        with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
+            with ui.row().classes("w-full items-start justify-between no-wrap"):
+                with ui.column().classes("gap-1 min-w-0"):
+                    ui.label(username).classes("vpn-form-dialog__title")
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        status_badge(
+                            "running" if is_active else "disabled",
+                            label="账号启用" if is_active else "账号停用",
                         )
-                        if not is_active:
-                            ui.label("已停用").classes("user-session-badge is-offline")
-                    with ui.element("div").classes("mgmt-record-meta user-card-meta"):
-                        with ui.row().classes("items-center gap-3 flex-wrap w-full"):
-                            with ui.element("span").classes("mgmt-meta-item"):
-                                ui.icon("event", size="12px")
-                                ui.label(created_at)
-                            ui.button(
-                                f"SN {serial_short}",
-                                icon="content_copy",
-                                on_click=lambda value=cert_serial: self._copy_text(
-                                    value, f"证书序列号已复制: {value}"
-                                ),
-                            ).props("flat dense no-caps no-ripple").classes("user-copy-chip")
-                            if group_id:
-                                ui.button(
-                                    f"GID {group_short}",
-                                    icon="content_copy",
-                                    on_click=lambda value=group_id: self._copy_text(
-                                        value, f"组 ID 已复制: {value}"
-                                    ),
-                                ).props("flat dense no-caps no-ripple").classes("user-copy-chip")
-                        with ui.row().classes(
-                            "items-center gap-3 flex-wrap w-full user-meta-session-line"
-                        ):
-                            with ui.element("span").classes("mgmt-meta-item"):
-                                ui.label(f"↓{br_label}  ↑{bs_label}")
-                            if is_online:
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"连接于 {connected_since}  时长 {connection_duration}")
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"来源 {real_address}")
-                            elif last_conn_stored:
-                                lc_label = self._format_connected_since(last_conn_stored)
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"上次连接于 {lc_label}")
-                            if client_device:
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"设备 {client_device}")
-                            with ui.element("span").classes("mgmt-meta-item"):
-                                ui.label(f"虚拟 {virtual_label}")
+                        status_badge(
+                            "success" if is_online else "unknown",
+                            label="在线" if is_online else "离线",
+                            icon="wifi" if is_online else "wifi_off",
+                        )
+                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
 
-            with ui.element("div").classes("mgmt-actions"):
-                ui.button(
-                    icon="toggle_on" if is_active else "toggle_off",
-                    on_click=lambda current=username: self._toggle_user_status(current),
-                ).props("flat round dense no-caps no-ripple").classes(
-                    "mgmt-icon-btn is-link" if is_active else "mgmt-icon-btn"
-                ).tooltip("停用" if is_active else "启用")
-                if is_online:
-                    ui.button(
-                        icon="power_settings_new",
-                        on_click=lambda current=username: self._kick_offline(current),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("踢下线")
-                ui.button(
-                    icon="download",
-                    on_click=lambda current=username: self._download_ovpn(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-link").tooltip("下载 .ovpn")
-                ui.button(
-                    icon="edit_note",
-                    on_click=lambda current=username: self._edit_ovpn(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("编辑配置")
-                ui.button(
+            with ui.column().classes("w-full gap-2"):
+                structured_value(
+                    row.get("virtual_ip") or "—",
+                    kind="ip",
+                    copyable=row.get("virtual_ip") not in {None, "", "—"},
+                    copy_message="虚拟 IP 已复制",
+                )
+                structured_value(
+                    row.get("cert_serial") or "—",
+                    kind="serial",
+                    copyable=row.get("cert_serial") not in {None, "", "—"},
+                    copy_message="证书序列号已复制",
+                )
+                structured_value(
+                    row.get("group_id") or "—",
+                    kind="serial",
+                    copyable=bool(row.get("group_id")),
+                    copy_message="组 ID 已复制",
+                )
+
+            def invoke(callback):
+                dialog.close()
+                return callback()
+
+            with ui.row().classes("w-full gap-2 flex-wrap"):
+                if is_active:
+                    secondary_action(
+                        "停用",
+                        icon="toggle_off",
+                        on_click=lambda: invoke(lambda: self._confirm_user_disable(username)),
+                    )
+                else:
+                    secondary_action(
+                        "启用",
+                        icon="toggle_on",
+                        on_click=lambda: invoke(lambda: self._toggle_user_status(username)),
+                    )
+                secondary_action(
+                    "踢下线",
+                    icon="power_settings_new",
+                    on_click=lambda: invoke(lambda: self._kick_offline(username)),
+                    disabled=not is_online,
+                    tooltip=None if is_online else "当前用户不在线",
+                )
+                secondary_action(
+                    "切换组",
                     icon="drive_file_move",
-                    on_click=lambda current=username: self._show_change_group_dialog(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("切换组")
-                ui.button(
-                    icon="phonelink_lock",
-                    on_click=lambda current=username: self._confirm_reset_binding(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("重置设备绑定")
-                ui.button(
+                    on_click=lambda: invoke(lambda: self._show_change_group_dialog(username)),
+                )
+                secondary_action(
+                    "下载配置",
+                    icon="download",
+                    on_click=lambda: invoke(lambda: self._download_ovpn(username)),
+                )
+                secondary_action(
+                    "编辑配置",
+                    icon="edit_note",
+                    on_click=lambda: invoke(lambda: self._edit_ovpn(username)),
+                )
+                secondary_action(
+                    "复制下载链接",
                     icon="link",
-                    on_click=lambda current=username: self._copy_download_link(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-link").tooltip("复制下载链接")
-                ui.button(
+                    on_click=lambda: invoke(lambda: self._copy_download_link(username)),
+                )
+                secondary_action(
+                    "推送下载链接",
                     icon="send",
-                    on_click=lambda current=username: self._push_download_link_notify(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-send").tooltip("推送下载链接")
-                ui.button(
+                    on_click=lambda: invoke(lambda: self._push_download_link_notify(username)),
+                )
+                secondary_action(
+                    "重置绑定",
+                    icon="phonelink_erase",
+                    on_click=lambda: invoke(lambda: self._confirm_reset_binding(username)),
+                )
+                danger_action(
+                    "删除",
                     icon="delete",
-                    on_click=lambda current=username: self._confirm_delete(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
+                    on_click=lambda: invoke(lambda: self._confirm_delete(username)),
+                )
+        dialog.open()
+
+    def _confirm_user_disable(self, username: str) -> None:
+        confirm_dialog.show(
+            f"确定停用用户 {username}？",
+            impact="停用会更新 CCD 禁用状态，并终止该用户当前连接。",
+            object_count=1,
+            danger_level="warning",
+            on_confirm=lambda: self._toggle_user_status(username),
+        )
+
+    def _batch_set_status(self, enabled: bool) -> None:
+        """批量设置账号启用状态并汇总成功、跳过和失败。"""
+
+        if not self.selected_users:
+            ui.notify("请先选择用户", type="warning")
+            return
+        target = "active" if enabled else "disabled"
+        success = skipped = failed = 0
+        for username in list(self.selected_users):
+            try:
+                user = self.user_service.get(username)
+                if not user:
+                    failed += 1
+                    continue
+                if str(user.get("status") or "active") == target:
+                    skipped += 1
+                    continue
+                self.user_service.toggle_status(username)
+                success += 1
+            except Exception:
+                logger.exception("批量修改用户状态失败 user=%s target=%s", username, target)
+                failed += 1
+        ui.notify(
+            f"批量{'启用' if enabled else '停用'}完成：成功 {success}，跳过 {skipped}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
+        self._refresh_user_list()
+
+    def _batch_disable_confirm(self) -> None:
+        if not self.selected_users:
+            ui.notify("请先选择用户", type="warning")
+            return
+        confirm_dialog.show(
+            "确定停用所选用户？",
+            impact="停用会更新所选用户的 CCD 禁用状态，并终止其当前连接。",
+            object_count=len(self.selected_users),
+            danger_level="warning",
+            on_confirm=lambda: self._batch_set_status(False),
+        )
+
+    def _batch_kick_offline(self) -> None:
+        if not self.selected_users:
+            ui.notify("请先选择用户", type="warning")
+            return
+        success = skipped = failed = 0
+        for username in list(self.selected_users):
+            try:
+                if self.user_service.kick_offline(username):
+                    success += 1
+                else:
+                    skipped += 1
+            except Exception:
+                logger.exception("批量踢下线失败 user=%s", username)
+                failed += 1
+        ui.notify(
+            f"批量下线完成：成功 {success}，跳过 {skipped}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
+        self._refresh_user_list()
+
+    def _show_batch_change_group_dialog(self) -> None:
+        if not self.selected_users:
+            ui.notify("请先选择用户", type="warning")
+            return
+
+        from app.services.group.crud import GroupService
+
+        groups = [g for g in GroupService().list_all() if g.get("status") == "active"]
+        if not groups:
+            ui.notify("没有可用的启用用户组", type="warning")
+            return
+        options = {
+            str(group["id"]): f"{group['name']} ({group['subnet']})"
+            for group in groups
+        }
+        fields: dict[str, object] = {}
+
+        def body() -> None:
+            fields["group"] = ui.select(options, label="目标用户组").classes("w-full")
+            ui.label(
+                f"将对已选 {len(self.selected_users)} 个用户逐一切换；已在目标组的用户会跳过。"
+            ).classes("section-caption")
+
+        form = create_form_dialog(
+            "批量切换用户组",
+            body=body,
+            submit_label="切换",
+            on_submit=lambda: self._batch_change_group(
+                str(getattr(fields["group"], "value", "") or "")
+            ),
+        )
+        form.open()
+
+    def _batch_change_group(self, group_id: str) -> bool:
+        if not group_id:
+            ui.notify("请选择目标用户组", type="warning")
+            return False
+        success = skipped = failed = 0
+        for username in list(self.selected_users):
+            try:
+                user = self.user_service.get(username)
+                if not user:
+                    failed += 1
+                    continue
+                if str(user.get("group_id") or "") == group_id:
+                    skipped += 1
+                    continue
+                self.user_service.change_group(username, group_id)
+                success += 1
+            except Exception:
+                logger.exception("批量切换用户组失败 user=%s group=%s", username, group_id)
+                failed += 1
+        ui.notify(
+            f"批量切换完成：成功 {success}，跳过 {skipped}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
+        self._refresh_user_list()
+        return True
+
+    def _batch_delete_confirm(self) -> None:
+        if not self.selected_users:
+            ui.notify("请先选择用户", type="warning")
+            return
+        confirm_dialog.show(
+            "确定删除所选用户？",
+            impact="删除会吊销证书并清理用户配置，此操作不可恢复。",
+            object_count=len(self.selected_users),
+            danger_level="danger",
+            on_confirm=self._batch_delete,
+        )
+
+    def _batch_delete(self) -> None:
+        success = failed = 0
+        for username in list(self.selected_users):
+            try:
+                self.user_service.delete(username)
+                success += 1
+            except Exception:
+                logger.exception("批量删除用户失败 user=%s", username)
+                failed += 1
+        ui.notify(
+            f"批量删除完成：成功 {success}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
+        self.selected_users.clear()
+        self._refresh_user_list()
 
     def _short_serial(self, cert_serial: str) -> str:
         """生成适合列表展示的短序列号。"""
