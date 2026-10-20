@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import requests
-from nicegui import ui
+from nicegui import run, ui
 
 logger = logging.getLogger(__name__)
 
@@ -13,14 +13,19 @@ from app.core.config import load_config, save_config
 from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
 from app.models.config import SystemConfig
 from app.services.notify.dingtalk import send_dingtalk_text
+from app.services.notify.rocketchat import send_rocketchat_text
 from app.services.notify.wework import send_wework_text
 from app.services.openvpn.detector import validate_custom_path
-from app.services.openvpn.installer import _build_github_candidate_urls
 from app.ui.adapters.settings import (
     build_device_bind_config,
+    build_download_config,
+    build_github_candidate_urls,
     build_global_ssh_config,
+    build_notify_config,
     build_openvpn_path_config,
     build_server_connection_config,
+    parse_github_proxy_urls,
+    parse_rocketchat_channels,
     validate_easyrsa_script_path,
 )
 from app.ui.components.actions import primary_action, secondary_action
@@ -36,6 +41,8 @@ class SettingsPage:
 
     def __init__(self):
         self.config = load_config()
+        self._proxy_test_running = False
+        self._notify_test_running = False
 
     def render(self) -> None:
         """渲染系统设置页：顶栏 + 紧凑页签（含全局 SSH、下载、通知等）。"""
@@ -326,74 +333,92 @@ class SettingsPage:
         return True
 
     def _render_github_proxy_panel(self):
-        """渲染 GitHub 代理配置面板。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("Proxy").classes("settings-kicker")
-                    ui.label("GitHub 下载代理").classes("settings-panel-title")
-                    ui.label("每行一个前缀；装 OpenVPN / EasyRSA 时按序试连。").classes(
-                        "settings-panel-desc"
-                    )
+        """渲染 GitHub 下载代理及当前表单测试。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.github_proxy_input = ui.textarea(
-                    "代理列表",
-                    value="\n".join(self.config.github_proxy_urls or []),
-                    placeholder="https://gh-proxy.org/\nhttps://cdn.gh-proxy.org/\nhttps://gh.llkk.cc/",
-                ).classes("w-full")
-                self.proxy_status = ui.label("").classes("settings-status-text")
+        def body() -> None:
+            self.github_proxy_input = ui.textarea(
+                "代理列表",
+                value="\n".join(
+                    self.config.github_proxy_urls or []
+                ),
+                placeholder=(
+                    "https://gh-proxy.org/\n"
+                    "https://cdn.gh-proxy.org/\n"
+                    "https://gh.llkk.cc/"
+                ),
+            ).classes("w-full").props("rows=6")
+            self.proxy_status = ui.label(
+                "按配置顺序尝试代理，最后回退 GitHub 原始地址。"
+            ).classes("settings-status-text")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("测试 EasyRSA 下载", on_click=self._test_easyrsa_download).props(
-                    "outline no-caps no-ripple"
-                ).classes("settings-btn is-outline is-warn")
-                ui.button("保存", on_click=self._save_github_proxies).props("unelevated no-caps no-ripple").classes(
-                    "settings-btn is-primary"
-                )
+        def actions() -> None:
+            secondary_action(
+                "测试 EasyRSA 下载",
+                icon="network_check",
+                on_click=self._test_easyrsa_download,
+            )
+            primary_action(
+                "保存",
+                icon="save",
+                on_click=self._save_github_proxies,
+            )
+
+        render_form_section(
+            "GitHub 下载代理",
+            kicker="Proxy",
+            description=(
+                "每行一个 http/https 前缀；安装与下载按当前顺序尝试。"
+            ),
+            body=body,
+            actions=actions,
+        )
 
     def _render_notify_panel(self):
-        """渲染通知：启用与通道选择；选中钉钉或企业微信时显示对应机器人参数表单。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("Notify").classes("settings-kicker")
-                    ui.label("通知推送").classes("settings-panel-title")
-                    ui.label(
-                        "勾选启用并选择通道后，用户列表「推送下载链接」才会发到对应机器人。"
-                    ).classes("settings-panel-desc")
+        """渲染通知总开关、通道配置与当前表单测试。"""
 
-            prov = self.config.get("notify_provider") or "none"
-            if prov not in ("none", "dingtalk", "wework"):
-                prov = "none"
+        provider = str(
+            self.config.get("notify_provider") or "none"
+        ).strip()
+        if provider not in {
+            "none",
+            "dingtalk",
+            "wework",
+            "rocketchat",
+        }:
+            provider = "none"
 
-            with ui.element("div").classes("settings-stack"):
-                self.notify_enabled_input = ui.checkbox(
-                    "启用推送下载链接",
-                    value=bool(self.config.get("notify_enabled")),
-                ).classes("w-full")
-                self.notify_provider_select = ui.select(
-                    {
-                        "none": "不使用",
-                        "dingtalk": "钉钉机器人",
-                        "wework": "企业微信机器人",
-                    },
-                    label="通知通道",
-                    value=prov,
-                ).classes("w-full")
+        def body() -> None:
+            self.notify_enabled_input = ui.switch(
+                "启用推送下载链接",
+                value=bool(self.config.get("notify_enabled")),
+            ).classes("w-full")
+            self.notify_provider_select = ui.select(
+                {
+                    "none": "不使用",
+                    "dingtalk": "钉钉机器人",
+                    "wework": "企业微信机器人",
+                    "rocketchat": "Rocket.Chat",
+                },
+                label="通知通道",
+                value=provider,
+            ).classes("w-full")
+            self.notify_status = ui.label(
+                "测试按钮使用当前表单值，无需先保存。"
+            ).classes("settings-status-text")
 
-            # bind_visibility_from 第二参数须为 "value"，默认 "visible" 会绑错属性导致选中后仍不显示
-            with ui.column().classes("w-full gap-0") as dingtalk_fields:
-                ui.label("钉钉机器人参数").classes("settings-panel-title q-mt-md q-mb-none")
-                ui.label(
-                    "钉钉群 → 群设置 → 智能群助手 → 添加机器人 → 自定义，复制 Webhook；"
-                    "安全设置勾选「加签」时再填写 SEC。"
-                ).classes("settings-panel-desc q-mt-xs q-mb-sm")
-
+            with ui.column().classes(
+                "w-full gap-2 q-mt-sm"
+            ) as dingtalk_fields:
+                ui.label("钉钉机器人参数").classes(
+                    "settings-panel-title"
+                )
                 self.webhook_input = ui.input(
                     "Webhook URL",
                     value=self.config.dingtalk_webhook or "",
-                    placeholder="https://oapi.dingtalk.com/robot/send?access_token=...",
+                    placeholder=(
+                        "https://oapi.dingtalk.com/robot/send?"
+                        "access_token=..."
+                    ),
                 ).classes("w-full")
                 self.dingtalk_secret_input = ui.input(
                     "加签密钥 (SEC…)",
@@ -402,80 +427,150 @@ class SettingsPage:
                     password_toggle_button=True,
                     placeholder="未启用加签可留空",
                 ).classes("w-full")
-
+                secondary_action(
+                    "发送测试消息（钉钉）",
+                    icon="send",
+                    on_click=self._test_webhook,
+                )
             dingtalk_fields.bind_visibility_from(
                 self.notify_provider_select,
                 "value",
                 value="dingtalk",
             )
 
-            with ui.column().classes("w-full gap-0") as wework_fields:
-                ui.label("企业微信机器人参数").classes("settings-panel-title q-mt-md q-mb-none")
-                ui.label(
-                    "企业微信群 → 群机器人 → 添加 → 复制 Webhook 地址（qyapi.weixin.qq.com/cgi-bin/webhook/send）。"
-                ).classes("settings-panel-desc q-mt-xs q-mb-sm")
-
+            with ui.column().classes(
+                "w-full gap-2 q-mt-sm"
+            ) as wework_fields:
+                ui.label("企业微信机器人参数").classes(
+                    "settings-panel-title"
+                )
                 self.wework_webhook_input = ui.input(
                     "Webhook URL（企业微信）",
                     value=self.config.get("wework_webhook") or "",
-                    placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
+                    placeholder=(
+                        "https://qyapi.weixin.qq.com/cgi-bin/"
+                        "webhook/send?key=..."
+                    ),
                 ).classes("w-full")
-
+                secondary_action(
+                    "发送测试消息（企业微信）",
+                    icon="send",
+                    on_click=self._test_wework_webhook,
+                )
             wework_fields.bind_visibility_from(
                 self.notify_provider_select,
                 "value",
                 value="wework",
             )
 
-            with ui.row().classes("settings-toolbar") as dingtalk_actions:
-                ui.button("发送测试消息（钉钉）", on_click=self._test_webhook).props(
-                    "outline no-caps no-ripple"
-                ).classes("settings-btn is-outline")
-
-            dingtalk_actions.bind_visibility_from(
+            with ui.column().classes(
+                "w-full gap-2 q-mt-sm"
+            ) as rocketchat_fields:
+                ui.label("Rocket.Chat 参数").classes(
+                    "settings-panel-title"
+                )
+                self.rocketchat_webhook_input = ui.input(
+                    "Incoming Webhook URL",
+                    value=(
+                        self.config.get("rocketchat_webhook")
+                        or ""
+                    ),
+                    placeholder="https://chat.example/hooks/...",
+                ).classes("w-full")
+                channel_value = self.config.get(
+                    "rocketchat_channel"
+                )
+                if isinstance(channel_value, list):
+                    channel_text = "\n".join(
+                        str(item) for item in channel_value
+                    )
+                else:
+                    channel_text = str(channel_value or "")
+                self.rocketchat_channel_input = ui.textarea(
+                    "频道（每行一个或逗号分隔）",
+                    value=channel_text,
+                    placeholder="#vpn-alerts",
+                ).classes("w-full").props("rows=3")
+                with ui.row().classes("w-full gap-sm flex-wrap"):
+                    self.rocketchat_username_input = ui.input(
+                        "显示用户名",
+                        value=(
+                            self.config.get("rocketchat_username")
+                            or "VPN管理"
+                        ),
+                    ).classes("flex-1 min-w-[10rem]")
+                    self.rocketchat_icon_input = ui.input(
+                        "图标 Emoji",
+                        value=(
+                            self.config.get("rocketchat_icon_emoji")
+                            or ":lock:"
+                        ),
+                    ).classes("flex-1 min-w-[10rem]")
+                self.rocketchat_title_input = ui.input(
+                    "消息标题",
+                    value=(
+                        self.config.get("rocketchat_title")
+                        or "OpenVPN"
+                    ),
+                ).classes("w-full")
+                secondary_action(
+                    "发送测试消息（Rocket.Chat）",
+                    icon="send",
+                    on_click=self._test_rocketchat_webhook,
+                )
+            rocketchat_fields.bind_visibility_from(
                 self.notify_provider_select,
                 "value",
-                value="dingtalk",
+                value="rocketchat",
             )
 
-            with ui.row().classes("settings-toolbar") as wework_actions:
-                ui.button("发送测试消息（企业微信）", on_click=self._test_wework_webhook).props(
-                    "outline no-caps no-ripple"
-                ).classes("settings-btn is-outline")
-
-            wework_actions.bind_visibility_from(
-                self.notify_provider_select,
-                "value",
-                value="wework",
+        def actions() -> None:
+            primary_action(
+                "保存通知配置",
+                icon="save",
+                on_click=self._save_notify,
             )
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("保存通知配置", on_click=self._save_notify).props(
-                    "unelevated no-caps no-ripple"
-                ).classes("settings-btn is-primary")
+        render_form_section(
+            "通知推送",
+            kicker="Notify",
+            description=(
+                "启用并选择通道后，用户页的一次性下载链接"
+                "会推送到对应机器人。"
+            ),
+            body=body,
+            actions=actions,
+        )
 
     def _render_download_panel(self):
-        """渲染下载链接配置面板。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("Download").classes("settings-kicker")
-                    ui.label("下载链接").classes("settings-panel-title")
-                    ui.label(
-                        "留空按当前访问自动生成；localhost 时用启动解析的本机 IP。反代或固定域名在此覆盖。"
-                    ).classes("settings-panel-desc")
+        """渲染固定下载基址；留空继续自动解析当前访问地址。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.base_url_input = ui.input(
-                    "基础 URL（可选）",
-                    value=self.config.download_base_url or "",
-                    placeholder="留空自动；例 https://vpn.example.com",
-                ).classes("w-full")
+        def body() -> None:
+            self.base_url_input = ui.input(
+                "基础 URL（可选）",
+                value=self.config.download_base_url or "",
+                placeholder="留空自动；例 https://vpn.example.com",
+            ).classes("w-full")
+            ui.label(
+                "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。"
+            ).classes("settings-panel-desc")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("保存", on_click=self._save_base_url).props("unelevated no-caps no-ripple").classes(
-                    "settings-btn is-primary"
-                )
+        def actions() -> None:
+            primary_action(
+                "保存",
+                icon="save",
+                on_click=self._save_base_url,
+            )
+
+        render_form_section(
+            "下载链接",
+            kicker="Download",
+            description=(
+                "留空时按当前请求与监听地址自动生成；固定域名或反代前缀可在此覆盖。"
+            ),
+            body=body,
+            actions=actions,
+        )
 
     def _validate_path(self) -> bool:
         """同时验证 OpenVPN 与 EasyRSA 可执行路径。"""
