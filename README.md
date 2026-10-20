@@ -58,9 +58,13 @@ python main.py
 
 ## 测试
 
+本地与 GitHub Actions 使用同一条单元测试命令：
+
 ```bash
-pytest tests/unit -q
+python -m pytest tests/unit -q
 ```
+
+GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Python 3.10 和 3.14。
 
 ## 目录结构（摘）
 
