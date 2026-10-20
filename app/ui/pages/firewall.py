@@ -65,7 +65,7 @@ from app.ui.components.actions import (
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.components.list_selection import (
@@ -769,28 +769,9 @@ class FirewallPage:
         self._refresh_remote_view()
 
     async def _on_remote_row_enabled_change(self, idx: int, e) -> None:
-        """对端链规则启用开关：更新本地工作副本后立即 SSH 写回对端。"""
-        if not self._require_remote_strategy_tab():
-            return
-        pid = self._active_remote_peer_id()
-        if not pid:
-            self._notify_for_page("请选择对端", type="warning")
-            return
-        cname = IptablesManager.peer_chain_name_for_id(pid)
-        c2 = remote_chain_cache.read_remote_chain_cache(pid) or {}
-        rws = list(c2.get("rows") or [])
-        if not (0 <= idx < len(rws)):
-            logger.error("对端链行索引越界 peer=%s idx=%s n=%s", pid, idx, len(rws))
-            self._notify_for_page("数据已变，请重拉或换对端。", type="warning")
-            self._refresh_remote_view()
-            return
-        rws[idx]["enabled"] = bool(e.value)
-        remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
-        )
-        if await self._apply_remote_cache_to_peer(pid):
-            self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        """兼容旧开关入口。"""
+
+        await self._set_remote_row_enabled(idx, bool(e.value))
 
     @staticmethod
     def _rows_from_remote_import_payload(raw: dict) -> list[dict]:
@@ -911,72 +892,333 @@ class FirewallPage:
         except RuntimeError:
             pass
 
+    @staticmethod
+    def _remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
+        """对端链规则核心列定义，原始 rest 始终保留。"""
+
+        return [
+            {
+                "field": "row_number",
+                "headerName": "#",
+                "width": 85,
+                "pinned": "left",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "rowDrag": bool(can_reorder),
+            },
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "width": 95,
+            },
+            {
+                "field": "priority",
+                "headerName": "优先级",
+                "width": 105,
+            },
+            {
+                "field": "protocol",
+                "headerName": "协议",
+                "width": 90,
+            },
+            {
+                "field": "action_label",
+                "headerName": "动作",
+                "width": 105,
+            },
+            {
+                "field": "source",
+                "headerName": "来源",
+                "minWidth": 170,
+                "flex": 1,
+            },
+            {
+                "field": "dest",
+                "headerName": "目标",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "dest_port",
+                "headerName": "端口",
+                "minWidth": 105,
+            },
+            {
+                "field": "description",
+                "headerName": "说明",
+                "minWidth": 200,
+                "flex": 1,
+            },
+            {
+                "field": "raw_rest",
+                "headerName": "原始规则",
+                "minWidth": 320,
+                "flex": 2,
+            },
+            {
+                "field": "actions",
+                "headerName": "操作",
+                "width": 100,
+                "sortable": False,
+                "filter": False,
+                "pinned": "right",
+            },
+        ]
+
     def _refresh_remote_view(self) -> None:
+        """按当前对端缓存刷新 AG Grid；拉取失败时保留可用旧缓存。"""
+
         if not self._remote_list_container:
             return
+
+        self._refresh_remote_toolbar_state()
         self._remote_list_container.clear()
-        self._remote_select_all_checkbox = None
+        self._remote_grid_view = None
         self._visible_remote_indices = []
-        self._remote_row_checkboxes.clear()
-        pid = self._active_remote_peer_id()
-        with self._remote_list_container:
-            if not pid:
-                self._render_empty(
-                    "hub",
-                    "请先选对端",
-                    "在上方选对端；进页会自动尝试拉取链。",
-                )
-                if self._remote_rules_total_footer is not None:
-                    self._remote_rules_total_footer.set_text("0 RULES TOTAL")
-                return
-            cache = remote_chain_cache.read_remote_chain_cache(pid)
-            rows = list(cache.get("rows") or []) if cache else []
-            self._visible_remote_indices = list(range(len(rows)))
-            if cache and cache.get("rows") is not None:
-                n = len(cache.get("rows") or [])
-                self._selected_remote_indices = {i for i in self._selected_remote_indices if 0 <= i < n}
-            else:
-                self._selected_remote_indices.clear()
+
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._remote_grid_rows = []
+            self._selected_remote_indices.clear()
             if self._remote_rules_total_footer is not None:
-                self._remote_rules_total_footer.set_text(f"{len(rows)} RULES TOTAL")
-            if not cache:
-                self._render_empty(
-                    "cloud_off",
-                    "尚无本地副本",
-                    "可重进本页自动拉取，或用「导入 / 新建」后再写回。",
+                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
+            with self._remote_list_container:
+                empty_state(
+                    "请先选择对端",
+                    description="选择对端后会自动尝试通过 SSH 拉取远端链真值。",
+                    icon="hub",
                 )
-                return
+            return
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        fetch_running = self._remote_fetch_running_peer == peer_id
+        fetch_error = str(
+            self._remote_fetch_error_by_peer.get(peer_id, "")
+        ).strip()
+
+        if cache is None:
+            self._remote_grid_rows = []
+            self._selected_remote_indices.clear()
+            if self._remote_rules_total_footer is not None:
+                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
+            with self._remote_list_container:
+                if fetch_running:
+                    loading_state("正在从对端拉取规则…")
+                elif fetch_error:
+                    error_state(
+                        fetch_error,
+                        title="拉取对端规则失败",
+                        on_retry=self._schedule_remote_fetch_via_ssh,
+                    )
+                else:
+                    empty_state(
+                        "尚无本地工作副本",
+                        description="点击“从对端拉取”读取真实链；新建或导入后也可以建立工作副本。",
+                        action_label="从对端拉取",
+                        on_action=self._schedule_remote_fetch_via_ssh,
+                        icon="cloud_download",
+                    )
+            return
+
+        raw_rows = list(cache.get("rows") or [])
+        rows = adapt_remote_rule_rows(raw_rows, peer_id=peer_id)
+        for row in rows:
+            row["actions"] = "操作"
+        self._remote_grid_rows = rows
+        self._visible_remote_indices = [int(row["index"]) for row in rows]
+
+        valid_indices = set(self._visible_remote_indices)
+        self._selected_remote_indices.intersection_update(valid_indices)
+
+        if self._remote_rules_total_footer is not None:
+            self._remote_rules_total_footer.set_text(
+                f"{len(rows)} RULES TOTAL"
+            )
+
+        with self._remote_list_container:
+            if fetch_error:
+                with ui.element("div").classes("w-full q-mb-sm"):
+                    error_state(
+                        fetch_error,
+                        title="本次拉取失败，当前仍显示上次缓存",
+                        on_retry=self._schedule_remote_fetch_via_ssh,
+                    )
+
             if not rows:
-                self._render_empty(
-                    "shield",
-                    "暂无规则",
-                    "新建写回，或等拉取/导入；可拖拽排序。",
+                empty_state(
+                    "远端链暂无规则",
+                    description="当前工作副本为空；可以新建、导入或再次从对端拉取。",
+                    action_label="新建规则",
+                    on_action=self._show_create_remote_line_dialog,
+                    icon="shield",
                 )
                 return
-            peer_row = self._peer_service.get(pid) or {}
-            peer_badge = str(peer_row.get("name") or "").strip() or self._peer_id_short_label(pid)
-            t_pull = _format_peer_cache_timestamp(str(cache.get("last_pulled_at") or "") or None)
-            t_sync = _format_peer_cache_timestamp(str(cache.get("last_pushed_at") or "") or None)
-            with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self._remote_select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_remote_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前对端全部规则")
-                        with ui.column().classes("gap-1"):
-                            ui.label("规则顺序").classes("mgmt-section-title")
-                            ui.label(f"拉取：{t_pull}  同步：{t_sync}").classes("mgmt-section-sub")
-                    ui.label(f"对端: {peer_badge}").classes("meta-badge")
-                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
-                    for i, row in enumerate(rows):
-                        self._render_remote_rule_card(i, row, row_index_1based=i + 1, n_rows=len(rows))
-                sortable_list.make_sortable(
-                    on_end=self._on_remote_sort_end,
-                    handle=".firewall-rule-drag",
-                    ghost_class="sortable-ghost",
+
+            selected_ids = {
+                f"{peer_id}:{index}"
+                for index in self._selected_remote_indices
+            }
+            self._remote_grid_view = render_data_grid(
+                self._remote_grid_columns(can_reorder=False),
+                rows,
+                row_id="id",
+                page_size=50,
+                selectable=True,
+                selected_ids=selected_ids,
+                on_cell_click=self._on_remote_grid_cell_click,
+            )
+            self._remote_grid_view.grid.on(
+                "selectionChanged",
+                self._on_remote_grid_selection_changed,
+            )
+
+    async def _on_remote_grid_selection_changed(self, *_args) -> None:
+        """同步 AG Grid 选择到现有远端批量操作索引集合。"""
+
+        if self._remote_grid_view is None:
+            self._selected_remote_indices.clear()
+            return
+        selected = await self._remote_grid_view.get_selected_rows()
+        self._selected_remote_indices = {
+            int(row.get("index"))
+            for row in selected
+            if isinstance(row.get("index"), int)
+        }
+
+    async def _on_remote_grid_cell_click(self, event) -> None:
+        """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            return
+        data = args.get("data") or {}
+        if not isinstance(data, dict):
+            return
+
+        col_id = str(args.get("colId") or "")
+        index = data.get("index")
+        if col_id == "actions" and isinstance(index, int):
+            self._show_remote_rule_actions(index)
+            return
+
+        value = ""
+        if col_id == "raw_rest":
+            value = str(data.get("raw_rest") or "")
+        elif col_id in {"source", "dest", "dest_port"}:
+            value = str(data.get(col_id) or "")
+        if value and value not in {"—", "*"}:
+            await self._copy_text_to_clipboard(value)
+
+    def _show_remote_rule_actions(self, index: int) -> None:
+        """远端单行操作面板；编辑路径继续使用现有写回逻辑。"""
+
+        peer_id = self._active_remote_peer_id()
+        cache = (
+            remote_chain_cache.read_remote_chain_cache(peer_id)
+            if peer_id
+            else None
+        )
+        rows = list(cache.get("rows") or []) if cache else []
+        if not (0 <= index < len(rows)):
+            self._notify_for_page(
+                "本地工作副本已变化，请刷新后重试",
+                type="warning",
+            )
+            return
+        row = dict(rows[index])
+        enabled = bool(row.get("enabled", True))
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+            ui.label(f"对端规则 #{index + 1}").classes("text-h6")
+            ui.label(str(row.get("rest") or "")).classes(
+                "font-mono text-caption break-all"
+            )
+            with ui.column().classes("w-full gap-2 q-mt-sm"):
+                secondary_action(
+                    "编辑",
+                    icon="edit",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._show_edit_remote_line_dialog(index, row),
+                    ),
                 )
-                self._sync_remote_select_all()
+                secondary_action(
+                    "停用" if enabled else "启用",
+                    icon="pause_circle" if enabled else "play_circle",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._schedule_remote_coro(
+                            self._set_remote_row_enabled(index, not enabled)
+                        ),
+                    ),
+                )
+                secondary_action(
+                    "复制原始规则",
+                    icon="content_copy",
+                    on_click=lambda: self._schedule_center_rule_copy(
+                        {"rest": str(row.get("rest") or "")}
+                    ),
+                )
+                danger_action(
+                    "删除",
+                    icon="delete",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._confirm_delete_remote_line(index),
+                    ),
+                )
+            secondary_action("关闭", on_click=dialog.close)
+
+        dialog.open()
+
+    async def _set_remote_row_enabled(
+        self,
+        index: int,
+        enabled: bool,
+    ) -> bool:
+        """按显式目标状态切换单行并立即写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= index < len(rows)):
+            self._notify_for_page(
+                "本地数据已变化，请重拉或切换对端",
+                type="warning",
+            )
+            self._refresh_remote_view()
+            return False
+
+        if bool(rows[index].get("enabled", True)) == bool(enabled):
+            return True
+
+        rows[index]["enabled"] = bool(enabled)
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        remote_chain_cache.mark_pending_apply(
+            peer_id,
+            chain,
+            bool(cache.get("chain_exists", True)),
+            rows,
+        )
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if ok:
+            self._notify_for_page(
+                "已启用并写回对端"
+                if enabled
+                else "已停用并写回对端",
+                type="positive",
+            )
+        self._refresh_remote_view()
+        return ok
 
     def _peer_id_short_label(self, pid: str) -> str:
         p = str(pid or "")
