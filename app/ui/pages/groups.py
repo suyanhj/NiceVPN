@@ -12,6 +12,7 @@ from app.core.config import load_config
 from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
+from app.ui.adapters.groups import adapt_group_view
 from app.ui.components.actions import danger_action, primary_action, secondary_action
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.list_selection import (
@@ -128,10 +129,10 @@ class GroupsPage:
     def _render_group_card(self, group: dict, is_root: bool = False):
         """渲染单个用户组卡片。"""
 
-        group_id = str(group["id"])
-        status = str(group.get("status") or "active")
-        is_active = status == "active"
-        user_count = int(group.get("user_count") or 0)
+        view = adapt_group_view(group, is_root=is_root)
+        group_id = view["id"]
+        is_active = bool(view["active"])
+        user_count = int(view["user_count"])
 
         with ui.element("div").classes("mgmt-record-card"):
             with ui.element("div").classes("mgmt-record-main"):
@@ -142,21 +143,21 @@ class GroupsPage:
 
                 with ui.element("div").classes("mgmt-record-copy"):
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.label(str(group.get("name") or "未命名用户组")).classes("mgmt-record-title")
+                        ui.label(str(view["name"])).classes("mgmt-record-title")
                         if is_root:
                             ui.badge("根组", color="primary").props("outline")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
-                            ui.label(str(group.get("subnet") or "未配置子网"))
+                            ui.label(str(view["subnet"]))
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="14px")
                             ui.label(f"用户数 {user_count}")
 
             with ui.column().classes("group-record-side hidden md:flex gap-2"):
                 status_badge(
-                    "running" if is_active else "disabled",
-                    label="启用" if is_active else "停用",
+                    view["status_tone"],
+                    label=view["status_label"],
                 )
                 structured_value(
                     group_id,
@@ -191,7 +192,7 @@ class GroupsPage:
                         "删除",
                         icon="delete",
                         disabled=True,
-                        tooltip="根组定义全局 VPN 子网，不允许删除",
+                        tooltip=str(view["delete_reason"]),
                     ).props("dense")
                 else:
                     danger_action(
