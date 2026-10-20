@@ -260,56 +260,90 @@ class InitPage:
                     self._render_complete()
 
     def _render_detect_result(self, result: StepResult):
-        """渲染环境检查结果。"""
-        with self.content:
-            if result.success:
-                self.status_label.text = "OpenVPN 已就绪，下一步建立证书。"
-                self._render_pki_form()
-                return
+        """渲染环境检查结果与安装/自定义路径分支。"""
 
-            self.status_label.text = "未检测到 OpenVPN：可自动安装或指定路径。"
-            with ui.card().classes("page-panel"):
-                ui.label("接入组件未就绪").classes("section-title")
-                ui.label("本机未找到可用的 OpenVPN，请先安装或指定可执行文件。").classes("section-caption")
-                with ui.row().classes("action-row q-mt-md"):
-                    ui.button("自动安装 OpenVPN", icon="download", on_click=self._handle_install).props(
-                        "unelevated color=primary"
-                    ).classes("primary-action")
-                    ui.button("我已安装，指定路径", icon="route", on_click=self._render_custom_path_form).props(
-                        "outline"
-                    ).classes("secondary-action")
+        if result.success:
+            self.status_label.text = "OpenVPN 已就绪，下一步建立证书。"
+            self._render_pki_form()
+            return
+
+        self.status_label.text = "未检测到可用 OpenVPN，请选择安装方式。"
+
+        def body() -> None:
+            ui.label(
+                "自动安装会识别当前 Linux 发行版并执行项目安装流程；"
+                "若 OpenVPN 已在自定义目录，可直接指定绝对路径。"
+            ).classes("section-caption")
+
+        def actions() -> None:
+            primary_action(
+                "自动安装 OpenVPN",
+                icon="download",
+                on_click=self._handle_install,
+                disabled=self._install_running,
+            )
+            secondary_action(
+                "指定已安装路径",
+                icon="route",
+                on_click=self._render_custom_path_form,
+                disabled=self._install_running,
+            )
+
+        render_form_section(
+            "接入组件未就绪",
+            description="先准备 OpenVPN 2.7.0+，再继续证书初始化。",
+            kicker="Environment",
+            body=body,
+            actions=actions,
+        )
 
     def _render_custom_path_form(self):
-        """渲染自定义路径表单。"""
+        """渲染共享自定义路径表单。"""
+
         self.current_step = WizardStep.CUSTOM_PATH
         self._update_step_indicator()
         self.content.clear()
+        refs: dict[str, object] = {}
+
+        def body() -> None:
+            refs["path"] = ui.input(
+                "OpenVPN 可执行文件路径",
+                placeholder="/usr/local/sbin/openvpn",
+            ).classes("w-full")
+            ui.label(
+                "必须填写绝对路径；验证会检查版本并保存 OpenVPN / EasyRSA 位置。"
+            ).classes("section-caption")
+
+        def actions() -> None:
+            primary_action(
+                "校验并继续",
+                icon="task_alt",
+                on_click=lambda: self._run_step(
+                    WizardStep.CUSTOM_PATH,
+                    {"path": refs["path"].value},
+                ),
+            )
+            secondary_action(
+                "返回上一步",
+                icon="arrow_back",
+                on_click=lambda: self._run_step(
+                    WizardStep.DETECT_OPENVPN
+                ),
+            )
 
         with self.content:
             self.status_label.text = "填写 OpenVPN 可执行文件的绝对路径。"
-            with ui.card().classes("page-panel"):
-                ui.label("校验自定义执行路径").classes("section-title")
-                ui.label("已安装但不在 PATH 时，在此填写路径。").classes("section-caption")
-                path_input = ui.input(
-                    "OpenVPN 可执行文件路径",
-                    placeholder="/usr/local/sbin/openvpn",
-                ).classes("w-full q-mt-md")
-
-                with ui.row().classes("action-row q-mt-md"):
-                    ui.button(
-                        "校验并继续",
-                        icon="task_alt",
-                        on_click=lambda: self._run_step(
-                            WizardStep.CUSTOM_PATH,
-                            {"path": path_input.value},
-                        ),
-                    ).props("unelevated color=primary").classes("primary-action")
-                    ui.button("返回上一步", icon="arrow_back", on_click=lambda: self._run_step(WizardStep.DETECT_OPENVPN)).props(
-                        "flat"
-                    ).classes("secondary-action")
+            render_form_section(
+                "校验自定义执行路径",
+                description="适用于已安装但不在 PATH 中的 OpenVPN。",
+                kicker="Custom path",
+                body=body,
+                actions=actions,
+            )
 
     def _handle_install(self):
-        """后台执行 OpenVPN 安装。"""
+        """后台执行 OpenVPN 安装，并统一进度/重复提交状态。"""
+
         if self._install_running:
             ui.notify("OpenVPN 正在安装，请稍候", type="warning")
             return
@@ -323,32 +357,53 @@ class InitPage:
         self._install_log_queue = queue.Queue()
 
         with self.content:
-            self.status_label.text = "正在安装 OpenVPN，请看下方日志。"
-            with ui.card().classes("page-panel"):
-                ui.label("正在安装接入组件").classes("section-title")
-                ui.label("日志自动刷新；勿关页、勿重复点击安装。").classes("section-caption")
-                ui.spinner("dots", size="lg").classes("q-my-md")
+            self.status_label.text = "正在安装 OpenVPN，请查看实时日志。"
+
+            def body() -> None:
+                ui.spinner("dots", size="lg").classes("q-my-sm")
                 with ui.element("div").classes("log-frame"):
-                    log_area = ui.log(max_lines=80).classes("w-full h-72")
+                    log_area = ui.log(max_lines=120).classes("w-full h-72")
                 log_area.push("开始执行 OpenVPN 接入组件安装流程...")
+                self._install_log_area = log_area
 
-                def on_output(message: str):
-                    self._install_log_queue.put(message)
+            render_form_section(
+                "正在安装接入组件",
+                description="安装任务在后台执行；重复点击会被阻止。页面关闭后停止 UI 轮询，不中断系统安装进程。",
+                kicker="Install",
+                body=body,
+            )
 
-                def worker():
-                    try:
-                        self._install_result = self.wizard.run_step(
-                            WizardStep.INSTALL_OPENVPN,
-                            {"on_output": on_output},
-                        )
-                    except Exception as exc:
-                        self._install_result = StepResult(False, f"安装过程异常: {exc}")
+            log_area = self._install_log_area
 
-                threading.Thread(target=worker, daemon=True).start()
-                self._install_timer = ui.timer(0.2, lambda: self._poll_install_progress(log_area))
+            def on_output(message: str):
+                self._install_log_queue.put(message)
+
+            def worker():
+                try:
+                    self._install_result = self.wizard.run_step(
+                        WizardStep.INSTALL_OPENVPN,
+                        {"on_output": on_output},
+                    )
+                except Exception as exc:
+                    logger.exception("OpenVPN 安装步骤异常")
+                    self._install_result = StepResult(
+                        False,
+                        f"安装过程异常: {type(exc).__name__}",
+                    )
+
+            threading.Thread(target=worker, daemon=True).start()
+            self._install_timer = ui.timer(
+                0.2,
+                lambda: self._poll_install_progress(log_area),
+            )
 
     def _poll_install_progress(self, log_area):
         """轮询安装进度并刷新日志。"""
+
+        if self._client_deleted:
+            self._cleanup_timers()
+            return
+
         while True:
             try:
                 message = self._install_log_queue.get_nowait()
@@ -365,10 +420,7 @@ class InitPage:
             return
 
         if self._install_timer is not None:
-            if hasattr(self._install_timer, "deactivate"):
-                self._install_timer.deactivate()
-            elif hasattr(self._install_timer, "active"):
-                self._install_timer.active = False
+            self._install_timer.deactivate()
             self._install_timer = None
 
         self._install_running = False
@@ -386,7 +438,8 @@ class InitPage:
                 self._render_pki_form()
 
     def _handle_pki_init(self):
-        """后台执行 PKI 初始化。"""
+        """后台执行 PKI 初始化，并保护重复提交与 UI 生命周期。"""
+
         if self._pki_running:
             ui.notify("证书体系初始化进行中，请稍候", type="warning")
             return
@@ -400,31 +453,52 @@ class InitPage:
 
         with self.content:
             self.status_label.text = "正在建立证书体系…"
-            with ui.card().classes("page-panel"):
-                ui.label("正在建立证书体系").classes("section-title")
-                ui.label("自动生成 CA、服务端证书、DH、CRL、tls-crypt-v2。").classes("section-caption")
-                ui.spinner("dots", size="lg").classes("q-my-md")
+
+            def body() -> None:
+                ui.spinner("dots", size="lg").classes("q-my-sm")
                 with ui.element("div").classes("log-frame"):
-                    log_area = ui.log(max_lines=100).classes("w-full h-72")
+                    log_area = ui.log(max_lines=140).classes("w-full h-72")
                 log_area.push("开始执行平台证书体系初始化流程...")
+                self._pki_log_area = log_area
 
-                def on_output(message: str):
-                    self._pki_log_queue.put(message)
+            render_form_section(
+                "正在建立证书体系",
+                description="自动生成 CA、服务端证书、DH、CRL 与 tls-crypt-v2；日志不展示私钥内容。",
+                kicker="PKI",
+                body=body,
+            )
 
-                def worker():
-                    try:
-                        self._pki_result = self.wizard.run_step(
-                            WizardStep.CONFIG_PKI,
-                            {"on_output": on_output},
-                        )
-                    except Exception as exc:
-                        self._pki_result = StepResult(False, f"PKI 初始化过程异常: {exc}")
+            log_area = self._pki_log_area
 
-                threading.Thread(target=worker, daemon=True).start()
-                self._pki_timer = ui.timer(0.2, lambda: self._poll_pki_progress(log_area))
+            def on_output(message: str):
+                self._pki_log_queue.put(message)
+
+            def worker():
+                try:
+                    self._pki_result = self.wizard.run_step(
+                        WizardStep.CONFIG_PKI,
+                        {"on_output": on_output},
+                    )
+                except Exception as exc:
+                    logger.exception("PKI 初始化步骤异常")
+                    self._pki_result = StepResult(
+                        False,
+                        f"PKI 初始化过程异常: {type(exc).__name__}",
+                    )
+
+            threading.Thread(target=worker, daemon=True).start()
+            self._pki_timer = ui.timer(
+                0.2,
+                lambda: self._poll_pki_progress(log_area),
+            )
 
     def _poll_pki_progress(self, log_area):
         """轮询 PKI 初始化进度。"""
+
+        if self._client_deleted:
+            self._cleanup_timers()
+            return
+
         while True:
             try:
                 message = self._pki_log_queue.get_nowait()
@@ -447,10 +521,7 @@ class InitPage:
             return
 
         if self._pki_timer is not None:
-            if hasattr(self._pki_timer, "deactivate"):
-                self._pki_timer.deactivate()
-            elif hasattr(self._pki_timer, "active"):
-                self._pki_timer.active = False
+            self._pki_timer.deactivate()
             self._pki_timer = None
 
         self._pki_running = False
@@ -460,15 +531,31 @@ class InitPage:
         self._render_step_result(result)
 
     def _render_pki_form(self):
-        """渲染 PKI 初始化按钮。"""
+        """渲染共享 PKI 初始化步骤。"""
+
+        def body() -> None:
+            ui.label(
+                "平台会自动初始化 PKI，并生成运行所需证书与密钥。"
+                " 此页面不会回显任何私钥材料。"
+            ).classes("section-caption")
+
+        def actions() -> None:
+            primary_action(
+                "开始建立证书体系",
+                icon="vpn_key",
+                on_click=self._handle_pki_init,
+                disabled=self._pki_running,
+            )
+
         with self.content:
             self.status_label.text = "OpenVPN 已就绪，可建立证书体系。"
-            with ui.card().classes("page-panel"):
-                ui.label("建立平台证书体系").classes("section-title")
-                ui.label("签发服务端与客户端凭据，过程全自动，无需在控制台输入。").classes("section-caption")
-                ui.button("开始建立证书体系", icon="vpn_key", on_click=self._handle_pki_init).props(
-                    "unelevated color=primary"
-                ).classes("primary-action q-mt-md")
+            render_form_section(
+                "建立平台证书体系",
+                description="签发服务端与客户端凭据，并准备 CRL / tls-crypt-v2。",
+                kicker="PKI",
+                body=body,
+                actions=actions,
+            )
 
     def _render_subnet_form(self):
         """渲染全局子网 + 服务端连接配置表单。"""
