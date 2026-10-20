@@ -72,6 +72,8 @@ class FakeRuleService:
         self.enabled_calls: list[tuple[str, bool]] = []
         self.delete_calls: list[str] = []
         self.reorder_calls: list[tuple[str, list[str]]] = []
+        self.create_calls: list[dict] = []
+        self.update_calls: list[tuple[str, dict]] = []
 
     def list_unified_flat(self):
         return [dict(row) for row in self.rows]
@@ -100,10 +102,39 @@ class FakeRuleService:
         self.rows = reordered
         return True
 
+    def create(self, payload: dict):
+        self.create_calls.append(dict(payload))
+        return dict(payload)
+
+    def update_by_id(self, rule_id: str, payload: dict):
+        self.update_calls.append((rule_id, dict(payload)))
+        return dict(payload)
+
 
 class FakePeerService:
+    def __init__(self):
+        self.updated: list[tuple[str, dict]] = []
+
     def list_all(self):
         return [{"id": "peer-001", "name": "广州站点"}]
+
+    def get(self, peer_id: str):
+        if peer_id == "peer-001":
+            return {"id": "peer-001", "name": "广州站点"}
+        return None
+
+    def update(self, peer_id: str, payload: dict, **_kwargs):
+        self.updated.append((peer_id, dict(payload)))
+        return {"id": peer_id, **payload}
+
+    def list_peer_lan_firewall_presets_for_center_form(self):
+        return [
+            {
+                "key": "peer-001:192.168.10.0/24",
+                "cidr": "192.168.10.0/24",
+                "label": "广州站点 · 192.168.10.0/24",
+            }
+        ]
 
 
 def _prepare_page(monkeypatch: pytest.MonkeyPatch, rows=None) -> FirewallPage:
@@ -403,3 +434,225 @@ def test_center_delete_confirmation_describes_peer_virtual_row_impact(
     assert captured["danger_level"] == "danger"
     assert captured["object_count"] == 1
     assert "清空该对端的 LAN CIDR" in str(captured["impact"])
+
+
+def test_create_center_rule_normalizes_protocol_and_refreshes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    messages: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+
+    payload = {
+        "owner_type": "group",
+        "owner_id": "group-dev",
+        "instance": "server",
+        "deployment_target": "center",
+        "action": "accept",
+        "protocol": "any",
+        "source_subnet": "10.8.0.0/24",
+        "source_ips": None,
+        "dest_ip": "172.16.0.10",
+        "dest_port": "443",
+        "priority": 10,
+        "description": "allow api",
+        "enabled": True,
+    }
+
+    assert page._create_center_rule(payload) is True
+    assert service.create_calls[0]["protocol"] == "all"
+    assert refreshed == [True]
+    assert messages[-1] == ("规则创建成功", "positive")
+
+
+def test_create_center_rule_failure_keeps_form_state_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+
+    class BrokenService(FakeRuleService):
+        def create(self, payload: dict):
+            raise RuntimeError("iptables failed")
+
+    page.rule_service = BrokenService()
+    messages: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+
+    assert page._create_center_rule({
+        "owner_type": "group",
+        "owner_id": "group-dev",
+        "action": "accept",
+        "protocol": "tcp",
+        "priority": 10,
+    }) is False
+    assert refreshed == []
+    assert messages[-1] == ("创建失败: iptables failed", "negative")
+
+
+def test_center_json_edit_success_and_failure_refresh_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    messages: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+
+    original = dict(CENTER_RULES[0])
+    assert page._save_center_rule_edit(
+        original,
+        action="drop",
+        protocol="any",
+        source_input="10.8.1.0/24",
+        dest_ip="172.16.0.20",
+        dest_port="80-443",
+        description="updated",
+        enabled=False,
+    ) is True
+
+    rule_id, payload = service.update_calls[-1]
+    assert rule_id == "rule-accept"
+    assert payload["protocol"] == "all"
+    assert payload["source_subnet"] == "10.8.1.0/24"
+    assert payload["enabled"] is False
+    assert "_row_kind" not in payload
+    assert refreshed == [True]
+
+    class BrokenUpdate(FakeRuleService):
+        def update_by_id(self, rule_id: str, payload: dict):
+            raise RuntimeError("rebuild failed")
+
+    page.rule_service = BrokenUpdate()
+    refreshed.clear()
+    assert page._save_center_rule_edit(
+        original,
+        action="accept",
+        protocol="tcp",
+        source_input="10.8.0.0/24",
+        dest_ip=None,
+        dest_port=None,
+        description=None,
+        enabled=True,
+    ) is False
+    assert refreshed == []
+    assert messages[-1] == ("更新失败: rebuild failed", "negative")
+
+
+def test_center_peer_edit_updates_peer_fields_and_validates_accept_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    peers = FakePeerService()
+    page._peer_service = peers
+    messages: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+
+    original = dict(CENTER_RULES[2])
+
+    assert page._save_center_rule_edit(
+        original,
+        action="drop",
+        protocol="udp",
+        source_input="192.168.10.0/24",
+        dest_ip="10.0.0.0/8",
+        dest_port="53",
+        description="dns",
+        enabled=True,
+    ) is False
+    assert peers.updated == []
+    assert messages[-1] == ("对端·中心放行仅支持 ACCEPT", "negative")
+
+    assert page._save_center_rule_edit(
+        original,
+        action="accept",
+        protocol="udp",
+        source_input="192.168.10.0/24, 192.168.20.0/24",
+        dest_ip="10.0.0.0/8",
+        dest_port="53",
+        description="dns",
+        enabled=False,
+    ) is True
+
+    peer_id, payload = peers.updated[-1]
+    assert peer_id == "peer-001"
+    assert payload["lan_cidrs"] == ["192.168.10.0/24", "192.168.20.0/24"]
+    assert payload["center_forward_enabled"] is False
+    assert payload["center_forward_protocol"] == "udp"
+    assert refreshed == [True]
+
+
+def test_center_create_and_edit_dialogs_use_shared_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page.rule_service = FakeRuleService()
+    page._peer_service = FakePeerService()
+    monkeypatch.setattr(
+        GroupService,
+        "list_all",
+        lambda self: [
+            {
+                "id": "group-dev",
+                "name": "开发组",
+                "subnet": "10.8.0.0/24",
+                "status": "active",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.UserService.list_all",
+        lambda self: [{"username": "alice"}],
+    )
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda: {"instances": {"server": {}}},
+    )
+
+    async def verify_create() -> None:
+        async with user_simulation(page._show_create_center_dialog) as user:
+            await user.open("/")
+            await user.should_see("新建中心规则")
+            await user.should_see("归属类型")
+            await user.should_see("源用本组子网")
+            await user.should_see("对端内网 CIDR")
+            await user.should_see("创建后启用")
+            await user.should_see("创建")
+
+    asyncio.run(verify_create())
+
+    async def verify_edit() -> None:
+        async with user_simulation(
+            lambda: page._show_edit_dialog(dict(CENTER_RULES[0]))
+        ) as user:
+            await user.open("/")
+            await user.should_see("编辑中心规则")
+            await user.should_see("优先级：10")
+            await user.should_see("保存")
+
+    asyncio.run(verify_edit())
