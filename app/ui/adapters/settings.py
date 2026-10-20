@@ -159,6 +159,7 @@ def _normalize_http_url(
     *,
     label: str,
     allow_blank: bool = False,
+    allow_query: bool = False,
 ) -> str | None:
     text = str(value or "").strip()
     if not text:
@@ -170,8 +171,9 @@ def _normalize_http_url(
         raise ValueError(f"{label}须为 http/https 完整 URL")
     if parsed.username or parsed.password:
         raise ValueError(f"{label}不能包含 URL 用户名或密码")
-    if parsed.query or parsed.fragment:
-        raise ValueError(f"{label}不能包含 query 或 fragment")
+    if (parsed.query and not allow_query) or parsed.fragment:
+        suffix = "fragment" if allow_query else "query 或 fragment"
+        raise ValueError(f"{label}不能包含 {suffix}")
     return text.rstrip("/")
 
 
@@ -310,16 +312,19 @@ def build_notify_config(
         dingtalk_webhook,
         label="钉钉 Webhook",
         allow_blank=True,
+        allow_query=True,
     )
     wework = _normalize_http_url(
         wework_webhook,
         label="企业微信 Webhook",
         allow_blank=True,
+        allow_query=True,
     )
     rocket = _normalize_http_url(
         rocketchat_webhook,
         label="Rocket.Chat Webhook",
         allow_blank=True,
+        allow_query=True,
     )
     channels = parse_rocketchat_channels(rocketchat_channel)
 
