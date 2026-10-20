@@ -55,6 +55,7 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state, no_match_state
 from app.ui.components.toolbars import render_page_toolbar
@@ -1825,7 +1826,349 @@ class FirewallPage:
             self._handle_reorder(new_order)
 
     def _show_create_dialog(self) -> None:
-        self._open_create_rule_dialog("center")
+        self._show_create_center_dialog()
+
+    def _show_create_center_dialog(self) -> None:
+        """使用统一表单创建中心规则，保留组/用户/CCD/对端 LAN 预设语义。"""
+
+        if not self._require_center_strategy_tab():
+            return
+
+        groups = GroupService().list_all()
+        group_map = {str(group["id"]): group for group in groups}
+        users = UserService().list_all()
+        user_options = {
+            str(user["username"]): str(user["username"])
+            for user in users
+            if user.get("username")
+        }
+
+        from app.core.config import load_config
+
+        config = load_config()
+        instances = list((config or {}).get("instances", {}).keys()) if config else []
+        auto_instance = instances[0] if instances else "server"
+        default_group_id: str | None = None
+        if groups:
+            current = str(self.current_owner_id or "").strip()
+            default_group_id = (
+                current
+                if current in group_map
+                else str(groups[0]["id"])
+            )
+
+        fields: dict[str, Any] = {}
+        peer_src_ux: dict[str, bool] = {"user_picked": False}
+        peer_preset_holder: dict[str, dict] = {"by_key": {}}
+        peer_group_value_seeded: dict[str, bool] = {"done": False}
+
+        def body() -> None:
+            ui.label("归属与来源").classes("section-caption")
+            fields["owner_type"] = ui.select(
+                {"group": "组", "user": "用户"},
+                label="归属类型",
+                value="group",
+            ).classes("w-full")
+            fields["group"] = ui.select(
+                {
+                    str(group["id"]): f"{group['name']} ({group['subnet']})"
+                    for group in groups
+                },
+                label="选择组",
+                with_input=True,
+                value=default_group_id,
+            ).classes("w-full")
+            fields["users"] = ui.select(
+                user_options,
+                label="选择用户（多选）",
+                multiple=True,
+                with_input=True,
+            ).classes("w-full")
+            fields["users"].set_visibility(False)
+
+            fields["auto_source"] = ui.switch("源用本组子网", value=False)
+            fields["peer_lan"] = ui.select(
+                {},
+                label="对端内网 CIDR（任选；与上项二选一）",
+                with_input=True,
+            ).classes("w-full")
+            fields["source"] = ui.input(
+                "源地址",
+                placeholder="组可自动填子网；用户可从 CCD 读取",
+            ).classes("w-full")
+            fields["user_hint"] = ui.label(
+                "多选用户时可预填 CCD 虚拟 IP，或留空从 CCD 读。"
+            ).classes("section-caption")
+            fields["user_hint"].set_visibility(False)
+
+            ui.label("规则").classes("section-caption q-mt-sm")
+            with ui.row().classes("w-full gap-sm"):
+                fields["action"] = ui.select(
+                    {
+                        "accept": "放行 (ACCEPT)",
+                        "drop": "丢弃 (DROP)",
+                        "reject": "拒绝 (REJECT)",
+                    },
+                    label="动作",
+                    value="accept",
+                ).classes("w-full")
+                fields["protocol"] = ui.select(
+                    {
+                        "all": "不限 (ALL)",
+                        "tcp": "TCP",
+                        "udp": "UDP",
+                        "icmp": "ICMP",
+                    },
+                    label="协议",
+                    value="all",
+                    with_input=True,
+                    new_value_mode="add-unique",
+                ).classes("w-full")
+
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                placeholder="子网或多 IP；空=不限",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                placeholder="空=不限制",
+            ).classes("w-full")
+            fields["enabled"] = ui.switch("创建后启用", value=True)
+
+            ui.label("优先级").classes("section-caption q-mt-sm")
+            fields["priority_mode"] = ui.toggle(
+                {
+                    "insert": "插入（指定优先级）",
+                    "append": "追加（链尾）",
+                },
+                value="insert",
+            ).classes("w-full")
+            fields["priority"] = ui.number(
+                "优先级",
+                value=None,
+                min=1,
+                max=999999,
+                step=10,
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                placeholder="可选",
+            ).classes("w-full")
+
+            def mutex() -> None:
+                if fields["owner_type"].value != "group":
+                    return
+                auto = bool(fields["auto_source"].value)
+                key = str(fields["peer_lan"].value or "").strip()
+                cidr = (
+                    peer_preset_holder.get("by_key") or {}
+                ).get(key) if key else None
+                raw = str(fields["source"].value or "").strip()
+                cidr_lock = bool(cidr and raw and raw == cidr)
+                fields["peer_lan"].set_enabled(not auto)
+                fields["auto_source"].set_enabled(auto or not cidr_lock)
+
+            def sync_peer_presets() -> None:
+                if fields["owner_type"].value != "group":
+                    fields["peer_lan"].set_visibility(False)
+                    return
+                fields["peer_lan"].set_visibility(True)
+                if (
+                    not peer_group_value_seeded["done"]
+                    and default_group_id
+                    and not str(fields["group"].value or "").strip()
+                ):
+                    fields["group"].value = str(default_group_id)
+                peer_group_value_seeded["done"] = True
+
+                gid = str(fields["group"].value or "").strip()
+                presets = (
+                    self._peer_service.list_peer_lan_firewall_presets_for_center_form()
+                    if gid
+                    else []
+                )
+                peer_preset_holder["by_key"] = {
+                    str(preset["key"]): str(preset["cidr"])
+                    for preset in presets
+                }
+                options = {
+                    str(preset["key"]): str(preset["label"])
+                    for preset in presets
+                }
+                fields["peer_lan"].set_options(options)
+                if (
+                    fields["peer_lan"].value
+                    and fields["peer_lan"].value not in options
+                ):
+                    fields["peer_lan"].set_value(None)
+                if (
+                    fields["peer_lan"].value in options
+                    and not peer_src_ux["user_picked"]
+                ):
+                    fields["peer_lan"].set_value(None)
+                mutex()
+
+            def on_peer_change() -> None:
+                value = fields["peer_lan"].value
+                presets = peer_preset_holder.get("by_key") or {}
+                peer_src_ux["user_picked"] = value in presets
+                cidr = presets.get(value) if value else None
+                if cidr:
+                    fields["auto_source"].set_value(False)
+                    fields["source"].set_value(cidr)
+                    fields["source"].props(remove="readonly")
+                mutex()
+
+            def on_group_change() -> None:
+                group_id = str(fields["group"].value or "")
+                if (
+                    fields["auto_source"].value
+                    and group_id
+                    and group_id in group_map
+                ):
+                    fields["source"].set_value(
+                        group_map[group_id].get("subnet", "")
+                    )
+                peer_src_ux["user_picked"] = False
+                sync_peer_presets()
+
+            def on_auto_change() -> None:
+                if fields["auto_source"].value:
+                    fields["peer_lan"].set_value(None)
+                    peer_src_ux["user_picked"] = False
+                    group_id = str(fields["group"].value or "")
+                    if group_id and group_id in group_map:
+                        fields["source"].set_value(
+                            group_map[group_id].get("subnet", "")
+                        )
+                    fields["source"].props(add="readonly")
+                else:
+                    fields["source"].props(remove="readonly")
+                sync_peer_presets()
+
+            def on_owner_type_change() -> None:
+                is_group = fields["owner_type"].value == "group"
+                fields["group"].set_visibility(is_group)
+                fields["users"].set_visibility(not is_group)
+                fields["auto_source"].set_visibility(is_group)
+                fields["peer_lan"].set_visibility(is_group)
+                fields["user_hint"].set_visibility(not is_group)
+                if is_group:
+                    sync_peer_presets()
+                mutex()
+
+            def on_users_change() -> None:
+                selected = fields["users"].value
+                user_list = (
+                    list(selected)
+                    if isinstance(selected, list)
+                    else ([selected] if selected else [])
+                )
+                fields["user_hint"].set_visibility(bool(user_list))
+                if user_list:
+                    ips = _read_ccd_vpn_ips([str(value) for value in user_list])
+                    if ips:
+                        fields["source"].set_value(", ".join(ips))
+
+            def on_source_change() -> None:
+                if fields["owner_type"].value != "group":
+                    return
+                if not str(fields["source"].value or "").strip():
+                    fields["peer_lan"].set_value(None)
+                    peer_src_ux["user_picked"] = False
+                mutex()
+
+            fields["owner_type"].on_value_change(lambda _e: on_owner_type_change())
+            fields["group"].on_value_change(lambda _e: on_group_change())
+            fields["users"].on_value_change(lambda _e: on_users_change())
+            fields["source"].on_value_change(lambda _e: on_source_change())
+            fields["auto_source"].on_value_change(lambda _e: on_auto_change())
+            fields["peer_lan"].on_value_change(lambda _e: on_peer_change())
+            fields["priority_mode"].on_value_change(
+                lambda _e: fields["priority"].set_visibility(
+                    fields["priority_mode"].value == "insert"
+                )
+            )
+            on_group_change()
+
+        def submit() -> bool:
+            values = self._read_create_form_to_values(
+                fields["owner_type"],
+                fields["group"],
+                fields["users"],
+                group_map,
+                fields["auto_source"],
+                fields["peer_lan"],
+                peer_preset_holder,
+                fields["source"],
+                fields["action"],
+                fields["protocol"],
+                fields["dest_ip"],
+                fields["dest_port"],
+                fields["description"],
+            )
+            if values is None:
+                return False
+
+            try:
+                priority = self._resolve_priority(
+                    fields["priority_mode"].value,
+                    fields["priority"].value,
+                )
+            except (TypeError, ValueError) as exc:
+                self._notify_for_page(f"优先级无效: {exc}", type="negative")
+                return False
+
+            payload = {
+                "owner_type": values["owner_type"],
+                "owner_id": values["owner_id"],
+                "instance": auto_instance,
+                "deployment_target": "center",
+                "action": values["action"],
+                "protocol": values["protocol"],
+                "source_subnet": values["source_subnet"],
+                "source_ips": values["source_ips"],
+                "dest_ip": values["dest_ip"],
+                "dest_port": values["dest_port"],
+                "priority": priority,
+                "description": values["description"],
+                "enabled": bool(fields["enabled"].value),
+            }
+            return self._create_center_rule(payload)
+
+        form = create_form_dialog(
+            "新建中心规则",
+            body=body,
+            on_submit=submit,
+            submit_label="创建",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _create_center_rule(self, payload: dict[str, Any]) -> bool:
+        """创建中心规则；失败时让统一表单保留输入。"""
+
+        try:
+            normalized = dict(payload)
+            if str(normalized.get("protocol") or "").lower() in {
+                "",
+                "any",
+                "all",
+            }:
+                normalized["protocol"] = "all"
+            self.rule_service.create(normalized)
+        except Exception as exc:
+            logger.error("create center rule: %s", exc)
+            self._notify_for_page(f"创建失败: {exc}", type="negative")
+            return False
+
+        self._notify_for_page("规则创建成功", type="positive")
+        self._refresh_rules()
+        return True
 
     def _open_create_rule_dialog(self, target: str) -> None:
         """``target`` 为 ``center`` 时写中心 JSON；为 ``remote`` 时同表单生成对端链 ``rest`` 并写回。"""
