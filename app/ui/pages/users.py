@@ -64,6 +64,14 @@ class UsersPage:
         self._create_running = False
         self._create_result: dict | None = None
         self._create_timer = None
+        self._create_progress: dict[str, object] = {}
+        self._create_progress_ui: dict[str, object] | None = None
+
+        self._import_running = False
+        self._import_result: dict | None = None
+        self._import_timer = None
+        self._import_progress: dict[str, object] = {}
+        self._import_progress_ui: dict[str, object] | None = None
         self.page = 1
         self.page_size = 50
 
@@ -1038,8 +1046,53 @@ class UsersPage:
 
         dialog.open()
 
+    def _open_progress_dialog(self, title: str, total: int) -> dict[str, object]:
+        """创建一个持久进度对话框；任务完成后才显示关闭按钮。"""
+
+        refs: dict[str, object] = {}
+        with ui.dialog().props("persistent") as dialog, ui.card().classes("vpn-form-dialog"):
+            ui.label(title).classes("vpn-form-dialog__title")
+            refs["status"] = ui.label(f"准备处理 0 / {total}").classes("section-caption")
+            refs["progress"] = ui.linear_progress(value=0.0, show_value=False).classes("w-full")
+            refs["result"] = ui.label("").classes("section-caption")
+            refs["result"].set_visibility(False)
+            with ui.row().classes("w-full justify-end"):
+                refs["close"] = ui.button("关闭", on_click=dialog.close).props("flat no-caps")
+                refs["close"].set_visibility(False)
+        refs["dialog"] = dialog
+        dialog.open()
+        return refs
+
+    @staticmethod
+    def _update_progress_dialog(
+        refs: dict[str, object] | None,
+        *,
+        done: int,
+        total: int,
+        current: str = "",
+        result: str | None = None,
+    ) -> None:
+        if not refs:
+            return
+        status = refs.get("status")
+        progress = refs.get("progress")
+        if status is not None:
+            suffix = f" · {current}" if current else ""
+            status.set_text(f"已处理 {done} / {total}{suffix}")
+        if progress is not None:
+            progress.set_value((done / total) if total else 1.0)
+        if result is not None:
+            result_label = refs.get("result")
+            close_button = refs.get("close")
+            if result_label is not None:
+                result_label.set_text(result)
+                result_label.set_visibility(True)
+            if close_button is not None:
+                close_button.set_visibility(True)
+
     def _do_create(self, dialog, username: str, count: int, group_id: str, password_enabled: bool, password: str):
-        """执行用户创建（支持批量命名）。"""
+        """执行用户创建（支持批量命名）并展示可见进度。"""
+
         if self._create_running:
             ui.notify("用户正在后台创建，请稍候", type="warning")
             return
@@ -1049,24 +1102,31 @@ class UsersPage:
         if count < 1:
             ui.notify("创建数量无效", type="negative")
             return
-        if count == 1:
-            names = [username.strip()]
-        else:
-            base = username.strip()
-            names = [base] + [f"{base}_{i}" for i in range(1, count)]
 
+        base = username.strip()
+        names = [base] if count == 1 else [base] + [f"{base}_{i}" for i in range(1, count)]
         self._create_running = True
         self._create_result = None
+        self._create_progress = {
+            "done": 0,
+            "total": len(names),
+            "current": names[0] if names else "",
+        }
         dialog.close()
-        ui.notify(f"已开始后台创建 {len(names)} 个用户，请稍候", type="info")
+        self._create_progress_ui = self._open_progress_dialog("创建用户", len(names))
         logger.info("后台用户创建任务已启动 count=%s first_user=%s", len(names), names[0])
 
         def worker():
-            created = []
+            created: list[str] = []
             current_name = ""
             try:
-                for name in names:
+                for index, name in enumerate(names, start=1):
                     current_name = name
+                    self._create_progress = {
+                        "done": len(created),
+                        "total": len(names),
+                        "current": name,
+                    }
                     logger.info("后台创建用户开始 user=%s", name)
                     self.user_service.create(
                         username=name,
@@ -1075,6 +1135,11 @@ class UsersPage:
                         password=password if password_enabled else None,
                     )
                     created.append(name)
+                    self._create_progress = {
+                        "done": index,
+                        "total": len(names),
+                        "current": name,
+                    }
                     logger.info("后台创建用户完成 user=%s", name)
                 self._create_result = {"ok": True, "created": created}
             except Exception as exc:
@@ -1089,7 +1154,15 @@ class UsersPage:
         self._create_timer = ui.timer(0.3, self._poll_create_progress)
 
     def _poll_create_progress(self):
-        """轮询后台用户创建结果，并在 UI 线程刷新页面。"""
+        """轮询后台用户创建进度与最终结果。"""
+
+        progress = self._create_progress
+        self._update_progress_dialog(
+            self._create_progress_ui,
+            done=int(progress.get("done") or 0),
+            total=int(progress.get("total") or 0),
+            current=str(progress.get("current") or ""),
+        )
         if self._create_result is None:
             return
 
@@ -1103,21 +1176,28 @@ class UsersPage:
         self._create_running = False
         result = self._create_result
         self._create_result = None
-        created = result.get("created") or []
+        created = list(result.get("created") or [])
+        total = int(progress.get("total") or len(created))
 
         if result.get("ok"):
-            ui.notify(f"已创建 {len(created)} 个用户", type="positive")
-            if created:
-                self._copy_download_link(created[0])
-                # 延后跳转，避免页面卸载导致剪贴板脚本未执行
-                ui.timer(0.25, lambda: ui.navigate.to("/users"), once=True)
-            else:
-                ui.navigate.to("/users")
-            return
+            summary = f"创建完成：成功 {len(created)}，失败 0"
+            ui.notify(summary, type="positive")
+        else:
+            summary = (
+                f"创建中断：成功 {len(created)}，失败 {max(1, total - len(created))}。"
+                f"{result.get('error') or '创建失败'}"
+            )
+            ui.notify(summary, type="warning")
 
+        self._update_progress_dialog(
+            self._create_progress_ui,
+            done=len(created),
+            total=total,
+            current="",
+            result=summary,
+        )
         if created:
-            ui.notify(f"已创建 {len(created)} 个用户，后续创建中断", type="warning")
-        ui.notify(str(result.get("error") or "创建失败"), type="negative")
+            self._copy_download_link(created[0])
         self._refresh_user_list()
 
     def _ensure_one_time_download_url(self, username: str) -> str | None:
