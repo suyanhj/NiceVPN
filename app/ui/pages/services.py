@@ -1090,44 +1090,66 @@ class ServicesPage:
         self._refresh_list_with_client()
 
     def _open_config_editor(self, name: str):
-        """打开配置编辑弹窗。"""
+        """使用统一表单编辑实例配置；保存失败时保留输入。"""
+
         conf_file = resolve_server_conf_dir(self._conf_dir) / f"{name}.conf"
         conf_path = str(conf_file)
-
         if not conf_file.exists():
             ui.notify(f"配置文件不存在: {conf_path}", type="negative")
             return
 
         try:
             backup_path = backup_before_edit(conf_path)
-            ui.notify(f"已备份: {backup_path}", type="info")
+            content = conf_file.read_text(encoding="utf-8")
         except Exception as exc:
-            ui.notify(f"备份失败: {exc}", type="negative")
+            logger.exception("打开实例配置失败 instance=%s", name)
+            ui.notify(f"读取或备份配置失败: {exc}", type="negative")
             return
 
-        content = conf_file.read_text(encoding="utf-8")
+        fields: dict[str, Any] = {}
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl"):
-            ui.label(f"编辑配置 - {name}.conf").classes("text-h6")
-            ui.label("保存后需重启实例生效。").classes("section-caption")
+        def body() -> None:
+            ui.label(f"已备份：{backup_path}").classes("section-caption")
+            ui.label("保存成功后需要重启实例才能生效。").classes("section-caption")
+            fields["content"] = (
+                ui.textarea(value=content)
+                .classes("w-full font-mono")
+                .props("outlined rows=20")
+            )
 
-            textarea = ui.textarea(value=content).classes("w-full font-mono q-mt-md").props("outlined rows=20")
+        def submit() -> bool:
+            return self._save_config_content(
+                conf_path,
+                str(fields["content"].value or ""),
+            )
 
-            with ui.row().classes("justify-end q-mt-md gap-sm"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "保存",
-                    icon="save",
-                    on_click=lambda: self._do_save_config(dialog, conf_path, textarea.value),
-                ).props("color=primary")
+        form = create_form_dialog(
+            f"编辑配置 — {name}.conf",
+            body=body,
+            on_submit=submit,
+            submit_label="保存",
+            close_on_success=True,
+        )
+        form.card.classes("w-full max-w-4xl")
+        form.open()
 
-        dialog.open()
+    def _save_config_content(self, conf_path: str, new_content: str) -> bool:
+        """保存实例配置；失败返回 False 以保留统一表单。"""
 
-    def _do_save_config(self, dialog, conf_path: str, new_content: str):
-        """保存配置。"""
         try:
             save_with_backup(conf_path, new_content)
-            dialog.close()
-            ui.notify("已保存，请重启实例", type="warning")
         except Exception as exc:
+            logger.exception("保存实例配置失败 path=%s", conf_path)
             ui.notify(f"保存失败: {exc}", type="negative")
+            return False
+        ui.notify("已保存配置；请重启实例使新配置生效", type="warning")
+        return True
+
+    def _do_save_config(self, dialog, conf_path: str, new_content: str):
+        """兼容旧调用入口。"""
+
+        success = self._save_config_content(conf_path, new_content)
+        if success and dialog is not None:
+            dialog.close()
+        return success
+
