@@ -10,9 +10,15 @@ import pytest
 from app.models.config import SystemConfig
 from app.ui.adapters.settings import (
     build_device_bind_config,
+    build_download_config,
+    build_github_candidate_urls,
     build_global_ssh_config,
+    build_notify_config,
     build_openvpn_path_config,
     build_server_connection_config,
+    normalize_download_base_url,
+    parse_github_proxy_urls,
+    parse_rocketchat_channels,
     validate_easyrsa_script_path,
     validate_server_host,
 )
@@ -164,3 +170,160 @@ def test_device_bind_builder_does_not_silently_fallback() -> None:
             SystemConfig(),
             mode="typo-mode",
         )
+
+
+def test_proxy_parser_preserves_order_normalizes_and_deduplicates() -> None:
+    proxies = parse_github_proxy_urls(
+        """
+https://b.example/proxy
+https://a.example/
+https://b.example/proxy/
+"""
+    )
+
+    assert proxies == [
+        "https://b.example/proxy/",
+        "https://a.example/",
+    ]
+
+    candidates = build_github_candidate_urls(
+        "https://github.com/OpenVPN/easy-rsa/releases/x.tgz",
+        proxies,
+    )
+    assert candidates == [
+        "https://b.example/proxy/https://github.com/OpenVPN/easy-rsa/releases/x.tgz",
+        "https://a.example/https://github.com/OpenVPN/easy-rsa/releases/x.tgz",
+        "https://github.com/OpenVPN/easy-rsa/releases/x.tgz",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "ftp://proxy.example/",
+        "https://user:pass@proxy.example/",
+        "https://proxy.example/?x=1",
+    ],
+)
+def test_proxy_parser_rejects_invalid_prefixes(text: str) -> None:
+    with pytest.raises(ValueError):
+        parse_github_proxy_urls(text)
+
+
+def test_download_base_url_blank_and_normalization() -> None:
+    assert normalize_download_base_url("") is None
+    assert (
+        normalize_download_base_url(
+            "https://vpn.example.com/prefix/"
+        )
+        == "https://vpn.example.com/prefix"
+    )
+
+    cfg = build_download_config(
+        SystemConfig(),
+        download_base_url="https://vpn.example.com/prefix/",
+    )
+    assert (
+        cfg.download_base_url
+        == "https://vpn.example.com/prefix"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "vpn.example.com",
+        "ftp://vpn.example.com",
+        "https://user:pass@vpn.example.com",
+        "https://vpn.example.com/?token=x",
+        "https://vpn.example.com/#frag",
+    ],
+)
+def test_download_base_url_rejects_unsafe_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_download_base_url(value)
+
+
+def test_parse_rocketchat_channels_supports_multi_value() -> None:
+    assert parse_rocketchat_channels("") is None
+    assert parse_rocketchat_channels("#ops") == "#ops"
+    assert parse_rocketchat_channels(
+        "#ops, #vpn\n#ops\n#security"
+    ) == ["#ops", "#vpn", "#security"]
+
+
+def test_notify_config_accepts_webhook_queries_and_rocketchat() -> None:
+    cfg = build_notify_config(
+        SystemConfig(),
+        enabled=True,
+        provider="dingtalk",
+        dingtalk_webhook=(
+            "https://oapi.dingtalk.com/robot/send?access_token=abc"
+        ),
+        dingtalk_secret="SEC123",
+        wework_webhook=(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xyz"
+        ),
+        rocketchat_webhook="https://chat.example/hooks/abc",
+        rocketchat_channel="#vpn",
+        rocketchat_username="VPN Bot",
+        rocketchat_icon_emoji=":lock:",
+        rocketchat_title="OpenVPN",
+    )
+    assert cfg.notify_provider == "dingtalk"
+    assert cfg.dingtalk_webhook.endswith("access_token=abc")
+
+    rocket = build_notify_config(
+        cfg,
+        enabled=True,
+        provider="rocketchat",
+        dingtalk_webhook=cfg.dingtalk_webhook or "",
+        dingtalk_secret=cfg.dingtalk_secret or "",
+        wework_webhook=cfg.wework_webhook or "",
+        rocketchat_webhook="https://chat.example/hooks/abc",
+        rocketchat_channel="#vpn\n#security",
+        rocketchat_username="VPN Bot",
+        rocketchat_icon_emoji=":shield:",
+        rocketchat_title="VPN Alert",
+    )
+    assert rocket.notify_provider == "rocketchat"
+    assert rocket.rocketchat_channel == ["#vpn", "#security"]
+    assert rocket.rocketchat_username == "VPN Bot"
+    assert rocket.rocketchat_icon_emoji == ":shield:"
+    assert rocket.rocketchat_title == "VPN Alert"
+
+
+@pytest.mark.parametrize(
+    ("provider", "kwargs", "message"),
+    [
+        ("none", {}, "必须选择通知通道"),
+        ("dingtalk", {}, "必须填写 Webhook"),
+        ("wework", {}, "必须填写 Webhook"),
+        (
+            "rocketchat",
+            {"rocketchat_webhook": "https://chat.example/hooks/a"},
+            "必须填写频道",
+        ),
+    ],
+)
+def test_notify_config_requires_active_provider_fields(
+    provider: str,
+    kwargs: dict,
+    message: str,
+) -> None:
+    data = {
+        "enabled": True,
+        "provider": provider,
+        "dingtalk_webhook": "",
+        "dingtalk_secret": "",
+        "wework_webhook": "",
+        "rocketchat_webhook": "",
+        "rocketchat_channel": "",
+        "rocketchat_username": "",
+        "rocketchat_icon_emoji": "",
+        "rocketchat_title": "",
+    }
+    data.update(kwargs)
+    with pytest.raises(ValueError, match=message):
+        build_notify_config(SystemConfig(), **data)
