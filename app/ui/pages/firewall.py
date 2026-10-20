@@ -45,7 +45,19 @@ from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
+from app.ui.adapters.firewall import adapt_center_rule_rows
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import (
+    MenuAction,
+    danger_action,
+    more_actions,
+    primary_action,
+    secondary_action,
+)
+from app.ui.components.data_grid import render_data_grid
+from app.ui.components.page_header import render_page_header
+from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.toolbars import render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -251,6 +263,14 @@ class FirewallPage:
         self._center_import_running = False
         self._center_import_result: dict[str, Any] | None = None
         self._center_import_timer = None
+        self._center_grid_container = None
+        self._center_grid_view = None
+        self._center_search_controls = None
+        self._center_search_input = None
+        self._center_owner_filter = None
+        self._center_all_rows: list[dict[str, Any]] = []
+        self._center_display_rows: list[dict[str, Any]] = []
+        self._center_raw_by_id: dict[str, dict[str, Any]] = {}
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
 
@@ -304,70 +324,98 @@ class FirewallPage:
         return True
 
     def render(self) -> None:
+        """使用共享后台外壳渲染中心与对端策略入口。"""
+
         try:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
-        with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
-            with ui.element("div").classes("mgmt-header-row"):
-                with ui.element("div").classes("mgmt-header-copy"):
-                    ui.label("规则管理").classes("mgmt-title")
-                    ui.label("本机中心 JSON + 对端 iptables 链，分两个 Tab。").classes("mgmt-desc")
 
-            # 顶栏与 script/py/vpn/t.html 的 .control-header-row / .compact-tabs / .btn-group 同一套
-            with ui.element("div").classes("firewall-control-header firewall-tab-bar"):
-                with ui.tabs(value="center", on_change=self._on_strat_change).classes(
-                    "firewall-compact-tabs"
-                ) as self._strat_tabs:
-                    ui.tab("center", label="中心策略")
-                    ui.tab("remote", label="对端远端")
-                with ui.element("div").classes("firewall-btn-group"):
-                    # 与组管理条一致：仅「新建」主色，其余 outline
-                    ui.button("批量启用", on_click=self._batch_enable).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline")
-                    ui.button("批量停用", on_click=self._batch_disable).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline")
-                    ui.button("批量删除", on_click=self._batch_delete).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline is-danger")
-                    ui.button("导入", on_click=self._show_import_dialog).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline mgmt-toolbar-cjk-2")
-                    ui.button("导出", on_click=self._export_backup).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline mgmt-toolbar-cjk-2")
-                    ui.button("新建规则", on_click=self._on_new_rule_click).props(
-                        "unelevated dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-primary q-ml-sm")
+        def search_region() -> None:
+            with ui.row().classes("items-center gap-2 flex-wrap") as self._center_search_controls:
+                self._center_search_input = (
+                    ui.input(
+                        placeholder="搜索归属 / IP / 协议 / 动作 / 规则 ID",
+                        on_change=lambda _event: self._refresh_rules(),
+                    )
+                    .props("outlined dense clearable debounce=250")
+                    .classes("min-w-[18rem] flex-1")
+                )
+                self._center_owner_filter = (
+                    ui.select(
+                        {"": "全部归属"},
+                        value="",
+                        label="归属",
+                        on_change=lambda _event: self._refresh_rules(),
+                    )
+                    .props('outlined dense clearable behavior=menu popup-content-class="vpn-owner-select-menu"')
+                    .classes("min-w-[12rem]")
+                )
+
+        def primary_region() -> None:
+            primary_action(
+                "新建规则",
+                icon="add",
+                on_click=self._on_new_rule_click,
+            )
+
+        def secondary_region() -> None:
+            secondary_action("批量启用", on_click=self._batch_enable)
+            secondary_action("批量停用", on_click=self._batch_disable)
+            danger_action("批量删除", on_click=self._batch_delete)
+            more_actions(
+                (
+                    MenuAction("导入", icon="upload_file", on_click=self._show_import_dialog),
+                    MenuAction("导出", icon="download", on_click=self._export_backup),
+                ),
+                label="更多",
+            )
+
+        with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
+            render_page_header(
+                "规则管理",
+                description="集中管理中心 VPN_FORWARD 策略与对端 iptables 工作副本。",
+            )
+
+            with ui.tabs(
+                value="center",
+                on_change=self._on_strat_change,
+            ).classes("firewall-compact-tabs w-full") as self._strat_tabs:
+                ui.tab("center", label="中心策略")
+                ui.tab("remote", label="对端远端")
+
+            render_page_toolbar(
+                search=search_region,
+                primary=primary_region,
+                secondary=secondary_region,
+            )
 
             with ui.tab_panels(
-                self._strat_tabs, value="center", keep_alive=False
+                self._strat_tabs,
+                value="center",
+                keep_alive=False,
             ).classes("w-full h-full min-h-0 flex-1 firewall-tabpanels"):
                 with ui.tab_panel("center").classes("h-full min-h-0 flex-1"):
-                    with ui.column().classes("firewall-center-canvas w-full min-h-0 flex-1 gap-0"):
-                        with ui.element("div").classes("firewall-search-row w-full flex-shrink-0"):
-                            with ui.element("div").classes("w-full min-w-0"):
-                                self.owner_input = ui.input(
-                                    label="关键词",
-                                    placeholder="归属 / 组 ID / IP，回车跳转",
-                                    value=self.current_owner_id,
-                                ).classes("w-full").props("outlined dense").on(
-                                    "keydown.enter",
-                                    lambda _: self._switch_owner(self.owner_input.value),
-                                )
-                        # 与组管理「分组列表」同构：带边框的 mgmt-panel-list 作为唯一伸缩列，内层再铺规则卡片
+                    with ui.column().classes(
+                        "firewall-center-canvas w-full min-h-0 flex-1 gap-0"
+                    ):
                         with ui.element("section").classes(
                             "mgmt-panel mgmt-panel-list firewall-center-shell w-full min-h-0 flex-1"
                         ):
-                            self.rules_container = ui.column().classes("mgmt-stretch w-full min-h-0 flex-1")
-                            with self.rules_container:
-                                pass
-                                
-                        with ui.element("div").classes("mgmt-page-foot w-full mt-auto flex-shrink-0"):
-                            with ui.row().classes("mgmt-page-footer-row w-full items-center justify-between text-grey-6"):
-                                ui.label("DRAG TO CHANGE PRIORITY").classes("uppercase tracking-widest")
+                            self._center_grid_container = ui.column().classes(
+                                "w-full min-h-0 flex-1"
+                            )
+                            self.rules_container = self._center_grid_container
+
+                        with ui.element("div").classes(
+                            "mgmt-page-foot w-full mt-auto flex-shrink-0"
+                        ):
+                            with ui.row().classes(
+                                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+                            ):
+                                ui.label(
+                                    "排序请在无搜索/无归属筛选时操作"
+                                ).classes("uppercase tracking-widest")
                                 self._rules_total_footer = ui.label("0 RULES TOTAL").classes(
                                     "uppercase tracking-widest"
                                 )
@@ -379,7 +427,7 @@ class FirewallPage:
                     with self._remote_tab_shell:
                         self._build_remote_tab_static()
 
-            self._refresh_rules()
+        self._refresh_rules()
 
     def _on_strat_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "center")
