@@ -39,7 +39,9 @@ def _config() -> Box:
 CONFIG = _config()
 core_config.load_config = lambda: CONFIG
 
+from app.services.group.crud import GroupService
 from app.services.monitor.service_monitor import InstanceStatus
+from app.services.user.device_bind import DeviceBindingService
 from app.ui.adapters.dashboard import DashboardSnapshot
 from app.ui.components.app_shell import render_app_shell
 from app.ui.pages.certs import CertsPage
@@ -293,9 +295,6 @@ def _users() -> None:
     page = UsersPage()
     page.user_service = FakeUserService()
     page._load_live_sessions = lambda: {}
-    import app.ui.pages.users as users_module
-    users_module.DeviceBindingService.build_user_binding_aux = lambda _self: {}
-    users_module.GroupService.list_all = lambda _self: [dict(row) for row in GROUPS]
     page.render()
 
 
