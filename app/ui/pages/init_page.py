@@ -6,30 +6,23 @@ import queue
 import threading
 import json
 
-from nicegui import ui
+from nicegui import context, ui
 
 from app.core.init_wizard import InitWizard, StepResult, WizardStep
+from app.ui.adapters.init_wizard import (
+    DISPLAY_STEPS,
+    adapt_step_result,
+    resume_wizard_step,
+    step_title,
+    wizard_progress_index,
+)
 from app.ui.components import alert_card
+from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components.form_section import render_form_section
 
 logger = logging.getLogger(__name__)
 
-_STEP_TITLES = {
-    WizardStep.DETECT_OPENVPN: "环境检查",
-    WizardStep.INSTALL_OPENVPN: "安装组件",
-    WizardStep.CUSTOM_PATH: "校验路径",
-    WizardStep.CONFIG_PKI: "证书体系",
-    WizardStep.CONFIG_SUBNET: "接入网段",
-    WizardStep.CREATE_DEFAULT_GROUP: "默认策略域",
-    WizardStep.START_SERVICE: "启动服务",
-}
-
-_STEP_ORDER = [
-    (WizardStep.DETECT_OPENVPN, "环境校验"),
-    (WizardStep.INSTALL_OPENVPN, "组件准备"),
-    (WizardStep.CONFIG_PKI, "证书体系"),
-    (WizardStep.CONFIG_SUBNET, "接入规划"),
-    (WizardStep.START_SERVICE, "服务接管"),
-]
+_STEP_ORDER = list(DISPLAY_STEPS)
 
 
 class InitPage:
@@ -51,16 +44,24 @@ class InitPage:
         self._pki_result: StepResult | None = None
         self._pki_running = False
         self._pki_timer = None
+        self._client_deleted = False
 
     def render(self):
-        """渲染引导页面。"""
-        with ui.column().classes("page-shell"):
+        """渲染统一品牌、步骤指示和内容面板。"""
+
+        self._client_deleted = False
+        try:
+            context.client.on_delete(lambda _client=None: self._cleanup_timers())
+        except RuntimeError:
+            pass
+
+        with ui.column().classes("page-shell page-shell--setup"):
             with ui.element("div").classes("setup-shell"):
                 with ui.element("div").classes("setup-brand"):
                     ui.label("Secure Access Console").classes("setup-brand-badge")
                     ui.label("安全接入平台初始化").classes("setup-brand-title")
                     ui.label(
-                        "右栏按步执行：环境、证书、地址池与默认服务；左栏显示当前进度。"
+                        "按步完成环境、证书、地址池与默认服务配置；每一步都可看到明确状态和下一步动作。"
                     ).classes("setup-brand-copy")
 
                     with ui.element("div").classes("setup-status-card"):
@@ -92,27 +93,64 @@ class InitPage:
             ui.label(copy).classes("setup-point-copy")
 
     def _render_initial_state(self) -> None:
-        """根据已保存配置恢复初始化进度，避免刷新后回到前置步骤。"""
+        """根据已保存配置恢复初始化进度，避免刷新回到前置步骤。"""
+
         config = self.wizard.config
-        if config.get("pki_dir") and config.get("global_subnet"):
-            if self._has_default_group():
-                self.current_step = WizardStep.START_SERVICE
-                self._update_step_indicator()
-                self.content.clear()
-                with self.content:
-                    alert_card.show("info", "已恢复进度", "证书与地址池已完成，请启动默认接入服务。")
-                self._render_start_service()
-                return
-
-            self._run_step(WizardStep.CREATE_DEFAULT_GROUP)
-            return
-
-        if config.get("pki_dir"):
-            self.current_step = WizardStep.CONFIG_SUBNET
+        try:
+            has_group = self._has_default_group()
+        except Exception as exc:
+            logger.exception("读取初始化默认组失败")
+            self.current_step = WizardStep.DETECT_OPENVPN
             self._update_step_indicator()
             self.content.clear()
             with self.content:
-                alert_card.show("info", "已恢复进度", "证书已完成，请填写接入地址池。")
+                alert_card.show(
+                    "warning",
+                    "恢复初始化进度失败",
+                    f"读取默认策略域失败: {exc}",
+                )
+                secondary_action(
+                    "重新检查",
+                    icon="refresh",
+                    on_click=lambda: self._run_step(
+                        WizardStep.DETECT_OPENVPN
+                    ),
+                )
+            return
+
+        resume = resume_wizard_step(
+            config,
+            has_default_group=has_group,
+        )
+        if resume == WizardStep.DONE:
+            self.current_step = WizardStep.DONE
+            self._render_complete()
+            return
+        if resume == WizardStep.START_SERVICE:
+            self.current_step = resume
+            self._update_step_indicator()
+            self.content.clear()
+            with self.content:
+                alert_card.show(
+                    "info",
+                    "已恢复进度",
+                    "证书与地址池已完成，请启动默认接入服务。",
+                )
+            self._render_start_service()
+            return
+        if resume == WizardStep.CREATE_DEFAULT_GROUP:
+            self._run_step(WizardStep.CREATE_DEFAULT_GROUP)
+            return
+        if resume == WizardStep.CONFIG_SUBNET:
+            self.current_step = resume
+            self._update_step_indicator()
+            self.content.clear()
+            with self.content:
+                alert_card.show(
+                    "info",
+                    "已恢复进度",
+                    "证书已完成，请填写接入地址池。",
+                )
             self._render_subnet_form()
             return
 
@@ -157,35 +195,48 @@ class InitPage:
 
     @staticmethod
     def _progress_index(step: WizardStep) -> int:
-        """把内部步骤映射到展示步骤序号。"""
-        if step in (WizardStep.DETECT_OPENVPN,):
-            return 1
-        if step in (WizardStep.INSTALL_OPENVPN, WizardStep.CUSTOM_PATH):
-            return 2
-        if step == WizardStep.CONFIG_PKI:
-            return 3
-        if step in (WizardStep.CONFIG_SUBNET, WizardStep.CREATE_DEFAULT_GROUP):
-            return 4
-        return 5
+        """兼容入口：使用统一步骤映射。"""
+
+        return wizard_progress_index(step)
+
+    def _cleanup_timers(self) -> None:
+        """页面删除时停止安装/PKI UI 轮询，避免向已销毁 client 写入。"""
+
+        self._client_deleted = True
+        for attr in ("_install_timer", "_pki_timer"):
+            timer = getattr(self, attr, None)
+            if timer is not None:
+                try:
+                    timer.deactivate()
+                except Exception:
+                    logger.exception("停止初始化 timer 失败 attr=%s", attr)
+                setattr(self, attr, None)
 
     def _run_step(self, step: WizardStep, data: dict | None = None):
-        """执行向导步骤并刷新 UI。"""
+        """执行向导步骤并刷新 UI；异常隔离在当前步骤。"""
+
         self.current_step = step
         self._update_step_indicator()
-        result = self.wizard.run_step(step, data)
+        try:
+            result = self.wizard.run_step(step, data)
+        except Exception as exc:
+            logger.exception("初始化步骤异常 step=%s", step.value)
+            result = StepResult(False, f"步骤执行异常: {exc}")
         self._render_step_result(result)
 
     def _render_step_result(self, result: StepResult):
         """根据步骤结果渲染界面。"""
         self.content.clear()
         self._update_step_indicator()
-        self.status_label.text = _STEP_TITLES.get(self.current_step, "初始化")
+        self.status_label.text = step_title(self.current_step)
+        view = adapt_step_result(self.current_step, result)
 
         with self.content:
-            if result.success:
-                alert_card.show("info", "本步完成", result.message)
-            else:
-                alert_card.show("warning", "待处理", result.message)
+            alert_card.show(
+                "info" if view["success"] else "warning",
+                str(view["title"]),
+                str(view["message"]),
+            )
 
             if self.current_step == WizardStep.DETECT_OPENVPN:
                 self._render_detect_result(result)
