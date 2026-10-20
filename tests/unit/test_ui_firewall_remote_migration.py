@@ -596,3 +596,305 @@ def test_remote_delete_confirmation_explains_immediate_apply_and_rollback(
     assert captured["object_count"] == 1
     assert "立即通过 SSH" in str(captured["impact"])
     assert "prepush" in str(captured["impact"])
+
+
+def test_remote_batch_enable_skips_existing_and_applies_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0, 1}
+    marked: list[list[dict]] = []
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda _peer_id, _chain, _exists, rows: marked.append(
+            [dict(row) for row in rows]
+        ),
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    async def apply_ok(_peer_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_ok)
+
+    assert asyncio.run(page._do_batch_remote_set_enabled_async(True)) is True
+
+    assert len(marked) == 1
+    assert marked[0][0]["enabled"] is True
+    assert marked[0][1]["enabled"] is True
+    assert page._selected_remote_indices == set()
+    assert messages[-1] == (
+        "批量启用完成：成功 1，跳过 1，失败 0",
+        "positive",
+    )
+
+
+def test_remote_batch_enable_failure_keeps_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {1}
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    async def apply_fail(_peer_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_fail)
+
+    assert asyncio.run(page._do_batch_remote_set_enabled_async(True)) is False
+    assert page._selected_remote_indices == {1}
+    assert messages[-1] == (
+        "批量启用失败：成功 0，跳过 0，失败 1",
+        "negative",
+    )
+
+
+def test_remote_batch_delete_failure_keeps_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0, 1}
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    async def apply_fail(_peer_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_fail)
+
+    assert asyncio.run(page._do_batch_remote_delete_async()) is False
+    assert page._selected_remote_indices == {0, 1}
+
+
+def test_remote_push_duplicate_guard_and_success_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    messages: list[tuple[str, str]] = []
+    marked: list[bool] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: marked.append(True),
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    page._remote_push_running_peer = "another-peer"
+    assert asyncio.run(page._on_remote_push()) is False
+    assert marked == []
+    assert "请勿重复提交" in messages[-1][0]
+
+    page._remote_push_running_peer = None
+
+    async def apply_ok(_peer_id: str) -> bool:
+        assert page._remote_push_running_peer == "peer-001"
+        return True
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_ok)
+
+    assert asyncio.run(page._on_remote_push()) is True
+    assert marked == [True]
+    assert page._remote_push_running_peer is None
+    assert messages[-1] == ("已写回对端", "positive")
+
+
+def test_remote_push_confirmation_describes_chain_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.confirm_dialog.show",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+
+    page._confirm_remote_push()
+
+    assert captured["object_count"] == 2
+    assert captured["danger_level"] == "warning"
+    assert "SSH 重写" in str(captured["impact"])
+    assert "prepush" in str(captured["impact"])
+
+
+def test_execute_remote_import_failure_keeps_form_and_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0}
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+
+    async def apply_fail(_peer_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_fail)
+
+    class FakeForm:
+        busy: list[bool] = []
+        closed = False
+
+        def set_busy(self, value: bool):
+            self.busy.append(value)
+
+        def close(self):
+            self.closed = True
+
+    class Status:
+        text = ""
+
+    form = FakeForm()
+    status = Status()
+    prepared = {
+        "peer_id": "peer-001",
+        "kind": "iptables",
+        "rows": [{"rest": "-j ACCEPT", "enabled": True}],
+        "chain": "VPN_PEER_peer001",
+        "chain_exists": True,
+        "count": 1,
+    }
+
+    assert asyncio.run(
+        page._execute_remote_import(form, status, prepared)
+    ) is False
+    assert form.closed is False
+    assert form.busy == [True, False]
+    assert page._selected_remote_indices == {0}
+    assert "导入失败" in status.text
+
+
+def test_execute_remote_import_success_closes_and_clears_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0}
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    async def apply_ok(_peer_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_ok)
+
+    class FakeForm:
+        busy: list[bool] = []
+        closed = False
+
+        def set_busy(self, value: bool):
+            self.busy.append(value)
+
+        def close(self):
+            self.closed = True
+
+    class Status:
+        text = ""
+
+    form = FakeForm()
+    status = Status()
+    prepared = {
+        "peer_id": "peer-001",
+        "kind": "backup",
+        "rows": [{"rest": "-j ACCEPT", "enabled": True}],
+        "chain": "VPN_PEER_peer001",
+        "chain_exists": True,
+        "count": 1,
+    }
+
+    assert asyncio.run(
+        page._execute_remote_import(form, status, prepared)
+    ) is True
+    assert form.closed is True
+    assert form.busy == [True, False]
+    assert page._selected_remote_indices == set()
+    assert status.text == "导入完成：成功 1，跳过 0，失败 0"
+
+
+def test_remote_import_dialog_uses_precheck_shared_form() -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+
+    async def verify() -> None:
+        async with user_simulation(page._show_remote_import_dialog) as user:
+            await user.open("/")
+            await user.should_see("导入对端规则")
+            await user.should_see("规则内容")
+            await user.should_see("预检查并导入")
+            await user.should_see("尚未执行预检查")
+
+    asyncio.run(verify())
