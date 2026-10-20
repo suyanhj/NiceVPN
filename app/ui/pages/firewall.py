@@ -4958,9 +4958,9 @@ class FirewallPage:
             return
         remote_chain_cache.mark_pending_apply(pid, chn, cex, rows)
         if await self._apply_remote_cache_to_peer(pid):
+            self._selected_remote_indices.clear()
             dialog.close()
             self._notify_for_page("已导入并写回", type="positive")
-        self._selected_remote_indices.clear()
         self._refresh_remote_view()
 
     def _toggle_selection(self, rule_id: str, checked: bool) -> None:
