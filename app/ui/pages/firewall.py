@@ -1364,72 +1364,312 @@ class FirewallPage:
                     ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
 
     def _show_edit_remote_line_dialog(self, idx: int, row: dict) -> None:
-        """与 :meth:`_show_edit_dialog`（非对端·中心行）同套表单项，保存为 ``rest`` 并写回对端。"""
+        """统一表单编辑对端规则；可结构化编辑，也可直接修改原始 rest。"""
+
         if not self._require_remote_strategy_tab():
             return
-        pid = self._active_remote_peer_id()
-        if not pid:
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
             return
-        er = _remote_row_to_edit_form_dict(row)
-        ssub = er.get("source_subnet") or ""
-        sips = er.get("source_ips")
-        src_val = ssub or (",".join(sips) if sips else "")
-        cnm = IptablesManager.peer_chain_name_for_id(pid)
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full"
-        ):
-            ui.label("编辑对端链内规则").classes("text-h6")
+
+        edit = _remote_row_to_edit_form_dict(row)
+        source_subnet = edit.get("source_subnet") or ""
+        source_ips = edit.get("source_ips")
+        source_value = source_subnet or (
+            ",".join(source_ips) if source_ips else ""
+        )
+        original_rest = str(row.get("rest") or "").strip()
+        chain_name = IptablesManager.peer_chain_name_for_id(peer_id)
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
             ui.label(
-                f"链 {cnm}；保存后 SSH 写回。"
-            ).classes("text-caption text-grey q-mb-sm")
-            action_select = ui.select(
-                {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
+                f"链 {chain_name}；保存后立即 SSH 写回。"
+                " 原始 rest 改动优先于结构化字段。"
+            ).classes("section-caption")
+            fields["action"] = ui.select(
+                {
+                    "accept": "放行 (ACCEPT)",
+                    "drop": "丢弃 (DROP)",
+                    "reject": "拒绝 (REJECT)",
+                },
                 label="动作",
-                value=er.get("action", "accept"),
+                value=edit.get("action", "accept"),
             ).classes("w-full")
-            protocol_select = ui.select(
-                {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
+            fields["protocol"] = ui.select(
+                {
+                    "all": "不限 (ALL)",
+                    "tcp": "TCP",
+                    "udp": "UDP",
+                    "icmp": "ICMP",
+                },
                 label="协议",
-                value=(er.get("protocol") or "all").replace("any", "all"),
+                value=str(edit.get("protocol") or "all").replace("any", "all"),
                 with_input=True,
                 new_value_mode="add-unique",
             ).classes("w-full")
-            source_input = ui.input("源子网 CIDR 或源 IP 列表", value=src_val).classes("w-full")
-            dest_ip_input = ui.input("目标地址", value=er.get("dest_ip") or "").classes("w-full")
-            dest_port_input = ui.input("目标端口", value=er.get("dest_port") or "").classes("w-full")
-            desc_input = ui.input("规则描述", value=er.get("description") or "").classes("w-full")
-            enabled_switch = ui.switch("启用", value=er.get("enabled", True))
-            rest0 = str(row.get("rest") or "")
-            raw_ta = ui.textarea("原始 rest（与 ``iptables -A`` 后同形，高级）", value=rest0).classes("w-full").props(
-                "rows=3"
+            fields["source"] = ui.input(
+                "源子网 CIDR 或源 IP 列表",
+                value=source_value,
+            ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                value=edit.get("dest_ip") or "",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                value=edit.get("dest_port") or "",
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                value=edit.get("description") or "",
+            ).classes("w-full")
+            fields["enabled"] = ui.switch(
+                "启用",
+                value=bool(edit.get("enabled", True)),
             )
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
 
-                def _save_click() -> None:
-                    use_raw = (raw_ta.value or "").strip() != rest0.strip()
-                    if use_raw:
-                        self._schedule_remote_coro(
-                            self._do_edit_remote_line_raw_apply(
-                                dialog, pid, idx, (raw_ta.value or "").strip(), enabled_switch.value
-                            )
-                        )
-                    else:
-                        self._do_edit_remote_line_form(
-                            dialog,
-                            pid,
-                            idx,
-                            action=action_select.value,
-                            protocol=protocol_select.value,
-                            source_input=source_input.value,
-                            dest_ip=dest_ip_input.value or None,
-                            dest_port=dest_port_input.value or None,
-                            description=desc_input.value or None,
-                            enabled=enabled_switch.value,
-                        )
+            ui.separator().classes("q-my-sm")
+            ui.label("高级：原始 iptables rest").classes("section-caption")
+            fields["raw"] = (
+                ui.textarea(
+                    "原始 rest",
+                    value=original_rest,
+                )
+                .classes("w-full font-mono")
+                .props("rows=4")
+            )
+            fields["parse_status"] = ui.label("").classes("section-caption")
 
-                ui.button("保存", on_click=_save_click).props("color=primary")
-        dialog.open()
+            def update_parse_status() -> None:
+                raw = str(fields["raw"].value or "").strip()
+                if not raw:
+                    fields["parse_status"].text = "原始规则不能为空"
+                    return
+                if "\n" in raw or "\r" in raw:
+                    fields["parse_status"].text = "单条规则不能包含换行"
+                    return
+                hints = parse_remote_rule_hints(raw)
+                parsed = [
+                    f"协议 {hints.get('proto') or 'ALL'}",
+                    f"动作 {hints.get('action') or '—'}",
+                    f"源 {hints.get('source') or '*'}",
+                    f"目标 {hints.get('dest') or '*'}:{hints.get('dport') or '*'}",
+                ]
+                fields["parse_status"].text = " · ".join(parsed)
+
+            fields["raw"].on_value_change(lambda _event: update_parse_status())
+            update_parse_status()
+
+        async def submit() -> bool:
+            raw_value = str(fields["raw"].value or "").strip()
+            if raw_value != original_rest:
+                return await self._save_remote_raw_edit(
+                    peer_id,
+                    idx,
+                    raw_value,
+                    bool(fields["enabled"].value),
+                )
+
+            block_rows = self._build_remote_structured_block(
+                peer_id,
+                idx,
+                action=str(fields["action"].value or "accept"),
+                protocol=str(fields["protocol"].value or "all"),
+                source_input=str(fields["source"].value or ""),
+                dest_ip=str(fields["dest_ip"].value or "").strip() or None,
+                dest_port=str(fields["dest_port"].value or "").strip() or None,
+                description=str(fields["description"].value or "").strip() or None,
+                enabled=bool(fields["enabled"].value),
+            )
+            if block_rows is None:
+                return False
+            return await self._save_remote_block_replace_and_push(
+                peer_id,
+                idx,
+                block_rows,
+            )
+
+        form = create_form_dialog(
+            f"编辑对端规则 #{idx + 1}",
+            body=body,
+            on_submit=submit,
+            submit_label="保存并写回",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _build_remote_structured_block(
+        self,
+        peer_id: str,
+        idx: int,
+        *,
+        action: str,
+        protocol: str,
+        source_input: str,
+        dest_ip,
+        dest_port,
+        description,
+        enabled: bool,
+    ) -> list[dict[str, Any]] | None:
+        """把结构化表单生成可替换的工作副本规则块。"""
+
+        source_text = str(source_input or "").strip()
+        source_subnet, source_ips = _parse_source_text_for_remote_save(
+            source_text
+        )
+        port_text = str(dest_port or "").strip()
+        normalized_action = str(action or "accept").lower()
+        if normalized_action not in {"accept", "drop", "reject"}:
+            normalized_action = "accept"
+        normalized_protocol = str(protocol or "all").strip().lower()
+        if normalized_protocol in {"", "any"}:
+            normalized_protocol = "all"
+
+        try:
+            FirewallRule(
+                owner_type="group",
+                owner_id="_",
+                action=normalized_action,  # type: ignore[arg-type]
+                priority=1,
+                protocol=normalized_protocol,
+                dest_ip=str(dest_ip or "").strip() or None,
+                dest_port=port_text or None,
+            )
+        except (ValidationError, ValueError) as exc:
+            self._notify_for_page(str(exc), type="negative")
+            return None
+
+        try:
+            rests = remote_rests_from_create_fields(
+                source_subnet=source_subnet,
+                source_ips=source_ips,
+                action=normalized_action,
+                protocol=normalized_protocol,
+                dest_ip=str(dest_ip or "").strip() or None,
+                dest_port=port_text or None,
+            )
+        except (ValueError, ValidationError) as exc:
+            logger.error("对端编辑生成 rest 失败: %s", exc)
+            self._notify_for_page(str(exc), type="negative")
+            return None
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        priority = (
+            int(rows[idx].get("priority", 0) or 0) or ((idx + 1) * 10)
+            if 0 <= idx < len(rows)
+            else ((idx + 1) * 10)
+        )
+        desc = str(description or "").strip()
+        return [
+            {
+                "rest": rest,
+                "enabled": bool(enabled),
+                "priority": priority,
+                **({"description": desc} if desc else {}),
+            }
+            for rest in rests
+        ]
+
+    async def _save_remote_raw_edit(
+        self,
+        peer_id: str,
+        idx: int,
+        raw_rest: str,
+        enabled: bool,
+    ) -> bool:
+        """保存原始 rest，并经统一工作副本事务立即写回。"""
+
+        body = str(raw_rest or "").strip()
+        if not body:
+            self._notify_for_page("原始规则不能为空", type="negative")
+            return False
+        if "\n" in body or "\r" in body:
+            self._notify_for_page("单条规则不能含换行", type="negative")
+            return False
+        if self._active_remote_peer_id() != peer_id:
+            self._notify_for_page("对端已切换，已取消写回", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= idx < len(rows)):
+            self._notify_for_page("本地数据已变化，请重试", type="warning")
+            return False
+
+        rows[idx] = {
+            **rows[idx],
+            "rest": body,
+            "enabled": bool(enabled),
+        }
+        return await self._save_remote_rows_and_push(peer_id, rows)
+
+    async def _save_remote_block_replace_and_push(
+        self,
+        peer_id: str,
+        at_idx: int,
+        new_block: list[dict[str, Any]],
+    ) -> bool:
+        """用一段规则替换当前行，并经统一工作副本事务写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        if self._active_remote_peer_id() != peer_id:
+            self._notify_for_page("对端已切换，已取消写回", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= at_idx < len(rows)):
+            self._notify_for_page("本地数据已变化，请重试", type="warning")
+            return False
+        if not new_block:
+            self._notify_for_page("没有可保存的规则", type="negative")
+            return False
+
+        rows[at_idx : at_idx + 1] = [
+            dict(item)
+            for item in new_block
+        ]
+        return await self._save_remote_rows_and_push(peer_id, rows)
+
+    async def _save_remote_rows_and_push(
+        self,
+        peer_id: str,
+        rows: list[dict[str, Any]],
+    ) -> bool:
+        """统一对端工作副本写事务：prepush 备份 → pending → SSH → 成功/回滚。"""
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        chain_exists = bool(cache.get("chain_exists", True))
+
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                chain_exists,
+                rows,
+            )
+        except Exception as exc:
+            logger.error("对端工作副本预写失败 peer=%s: %s", peer_id, exc)
+            self._notify_for_page(f"本地工作副本保存失败: {exc}", type="negative")
+            return False
+
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if ok:
+            self._notify_for_page("已写回对端", type="positive")
+        self._refresh_remote_view()
+        return ok
 
     def _do_edit_remote_line_form(
         self,
@@ -1445,111 +1685,67 @@ class FirewallPage:
         description,
         enabled: bool,
     ) -> None:
-        t = (source_input or "").strip()
-        src_sub, src_ips = _parse_source_text_for_remote_save(t)
-        dp = (dest_port or "").strip()
-        a = str(action or "accept").lower()
-        if a not in ("accept", "drop", "reject"):
-            a = "accept"
-        try:
-            FirewallRule(
-                owner_type="group",
-                owner_id="_",
-                action=a,  # type: ignore[arg-type]
-                priority=1,
-                dest_port=dp or None,
-            )
-        except ValidationError as exc:
-            self._notify_for_page(str(exc), type="negative")
+        """兼容旧同步调用入口。"""
+
+        block_rows = self._build_remote_structured_block(
+            peer_id,
+            idx,
+            action=action,
+            protocol=protocol,
+            source_input=source_input,
+            dest_ip=dest_ip,
+            dest_port=dest_port,
+            description=description,
+            enabled=enabled,
+        )
+        if block_rows is None:
             return
-        try:
-            rests = remote_rests_from_create_fields(
-                source_subnet=src_sub,
-                source_ips=src_ips,
-                action=action,
-                protocol=protocol,
-                dest_ip=(dest_ip or "").strip() or None,
-                dest_port=dp or None,
-            )
-        except (ValueError, ValidationError) as exc:
-            logger.error("对端编辑生成 rest: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        pr = 0
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        rws0 = list(c2.get("rows") or [])
-        if 0 <= idx < len(rws0):
-            pr = int(rws0[idx].get("priority", 0) or 0) or (idx + 1) * 10
-        desc = (description or "").strip() or None
-        new_block = [
-            {
-                "rest": line,
-                "enabled": bool(enabled),
-                "priority": pr,
-                **({"description": desc} if desc else {}),
-            }
-            for line in rests
-        ]
         self._schedule_remote_coro(
-            self._do_edit_remote_block_replace_and_push(dialog, peer_id, idx, new_block)
+            self._do_edit_remote_block_replace_and_push(
+                dialog,
+                peer_id,
+                idx,
+                block_rows,
+            )
         )
 
     async def _do_edit_remote_line_raw_apply(
-        self, dialog, peer_id: str, idx: int, body: str, enabled: bool
-    ) -> None:
-        if not self._require_remote_strategy_tab() or not body or "\n" in body or "\r" in body:
-            if body and ("\n" in body or "\r" in body):
-                self._notify_for_page("单条规则不能含换行", type="negative")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
-        if not (0 <= idx < len(rws)):
-            self._notify_for_page("本地数据已变化，请重试", type="warning")
-            return
-        old = rws[idx]
-        rws[idx] = {**old, "rest": body, "enabled": bool(enabled)}
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        if await self._apply_remote_cache_to_peer(peer_id):
+        self,
+        dialog,
+        peer_id: str,
+        idx: int,
+        body: str,
+        enabled: bool,
+    ) -> bool:
+        """兼容旧异步调用入口。"""
+
+        ok = await self._save_remote_raw_edit(
+            peer_id,
+            idx,
+            body,
+            enabled,
+        )
+        if ok and dialog is not None:
             dialog.close()
-            self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        return ok
 
     async def _do_edit_remote_block_replace_and_push(
-        self, dialog, peer_id: str, at_idx: int, new_block: list[dict]
-    ) -> None:
-        if not self._require_remote_strategy_tab():
-            return
-        if self._active_remote_peer_id() != peer_id:
-            self._notify_for_page("对端已切换，已取消写回", type="warning")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
-        if not (0 <= at_idx < len(rws)):
-            self._notify_for_page("本地数据已变化，请重试", type="warning")
-            return
-        rws[at_idx : at_idx + 1] = new_block
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        try:
-            rests = remote_chain_cache.rests_to_push_list(rws)
-            await run.io_bound(
-                self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests
-            )
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, True, None)
-        except Exception as exc:
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, False, str(exc))
-            logger.error("对端编辑写回: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        logger.info("对端链行已按表单更新 peer=%s at=%s n=%s", peer_id, at_idx, len(new_block))
-        dialog.close()
-        self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        self,
+        dialog,
+        peer_id: str,
+        at_idx: int,
+        new_block: list[dict],
+    ) -> bool:
+        """兼容旧异步调用入口。"""
+
+        ok = await self._save_remote_block_replace_and_push(
+            peer_id,
+            at_idx,
+            new_block,
+        )
+        if ok and dialog is not None:
+            dialog.close()
+        return ok
 
     def _confirm_delete_remote_line(self, idx: int) -> None:
         confirm_dialog.show(
