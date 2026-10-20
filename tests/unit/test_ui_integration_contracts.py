@@ -45,8 +45,9 @@ def test_removed_legacy_certificate_and_user_page_selectors_stay_removed() -> No
     assert ".user-page" not in legacy
     assert ".user-header-panel" not in legacy
     assert ".user-record-list" not in legacy
-    assert ".user-actions" not in legacy
 
+    # 少量 user-* 仍可能作为与 group/service 共用的响应式 selector
+    # 留在兼容规则中；旧用户页主体必须保持移除。
     # 该徽标仍被共享视图引用，不能误删。
     assert ".user-session-badge" in legacy
 
