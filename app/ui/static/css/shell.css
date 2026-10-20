@@ -637,3 +637,26 @@ body {
     min-height: 320px;
   }
 }
+
+
+.vpn-grid-mono {
+  font-family: var(--vpn-font-mono);
+  font-size: 12px;
+}
+
+.vpn-grid-action-cell {
+  cursor: pointer;
+  color: var(--vpn-color-brand-soft);
+  font-weight: 650;
+}
+
+.vpn-grid-action-cell:hover {
+  color: var(--vpn-color-brand);
+}
+
+.vpn-data-warning {
+  padding: var(--vpn-space-3) var(--vpn-space-4);
+  border: 1px solid color-mix(in srgb, var(--vpn-color-warning) 30%, transparent);
+  border-radius: var(--vpn-radius-sm);
+  background: color-mix(in srgb, var(--vpn-color-warning) 7%, var(--vpn-panel));
+}
