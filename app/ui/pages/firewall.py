@@ -1360,10 +1360,13 @@ class FirewallPage:
             return
         reordered = [rws[i] for i in new_order]
         remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), reordered
+            pid,
+            str(c2.get("chain") or cname),
+            bool(c2.get("chain_exists", True)),
+            reordered,
         )
-        self._selected_remote_indices.clear()
         if await self._apply_remote_cache_to_peer(pid):
+            self._selected_remote_indices.clear()
             self._notify_for_page("规则顺序已更新", type="positive")
         self._refresh_remote_view()
 
@@ -1858,10 +1861,13 @@ class FirewallPage:
             return
         rws.pop(idx)
         remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
+            pid,
+            str(c2.get("chain") or cname),
+            bool(c2.get("chain_exists", True)),
+            rws,
         )
-        self._reindex_selected_after_remote_delete(idx)
         if await self._apply_remote_cache_to_peer(pid):
+            self._reindex_selected_after_remote_delete(idx)
             self._notify_for_page("已写回对端", type="positive")
         self._refresh_remote_view()
 
