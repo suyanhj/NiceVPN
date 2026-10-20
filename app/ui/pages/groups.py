@@ -119,11 +119,28 @@ class GroupsPage:
             )
             return
 
-        root_id = groups[0]["id"]
+        root_id = str(groups[0]["id"])
         with ui.element("div").classes("mgmt-record-list"):
             for group in groups:
-                self._render_group_card(group, is_root=(group["id"] == root_id))
+                view = self._build_group_view_model(group, root_id=root_id)
+                self._render_group_card(view, is_root=view["is_root"])
         self._sync_select_all()
+
+    @staticmethod
+    def _build_group_view_model(group: dict, *, root_id: str) -> dict:
+        """标准化分组展示数据，容忍缺失字段并明确根组/状态语义。"""
+
+        group_id = str(group.get("id") or "")
+        status = str(group.get("status") or "active")
+        return {
+            **group,
+            "id": group_id,
+            "name": str(group.get("name") or "未命名用户组"),
+            "subnet": str(group.get("subnet") or "未配置子网"),
+            "status": status if status in {"active", "disabled"} else "disabled",
+            "user_count": int(group.get("user_count") or 0),
+            "is_root": bool(group_id and group_id == root_id),
+        }
 
     def _render_group_card(self, group: dict, is_root: bool = False):
         """渲染单个用户组卡片。"""
@@ -142,13 +159,13 @@ class GroupsPage:
 
                 with ui.element("div").classes("mgmt-record-copy"):
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.label(str(group.get("name") or "未命名用户组")).classes("mgmt-record-title")
+                        ui.label(str(group["name"])).classes("mgmt-record-title")
                         if is_root:
                             ui.badge("根组", color="primary").props("outline")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
-                            ui.label(str(group.get("subnet") or "未配置子网"))
+                            ui.label(str(group["subnet"]))
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="14px")
                             ui.label(f"用户数 {user_count}")
