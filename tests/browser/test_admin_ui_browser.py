@@ -60,7 +60,10 @@ def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     screen.open("/")
     screen.should_contain("服务健康度")
     screen.should_contain("当前累计流量分布")
-    screen.should_contain("canvas")
+    canvas_count = screen.selenium.execute_script(
+        "return document.querySelectorAll('canvas').length"
+    )
+    assert int(canvas_count) >= 2
 
 
 def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
