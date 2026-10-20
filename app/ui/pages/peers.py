@@ -855,8 +855,20 @@ class PeersPage:
         if self._peers_total_label is not None:
             self._peers_total_label.text = f"共 {len(peers)} 个"
         self.list_container.clear()
-        with self.list_container:
-            self._render_peer_list(peers)
+        try:
+            with self.list_container:
+                self._render_peer_list(peers)
+        except Exception as exc:
+            logger.exception("渲染对端辅助数据失败")
+            if self._peers_total_label is not None:
+                self._peers_total_label.text = "辅助数据失败"
+            self.list_container.clear()
+            with self.list_container:
+                error_state(
+                    str(exc),
+                    title="对端辅助数据加载失败",
+                    on_retry=self._refresh_list,
+                )
 
     def _render_peer_list(self, peers: list[dict]) -> None:
         if not peers:
