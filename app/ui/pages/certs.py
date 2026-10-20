@@ -11,6 +11,7 @@ from nicegui import ui
 
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.cert.cert_service import CertService
+from app.ui.adapters.certs import adapt_cert_row, short_serial
 from app.ui.components import alert_card, confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
@@ -138,55 +139,9 @@ class CertsPage:
         now: datetime | None = None,
         warn_days: int = CERT_EXPIRY_WARN_DAYS,
     ) -> dict[str, Any]:
-        """标准化证书行数据，并把临期等级与服务原始状态分离。"""
+        """兼容页面调用；证书展示语义由纯适配层统一维护。"""
 
-        now = now or datetime.now(timezone.utc)
-        common_name = str(cert.get("common_name") or "")
-        serial = str(cert.get("serial") or "")
-        raw_status = str(cert.get("status") or "unknown")
-        status = raw_status if raw_status in {"valid", "revoked", "expired"} else "unknown"
-        expires_at = str(cert.get("expires_at") or "")
-        expires_display = "—"
-        days_left: int | None = None
-
-        if expires_at:
-            try:
-                expires_dt = datetime.fromisoformat(expires_at)
-                if expires_dt.tzinfo is None:
-                    expires_dt = expires_dt.replace(tzinfo=timezone.utc)
-                expires_display = expires_dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
-                days_left = (expires_dt - now).days
-                if status == "valid" and days_left < 0:
-                    status = "expired"
-                elif status == "valid" and days_left <= warn_days:
-                    status = "expiring"
-            except (TypeError, ValueError):
-                expires_display = expires_at
-
-        if status == "valid":
-            tone = "success"
-        elif status == "expiring":
-            tone = "warning"
-        elif status in {"expired", "revoked"}:
-            tone = "failed"
-        else:
-            tone = "unknown"
-
-        return {
-            "id": common_name,
-            "common_name": common_name or "—",
-            "serial": serial,
-            "serial_display": cls._short_serial(serial),
-            "status": status,
-            "status_label": cls._STATUS_LABELS.get(status, "未知"),
-            "status_tone": tone,
-            "expires_at": expires_at,
-            "expires_display": expires_display,
-            "days_left": days_left,
-            "revoked_at": str(cert.get("revoked_at") or ""),
-            "actions": "操作",
-            "_raw_status": raw_status,
-        }
+        return adapt_cert_row(cert, now=now, warn_days=warn_days)
 
     @staticmethod
     def _grid_columns() -> tuple[dict, ...]:
@@ -598,11 +553,9 @@ class CertsPage:
 
     @staticmethod
     def _short_serial(serial: str) -> str:
-        if not serial:
-            return "—"
-        if len(serial) <= 16:
-            return serial
-        return f"{serial[:8]}…{serial[-8:]}"
+        """兼容旧调用入口。"""
+
+        return short_serial(serial)
 
     def _refresh_table(self):
         self._refresh_cert_list()
