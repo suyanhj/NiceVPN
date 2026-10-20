@@ -2713,55 +2713,264 @@ class FirewallPage:
             self._refresh_rules()
 
     def _show_edit_dialog(self, rule: dict) -> None:
+        """使用统一表单编辑中心 JSON 规则或 center_peer 虚拟行。"""
+
         if not self._require_center_strategy_tab():
             return
-        rid = str(rule.get("id") or "")
-        is_center_peer = rid.startswith(CE_PEER_RULE_PREFIX) or rule.get("_row_kind") == "center_peer"
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full"
-        ):
-            ui.label("编辑对端·中心放行" if is_center_peer else "编辑中心规则").classes("text-h6")
+
+        rule = dict(rule)
+        rule_id = str(rule.get("id") or "").strip()
+        is_center_peer = (
+            rule_id.startswith(CE_PEER_RULE_PREFIX)
+            or rule.get("_row_kind") == "center_peer"
+        )
+        source_subnet = str(rule.get("source_subnet") or "").strip()
+        source_ips = [
+            str(value).strip()
+            for value in (rule.get("source_ips") or [])
+            if str(value).strip()
+        ]
+        source_value = source_subnet or ",".join(source_ips)
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
             if is_center_peer:
                 ui.label(
-                    "字段对应对端 JSON 的 center_forward_*；保存后与本机 VPN_FORWARD 一致；仅支持放行。"
-                ).classes("text-caption text-grey q-mb-sm")
-            action_select = ui.select(
-                {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
+                    "此行对应对端 center_forward_*；仅支持 ACCEPT。"
+                    " 修改 LAN 会同步影响中心 VPN_FORWARD。"
+                ).classes("section-caption")
+
+            fields["action"] = ui.select(
+                (
+                    {"accept": "放行 (ACCEPT)"}
+                    if is_center_peer
+                    else {
+                        "accept": "放行 (ACCEPT)",
+                        "drop": "丢弃 (DROP)",
+                        "reject": "拒绝 (REJECT)",
+                    }
+                ),
                 label="动作",
-                value=rule.get("action", "accept"),
+                value=(
+                    "accept"
+                    if is_center_peer
+                    else str(rule.get("action") or "accept").lower()
+                ),
             ).classes("w-full")
-            protocol_select = ui.select(
-                {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
+
+            fields["protocol"] = ui.select(
+                {
+                    "all": "不限 (ALL)",
+                    "tcp": "TCP",
+                    "udp": "UDP",
+                    "icmp": "ICMP",
+                },
                 label="协议",
-                value=(rule.get("protocol") or "all").replace("any", "all"),
+                value=str(rule.get("protocol") or "all").lower().replace("any", "all"),
                 with_input=True,
                 new_value_mode="add-unique",
             ).classes("w-full")
-            ssub = rule.get("source_subnet") or ""
-            sips = rule.get("source_ips")
-            src_val = ssub or (",".join(sips) if sips else "")
-            source_input = ui.input("源子网 CIDR 或源 IP 列表", value=src_val).classes("w-full")
-            dest_ip_input = ui.input("目标地址", value=rule.get("dest_ip") or "").classes("w-full")
-            dest_port_input = ui.input("目标端口", value=rule.get("dest_port") or "").classes("w-full")
-            desc_input = ui.input("规则描述", value=rule.get("description") or "").classes("w-full")
-            enabled_switch = ui.switch("启用", value=rule.get("enabled", True))
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "保存",
-                    on_click=lambda: self._do_edit(
-                        dialog,
-                        rule,
-                        action=action_select.value,
-                        protocol=protocol_select.value,
-                        source_input=source_input.value,
-                        dest_ip=dest_ip_input.value or None,
-                        dest_port=dest_port_input.value or None,
-                        description=desc_input.value or None,
-                        enabled=enabled_switch.value,
-                    ),
-                ).props("color=primary")
-        dialog.open()
+
+            fields["source"] = ui.input(
+                "源子网 CIDR 或源 IP 列表",
+                value=source_value,
+            ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                value=str(rule.get("dest_ip") or ""),
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                value=str(rule.get("dest_port") or ""),
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                value=str(rule.get("description") or ""),
+            ).classes("w-full")
+            fields["enabled"] = ui.switch(
+                "启用",
+                value=bool(rule.get("enabled", True)),
+            )
+
+            if not is_center_peer:
+                ui.label(
+                    f"归属：{rule.get('owner_type', 'group')} / "
+                    f"{rule.get('_owner_id') or rule.get('owner_id') or '—'}"
+                ).classes("section-caption")
+                ui.label(
+                    f"优先级：{int(rule.get('priority') or 0)}；"
+                    "优先级请在列表拖动调整。"
+                ).classes("section-caption")
+
+        def submit() -> bool:
+            return self._save_center_rule_edit(
+                rule,
+                action=str(fields["action"].value or "accept"),
+                protocol=str(fields["protocol"].value or "all"),
+                source_input=str(fields["source"].value or ""),
+                dest_ip=str(fields["dest_ip"].value or "").strip() or None,
+                dest_port=str(fields["dest_port"].value or "").strip() or None,
+                description=str(fields["description"].value or "").strip() or None,
+                enabled=bool(fields["enabled"].value),
+            )
+
+        form = create_form_dialog(
+            "编辑对端·中心放行" if is_center_peer else "编辑中心规则",
+            body=body,
+            on_submit=submit,
+            submit_label="保存",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _save_center_rule_edit(
+        self,
+        original: dict,
+        *,
+        action: str,
+        protocol: str,
+        source_input: str,
+        dest_ip,
+        dest_port,
+        description,
+        enabled: bool,
+    ) -> bool:
+        """保存中心规则；失败返回 False，让统一表单保留输入。"""
+
+        source_text = str(source_input or "").strip()
+        rule_id = str(original.get("id") or "").strip()
+        is_center_peer = (
+            rule_id.startswith(CE_PEER_RULE_PREFIX)
+            or original.get("_row_kind") == "center_peer"
+        )
+
+        normalized_protocol = str(protocol or "all").strip().lower()
+        if normalized_protocol in {"", "any"}:
+            normalized_protocol = "all"
+
+        if is_center_peer:
+            peer_id = str(original.get("_peer_id") or "").strip()
+            if not peer_id and rule_id.startswith(CE_PEER_RULE_PREFIX):
+                peer_id = rule_id[len(CE_PEER_RULE_PREFIX):].strip()
+            if not peer_id:
+                self._notify_for_page("对端 id 无效", type="negative")
+                return False
+            if not self._peer_service.get(peer_id):
+                self._notify_for_page("对端不存在", type="negative")
+                return False
+            if str(action or "").lower() != "accept":
+                self._notify_for_page(
+                    "对端·中心放行仅支持 ACCEPT",
+                    type="negative",
+                )
+                return False
+
+            lan_cidrs = _parse_lan_cidrs_text(source_text)
+            for cidr in lan_cidrs:
+                if not validate_cidr(cidr):
+                    self._notify_for_page(
+                        f"无效 CIDR: {cidr}",
+                        type="negative",
+                    )
+                    return False
+
+            port_text = str(dest_port or "").strip()
+            try:
+                FirewallRule(
+                    owner_type="group",
+                    owner_id="_",
+                    action="accept",
+                    priority=1,
+                    protocol=normalized_protocol,
+                    dest_ip=str(dest_ip or "").strip() or None,
+                    dest_port=port_text or None,
+                )
+            except (ValidationError, ValueError) as exc:
+                logger.error("对端·中心放行字段校验失败: %s", exc)
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            try:
+                self._peer_service.update(
+                    peer_id,
+                    {
+                        "lan_cidrs": lan_cidrs,
+                        "center_forward_enabled": bool(enabled),
+                        "center_forward_dest_ip": str(dest_ip or "").strip(),
+                        "center_forward_dest_port": port_text,
+                        "center_forward_protocol": normalized_protocol,
+                        "center_forward_rule_description": str(
+                            description or ""
+                        ).strip(),
+                    },
+                )
+            except Exception as exc:
+                logger.error(
+                    "对端·中心放行保存失败 peer=%s: %s",
+                    peer_id,
+                    exc,
+                )
+                self._notify_for_page(
+                    f"更新失败: {exc}",
+                    type="negative",
+                )
+                return False
+
+            self._notify_for_page("已更新", type="positive")
+            if os.name == "nt":
+                self._notify_for_page(
+                    "当前为 Windows，本机未落 iptables；请在 Linux 网关核对。",
+                    type="warning",
+                )
+            self._refresh_rules()
+            return True
+
+        owner_type = str(original.get("owner_type") or "group")
+        source_subnet = None
+        source_ips = None
+        if owner_type == "user" and source_text:
+            try:
+                source_subnet, source_ips = _parse_user_source_for_create(
+                    source_text
+                )
+            except ValueError as exc:
+                self._notify_for_page(str(exc), type="negative")
+                return False
+        else:
+            source_subnet = source_text or None
+
+        new_rule_data = {
+            **original,
+            "action": str(action or "accept").lower(),
+            "protocol": normalized_protocol,
+            "source_subnet": source_subnet,
+            "source_ips": source_ips,
+            "dest_ip": dest_ip,
+            "dest_port": dest_port,
+            "description": description,
+            "enabled": bool(enabled),
+            "updated_at": datetime.now().isoformat(),
+        }
+        for key in ("_owner_id", "_row_kind", "_peer_id", "_center_tag_line"):
+            new_rule_data.pop(key, None)
+
+        try:
+            self.rule_service.update_by_id(rule_id, new_rule_data)
+        except Exception as exc:
+            logger.error("编辑中心规则失败 rule=%s: %s", rule_id, exc)
+            self._notify_for_page(
+                f"更新失败: {exc}",
+                type="negative",
+            )
+            return False
+
+        self._notify_for_page("已更新", type="positive")
+        self._refresh_rules()
+        return True
 
     def _do_edit(
         self,
@@ -2775,89 +2984,22 @@ class FirewallPage:
         dest_port,
         description,
         enabled: bool,
-    ) -> None:
-        t = (source_input or "").strip()
-        rid = str(original.get("id") or "")
-        is_ce = rid.startswith(CE_PEER_RULE_PREFIX) or original.get("_row_kind") == "center_peer"
-        if is_ce:
-            peer_id = str(original.get("_peer_id") or "").strip()
-            if not peer_id and rid.startswith(CE_PEER_RULE_PREFIX):
-                peer_id = rid[len(CE_PEER_RULE_PREFIX) :]
-            peer_id = peer_id.strip()
-            if not peer_id:
-                self._notify_for_page("对端 id 无效", type="negative")
-                return
-            if not self._peer_service.get(peer_id):
-                self._notify_for_page("对端不存在", type="negative")
-                return
-            if (str(action or "").lower() != "accept"):
-                self._notify_for_page("对端·中心放行仅支持 ACCEPT", type="negative")
-                return
-            lans = _parse_lan_cidrs_text(t)
-            for c in lans:
-                if not validate_cidr(c):
-                    self._notify_for_page(f"无效 CIDR: {c}", type="negative")
-                    return
-            dp = (dest_port or "").strip()
-            try:
-                FirewallRule(
-                    owner_type="group",
-                    owner_id="_",
-                    action="accept",
-                    priority=1,
-                    dest_port=dp or None,
-                )
-            except ValidationError as exc:
-                logger.error("对端·中心放行端口校验: %s", exc)
-                self._notify_for_page(str(exc), type="negative")
-                return
-            try:
-                self._peer_service.update(
-                    peer_id,
-                    {
-                        "lan_cidrs": lans,
-                        "center_forward_enabled": bool(enabled),
-                        "center_forward_dest_ip": (dest_ip or "").strip(),
-                        "center_forward_dest_port": dp,
-                        "center_forward_protocol": (protocol or "all").strip().lower(),
-                        "center_forward_rule_description": (description or "").strip(),
-                    },
-                )
-            except Exception as exc:
-                logger.error("对端·中心放行保存: %s", exc)
-                self._notify_for_page(f"更新失败: {exc}", type="negative")
-                return
+    ) -> bool:
+        """兼容旧测试/调用入口。"""
+
+        success = self._save_center_rule_edit(
+            original,
+            action=action,
+            protocol=protocol,
+            source_input=source_input,
+            dest_ip=dest_ip,
+            dest_port=dest_port,
+            description=description,
+            enabled=enabled,
+        )
+        if success and dialog is not None:
             dialog.close()
-            self._notify_for_page("已更新", type="positive")
-            if os.name == "nt":
-                self._notify_for_page("当前为 Windows，本机未落 iptables；请在 Linux 网关核对。", type="warning")
-            self._refresh_rules()
-            return
-        otype = str(original.get("owner_type", "group"))
-        src_subnet = None
-        src_ips = None
-        if otype == "user" and t:
-            try:
-                src_subnet, src_ips = _parse_user_source_for_create(t)
-            except ValueError as exc:
-                self._notify_for_page(str(exc), type="negative")
-                return
-        else:
-            src_subnet = t or None
-        new_rule_data = {**original, "action": action, "protocol": protocol, "source_subnet": src_subnet, "source_ips": src_ips, "dest_ip": dest_ip, "dest_port": dest_port, "description": description, "enabled": enabled}
-        new_rule_data.pop("_owner_id", None)
-        new_rule_data.pop("_row_kind", None)
-        new_rule_data.pop("_peer_id", None)
-        new_rule_data["updated_at"] = datetime.now().isoformat()
-        try:
-            self.rule_service.update_by_id(str(original["id"]), new_rule_data)
-            dialog.close()
-            self._notify_for_page("已更新", type="positive")
-            self._refresh_rules()
-        except Exception as exc:
-            logger.error("edit: %s", exc)
-            self._notify_for_page(f"更新失败: {exc}", type="negative")
-            self._refresh_rules()
+        return success
 
     def _confirm_delete(self, rule_id: str) -> None:
         raw = self._center_raw_by_id.get(str(rule_id), {})
