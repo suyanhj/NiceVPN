@@ -108,9 +108,14 @@ def test_get_status_uses_status_directive_from_conf(monkeypatch, tmp_path: Path)
     assert out["clients"][0]["bytes_sent"] == 11774
 
 
-def test_write_server_conf_uses_official_server_dir(tmp_path: Path):
-    """server.conf 默认写入官方 /server 子目录。"""
+def test_write_server_conf_uses_official_server_dir(monkeypatch, tmp_path: Path):
+    """server.conf 默认写入官方 /server 子目录，且不依赖宿主机 chown。"""
     from app.services.openvpn.instance import write_server_conf
+
+    monkeypatch.setattr(
+        "app.utils.posix_data_perms.apply_openvpn_runtime_permissions",
+        lambda *_args, **_kwargs: None,
+    )
 
     conf = write_server_conf(
         "srv1",
