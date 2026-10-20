@@ -45,7 +45,14 @@ from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
-from app.ui.adapters.firewall import adapt_center_rule_rows
+from app.ui.adapters.firewall import (
+    adapt_center_rule_rows,
+    adapt_remote_cache_status,
+    adapt_remote_peer_capability,
+    adapt_remote_rule_rows,
+    format_remote_cache_timestamp,
+    parse_remote_rule_hints,
+)
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
@@ -94,37 +101,9 @@ def _parse_lan_cidrs_text(raw: str) -> list[str]:
 
 
 def _hints_from_iptables_rest_line(rest: str) -> dict[str, str]:
-    """从对端机链一行的 rest 中抽取常用字段，用于与中心卡同构展示；非完整解析。"""
-    t = (rest or "").strip()
-    out: dict[str, str] = {}
-    m = re.search(r"-p\s+(!?\S+)", t, re.IGNORECASE)
-    if m:
-        out["proto"] = m.group(1).upper()
-    m = re.search(r"-j\s+(\S+)", t, re.IGNORECASE)
-    if m:
-        out["action"] = m.group(1).upper()
-    m = re.search(r"-s\s+(\S+)", t)
-    if m:
-        out["source"] = m.group(1)
-    m = re.search(r"-d\s+(\S+)", t)
-    if m:
-        out["dest"] = m.group(1)
-    m = re.search(r"--dport(?:s)?\s+(!?\S+)", t, re.IGNORECASE)
-    if m:
-        out["dport"] = m.group(1)
-    m = re.search(r"-i\s+(\S+)", t)
-    if m:
-        out["in_if"] = m.group(1)
-    m = re.search(r"-o\s+(\S+)", t)
-    if m:
-        out["out_if"] = m.group(1)
-    m = re.search(r'--comment\s+"((?:\\.|[^"\\])*)"', t)
-    if not m:
-        m = re.search(r"--comment\s+(\S+)", t)
-    if m:
-        c = m.group(1).replace("\\'", "'")
-        out["comment"] = c if len(c) <= 120 else c[:117] + "…"
-    return out
+    """兼容旧调用入口；解析逻辑统一由纯适配层维护。"""
+
+    return parse_remote_rule_hints(rest)
 
 
 def _remote_row_to_edit_form_dict(row: dict) -> dict:
@@ -183,23 +162,9 @@ _TZ_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
 def _format_peer_cache_timestamp(raw: str | None) -> str:
-    """把缓存里 ISO 时间（存 UTC，如 ``…Z``）格式化为**上海/东八区**本地时间；无或解析失败则 — / 回退截断。"""
-    if not raw or not str(raw).strip():
-        return "—"
-    s = str(raw).strip()
-    try:
-        iso = s[:-1] + "+00:00" if s.endswith("Z") else s
-        dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(_TZ_UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        pass
-    if "T" in s:
-        s = s.replace("T", " ", 1)
-    if len(s) > 10 and s[10] == " " and len(s) >= 19:
-        return s[:19]
-    return s[:32]
+    """兼容旧调用入口；缓存时间格式化统一由纯适配层维护。"""
+
+    return format_remote_cache_timestamp(raw)
 
 
 def _firewall_export_json_filename(stem: str) -> str:
