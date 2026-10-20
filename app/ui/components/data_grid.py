@@ -56,7 +56,7 @@ def render_data_grid(
         "rowData": normalized_rows,
         "pagination": True,
         "paginationPageSize": page_size,
-        "getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
+        ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
     if selectable:
