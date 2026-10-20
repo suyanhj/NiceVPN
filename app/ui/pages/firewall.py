@@ -251,6 +251,7 @@ class FirewallPage:
         self._remote_push_button = None
         self._remote_grid_view = None
         self._remote_grid_rows: list[dict[str, Any]] = []
+        self._remote_reorder_allowed = False
 
     def _page_client(self) -> Any:
         """当前页面浏览器会话。优先 render 时缓存的 client，否则从列表区容器解析。"""
@@ -1058,8 +1059,23 @@ class FirewallPage:
                 f"{peer_id}:{index}"
                 for index in self._selected_remote_indices
             }
+            peer = self._selected_remote_peer_row()
+            try:
+                has_auth = bool(peer and peer_row_has_usable_ssh_auth(peer))
+            except Exception:
+                logger.exception("判断对端排序 SSH 条件失败 peer=%s", peer_id)
+                has_auth = False
+            self._remote_reorder_allowed = bool(
+                has_auth
+                and not fetch_running
+                and not fetch_error
+                and self._remote_push_running_peer != peer_id
+            )
+
             self._remote_grid_view = render_data_grid(
-                self._remote_grid_columns(can_reorder=False),
+                self._remote_grid_columns(
+                    can_reorder=self._remote_reorder_allowed
+                ),
                 rows,
                 row_id="id",
                 page_size=50,
@@ -1071,6 +1087,16 @@ class FirewallPage:
                 "selectionChanged",
                 self._on_remote_grid_selection_changed,
             )
+            if self._remote_reorder_allowed:
+                self._remote_grid_view.grid.options["rowDragManaged"] = True
+                self._remote_grid_view.grid.options[
+                    "suppressMoveWhenRowDragging"
+                ] = False
+                self._remote_grid_view.grid.on(
+                    "rowDragEnd",
+                    self._on_remote_grid_row_drag_end,
+                )
+                self._remote_grid_view.grid.update()
 
     async def _on_remote_grid_selection_changed(self, *_args) -> None:
         """同步 AG Grid 选择到现有远端批量操作索引集合。"""
@@ -1249,17 +1275,74 @@ class FirewallPage:
         result.insert(new_index, result.pop(old_index))
         return result
 
-    def _on_remote_sort_end(self, event) -> None:
-        """处理 NiceGUI SortableJS 对端规则拖拽结果。"""
+    def _on_remote_grid_row_drag_end(self, event) -> None:
+        """AG Grid 拖动结束后按缓存索引生成新顺序并立即写回。"""
 
-        new_order = self._move_order(
-            list(range(len(self._visible_remote_indices))),
-            event.old_index,
-            event.new_index,
-        )
-        if not new_order:
+        if not self._remote_reorder_allowed:
+            self._notify_for_page(
+                "当前正在拉取/推送、SSH 不可用或远端真值未知，不能调整顺序",
+                type="warning",
+            )
+            self._refresh_remote_view()
             return
-        self._schedule_remote_coro(self._do_remote_reorder_async(new_order))
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            self._refresh_remote_view()
+            return
+
+        data = args.get("data")
+        if not isinstance(data, dict):
+            node = args.get("node")
+            data = node.get("data") if isinstance(node, dict) else None
+        row_index = (data or {}).get("index")
+        if not isinstance(row_index, int):
+            self._refresh_remote_view()
+            return
+        if row_index not in self._visible_remote_indices:
+            self._refresh_remote_view()
+            return
+
+        old_position = self._visible_remote_indices.index(row_index)
+        try:
+            new_position = int(
+                args.get("overIndex", args.get("rowIndex", old_position))
+            )
+        except (TypeError, ValueError):
+            new_position = old_position
+        new_position = max(
+            0,
+            min(new_position, len(self._visible_remote_indices) - 1),
+        )
+        new_order = self._move_order(
+            self._visible_remote_indices,
+            old_position,
+            new_position,
+        )
+        if new_order and new_order != self._visible_remote_indices:
+            self._schedule_remote_coro(
+                self._do_remote_reorder_async(new_order)
+            )
+        else:
+            self._refresh_remote_view()
+
+    def _on_remote_sort_end(self, event) -> None:
+        """兼容旧测试入口；页面已改用 AG Grid rowDragEnd。"""
+
+        old_index = getattr(event, "old_index", None)
+        new_index = getattr(event, "new_index", None)
+        if not isinstance(old_index, int) or not isinstance(new_index, int):
+            self._refresh_remote_view()
+            return
+        new_order = self._move_order(
+            self._visible_remote_indices,
+            old_index,
+            new_index,
+        )
+        if new_order:
+            self._schedule_remote_coro(
+                self._do_remote_reorder_async(new_order)
+            )
 
     async def _do_remote_reorder_async(self, new_order: list[int]) -> None:
         if not self._require_remote_strategy_tab():
@@ -1749,8 +1832,16 @@ class FirewallPage:
 
     def _confirm_delete_remote_line(self, idx: int) -> None:
         confirm_dialog.show(
-            "删除本行并立即写回对端。确定？",
-            on_confirm=lambda: self._schedule_remote_coro(self._do_delete_remote_line_async(idx)),
+            f"确定删除对端规则 #{idx + 1}？",
+            impact=(
+                "删除后会立即通过 SSH 重写当前对端链；"
+                "若写回失败，工作副本会从 prepush 备份恢复并标记待同步。"
+            ),
+            object_count=1,
+            danger_level="danger",
+            on_confirm=lambda: self._schedule_remote_coro(
+                self._do_delete_remote_line_async(idx)
+            ),
         )
 
     async def _do_delete_remote_line_async(self, idx: int) -> None:
@@ -1784,7 +1875,320 @@ class FirewallPage:
         self._selected_remote_indices = next_set
 
     def _show_create_remote_line_dialog(self) -> None:
-        self._open_create_rule_dialog("remote")
+        """统一表单新建对端规则，保存成功后立即 SSH 写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请先选择对端", type="warning")
+            return
+        peer = self._selected_remote_peer_row()
+        if not peer:
+            self._notify_for_page("对端不存在", type="negative")
+            return
+        try:
+            if not peer_row_has_usable_ssh_auth(peer):
+                self._notify_for_page(
+                    "请先配置对端 SSH 凭据",
+                    type="warning",
+                )
+                return
+        except Exception as exc:
+            logger.error("检查对端 SSH 凭据失败: %s", exc)
+            self._notify_for_page("无法确认 SSH 凭据", type="negative")
+            return
+
+        groups = GroupService().list_all()
+        group_map = {str(group["id"]): group for group in groups}
+        users = UserService().list_all()
+        user_options = {
+            str(user["username"]): str(user["username"])
+            for user in users
+            if user.get("username")
+        }
+        default_group_id = (
+            str(groups[0]["id"])
+            if groups
+            else None
+        )
+
+        fields: dict[str, Any] = {}
+        peer_preset_holder: dict[str, dict] = {"by_key": {}}
+        peer_source_state = {"user_picked": False}
+        holder: dict[str, Any] = {}
+
+        def body() -> None:
+            ui.label(
+                f"对端：{peer.get('name') or peer_id} · "
+                f"链 {IptablesManager.peer_chain_name_for_id(peer_id)}；"
+                "创建成功后立即写回。"
+            ).classes("section-caption")
+
+            fields["owner_type"] = ui.select(
+                {"group": "组", "user": "用户"},
+                label="来源类型",
+                value="group",
+            ).classes("w-full")
+            fields["group"] = ui.select(
+                {
+                    str(group["id"]): (
+                        f"{group['name']} ({group.get('subnet') or '—'})"
+                    )
+                    for group in groups
+                },
+                label="选择组",
+                value=default_group_id,
+                with_input=True,
+            ).classes("w-full")
+            fields["users"] = ui.select(
+                user_options,
+                label="选择用户（多选）",
+                multiple=True,
+                with_input=True,
+            ).classes("w-full")
+            fields["users"].set_visibility(False)
+
+            fields["auto_source"] = ui.switch(
+                "源用本组子网",
+                value=False,
+            )
+            fields["peer_lan"] = ui.select(
+                {},
+                label="对端内网 CIDR（可选）",
+                with_input=True,
+            ).classes("w-full")
+            fields["source"] = ui.input(
+                "源地址",
+                placeholder="可自动填组子网 / CCD，或手工填写",
+            ).classes("w-full")
+            fields["user_hint"] = ui.label(
+                "用户来源可从 CCD 预填虚拟 IP。"
+            ).classes("section-caption")
+            fields["user_hint"].set_visibility(False)
+
+            with ui.row().classes("w-full gap-sm"):
+                fields["action"] = ui.select(
+                    {
+                        "accept": "放行 (ACCEPT)",
+                        "drop": "丢弃 (DROP)",
+                        "reject": "拒绝 (REJECT)",
+                    },
+                    label="动作",
+                    value="accept",
+                ).classes("w-full")
+                fields["protocol"] = ui.select(
+                    {
+                        "all": "不限 (ALL)",
+                        "tcp": "TCP",
+                        "udp": "UDP",
+                        "icmp": "ICMP",
+                    },
+                    label="协议",
+                    value="all",
+                    with_input=True,
+                    new_value_mode="add-unique",
+                ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                placeholder="空=不限",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                placeholder="空=不限",
+            ).classes("w-full")
+            fields["enabled"] = ui.switch("创建后启用", value=True)
+            fields["priority_mode"] = ui.toggle(
+                {
+                    "insert": "插入（指定优先级）",
+                    "append": "追加（链尾）",
+                },
+                value="insert",
+            ).classes("w-full")
+            fields["priority"] = ui.number(
+                "优先级",
+                value=None,
+                min=1,
+                max=999999,
+                step=10,
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                placeholder="可选",
+            ).classes("w-full")
+
+            def sync_peer_presets() -> None:
+                is_group = fields["owner_type"].value == "group"
+                fields["peer_lan"].set_visibility(is_group)
+                if not is_group:
+                    return
+                group_id = str(fields["group"].value or "").strip()
+                presets = (
+                    self._peer_service
+                    .list_peer_lan_firewall_presets_for_center_form()
+                    if group_id
+                    else []
+                )
+                peer_preset_holder["by_key"] = {
+                    str(item["key"]): str(item["cidr"])
+                    for item in presets
+                }
+                options = {
+                    str(item["key"]): str(item["label"])
+                    for item in presets
+                }
+                fields["peer_lan"].set_options(options)
+                if fields["peer_lan"].value not in options:
+                    fields["peer_lan"].set_value(None)
+
+            def on_owner_type() -> None:
+                is_group = fields["owner_type"].value == "group"
+                fields["group"].set_visibility(is_group)
+                fields["users"].set_visibility(not is_group)
+                fields["auto_source"].set_visibility(is_group)
+                fields["peer_lan"].set_visibility(is_group)
+                fields["user_hint"].set_visibility(not is_group)
+                if is_group:
+                    sync_peer_presets()
+
+            def on_group() -> None:
+                group_id = str(fields["group"].value or "").strip()
+                if (
+                    fields["auto_source"].value
+                    and group_id in group_map
+                ):
+                    fields["source"].set_value(
+                        group_map[group_id].get("subnet", "")
+                    )
+                peer_source_state["user_picked"] = False
+                sync_peer_presets()
+
+            def on_auto_source() -> None:
+                if fields["auto_source"].value:
+                    fields["peer_lan"].set_value(None)
+                    group_id = str(fields["group"].value or "").strip()
+                    if group_id in group_map:
+                        fields["source"].set_value(
+                            group_map[group_id].get("subnet", "")
+                        )
+                    fields["source"].props(add="readonly")
+                else:
+                    fields["source"].props(remove="readonly")
+
+            def on_peer_lan() -> None:
+                key = str(fields["peer_lan"].value or "").strip()
+                cidr = (peer_preset_holder.get("by_key") or {}).get(key)
+                peer_source_state["user_picked"] = bool(cidr)
+                if cidr:
+                    fields["auto_source"].set_value(False)
+                    fields["source"].props(remove="readonly")
+                    fields["source"].set_value(cidr)
+
+            def on_users() -> None:
+                selected = fields["users"].value or []
+                values = (
+                    list(selected)
+                    if isinstance(selected, list)
+                    else [selected]
+                )
+                fields["user_hint"].set_visibility(bool(values))
+                if values:
+                    ips = _read_ccd_vpn_ips(
+                        [str(value) for value in values]
+                    )
+                    if ips:
+                        fields["source"].set_value(", ".join(ips))
+
+            fields["owner_type"].on_value_change(
+                lambda _event: on_owner_type()
+            )
+            fields["group"].on_value_change(lambda _event: on_group())
+            fields["auto_source"].on_value_change(
+                lambda _event: on_auto_source()
+            )
+            fields["peer_lan"].on_value_change(
+                lambda _event: on_peer_lan()
+            )
+            fields["users"].on_value_change(lambda _event: on_users())
+            fields["priority_mode"].on_value_change(
+                lambda _event: fields["priority"].set_visibility(
+                    fields["priority_mode"].value == "insert"
+                )
+            )
+            on_group()
+
+        async def submit() -> bool:
+            values = self._read_create_form_to_values(
+                fields["owner_type"],
+                fields["group"],
+                fields["users"],
+                group_map,
+                fields["auto_source"],
+                fields["peer_lan"],
+                peer_preset_holder,
+                fields["source"],
+                fields["action"],
+                fields["protocol"],
+                fields["dest_ip"],
+                fields["dest_port"],
+                fields["description"],
+            )
+            if values is None:
+                return False
+
+            try:
+                priority = self._resolve_priority(
+                    fields["priority_mode"].value,
+                    fields["priority"].value,
+                    base=self._remote_priority_base_list(peer_id),
+                )
+                rests = remote_rests_from_create_fields(
+                    source_subnet=values["source_subnet"],
+                    source_ips=values["source_ips"],
+                    action=values["action"],
+                    protocol=values["protocol"],
+                    dest_ip=values["dest_ip"],
+                    dest_port=values["dest_port"],
+                )
+            except (ValueError, ValidationError, TypeError) as exc:
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            description = str(
+                values.get("description") or ""
+            ).strip() or None
+            new_rows = [
+                {
+                    "rest": line,
+                    "enabled": bool(fields["enabled"].value),
+                    "priority": priority,
+                    **(
+                        {"description": description}
+                        if description
+                        else {}
+                    ),
+                }
+                for line in rests
+            ]
+            return await self._insert_remote_rows_and_push(
+                peer_id,
+                new_rows,
+                priority,
+            )
+
+        form = create_form_dialog(
+            "新建对端规则",
+            body=body,
+            on_submit=submit,
+            submit_label="创建并写回",
+            close_on_success=True,
+        )
+        holder["form"] = form
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
 
     def _switch_owner(self, owner_id: str) -> None:
         """兼容旧跳转入口：同步归属筛选并刷新 Grid。"""
@@ -3207,51 +3611,83 @@ class FirewallPage:
             self._do_remote_create_insert_and_push(dialog, str(peer_id).strip(), new_rows, pr)
         )
 
+    async def _insert_remote_rows_and_push(
+        self,
+        peer_id: str,
+        new_rows: list[dict],
+        priority: int,
+    ) -> bool:
+        """按优先级插入工作副本并立即写回；失败由缓存 prepush 语义回滚。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        if self._active_remote_peer_id() != peer_id:
+            self._notify_for_page(
+                "对端已切换，已取消写回",
+                type="warning",
+            )
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        rows = list(cache.get("rows") or [])
+
+        def row_priority(index: int) -> int:
+            row = rows[index]
+            return int(row.get("priority", 0) or 0) or (
+                (index + 1) * 10
+            )
+
+        insert_at = len(rows)
+        for index in range(len(rows)):
+            if row_priority(index) > int(priority):
+                insert_at = index
+                break
+
+        for offset, new_row in enumerate(new_rows):
+            rows.insert(insert_at + offset, dict(new_row))
+
+        remote_chain_cache.mark_pending_apply(
+            peer_id,
+            chain,
+            bool(cache.get("chain_exists", True)),
+            rows,
+        )
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if not ok:
+            self._refresh_remote_view()
+            return False
+
+        logger.info(
+            "对端链已插入新建行 peer=%s n=%s pri=%s",
+            peer_id,
+            len(new_rows),
+            priority,
+        )
+        self._notify_for_page("已创建并写回对端", type="positive")
+        self._refresh_remote_view()
+        return True
+
     async def _do_remote_create_insert_and_push(
         self,
         dialog,
         peer_id: str,
         new_rows: list[dict],
         priority: int,
-    ) -> None:
-        if not self._require_remote_strategy_tab():
-            return
-        if self._active_remote_peer_id() != peer_id:
-            self._notify_for_page("对端已切换，已取消写回", type="warning")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
+    ) -> bool:
+        """兼容旧调用入口。"""
 
-        def row_pri(i: int) -> int:
-            r = rws[i]
-            return int(r.get("priority", 0) or 0) or (i + 1) * 10
-
-        insert_at = len(rws)
-        for i in range(len(rws)):
-            if row_pri(i) > int(priority):
-                insert_at = i
-                break
-        for j, nr in enumerate(new_rows):
-            rws.insert(insert_at + j, nr)
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        try:
-            rests = remote_chain_cache.rests_to_push_list(rws)
-            await run.io_bound(
-                self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests
-            )
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, True, None)
-        except Exception as exc:
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, False, str(exc))
-            logger.error("对端新建规则写回: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        logger.info("对端链已插入新建行 peer=%s n=%s pri=%s", peer_id, len(new_rows), priority)
-        dialog.close()
-        self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        ok = await self._insert_remote_rows_and_push(
+            peer_id,
+            new_rows,
+            priority,
+        )
+        if ok and dialog is not None:
+            dialog.close()
+        return ok
 
     def _resolve_priority(self, mode: str, input_value, *, base: list[dict] | None = None) -> int:
         if base is None:
