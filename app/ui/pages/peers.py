@@ -29,7 +29,7 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.page_header import render_page_header
+from app.ui.components.page_header import BreadcrumbItem, render_page_header
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
@@ -211,52 +211,114 @@ class PeersPage:
         return f"**远端系统**：{dist_txt}\n\n未检测到 OpenVPN 可执行文件{hint}。"
 
     def render_manual_page(self, peer_id: str) -> None:
-        """渲染对端部署说明独立页面。"""
-        pid = str(peer_id or "").strip()
-        row = self.peer_service.get(pid) if pid else None
+        """使用统一子页面外壳渲染对端部署说明。"""
+
+        peer_id = str(peer_id or "").strip()
+        try:
+            row = self.peer_service.get(peer_id) if peer_id else None
+        except Exception as exc:
+            logger.exception("读取对端部署说明失败 peer=%s", peer_id)
+            with ui.column().classes("page-shell peer-manual-page"):
+                render_page_header(
+                    "对端部署说明",
+                    description="加载对端信息失败。",
+                    breadcrumbs=(
+                        BreadcrumbItem("对端站点", "/peers"),
+                        BreadcrumbItem("部署说明"),
+                    ),
+                )
+                error_state(
+                    str(exc),
+                    title="部署说明加载失败",
+                    on_retry=lambda: ui.navigate.to(f"/peers/manual?peer={peer_id}"),
+                )
+            return
+
         if not row:
             with ui.column().classes("page-shell peer-manual-page"):
-                with ui.element("section").classes("peer-manual-empty"):
-                    ui.icon("description", size="42px").classes("text-grey-6")
-                    ui.label("对端部署说明不可用").classes("peer-manual-page-title")
-                    ui.label("未找到该对端，请返回列表重选。").classes("peer-manual-page-subtitle")
-                    ui.button("返回对端站点", icon="arrow_back", on_click=lambda: ui.navigate.to("/peers")).props(
-                        "outline no-caps no-ripple"
-                    )
+                render_page_header(
+                    "对端部署说明",
+                    description="未找到指定对端。",
+                    breadcrumbs=(
+                        BreadcrumbItem("对端站点", "/peers"),
+                        BreadcrumbItem("部署说明"),
+                    ),
+                )
+                empty_state(
+                    "对端部署说明不可用",
+                    description="未找到该对端，请返回列表重新选择。",
+                    action_label="返回对端站点",
+                    on_action=lambda: ui.navigate.to("/peers"),
+                    icon="description",
+                )
             return
-        text = self.peer_service.export_peer_manual_markdown(pid)
-        data = self.peer_service.export_peer_manual_context(pid)
+
+        try:
+            markdown_text = self.peer_service.export_peer_manual_markdown(peer_id)
+            data = self.peer_service.export_peer_manual_context(peer_id)
+        except Exception as exc:
+            logger.exception("生成对端部署说明失败 peer=%s", peer_id)
+            with ui.column().classes("page-shell peer-manual-page"):
+                render_page_header(
+                    "对端部署说明",
+                    description=str(row.get("name") or peer_id),
+                    breadcrumbs=(
+                        BreadcrumbItem("对端站点", "/peers"),
+                        BreadcrumbItem("部署说明"),
+                    ),
+                )
+                error_state(
+                    str(exc),
+                    title="部署说明生成失败",
+                    on_retry=lambda: ui.navigate.to(f"/peers/manual?peer={peer_id}"),
+                )
+            return
+
         overview = data["overview"]
-        fname = self._peer_manual_download_filename(row)
-        all_commands = "\n\n".join(str(x) for x in data.get("commands") or [] if str(x).strip())
+        filename = self._peer_manual_download_filename(row)
+        all_commands = "\n\n".join(
+            str(command)
+            for command in data.get("commands") or []
+            if str(command).strip()
+        )
+
+        def header_actions() -> None:
+            secondary_action(
+                "返回",
+                icon="arrow_back",
+                on_click=lambda: ui.navigate.to("/peers"),
+            )
+            secondary_action(
+                "复制全部命令",
+                icon="content_copy",
+                on_click=lambda: self._copy_manual_text(
+                    all_commands,
+                    "已复制全部命令",
+                ),
+                disabled=not bool(all_commands),
+            )
+            secondary_action(
+                "下载配置",
+                icon="vpn_key",
+                on_click=lambda current=row: self._download_bound_user_ovpn(current),
+            )
+            primary_action(
+                "下载 Markdown",
+                icon="download",
+                on_click=lambda: ui.download(markdown_text.encode("utf-8"), filename),
+            )
+
         with ui.column().classes("page-shell peer-manual-page"):
-            with ui.element("section").classes("peer-manual-hero"):
-                with ui.element("div").classes("peer-manual-hero-copy"):
-                    ui.label("对端部署说明").classes("peer-manual-page-title")
-                    ui.label("按步执行，命令块可一键复制。").classes("peer-manual-page-subtitle")
-                    with ui.element("div").classes("peer-manual-chip-row"):
-                        for label, value in [
-                            ("对端", overview["peer_name"]),
-                            ("用户", overview["bound_username"]),
-                            ("VPN 地址池", overview["global_subnet"]),
-                        ]:
-                            with ui.element("span").classes("peer-manual-chip"):
-                                ui.label(label).classes("peer-manual-chip-label")
-                                ui.label(str(value or "—")).classes("peer-manual-chip-value")
-                with ui.element("div").classes("peer-manual-hero-actions"):
-                    ui.button("返回", icon="arrow_back", on_click=lambda: ui.navigate.to("/peers")).props(
-                        "flat no-caps no-ripple"
-                    )
-                    ui.button(
-                        "复制全部命令",
-                        icon="content_copy",
-                        on_click=lambda t=all_commands: self._copy_manual_text(t, "已复制全部命令"),
-                    ).props("outline no-caps no-ripple")
-                    ui.button(
-                        "下载 Markdown",
-                        icon="download",
-                        on_click=lambda: ui.download(text.encode("utf-8"), fname),
-                    ).props("unelevated no-caps no-ripple")
+            render_page_header(
+                "对端部署说明",
+                description="按步骤完成对端 OpenVPN 部署；命令、说明和绑定用户配置均可直接下载或复制。",
+                breadcrumbs=(
+                    BreadcrumbItem("对端站点", "/peers"),
+                    BreadcrumbItem(str(row.get("name") or peer_id)),
+                    BreadcrumbItem("部署说明"),
+                ),
+                actions=header_actions,
+            )
 
             with ui.element("section").classes("peer-manual-grid"):
                 with ui.element("div").classes("peer-manual-summary-card"):
@@ -265,18 +327,44 @@ class PeersPage:
                         with ui.element("div").classes("peer-manual-note"):
                             ui.icon("info", size="16px")
                             ui.label(str(item)).classes("peer-manual-note-text")
+
                 with ui.element("div").classes("peer-manual-summary-card"):
                     ui.label("对端信息").classes("peer-manual-section-title")
                     self._render_manual_meta("对端 ID", overview["peer_id"])
+                    self._render_manual_meta("绑定用户", overview["bound_username"])
+                    self._render_manual_meta("VPN 地址池", overview["global_subnet"])
                     self._render_manual_meta("客户端配置", overview["client_config_path"])
                     self._render_manual_meta("客户端日志", overview["client_log_path"])
                     cidrs = overview.get("lan_cidrs") or []
-                    self._render_manual_meta("后方内网", "、".join(cidrs) if cidrs else "未配置")
+                    self._render_manual_meta(
+                        "后方内网",
+                        "、".join(cidrs) if cidrs else "未配置",
+                    )
 
             with ui.element("section").classes("peer-manual-steps"):
                 ui.label("执行步骤").classes("peer-manual-section-title")
-                for idx, step in enumerate(data.get("steps") or [], start=1):
-                    self._render_manual_step(idx, step)
+                for index, step in enumerate(data.get("steps") or [], start=1):
+                    self._render_manual_step(index, step)
+
+    def _download_bound_user_ovpn(self, row: dict) -> None:
+        """下载对端绑定用户的中心 .ovpn 成品。"""
+
+        username = str(row.get("bound_username") or "").strip()
+        if not username:
+            ui.notify("该对端未绑定用户，无法下载客户端配置", type="warning")
+            return
+        path = OVPN_PROFILES_DIR / f"{username}.ovpn"
+        if not path.is_file():
+            ui.notify(
+                f"未找到 {username} 的客户端配置，请先在用户管理生成或重新签发配置",
+                type="negative",
+            )
+            return
+        try:
+            ui.download(path.read_bytes(), f"{username}.ovpn")
+        except OSError as exc:
+            logger.exception("读取对端绑定用户配置失败 user=%s", username)
+            ui.notify(f"读取客户端配置失败: {exc}", type="negative")
 
     def _render_manual_meta(self, label: str, value: str) -> None:
         """渲染部署说明元信息行。"""
