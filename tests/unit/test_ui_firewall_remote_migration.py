@@ -54,6 +54,7 @@ class FakePeerService:
         }
         self.fetch_error = fetch_error
         self.fetch_calls: list[str] = []
+        self.apply_calls: list[tuple[str, list[str]]] = []
 
     def list_all(self):
         return [dict(PEER)]
@@ -66,6 +67,19 @@ class FakePeerService:
         if self.fetch_error:
             raise self.fetch_error
         return dict(self.fetch_result)
+
+    def apply_remote_peer_filter_chain_rests(self, peer_id: str, rests: list[str]):
+        self.apply_calls.append((peer_id, list(rests)))
+        return True
+
+    def list_peer_lan_firewall_presets_for_center_form(self):
+        return [
+            {
+                "key": "peer-001:192.168.10.0/24",
+                "cidr": "192.168.10.0/24",
+                "label": "广州站点 · 192.168.10.0/24",
+            }
+        ]
 
 
 def _build_remote_view(page: FirewallPage) -> None:
@@ -123,6 +137,8 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
 
     assert page._remote_pull_button._props.get("disable") is not True
     assert page._remote_push_button._props.get("disable") is not True
+    assert options["columnDefs"][0]["rowDrag"] is True
+    assert options["rowDragManaged"] is True
 
 
 def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
@@ -148,6 +164,8 @@ def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
 
     assert page._remote_pull_button._props.get("disable") is True
     assert page._remote_push_button._props.get("disable") is True
+    assert page._remote_grid_view.grid.options["columnDefs"][0]["rowDrag"] is False
+    assert "rowDragManaged" not in page._remote_grid_view.grid.options
 
 
 def test_remote_no_cache_fetching_error_and_empty_states(
@@ -330,3 +348,251 @@ def test_remote_grid_columns_preserve_raw_rest_and_operations() -> None:
     ]
     assert FirewallPage._remote_grid_columns()[0]["checkboxSelection"] is True
     assert FirewallPage._remote_grid_columns()[0]["headerCheckboxSelection"] is True
+
+
+def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._remote_reorder_allowed = True
+    page._visible_remote_indices = [0, 1, 2]
+    captured: list[list[int]] = []
+
+    monkeypatch.setattr(
+        page,
+        "_do_remote_reorder_async",
+        lambda order: captured.append(list(order)),
+    )
+    monkeypatch.setattr(page, "_schedule_remote_coro", lambda _value: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+
+    class Event:
+        args = {
+            "data": {"index": 0},
+            "overIndex": 2,
+        }
+
+    page._on_remote_grid_row_drag_end(Event())
+
+    assert captured == [[1, 2, 0]]
+
+
+def test_remote_grid_drag_blocked_when_remote_truth_is_not_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._remote_reorder_allowed = False
+    messages: list[tuple[str, str]] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: refreshed.append(True))
+
+    class Event:
+        args = {"data": {"index": 0}, "overIndex": 1}
+
+    page._on_remote_grid_row_drag_end(Event())
+
+    assert "不能调整顺序" in messages[-1][0]
+    assert messages[-1][1] == "warning"
+    assert refreshed == [True]
+
+
+def test_remote_create_shared_form_keeps_source_priority_and_enabled_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._peer_service = FakePeerService()
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.peer_row_has_usable_ssh_auth",
+        lambda _row: True,
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.GroupService.list_all",
+        lambda self: [
+            {
+                "id": "group-dev",
+                "name": "开发组",
+                "subnet": "10.8.0.0/24",
+                "status": "active",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.UserService.list_all",
+        lambda self: [{"username": "alice"}],
+    )
+
+    async def verify() -> None:
+        async with user_simulation(page._show_create_remote_line_dialog) as user:
+            await user.open("/")
+            await user.should_see("新建对端规则")
+            await user.should_see("来源类型")
+            await user.should_see("选择组")
+            await user.should_see("选择用户（多选）")
+            await user.should_see("源用本组子网")
+            await user.should_see("对端内网 CIDR（可选）")
+            await user.should_see("源地址")
+            await user.should_see("优先级")
+            await user.should_see("创建后启用")
+            await user.should_see("创建并写回")
+
+    asyncio.run(verify())
+
+
+def test_insert_remote_rows_respects_priority_and_applies_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    marked: list[tuple[str, str, bool, list[dict]]] = []
+    refreshed: list[bool] = []
+    messages: list[tuple[str, str]] = []
+
+    cache = {
+        **CACHE,
+        "rows": [
+            {
+                "rest": "-s 10.0.0.0/24 -j ACCEPT",
+                "enabled": True,
+                "priority": 10,
+            },
+            {
+                "rest": "-s 20.0.0.0/24 -j ACCEPT",
+                "enabled": True,
+                "priority": 20,
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(cache),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda peer_id, chain, chain_exists, rows: marked.append(
+            (peer_id, chain, chain_exists, [dict(row) for row in rows])
+        ),
+    )
+
+    async def apply_ok(_peer_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_ok)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    new_rows = [
+        {
+            "rest": "-p tcp -s 15.0.0.0/24 --dport 443 -j ACCEPT",
+            "enabled": True,
+            "priority": 15,
+            "description": "inserted",
+        }
+    ]
+    assert asyncio.run(
+        page._insert_remote_rows_and_push("peer-001", new_rows, 15)
+    ) is True
+
+    assert len(marked) == 1
+    persisted = marked[0][3]
+    assert [row["priority"] for row in persisted] == [10, 15, 20]
+    assert persisted[1]["description"] == "inserted"
+    assert refreshed == [True]
+    assert messages[-1] == ("已创建并写回对端", "positive")
+
+
+def test_remote_reorder_failure_preserves_selection_for_rolled_back_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0, 1}
+    marked: list[list[dict]] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda _peer_id, _chain, _exists, rows: marked.append(
+            [dict(row) for row in rows]
+        ),
+    )
+
+    async def apply_fail(_peer_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_fail)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+
+    asyncio.run(page._do_remote_reorder_async([1, 0]))
+
+    assert [row["priority"] for row in marked[0]] == [20, 10]
+    assert page._selected_remote_indices == {0, 1}
+
+
+def test_remote_delete_failure_preserves_selection_and_success_reindexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = False
+    page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
+    page._selected_remote_indices = {0, 1}
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: dict(CACHE),
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    async def apply_fail(_peer_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_fail)
+    asyncio.run(page._do_delete_remote_line_async(0))
+    assert page._selected_remote_indices == {0, 1}
+
+    async def apply_ok(_peer_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(page, "_apply_remote_cache_to_peer", apply_ok)
+    asyncio.run(page._do_delete_remote_line_async(0))
+    assert page._selected_remote_indices == {0}
+
+
+def test_remote_delete_confirmation_explains_immediate_apply_and_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.confirm_dialog.show",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+
+    page._confirm_delete_remote_line(1)
+
+    assert captured["danger_level"] == "danger"
+    assert captured["object_count"] == 1
+    assert "立即通过 SSH" in str(captured["impact"])
+    assert "prepush" in str(captured["impact"])
