@@ -11,6 +11,25 @@ from nicegui import ui
 from app.ui.components.states import empty_state, error_state
 
 
+_DARK_ECHART_THEME: dict[str, Any] = {
+    "darkMode": True,
+    "backgroundColor": "transparent",
+    "textStyle": {"color": "#cbd5e1"},
+    "title": {"textStyle": {"color": "#d9e2ec"}},
+    "legend": {"textStyle": {"color": "#94a3b8"}},
+    "categoryAxis": {
+        "axisLine": {"lineStyle": {"color": "#475569"}},
+        "axisLabel": {"color": "#94a3b8"},
+        "splitLine": {"lineStyle": {"color": "rgba(148,163,184,0.12)"}},
+    },
+    "valueAxis": {
+        "axisLine": {"lineStyle": {"color": "#475569"}},
+        "axisLabel": {"color": "#94a3b8"},
+        "splitLine": {"lineStyle": {"color": "rgba(148,163,184,0.12)"}},
+    },
+}
+
+
 @dataclass(slots=True)
 class ChartCard:
     container: Any
@@ -80,7 +99,11 @@ def render_chart_card(
             ).container
         else:
             chart = (
-                ui.echart(merged, theme="dark", on_point_click=on_point_click)
+                ui.echart(
+                    merged,
+                    theme=_DARK_ECHART_THEME,
+                    on_point_click=on_point_click,
+                )
                 .classes("vpn-chart-card__chart w-full")
             )
     return ChartCard(container=container, chart=chart, placeholder=placeholder)
