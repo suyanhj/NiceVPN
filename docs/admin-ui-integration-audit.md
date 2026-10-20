@@ -16,8 +16,9 @@
 ### 已证明无引用并删除
 
 - 旧证书页 `cert-*`：当前所有页面零引用，整段删除；
-- 旧用户页主体：旧 header/list/card/action 等 selector 已无页面引用，删除；
-- 用户在线状态 `user-session-badge` 仍被共享视图使用，因此保留。
+- 旧用户页主体：旧 header/list/card 等主体 selector 已无页面引用，删除；
+- 用户在线状态 `user-session-badge` 仍被共享视图使用，因此保留；
+- 少量 `user-*` 名称仍位于与 `group-*` / `service-*` 共用的响应式 selector 中，本轮不做脆弱的行级拆分；它们不构成旧页面主体，也没有运行时页面引用。
 
 删除前完整备份位于：
 
