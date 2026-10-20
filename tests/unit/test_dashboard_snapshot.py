@@ -194,5 +194,5 @@ def test_traffic_chart_is_snapshot_not_fake_time_series() -> None:
 def test_cert_status_tones() -> None:
     assert cert_status(None) == ("无有效证书", "unknown")
     assert cert_status(-2) == ("已过期 2 天", "failed")
-    assert cert_status(10)[1] == "warning"
-    assert cert_status(120)[1] == "success"
+    assert cert_status(10, warn_days=30)[1] == "warning"
+    assert cert_status(120, warn_days=30)[1] == "success"
