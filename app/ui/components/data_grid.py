@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -38,6 +39,7 @@ def render_data_grid(
     row_id: str = "id",
     page_size: int = 20,
     selectable: bool = True,
+    selected_ids: Iterable[object] | None = None,
     on_cell_click: Callable[..., Any] | None = None,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
@@ -61,6 +63,18 @@ def render_data_grid(
     }
     if selectable:
         options["rowSelection"] = {"mode": "multiRow"}
+        selected = [str(value) for value in (selected_ids or []) if value is not None]
+        if selected:
+            selected_json = json.dumps(selected, ensure_ascii=False)
+            options[":onFirstDataRendered"] = (
+                "(params) => {"
+                f"const selected = new Set({selected_json});"
+                "params.api.forEachNode((node) => "
+                "node.setSelected(selected.has(String(node.data?."
+                f"{row_id}"
+                " ?? ''))));"
+                "}"
+            )
 
     with ui.column().classes("vpn-data-grid w-full") as container:
         grid = (
