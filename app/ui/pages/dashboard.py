@@ -1,76 +1,49 @@
 # -*- coding: utf-8 -*-
-"""仪表盘页面，展示实时指标与告警信息。"""
+"""仪表盘页面：隔离采集当前运行快照并使用共享后台组件展示。"""
 
-import json
+from __future__ import annotations
+
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from typing import Any
 
 from nicegui import ui
 
 from app.core.config import load_config
-from app.core.constants import (
-    ALERTS_FILE, FIREWALL_DIR, USERS_DIR, GROUPS_DIR,
-    CERT_EXPIRY_WARN_DAYS,
-)
+from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.monitor.service_monitor import ServiceMonitor
+from app.ui.adapters.dashboard import (
+    DashboardSnapshot,
+    cert_status,
+    collect_dashboard_snapshot,
+    service_health_chart_options,
+    traffic_snapshot_chart_options,
+)
+from app.ui.components.actions import secondary_action
+from app.ui.components.cards import info_card, metric_card, quick_link_card
+from app.ui.components.charts import render_chart_card
+from app.ui.components.page_header import render_page_header
+from app.ui.components.status import status_badge
 
 logger = logging.getLogger(__name__)
 
+_SHORTCUT_ROUTES = {
+    "users": "/users",
+    "services": "/services",
+    "certs": "/certs",
+    "firewall": "/firewall",
+}
+
 
 def _format_bytes(size: int) -> str:
-    """将字节数转换为易读格式（单位字母大写，与仪表盘展示一致）。"""
-    value = float(size)
+    """将字节数转换为易读格式。"""
+
+    value = float(max(int(size or 0), 0))
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(value) < 1024:
-            return f"{value:.1f} {unit}".upper()
+        if value < 1024:
+            return f"{value:.1f} {unit}"
         value /= 1024
-    return f"{value:.1f} PB".upper()
-
-
-def _count_json_files(directory) -> int:
-    """统计目录中的 JSON 文件数量。"""
-    if not directory.exists():
-        return 0
-    return sum(1 for _ in directory.glob("*.json"))
-
-
-def _count_active_rules() -> int:
-    """统计防火墙规则数量。"""
-    return _count_json_files(FIREWALL_DIR)
-
-
-def _load_alerts() -> list[dict]:
-    """加载告警列表。"""
-    if not ALERTS_FILE.exists():
-        return []
-    try:
-        data = json.loads(ALERTS_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def _get_cert_min_expiry_days() -> int | None:
-    """获取最近到期证书的剩余天数，无有效证书时返回 None。"""
-    try:
-        from app.services.cert.cert_service import CertService
-        certs = CertService().list_all()
-        now = datetime.now(timezone.utc)
-        min_days = None
-        for cert in certs:
-            if cert["status"] != "valid":
-                continue
-            try:
-                expires_at = datetime.fromisoformat(cert["expires_at"])
-                days_left = (expires_at - now).days
-                if min_days is None or days_left < min_days:
-                    min_days = days_left
-            except (ValueError, TypeError):
-                continue
-        return min_days
-    except Exception as exc:
-        logger.debug("获取证书到期天数失败: %s", exc)
-        return None
+    return f"{value:.1f} PB"
 
 
 class DashboardPage:
@@ -78,124 +51,320 @@ class DashboardPage:
 
     def __init__(self) -> None:
         self._monitor = ServiceMonitor()
+        self._content = None
+        self._updated_label = None
+        self._snapshot: DashboardSnapshot | None = None
+        self._health_chart = None
+        self._traffic_chart = None
+
+    def _collect_snapshot(self) -> DashboardSnapshot:
+        """采集当前仪表盘快照；配置读取失败也返回可渲染对象。"""
+
+        try:
+            config = load_config()
+            instance_names = list((config.get("instances") or {}).keys())
+        except Exception as exc:
+            logger.exception("读取仪表盘配置失败")
+            snapshot = DashboardSnapshot(
+                updated_at=datetime.now(timezone.utc),
+            )
+            snapshot.source_errors["config"] = str(exc)
+            return snapshot
+
+        return collect_dashboard_snapshot(
+            instance_names,
+            monitor=self._monitor,
+        )
 
     def render(self) -> None:
-        """渲染仪表盘。"""
-        config = load_config()
-        instance_names = list(config.get("instances", {}).keys())
-        statuses = self._monitor.check_all_instances(instance_names)
-        alerts = _load_alerts()
-        total_clients = sum(item.client_count for item in statuses)
-        total_rx = sum(item.bytes_received for item in statuses)
-        total_tx = sum(item.bytes_sent for item in statuses)
-        active_count = sum(1 for item in statuses if item.active)
-        rule_count = _count_active_rules()
-        user_count = _count_json_files(USERS_DIR)
-        group_count = _count_json_files(GROUPS_DIR)
-        cert_min_days = _get_cert_min_expiry_days()
-        health_score = 100
-        if statuses:
-            health_score = max(0, min(100, int((active_count / len(statuses)) * 100) - len(alerts) * 2))
+        """渲染共享首页外壳，并立即采集一次快照。"""
 
-        updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        def header_actions() -> None:
+            self._updated_label = ui.label("尚未刷新").classes(
+                "section-caption"
+            )
+            secondary_action(
+                "刷新",
+                icon="refresh",
+                on_click=self._refresh_dashboard,
+            )
 
-        with ui.column().classes("page-shell dashboard-page"):
-            with ui.element("div").classes("dashboard-header"):
-                with ui.element("div").classes("dashboard-header-copy"):
-                    ui.label("Global Overview").classes("dashboard-kicker")
-                    ui.label("运行状态概览").classes("dashboard-title")
-                ui.label(f"最后更新 {updated_at}").classes("dashboard-updated")
+        with ui.column().classes("page-shell mgmt-page dashboard-page"):
+            render_page_header(
+                "运行状态概览",
+                description=(
+                    "查看当前连接、服务、累计流量与安全状态。"
+                    "仪表盘展示实时快照，不伪造历史趋势。"
+                ),
+                actions=header_actions,
+            )
+            self._content = ui.column().classes("w-full gap-4")
 
-            with ui.element("div").classes("dashboard-metric-grid"):
-                self._metric_card(
-                    "在线设备", str(total_clients),
-                    f"共 {user_count} 个注册用户",
-                    "devices", "#2dd4bf",
+        self._refresh_dashboard()
+
+    def _refresh_dashboard(self) -> None:
+        """重新采集并局部重建首页。"""
+
+        if self._content is None:
+            return
+
+        snapshot = self._collect_snapshot()
+        self._snapshot = snapshot
+        if self._updated_label is not None:
+            local = snapshot.updated_at.astimezone()
+            self._updated_label.text = (
+                "最后更新 " + local.strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+        self._content.clear()
+        with self._content:
+            self._render_metrics(snapshot)
+            self._render_charts(snapshot)
+            self._render_summary(snapshot)
+            self._render_shortcuts()
+
+    def _render_metrics(self, snapshot: DashboardSnapshot) -> None:
+        with ui.element("div").classes("dashboard-metric-grid"):
+            metric_card(
+                "在线设备",
+                snapshot.total_clients,
+                helper=f"共 {snapshot.user_count} 个注册用户",
+                icon="devices",
+                tone="success" if snapshot.total_clients else "default",
+                on_click=lambda: ui.navigate.to("/users"),
+            )
+
+            configured = snapshot.configured_instance_count
+            if snapshot.instance_errors:
+                service_tone = "warning"
+                service_helper = (
+                    f"{snapshot.active_count} 运行 · "
+                    f"{len(snapshot.instance_errors)} 采集失败"
                 )
-                self._metric_card(
-                    "服务状态",
-                    f"{active_count}/{len(statuses) or 0}",
-                    "运行中" if active_count else "未运行",
-                    "dns", "#60a5fa",
-                    with_pulse=active_count > 0,
+            elif configured and snapshot.active_count == configured:
+                service_tone = "success"
+                service_helper = "全部实例运行中"
+            elif configured:
+                service_tone = "warning"
+                service_helper = f"{snapshot.stopped_count} 个实例已停止"
+            else:
+                service_tone = "default"
+                service_helper = "尚未纳管实例"
+
+            metric_card(
+                "服务状态",
+                f"{snapshot.active_count}/{configured}",
+                helper=service_helper,
+                icon="dns",
+                tone=service_tone,
+                on_click=lambda: ui.navigate.to("/services"),
+            )
+
+            metric_card(
+                "累计流量",
+                f"↑ {_format_bytes(snapshot.total_rx)}",
+                helper=f"↓ {_format_bytes(snapshot.total_tx)} · 当前快照",
+                icon="swap_vert",
+                tone="info",
+            )
+
+            alert_tone = "danger" if snapshot.alerts else (
+                "warning" if "alerts" in snapshot.source_errors else "success"
+            )
+            alert_helper = (
+                "告警文件读取失败"
+                if "alerts" in snapshot.source_errors
+                else (
+                    "存在待处理事件"
+                    if snapshot.alerts
+                    else "当前无活动告警"
                 )
-                self._traffic_metric_card(total_rx, total_tx)
-                self._metric_card(
-                    "安全告警", str(len(alerts)),
-                    "系统处于稳定状态" if not alerts else "存在待处理事件",
-                    "security", "#fb7185",
+            )
+            metric_card(
+                "安全告警",
+                len(snapshot.alerts),
+                helper=alert_helper,
+                icon="security",
+                tone=alert_tone,
+                on_click=self._refresh_dashboard,
+            )
+
+    def _render_charts(self, snapshot: DashboardSnapshot) -> None:
+        with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
+            self._health_chart = render_chart_card(
+                "服务健康度与状态分布",
+                service_health_chart_options(snapshot),
+                description=(
+                    "基于当前实例运行状态、采集失败和活动告警计算。"
+                ),
+                empty_message="尚未配置 OpenVPN 实例。",
+            )
+            self._traffic_chart = render_chart_card(
+                "当前累计流量分布",
+                traffic_snapshot_chart_options(snapshot),
+                description=(
+                    "仅展示本次 status 快照中的累计上/下行字节，"
+                    "不是历史趋势。"
+                ),
+                empty_message="尚未配置 OpenVPN 实例，暂无流量快照。",
+            )
+
+    def _render_summary(self, snapshot: DashboardSnapshot) -> None:
+        with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
+            with ui.card().classes("vpn-info-card"):
+                ui.label("运行摘要").classes("vpn-info-card__title")
+                self._summary_row(
+                    "已纳管实例",
+                    str(snapshot.configured_instance_count),
+                )
+                self._summary_row(
+                    "运行实例",
+                    str(snapshot.active_count),
+                )
+                self._summary_row(
+                    "防火墙规则",
+                    (
+                        f"{snapshot.enabled_rule_count} 启用 / "
+                        f"{snapshot.rule_count} 总计"
+                    ),
+                )
+                self._summary_row("用户组", str(snapshot.group_count))
+                self._summary_row("注册用户", str(snapshot.user_count))
+                with ui.row().classes("items-center gap-2 q-mt-sm"):
+                    ui.label("综合健康度").classes("dashboard-summary-name")
+                    status_badge(
+                        (
+                            "success"
+                            if snapshot.health_score >= 80
+                            else (
+                                "warning"
+                                if snapshot.health_score >= 50
+                                else "failed"
+                            )
+                        ),
+                        label=f"{snapshot.health_score}%",
+                    )
+
+            cert_label, cert_tone = cert_status(
+                snapshot.cert_min_expiry_days,
+                warn_days=CERT_EXPIRY_WARN_DAYS,
+            )
+            cert_error = snapshot.source_errors.get("certs")
+            info_card(
+                "证书状态",
+                (
+                    f"证书数据读取失败：{cert_error}"
+                    if cert_error
+                    else cert_label
+                ),
+                icon="verified_user",
+                tone=(
+                    "warning"
+                    if cert_error
+                    else {
+                        "success": "success",
+                        "warning": "warning",
+                        "failed": "danger",
+                        "unknown": "default",
+                    }[cert_tone]
+                ),
+            )
+
+            alert_error = snapshot.source_errors.get("alerts")
+            if alert_error:
+                info_card(
+                    "最新告警",
+                    f"告警文件读取失败：{alert_error}",
+                    icon="error_outline",
+                    tone="warning",
+                )
+            elif snapshot.alerts:
+                latest = snapshot.alerts[0]
+                info_card(
+                    "最新告警",
+                    str(
+                        latest.get("title")
+                        or latest.get("message")
+                        or "存在待处理告警"
+                    ),
+                    icon="error_outline",
+                    tone="danger",
+                )
+            else:
+                info_card(
+                    "最新告警",
+                    "当前无活动告警记录。",
+                    icon="check_circle",
+                    tone="success",
                 )
 
-            with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
-                with ui.element("section").classes("dashboard-glass-card flex flex-col"):
-                    ui.label("运行摘要 (Summary)").classes("dashboard-card-title mb-2")
-                    with ui.element("div").classes("dashboard-summary-list flex-1"):
-                        self._summary_row("已纳管实例", str(len(statuses)))
-                        cert_display = f"{cert_min_days} 天" if cert_min_days is not None else "无证书"
-                        cert_class = "dashboard-summary-warn" if cert_min_days is not None and cert_min_days <= CERT_EXPIRY_WARN_DAYS else ""
-                        self._summary_row("最近证书到期", cert_display, value_class=cert_class)
-                        self._summary_row("防火墙规则", str(rule_count))
-                        self._summary_row("用户组", str(group_count))
-                        self._summary_row("注册用户", str(user_count))
+        if snapshot.instance_errors or snapshot.source_errors:
+            messages: list[str] = []
+            for name, error in snapshot.instance_errors.items():
+                messages.append(f"实例 {name}: {error}")
+            for source, error in snapshot.source_errors.items():
+                messages.append(f"{source}: {error}")
+            info_card(
+                "部分数据不可用",
+                "；".join(messages),
+                icon="warning",
+                tone="warning",
+            )
 
-                    with ui.element("div").classes("dashboard-health-box mt-auto"):
-                        ui.label("健康度评估").classes("dashboard-health-label")
-                        ui.label(f"{health_score}%").classes("dashboard-health-value")
+    def _render_shortcuts(self) -> None:
+        ui.label("快捷入口").classes("mgmt-kicker")
+        with ui.element("div").classes("dashboard-metric-grid"):
+            quick_link_card(
+                "用户管理",
+                description="用户、连接与下载配置",
+                icon="people",
+                on_click=lambda: self._navigate_shortcut("users"),
+            )
+            quick_link_card(
+                "服务管理",
+                description="实例状态、日志与配置",
+                icon="dns",
+                on_click=lambda: self._navigate_shortcut("services"),
+            )
+            quick_link_card(
+                "证书管理",
+                description="证书有效期、续签与吊销",
+                icon="verified_user",
+                on_click=lambda: self._navigate_shortcut("certs"),
+            )
+            quick_link_card(
+                "防火墙规则",
+                description="中心与对端访问策略",
+                icon="shield",
+                on_click=lambda: self._navigate_shortcut("firewall"),
+            )
+            quick_link_card(
+                "刷新安全告警",
+                description="重新读取当前 alerts.json 快照",
+                icon="notifications_active",
+                on_click=self._refresh_dashboard,
+            )
 
-                with ui.element("section").classes("dashboard-glass-card flex flex-col"):
-                    with ui.row().classes("items-center gap-3 mb-2"):
-                        ui.icon("error_outline", color="#fb7185")
-                        ui.label("最新告警").classes("dashboard-mini-title")
-                    if alerts:
-                        ui.label(alerts[0].get("title", "存在待处理告警")).classes("dashboard-mini-copy flex-1")
-                    else:
-                        ui.label("当前无活动告警记录。").classes("dashboard-mini-copy flex-1")
-                    
-                    with ui.element("div").classes("dashboard-health-box mt-auto bg-transparent border-none p-0"):
-                        ui.label("系统稳定").classes("dashboard-health-label text-[#2dd4bf] opacity-80")
+    @staticmethod
+    def shortcut_routes() -> dict[str, str]:
+        """返回可测试的快捷入口路由映射。"""
 
-                with ui.element("section").classes("dashboard-glass-card flex flex-col"):
-                    with ui.row().classes("items-center gap-3 mb-2"):
-                        ui.icon("history", color="#2dd4bf")
-                        ui.label("规则统计").classes("dashboard-mini-title")
-                    ui.label(f"已生效 {rule_count} 条防火墙规则。配置了基础的内外网隔离和访问控制策略。").classes("dashboard-mini-copy flex-1")
-                    
-                    with ui.element("div").classes("dashboard-health-box mt-auto bg-transparent border-none p-0"):
-                        ui.label("防护中").classes("dashboard-health-label text-[#2dd4bf] opacity-80")
+        return dict(_SHORTCUT_ROUTES)
 
-    def _traffic_metric_card(self, total_rx: int, total_tx: int) -> None:
-        """总上行 / 总下行（OpenVPN status：服务端收=用户侧上行，服务端发=用户侧下行）。"""
-        with ui.element("section").classes("dashboard-glass-card dashboard-metric--traffic-balance"):
-            with ui.element("div").classes("dashboard-metric-top"):
-                ui.label("总流量").classes("dashboard-metric-label")
-                ui.icon("swap_vert").style("color:#f59e0b;opacity:0.35;font-size:24px;")
-            ui.label(f"总上行 {_format_bytes(total_rx)}").classes("dashboard-metric-value")
-            ui.label(f"总下行 {_format_bytes(total_tx)}").classes("dashboard-metric-footer")
+    def _navigate_shortcut(self, key: str) -> None:
+        route = _SHORTCUT_ROUTES.get(str(key))
+        if not route:
+            raise ValueError(f"未知快捷入口: {key}")
+        ui.navigate.to(route)
 
-    def _metric_card(
-        self,
+    @staticmethod
+    def _summary_row(
         label: str,
         value: str,
-        footer: str,
-        icon: str,
-        icon_color: str,
-        with_pulse: bool = False,
+        value_class: str = "",
     ) -> None:
-        """渲染顶部指标卡。"""
-        with ui.element("section").classes("dashboard-glass-card"):
-            with ui.element("div").classes("dashboard-metric-top"):
-                ui.label(label).classes("dashboard-metric-label")
-                ui.icon(icon).style(f"color:{icon_color};opacity:0.35;font-size:24px;")
-            ui.label(value).classes("dashboard-metric-value")
-            if with_pulse:
-                with ui.element("div").classes("dashboard-metric-footer dashboard-status-footer"):
-                    ui.element("span").classes("dashboard-badge-pulse")
-                    ui.label(footer)
-            else:
-                ui.label(footer).classes("dashboard-metric-footer")
-
-    def _summary_row(self, label: str, value: str, value_class: str = "") -> None:
         """渲染摘要行。"""
+
         with ui.element("div").classes("dashboard-summary-row"):
             ui.label(label).classes("dashboard-summary-name")
             classes = "dashboard-summary-val"
