@@ -1008,43 +1008,57 @@ class UsersPage:
         self._refresh_user_list()
 
     def _show_create_dialog(self):
-        """显示新建用户弹窗。"""
+        """显示统一的新建用户表单。"""
+
         from app.services.group.crud import GroupService
 
-        groups = GroupService().list_all()
+        groups = [g for g in GroupService().list_all() if g.get("status") == "active"]
+        group_options = {
+            str(group["id"]): f"{group['name']} ({group['subnet']})"
+            for group in groups
+        }
+        fields: dict[str, object] = {}
 
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label("新建用户").classes("text-h6")
-            username_input = ui.input("用户名", placeholder="例如: lisi").classes("w-full")
-            count_input = ui.number("创建数量", value=1, min=1, max=500, step=1, format="%.0f").classes(
-                "w-full"
+        def body() -> None:
+            fields["username"] = ui.input(
+                "用户名",
+                placeholder="例如：lisi",
+            ).classes("w-full")
+            fields["count"] = ui.number(
+                "创建数量",
+                value=1,
+                min=1,
+                max=500,
+                step=1,
+                format="%.0f",
+            ).classes("w-full")
+            ui.label("数量 > 1 时自动生成后缀：lisi、lisi_1、lisi_2 …").classes(
+                "section-caption"
             )
-            ui.label("数量>1 时自动生成后缀：lisi、lisi_1、lisi_2 …").classes("text-caption text-grey")
-
-            group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
-            group_select = ui.select(group_options, label="所属组").classes("w-full").props(
+            fields["group"] = ui.select(
+                group_options,
+                label="所属组",
+            ).classes("w-full").props(
                 'behavior=menu popup-content-class="vpn-group-select-menu"'
             )
+            fields["password_enabled"] = ui.checkbox("启用账号密码")
+            fields["password"] = ui.input("密码", password=True).classes("w-full")
+            fields["password"].bind_visibility_from(fields["password_enabled"], "value")
 
-            password_enabled = ui.checkbox("启用账号密码")
-            password_input = ui.input("密码", password=True).classes("w-full")
-            password_input.bind_visibility_from(password_enabled, "value")
-
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "创建",
-                    on_click=lambda: self._do_create(
-                        dialog,
-                        username_input.value,
-                        int(count_input.value or 1),
-                        group_select.value,
-                        password_enabled.value,
-                        password_input.value,
-                    ),
-                ).props("color=primary")
-
-        dialog.open()
+        form = create_form_dialog(
+            "新建用户",
+            body=body,
+            submit_label="创建",
+            on_submit=lambda: self._do_create(
+                form.dialog,
+                str(getattr(fields["username"], "value", "") or ""),
+                int(getattr(fields["count"], "value", 1) or 1),
+                str(getattr(fields["group"], "value", "") or ""),
+                bool(getattr(fields["password_enabled"], "value", False)),
+                str(getattr(fields["password"], "value", "") or ""),
+            ),
+        )
+        form.open()
 
     def _open_progress_dialog(self, title: str, total: int) -> dict[str, object]:
         """创建一个持久进度对话框；任务完成后才显示关闭按钮。"""
@@ -1095,13 +1109,13 @@ class UsersPage:
 
         if self._create_running:
             ui.notify("用户正在后台创建，请稍候", type="warning")
-            return
+            return False
         if not username or not group_id:
             ui.notify("请填写完整信息", type="negative")
-            return
+            return False
         if count < 1:
             ui.notify("创建数量无效", type="negative")
-            return
+            return False
 
         base = username.strip()
         names = [base] if count == 1 else [base] + [f"{base}_{i}" for i in range(1, count)]
@@ -1152,6 +1166,7 @@ class UsersPage:
 
         threading.Thread(target=worker, daemon=True, name="user-create-worker").start()
         self._create_timer = ui.timer(0.3, self._poll_create_progress)
+        return True
 
     def _poll_create_progress(self):
         """轮询后台用户创建进度与最终结果。"""
