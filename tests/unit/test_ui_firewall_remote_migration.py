@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 
 import pytest
 from nicegui import ui
@@ -101,7 +102,7 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
 
     async def verify() -> None:
@@ -152,7 +153,7 @@ def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
 
     async def verify() -> None:
@@ -525,7 +526,7 @@ def test_remote_reorder_failure_preserves_selection_for_rolled_back_cache(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -556,7 +557,7 @@ def test_remote_delete_failure_preserves_selection_and_success_reindexes(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -610,7 +611,7 @@ def test_remote_batch_enable_skips_existing_and_applies_once(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -654,7 +655,7 @@ def test_remote_batch_enable_failure_keeps_selection(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -691,7 +692,7 @@ def test_remote_batch_delete_failure_keeps_selection(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -721,7 +722,7 @@ def test_remote_push_duplicate_guard_and_success_cleanup(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.mark_pending_apply",
@@ -764,7 +765,7 @@ def test_remote_push_confirmation_describes_chain_rewrite(
 
     monkeypatch.setattr(
         "app.ui.pages.firewall.remote_chain_cache.read_remote_chain_cache",
-        lambda _peer_id: dict(CACHE),
+        lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
         "app.ui.pages.firewall.confirm_dialog.show",
