@@ -433,6 +433,8 @@ class FirewallPage:
         v = str(getattr(e, "value", None) or "center")
         self._center_tab_active = v == "center"
         logger.debug("firewall 策略页签切换为 %s", v)
+        if self._center_search_controls is not None:
+            self._center_search_controls.set_visibility(self._center_tab_active)
         if self._center_tab_active:
             self._remote_fetch_generation += 1
             self._remote_fetch_running_peer = None
@@ -1201,61 +1203,284 @@ class FirewallPage:
         self._open_create_rule_dialog("remote")
 
     def _switch_owner(self, owner_id: str) -> None:
-        self.current_owner_id = owner_id.strip()
+        """兼容旧跳转入口：同步归属筛选并刷新 Grid。"""
+
+        normalized = str(owner_id or "").strip()
+        self.current_owner_id = normalized
+        if self._center_owner_filter is not None:
+            self._center_owner_filter.set_value(normalized or "")
         self._refresh_rules()
 
+    @staticmethod
+    def _center_grid_columns() -> list[dict[str, Any]]:
+        """中心策略核心列定义。"""
+
+        return [
+            {
+                "field": "priority",
+                "headerName": "优先级",
+                "width": 105,
+                "pinned": "left",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "sort": "asc",
+            },
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "width": 100,
+            },
+            {
+                "field": "owner_label",
+                "headerName": "归属",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "kind_label",
+                "headerName": "部署",
+                "minWidth": 135,
+            },
+            {
+                "field": "protocol",
+                "headerName": "协议",
+                "width": 95,
+            },
+            {
+                "field": "action_label",
+                "headerName": "动作",
+                "width": 105,
+            },
+            {
+                "field": "source",
+                "headerName": "来源",
+                "minWidth": 180,
+                "flex": 1,
+            },
+            {
+                "field": "dest",
+                "headerName": "目标",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "dest_port",
+                "headerName": "端口",
+                "minWidth": 110,
+            },
+            {
+                "field": "description",
+                "headerName": "说明",
+                "minWidth": 220,
+                "flex": 1,
+            },
+            {
+                "field": "id",
+                "headerName": "规则 ID",
+                "minWidth": 210,
+            },
+        ]
+
+    def _load_center_grid_rows(self) -> list[dict[str, Any]]:
+        """从 service 获取统一中心规则并转换为稳定 Grid 行。"""
+
+        rules = self.rule_service.list_unified_flat()
+        group_names = {
+            str(group.get("id") or ""): str(group.get("name") or "")
+            for group in GroupService().list_all()
+            if str(group.get("id") or "").strip()
+        }
+        peer_names = {
+            str(peer.get("id") or ""): str(peer.get("name") or "")
+            for peer in self._peer_service.list_all()
+            if str(peer.get("id") or "").strip()
+        }
+        rows = adapt_center_rule_rows(
+            rules,
+            group_names=group_names,
+            peer_names=peer_names,
+        )
+        self._center_raw_by_id = {
+            str(row["id"]): dict(row.get("raw") or {})
+            for row in rows
+        }
+        return rows
+
+    def _sync_center_owner_options(self, rows: list[dict[str, Any]]) -> None:
+        """根据当前数据维护归属筛选选项。"""
+
+        if self._center_owner_filter is None:
+            return
+        options: dict[str, str] = {"": "全部归属"}
+        for row in rows:
+            owner_id = str(row.get("owner_id") or "").strip()
+            if not owner_id:
+                continue
+            owner_type = str(row.get("owner_type") or "").strip()
+            label = str(row.get("owner_label") or owner_id)
+            prefix = {
+                "group": "组",
+                "user": "用户",
+                "peer": "对端",
+            }.get(owner_type, "归属")
+            options.setdefault(owner_id, f"{prefix} · {label}")
+
+        current = str(self._center_owner_filter.value or "").strip()
+        if current and current not in options:
+            current = ""
+            self.current_owner_id = ""
+        self._center_owner_filter.set_options(options, value=current)
+
+    def _filter_center_rows(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """应用关键词和归属筛选。"""
+
+        query = (
+            str(self._center_search_input.value or "").strip().casefold()
+            if self._center_search_input is not None
+            else ""
+        )
+        owner_id = (
+            str(self._center_owner_filter.value or "").strip()
+            if self._center_owner_filter is not None
+            else ""
+        )
+        self.current_owner_id = owner_id
+        self._is_unified_list = not bool(owner_id)
+
+        filtered = rows
+        if owner_id:
+            filtered = [
+                row
+                for row in filtered
+                if str(row.get("owner_id") or "") == owner_id
+            ]
+        if query:
+            filtered = [
+                row
+                for row in filtered
+                if query in str(row.get("search_text") or "")
+            ]
+        return filtered
+
     def _refresh_rules(self) -> None:
-        if self.rules_container is None:
+        """刷新中心策略 AG Grid，区分空数据、无匹配和读取失败。"""
+
+        if self._center_grid_container is None:
             return
         if not self._center_tab_active:
             return
-        self.rules_container.clear()
-        self._center_select_all_checkbox = None
-        self._visible_center_rule_ids = []
-        self._center_rule_checkboxes.clear()
-        self._is_unified_list = not (self.current_owner_id or "").strip()
-        with self.rules_container:
-            if self._is_unified_list:
-                rules = self.rule_service.list_unified_flat()
-                scope_title: str | None = None
-                sub_hint: str | None = None
-                show_owner = True
-            else:
-                rules = self.rule_service.list_by_owner(self.current_owner_id)
-                scope_title = f"归属: {self.current_owner_id}"
-                sub_hint = "拖拽排序（JSON 规则）。"
-                show_owner = False
 
-            n_rules = len(rules)
-            self._visible_center_rule_ids = [str(rule["id"]) for rule in rules]
+        try:
+            all_rows = self._load_center_grid_rows()
+        except Exception as exc:
+            logger.exception("加载中心防火墙规则失败")
+            self._center_all_rows = []
+            self._center_display_rows = []
+            self._center_grid_view = None
+            self._center_grid_container.clear()
             if self._rules_total_footer is not None:
-                self._rules_total_footer.set_text(f"{n_rules} RULES TOTAL")
-
-            if not rules:
-                self._render_empty("shield", "暂无规则", "点新建，或清空关键词看全部。")
-                return
-            with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self._center_select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_center_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前列表全部规则")
-                        with ui.column().classes("gap-1"):
-                            ui.label("规则顺序").classes("mgmt-section-title")
-                            if sub_hint:
-                                ui.label(sub_hint).classes("mgmt-section-sub")
-                    if scope_title:
-                        ui.label(scope_title).classes("meta-badge")
-                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
-                    for rule in rules:
-                        self._render_rule_card(rule, show_owner=show_owner)
-                sortable_list.make_sortable(
-                    on_end=self._on_center_sort_end,
-                    handle=".firewall-rule-drag",
-                    ghost_class="sortable-ghost",
+                self._rules_total_footer.set_text("LOAD FAILED")
+            with self._center_grid_container:
+                error_state(
+                    str(exc),
+                    title="中心规则加载失败",
+                    on_retry=self._refresh_rules,
                 )
-                self._sync_center_select_all()
+            return
+
+        self._center_all_rows = all_rows
+        self._sync_center_owner_options(all_rows)
+        rows = self._filter_center_rows(all_rows)
+        self._center_display_rows = rows
+
+        visible_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
+        self._visible_center_rule_ids = visible_ids
+        self.selected_rule_ids.intersection_update(set(visible_ids))
+
+        if self._rules_total_footer is not None:
+            if len(rows) == len(all_rows):
+                self._rules_total_footer.set_text(f"{len(all_rows)} RULES TOTAL")
+            else:
+                self._rules_total_footer.set_text(
+                    f"{len(rows)} MATCHED / {len(all_rows)} TOTAL"
+                )
+
+        self._center_grid_container.clear()
+        self._center_grid_view = None
+        with self._center_grid_container:
+            if not all_rows:
+                empty_state(
+                    "暂无中心规则",
+                    description="新建规则或从备份导入后会显示在这里。",
+                    action_label="新建规则",
+                    on_action=self._show_create_dialog,
+                    icon="shield",
+                )
+                return
+            if not rows:
+                no_match_state(
+                    description="当前关键词或归属筛选没有匹配规则。",
+                    on_clear=self._clear_center_filters,
+                )
+                return
+
+            self._center_grid_view = render_data_grid(
+                self._center_grid_columns(),
+                rows,
+                row_id="id",
+                page_size=50,
+                selectable=True,
+                selected_ids=self.selected_rule_ids,
+                on_cell_click=self._on_center_grid_cell_click,
+            )
+            self._center_grid_view.grid.on(
+                "selectionChanged",
+                self._on_center_grid_selection_changed,
+            )
+
+    def _clear_center_filters(self) -> None:
+        if self._center_search_input is not None:
+            self._center_search_input.set_value("")
+        if self._center_owner_filter is not None:
+            self._center_owner_filter.set_value("")
+        self.current_owner_id = ""
+        self._refresh_rules()
+
+    async def _on_center_grid_selection_changed(self, *_args) -> None:
+        """同步 AG Grid 选中行到现有批量操作集合。"""
+
+        if self._center_grid_view is None:
+            self.selected_rule_ids.clear()
+            return
+        selected = await self._center_grid_view.get_selected_rows()
+        self.selected_rule_ids = {
+            str(row.get("id") or "").strip()
+            for row in selected
+            if str(row.get("id") or "").strip()
+        }
+
+    async def _on_center_grid_cell_click(self, event) -> None:
+        """点击结构化字段时复制其展示值。"""
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            return
+        data = args.get("data") or {}
+        if not isinstance(data, dict):
+            return
+        col_id = str(args.get("colId") or "")
+        value = ""
+        if col_id == "id":
+            value = str(data.get("id") or "")
+        elif col_id == "owner_label":
+            value = str(data.get("owner_id") or data.get("owner_label") or "")
+        elif col_id in {"source", "dest", "dest_port"}:
+            value = str(data.get(col_id) or "")
+        if value and value not in {"—", "*"}:
+            await self._copy_text_to_clipboard(value)
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
