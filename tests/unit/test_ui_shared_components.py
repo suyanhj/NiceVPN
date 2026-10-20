@@ -236,7 +236,8 @@ def test_chart_card_supports_data_empty_and_error_states() -> None:
     asyncio.run(verify_page())
 
     assert state["data"].chart is not None
-    assert state["data"].chart._props["theme"] == "dark"
+    assert state["data"].chart._props["theme"]["darkMode"] is True
+    assert state["data"].chart._props["theme"]["backgroundColor"] == "transparent"
     assert state["empty"].chart is None
     assert state["empty"].placeholder is not None
     assert state["error"].chart is None
