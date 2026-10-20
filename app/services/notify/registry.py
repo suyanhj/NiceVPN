@@ -94,6 +94,7 @@ def send_download_link(username: str, download_url: str) -> bool:
 def _register_builtin_plugins() -> None:
     """导入内置插件模块以完成通道注册。"""
     import app.services.notify.plugins.dingtalk_notify  # noqa: F401
+    import app.services.notify.plugins.rocketchat_notify  # noqa: F401
     import app.services.notify.plugins.wework_notify  # noqa: F401
 
 
