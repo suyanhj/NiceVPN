@@ -1051,15 +1051,6 @@
     color: #94a3b8;
   }
 
-    background-image: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-  }
-
-    outline: none !important;
-    box-shadow: none !important;
-  }
-
   .service-page {
     display: flex;
     flex-direction: column;
