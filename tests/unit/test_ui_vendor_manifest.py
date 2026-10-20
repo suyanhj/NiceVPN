@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 
 UI_DIR = Path(__file__).resolve().parents[2] / "app" / "ui"
