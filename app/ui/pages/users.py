@@ -16,6 +16,7 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
+from app.ui.adapters.users import adapt_user_grid_row
 from app.ui.components.actions import (
     MenuAction,
     danger_action,
@@ -221,66 +222,16 @@ class UsersPage:
         *,
         live_available: bool,
     ) -> dict:
-        """把既有用户、会话和绑定信息标准化为 AG Grid 行。"""
+        """兼容页面调用，实际适配逻辑保持为可独立测试的纯函数。"""
 
-        username = str(user.get("username") or "")
-        group_id = str(user.get("group_id") or "")
-        status = str(user.get("status") or "active")
-        is_online = session is not None if live_available else False
-        cert_serial = str(user.get("cert_serial") or "—")
-        created_at = str(user.get("created_at") or "")[:10] or "未知"
-
-        if ccd_virtual_ip:
-            virtual_ip = ccd_virtual_ip
-        elif session:
-            virtual_ip = str(session.get("virtual_address") or "").strip() or "—"
-        else:
-            virtual_ip = "—"
-
-        bytes_received = int(session.get("bytes_received", 0) or 0) if session else 0
-        bytes_sent = int(session.get("bytes_sent", 0) or 0) if session else 0
-        traffic = (
-            f"↓{self._format_bytes(bytes_received)} ↑{self._format_bytes(bytes_sent)}"
-            if session
-            else "—"
+        return adapt_user_grid_row(
+            user,
+            session=session,
+            binding_aux=binding_aux,
+            ccd_virtual_ip=ccd_virtual_ip,
+            group_names=group_names,
+            live_available=live_available,
         )
-        connected_raw = str(session.get("connected_since") or "") if session else ""
-        connection = (
-            f"{self._format_connected_since(connected_raw)} · "
-            f"{self._format_connection_duration(connected_raw)}"
-            if session
-            else (
-                f"上次 {self._format_connected_since(str(binding_aux.get('last_connected_since') or ''))}"
-                if binding_aux.get("last_connected_since")
-                else "—"
-            )
-        )
-        real_address = str(session.get("real_address") or "—") if session else "—"
-        device = str(binding_aux.get("device_label") or "").strip() or "—"
-        group_name = group_names.get(group_id) or (group_id[:8] if group_id else "—")
-
-        return {
-            "id": username,
-            "username": username,
-            "account_status": "启用" if status == "active" else "停用",
-            "session_status": (
-                "在线" if is_online else ("离线" if live_available else "未知")
-            ),
-            "virtual_ip": virtual_ip,
-            "group": group_name,
-            "group_id": group_id,
-            "cert_serial": cert_serial,
-            "cert_serial_display": self._short_serial(cert_serial),
-            "traffic": traffic,
-            "connection": connection,
-            "source": real_address,
-            "device": device,
-            "created_at": created_at,
-            "actions": "操作",
-            "_status": status,
-            "_online": is_online,
-            "_live_available": live_available,
-        }
 
     @staticmethod
     def _user_grid_columns() -> tuple[dict, ...]:
@@ -714,6 +665,7 @@ class UsersPage:
         success = failed = 0
         for username in list(self.selected_users):
             try:
+                self._disconnect_before_delete(username)
                 self.user_service.delete(username)
                 success += 1
             except Exception:
@@ -821,7 +773,8 @@ class UsersPage:
             ui.notify(f"踢下线失败: {exc}", type="negative")
 
     def _show_change_group_dialog(self, username: str):
-        """显示用户切换组弹窗。"""
+        """使用统一表单对话框切换用户组，并明确虚拟 IP 与在线会话影响。"""
+
         from app.services.group.crud import GroupService
 
         user = self.user_service.get(username)
@@ -830,48 +783,72 @@ class UsersPage:
             return
         current_group_id = str(user.get("group_id") or "").strip()
         groups = [
-            g for g in GroupService().list_all()
-            if g.get("status") == "active" and str(g.get("id") or "") != current_group_id
+            group
+            for group in GroupService().list_all()
+            if group.get("status") == "active"
+            and str(group.get("id") or "") != current_group_id
         ]
         if not groups:
             ui.notify("没有可切换的启用用户组", type="warning")
             return
 
-        group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label(f"切换用户组 — {username}").classes("text-h6")
-            ui.label("切换后会重新分配虚拟 IP，并立即踢下线，用户重连后生效。").classes(
-                "text-caption text-grey"
-            )
-            group_select = ui.select(group_options, label="目标组").classes("w-full").props(
-                'behavior=menu popup-content-class="vpn-group-select-menu"'
-            )
+        options = {
+            str(group["id"]): f"{group['name']} ({group['subnet']})"
+            for group in groups
+        }
+        fields: dict[str, object] = {}
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "切换",
-                    on_click=lambda: self._do_change_group(dialog, username, group_select.value),
-                ).props("color=primary")
-        dialog.open()
+        def body() -> None:
+            fields["group"] = (
+                ui.select(options, label="目标用户组")
+                .classes("w-full")
+                .props('behavior=menu popup-content-class="vpn-group-select-menu"')
+            )
+            ui.label(
+                "切换后会重新分配虚拟 IP，并立即断开当前会话；客户端重连后使用新地址。"
+            ).classes("section-caption")
 
-    def _do_change_group(self, dialog, username: str, new_group_id: str):
-        """执行用户切换组。"""
+        form = create_form_dialog(
+            f"切换用户组 — {username}",
+            body=body,
+            submit_label="切换",
+            on_submit=lambda: self._change_group(
+                username,
+                str(getattr(fields["group"], "value", "") or ""),
+            ),
+        )
+        form.open()
+
+    def _change_group(self, username: str, new_group_id: str) -> bool:
+        """执行用户切组；失败时保留统一表单输入。"""
+
         if not new_group_id:
             ui.notify("请选择目标组", type="negative")
-            return
+            return False
         try:
             result = self.user_service.change_group(username, new_group_id)
-            dialog.close()
             if result.get("changed"):
                 old_ip = result.get("old_virtual_ip") or "无"
                 new_ip = result.get("new_virtual_ip") or "无"
-                ui.notify(f"已切换 {username} 的用户组，虚拟 IP: {old_ip} -> {new_ip}", type="positive")
+                ui.notify(
+                    f"已切换 {username} 的用户组，虚拟 IP: {old_ip} -> {new_ip}",
+                    type="positive",
+                )
             else:
                 ui.notify(f"{username} 已在目标组，无需切换", type="warning")
             self._refresh_user_list()
+            return True
         except Exception as exc:
             ui.notify(f"切换组失败: {exc}", type="negative")
+            return False
+
+    def _do_change_group(self, dialog, username: str, new_group_id: str):
+        """兼容旧测试/调用入口。"""
+
+        success = self._change_group(username, new_group_id)
+        if success and dialog is not None:
+            dialog.close()
+        return success
 
     def _download_ovpn(self, username: str):
         """直接下载用户的 .ovpn 配置文件。"""
@@ -1298,12 +1275,33 @@ class UsersPage:
             on_confirm=lambda: self._do_delete(username),
         )
 
-    def _do_delete(self, username: str):
-        """执行用户删除。"""
+    def _is_known_online(self, username: str) -> bool:
+        """根据当前 Grid 快照判断用户是否在线。"""
+
+        for row in self.all_grid_rows:
+            if str(row.get("username") or "") == username:
+                return bool(row.get("_online"))
+        return False
+
+    def _disconnect_before_delete(self, username: str) -> None:
+        """删除已知在线用户前先断开当前会话；断开失败不掩盖后续删除错误。"""
+
+        if not self._is_known_online(username):
+            return
         try:
+            self.user_service.kick_offline(username)
+        except Exception as exc:
+            logger.warning("删除用户前断开会话失败 user=%s err=%s", username, exc)
+
+    def _do_delete(self, username: str):
+        """执行用户删除，并在当前 Grid 上刷新而不是整页跳转。"""
+
+        try:
+            self._disconnect_before_delete(username)
             self.user_service.delete(username)
+            self.selected_users.discard(username)
             ui.notify(f"用户 {username} 已删除", type="positive")
-            ui.navigate.to("/users")
+            self._refresh_user_list()
         except Exception as exc:
             ui.notify(f"删除失败: {exc}", type="negative")
 
