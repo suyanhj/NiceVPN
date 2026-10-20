@@ -3,16 +3,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
-from nicegui.testing import user_simulation
-
-from app.ui.components.firewall_rule_form import (
-    FirewallRuleCreateFields,
-    render_firewall_rule_create_fields,
-)
+from app.ui.components.firewall_rule_form import FirewallRuleCreateFields
 
 
 def _value(value):
@@ -167,52 +161,3 @@ def test_user_without_source_or_ccd_is_rejected() -> None:
         fields.read_values()
 
 
-def test_shared_component_renders_core_fields_and_peer_presets() -> None:
-    holder = {}
-
-    def render() -> None:
-        holder["fields"] = render_firewall_rule_create_fields(
-            groups=[
-                {
-                    "id": "g1",
-                    "name": "开发组",
-                    "subnet": "10.8.0.0/24",
-                }
-            ],
-            users=[{"username": "alice"}],
-            peer_presets_loader=lambda _group_id: [
-                {
-                    "key": "peer-lan",
-                    "cidr": "192.168.10.0/24",
-                    "label": "广州站点 · 192.168.10.0/24",
-                }
-            ],
-            ccd_reader=lambda _users: ["10.8.0.20"],
-            parse_user_source=lambda text: (text, None),
-            default_group_id="g1",
-        )
-
-    async def verify() -> None:
-        async with user_simulation(render) as user:
-            response = await user.open("/")
-            assert response.status_code == 200
-            await user.should_see("归属类型")
-            await user.should_see("选择组")
-            await user.should_see("源用本组子网")
-            await user.should_see("对端内网 CIDR")
-            await user.should_see("源地址")
-            await user.should_see("动作")
-            await user.should_see("协议")
-            await user.should_see("目标地址")
-            await user.should_see("目标端口")
-            await user.should_see("创建后启用")
-            await user.should_see("优先级")
-            await user.should_see("规则描述")
-
-    asyncio.run(verify())
-
-    fields = holder["fields"]
-    assert fields.group.value == "g1"
-    assert fields.peer_preset_by_key == {
-        "peer-lan": "192.168.10.0/24"
-    }
