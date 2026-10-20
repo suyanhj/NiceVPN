@@ -85,6 +85,5 @@ jobs:
 
       - name: Run browser smoke
         run: >
-          python -m pytest tests/browser -q
+          python -m pytest -c tests/browser/pytest.ini tests/browser -q
           --driver Chrome
-          -o main_file=tests/browser/smoke_app.py
