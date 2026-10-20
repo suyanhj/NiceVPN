@@ -190,7 +190,7 @@ class FakePeerService:
         return dict(PEERS[0]) if peer_id == "peer-001" else None
 
     def list_bound_usernames(self, *, exclude_peer_id=None):
-        return [] if exclude_peer_id == "peer-001" else ["alice"]
+        return []
 
     def list_peer_lan_firewall_presets_for_center_form(self):
         return [
