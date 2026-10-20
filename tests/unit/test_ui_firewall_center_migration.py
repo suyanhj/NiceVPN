@@ -74,6 +74,8 @@ class FakeRuleService:
         self.reorder_calls: list[tuple[str, list[str]]] = []
         self.create_calls: list[dict] = []
         self.update_calls: list[tuple[str, dict]] = []
+        self.restore_calls: list[str] = []
+        self.create_many_calls: list[list[dict]] = []
 
     def list_unified_flat(self):
         return [dict(row) for row in self.rows]
@@ -109,6 +111,27 @@ class FakeRuleService:
     def update_by_id(self, rule_id: str, payload: dict):
         self.update_calls.append((rule_id, dict(payload)))
         return dict(payload)
+
+    def backup(self):
+        return """{
+  "version": 2,
+  "rules_by_owner": {
+    "group-dev": [{"id": "rule-accept"}]
+  },
+  "peers_center_forward": [{"id": "peer-001"}]
+}"""
+
+    def restore(self, text: str):
+        self.restore_calls.append(text)
+        return True
+
+    def list_all_flat(self):
+        return [dict(row) for row in self.rows if row.get("_row_kind") != "center_peer"]
+
+    def create_many(self, payloads: list[dict]):
+        copied = [dict(payload) for payload in payloads]
+        self.create_many_calls.append(copied)
+        return copied
 
 
 class FakePeerService:
@@ -656,3 +679,244 @@ def test_center_create_and_edit_dialogs_use_shared_form(
             await user.should_see("保存")
 
     asyncio.run(verify_edit())
+
+
+def test_center_export_uses_timestamped_json_filename_and_backup_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    page._center_tab_active = True
+    downloads: list[tuple[bytes, str]] = []
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall.ui.download",
+        lambda data, filename: downloads.append((data, filename)),
+    )
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    page._export_backup()
+
+    assert len(downloads) == 1
+    body, filename = downloads[0]
+    assert b'"rules_by_owner"' in body
+    assert b'"peers_center_forward"' in body
+    assert filename.startswith("firewall-rules-backup_")
+    assert filename.endswith(".json")
+    assert len(filename) == len("firewall-rules-backup_YYYYMMDD_HHMMSS.json")
+    assert messages[-1] == (
+        "已导出（中心 JSON + 对端中心侧策略）",
+        "positive",
+    )
+
+
+def test_center_import_prepare_recognizes_backup_and_counts_items() -> None:
+    page = FirewallPage()
+    backup = """{
+      "version": 2,
+      "rules_by_owner": {
+        "group-dev": [{"id": "a"}, {"id": "b"}],
+        "alice": [{"id": "c"}]
+      },
+      "peers_center_forward": [{"id": "peer-1"}]
+    }"""
+
+    prepared = page._prepare_center_import(
+        backup,
+        file_mode="json_overwrite",
+    )
+
+    assert prepared["kind"] == "backup"
+    assert prepared["rule_count"] == 3
+    assert prepared["peer_count"] == 1
+    assert prepared["count"] == 4
+
+
+def test_center_import_prepare_simplified_requires_owner_and_builds_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._is_unified_list = True
+    page.current_owner_id = ""
+
+    with pytest.raises(ValueError, match="归属筛选"):
+        page._prepare_center_import(
+            "-p tcp -s 10.8.0.0/24 -d 172.16.0.10 --dport 443",
+            file_mode="simplified_text",
+        )
+
+    page._is_unified_list = False
+    page.current_owner_id = "group-dev"
+    monkeypatch.setattr(
+        "app.services.firewall.simple_rule_import.resolve_center_owner_type",
+        lambda _oid: "group",
+    )
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda: {"instances": {"server": {}}},
+    )
+
+    prepared = page._prepare_center_import(
+        "-p tcp -s 10.8.0.0/24 -d 172.16.0.10 --dport 443",
+        file_mode="simplified_text",
+    )
+
+    assert prepared["kind"] == "simplified"
+    assert prepared["owner_id"] == "group-dev"
+    assert prepared["count"] == 1
+    payload = prepared["payloads"][0]
+    assert payload["owner_id"] == "group-dev"
+    assert payload["source_subnet"] == "10.8.0.0/24"
+    assert payload["protocol"] == "tcp"
+    assert payload["dest_port"] == "443"
+
+
+def test_center_import_prepare_reports_simplified_parse_error_with_context() -> None:
+    page = FirewallPage()
+    page._is_unified_list = False
+    page.current_owner_id = "group-dev"
+
+    with pytest.raises(ValueError, match="简写解析失败"):
+        page._prepare_center_import(
+            "-A VPN_FORWARD -j ACCEPT",
+            file_mode="simplified_text",
+        )
+
+
+def test_execute_center_import_success_closes_form_and_refreshes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    refreshed: list[bool] = []
+    messages: list[tuple[str, str]] = []
+
+    class FakeForm:
+        busy: list[bool] = []
+        closed = False
+
+        def set_busy(self, value: bool):
+            self.busy.append(value)
+
+        def close(self):
+            self.closed = True
+
+    class FakeStatus:
+        text = ""
+
+    form = FakeForm()
+    status = FakeStatus()
+
+    async def fake_io_bound(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr("app.ui.pages.firewall.run.io_bound", fake_io_bound)
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    prepared = {
+        "kind": "backup",
+        "text": service.backup(),
+        "count": 2,
+        "rule_count": 1,
+        "peer_count": 1,
+    }
+    assert asyncio.run(
+        page._execute_center_import(form, status, prepared)
+    ) is True
+
+    assert service.restore_calls == [prepared["text"]]
+    assert form.busy == [True, False]
+    assert form.closed is True
+    assert refreshed == [True]
+    assert status.text == "导入完成：成功 2，跳过 0，失败 0"
+    assert messages[-1] == (
+        "导入完成：成功 2，跳过 0，失败 0",
+        "positive",
+    )
+
+
+def test_execute_center_import_failure_keeps_form_open_and_input_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+
+    class BrokenService(FakeRuleService):
+        def restore(self, text: str):
+            raise RuntimeError("iptables restore failed")
+
+    page.rule_service = BrokenService()
+    refreshed: list[bool] = []
+    messages: list[tuple[str, str]] = []
+
+    class FakeForm:
+        busy: list[bool] = []
+        closed = False
+
+        def set_busy(self, value: bool):
+            self.busy.append(value)
+
+        def close(self):
+            self.closed = True
+
+    class FakeStatus:
+        text = ""
+
+    form = FakeForm()
+    status = FakeStatus()
+
+    async def fake_io_bound(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr("app.ui.pages.firewall.run.io_bound", fake_io_bound)
+    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        page,
+        "_notify_for_page",
+        lambda message, type="info", **_kwargs: messages.append((str(message), type)),
+    )
+
+    prepared = {
+        "kind": "backup",
+        "text": "{}",
+        "count": 3,
+    }
+    assert asyncio.run(
+        page._execute_center_import(form, status, prepared)
+    ) is False
+
+    assert form.busy == [True, False]
+    assert form.closed is False
+    assert refreshed == []
+    assert "iptables restore failed" in status.text
+    assert messages[-1][1] == "negative"
+    assert "失败 3" in messages[-1][0]
+
+
+def test_center_import_dialog_uses_shared_form_and_precheck_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_tab_active = True
+
+    async def verify() -> None:
+        async with user_simulation(page._show_center_import_dialog) as user:
+            await user.open("/")
+            await user.should_see("导入中心规则")
+            await user.should_see("规则内容")
+            await user.should_see("从文件加载")
+            await user.should_see("预检查并导入")
+            await user.should_see("尚未执行预检查")
+
+    asyncio.run(verify())
