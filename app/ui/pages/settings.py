@@ -44,9 +44,23 @@ class SettingsPage:
         self._proxy_test_running = False
         self._notify_test_running = False
 
-    def render(self) -> None:
-        """渲染系统设置页：顶栏 + 紧凑页签（含全局 SSH、下载、通知等）。"""
+    def render(self, *, initial_tab: str = "openvpn") -> None:
+        """渲染系统设置页；支持调用方指定初始页签。"""
+
         self.config = load_config()
+        allowed_tabs = {
+            "openvpn",
+            "server",
+            "device",
+            "ssh",
+            "download",
+            "notify",
+        }
+        active_tab = (
+            str(initial_tab or "openvpn")
+            if str(initial_tab or "openvpn") in allowed_tabs
+            else "openvpn"
+        )
         with ui.column().classes(
             "page-shell mgmt-page w-full min-h-0 page-shell--settings"
         ):
@@ -60,7 +74,7 @@ class SettingsPage:
                 "firewall-control-header firewall-tab-bar w-full"
             ):
                 with ui.tabs(
-                    value="openvpn",
+                    value=active_tab,
                     on_change=self._on_settings_tab_change,
                 ).classes("firewall-compact-tabs w-full") as st:
                     self._settings_tabs = st
@@ -71,7 +85,7 @@ class SettingsPage:
                     ui.tab("download", label="下载配置")
                     ui.tab("notify", label="通知")
             with ui.tab_panels(
-                st, value="openvpn", keep_alive=False
+                st, value=active_tab, keep_alive=False
             ).classes("w-full min-h-0 flex-1 firewall-tabpanels"):
                 with ui.tab_panel("openvpn"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
