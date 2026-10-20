@@ -787,18 +787,26 @@ class ServicesPage:
         return refresh_status
 
     def _show_peer_client_file_log_viewer(self, peer_id: str, peer_name: str) -> None:
-        """查看对端 openvpn-client 文件日志。"""
+        """查看对端 openvpn-client 文件日志；关闭后不再写入失效元素。"""
+
+        state = {"open": True, "generation": 0}
+
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl"):
+            dialog.on("hide", lambda _event: state.update(open=False, generation=state["generation"] + 1))
             ui.label(f"对端日志 — {peer_name}").classes("text-h6")
             path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption")
             log_container = ui.column().classes("w-full log-frame")
             log_ref: dict[str, Any] = {"label": None}
 
             def set_body(text: str) -> None:
+                if not state["open"]:
+                    return
                 if log_ref["label"] is None:
                     log_container.clear()
                     with log_container:
-                        with ui.element("div").classes("w-full vpn-log-tail-viewport").style(_LOG_TAIL_CODE_STYLE):
+                        with ui.element("div").classes("w-full vpn-log-tail-viewport").style(
+                            _LOG_TAIL_CODE_STYLE
+                        ):
                             log_ref["label"] = ui.label(text).classes(
                                 "w-full whitespace-pre-wrap break-words font-mono text-left"
                             ).style("font-size: 12px;")
@@ -806,6 +814,10 @@ class ServicesPage:
                     cast(Any, log_ref["label"]).text = text
 
             async def refresh_log() -> None:
+                if not state["open"]:
+                    return
+                state["generation"] += 1
+                generation = state["generation"]
                 set_body("读取…")
                 try:
                     data = await run.io_bound(
@@ -815,17 +827,25 @@ class ServicesPage:
                         )
                     )
                 except Exception as exc:
+                    if not state["open"] or generation != state["generation"]:
+                        return
                     logger.error("读取对端客户端日志失败 peer=%s: %s", peer_id, exc)
                     set_body(f"读取失败: {exc}")
                     ui.notify(f"读日志失败: {exc}", type="negative")
                     return
-                path_caption.text = f"日志: {data.get('log_path') or '/etc/openvpn/log/client.log'}"
+
+                if not state["open"] or generation != state["generation"]:
+                    return
+                path_caption.text = (
+                    f"日志: {data.get('log_path') or '/etc/openvpn/log/client.log'}"
+                )
                 set_body(str(data.get("log") or "(空)"))
 
             ui.timer(0.1, refresh_log, once=True)
             with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
-                ui.button("刷新", icon="refresh", on_click=refresh_log).props("outline no-caps")
-                ui.button("关闭", on_click=dialog.close).props("flat no-caps")
+                secondary_action("刷新", icon="refresh", on_click=refresh_log)
+                secondary_action("关闭", on_click=dialog.close)
+
         dialog.open()
 
     def _render_instance_row(self, status: InstanceStatus, instance_config: dict):
@@ -942,78 +962,106 @@ class ServicesPage:
         )
 
     def _confirm_start(self, name: str):
-        """启动前二次确认。"""
+        """启动前确认。"""
+
         confirm_dialog.show(
             f"启动 {name}？",
-            on_confirm=lambda: self._do_start(name),
-            title="启动",
-            confirm_color="primary",
+            on_confirm=lambda: self._queue_local_action(name, "start"),
+            title="启动实例",
+            impact="将启动本机 OpenVPN systemd 实例。",
+            danger_level="normal",
         )
 
     def _confirm_stop(self, name: str):
-        """停止前二次确认。"""
+        """停止前确认，明确在线会话影响。"""
+
         confirm_dialog.show(
-            f"停止 {name}？在线用户将断开。",
-            on_confirm=lambda: self._do_stop(name),
-            title="停止",
+            f"停止 {name}？",
+            on_confirm=lambda: self._queue_local_action(name, "stop"),
+            title="停止实例",
+            impact="当前在线用户会立即断开，需要客户端重新连接。",
+            danger_level="danger",
         )
 
     def _confirm_restart(self, name: str):
-        """重启前二次确认。"""
+        """重启前确认。"""
+
         confirm_dialog.show(
-            f"重启 {name}？在线会话将短暂中断。",
-            on_confirm=lambda: self._do_restart(name),
-            title="重启",
-            confirm_color="primary",
+            f"重启 {name}？",
+            on_confirm=lambda: self._queue_local_action(name, "restart"),
+            title="重启实例",
+            impact="在线会话会短暂中断，并重新加载当前配置。",
+            danger_level="warning",
         )
 
     def _do_start(self, name: str):
-        """执行启动：systemctl 在线程池执行，避免阻塞 UI。"""
-        try:
-            background_tasks.create(
-                self._async_systemctl_action(name, "start"),
-                name=f"ovpn-local-{name}-start",
-            )
-        except RuntimeError as exc:
-            logger.error("调度本机启动任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 启动任务未能排队", type="negative")
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "start")
 
     def _do_stop(self, name: str):
-        """执行停止：同上。"""
-        try:
-            background_tasks.create(
-                self._async_systemctl_action(name, "stop"),
-                name=f"ovpn-local-{name}-stop",
-            )
-        except RuntimeError as exc:
-            logger.error("调度本机停止任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 停止任务未能排队", type="negative")
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "stop")
 
     def _do_restart(self, name: str):
-        """执行重启：同上。"""
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "restart")
+
+    def _queue_local_action(self, name: str, action: str) -> bool:
+        """在创建后台任务前占用实例，消除重复点击竞态。"""
+
+        if name in self._local_instance_busy:
+            ui.notify(f"{name} 尚有本机操作进行中，请稍候", type="warning")
+            return False
+        if action not in {"start", "stop", "restart"}:
+            raise ValueError(f"不支持的本机服务操作: {action}")
+
+        self._local_instance_busy.add(name)
         try:
             background_tasks.create(
-                self._async_systemctl_action(name, "restart"),
-                name=f"ovpn-local-{name}-restart",
+                self._async_systemctl_action(name, action, reserved=True),
+                name=f"ovpn-local-{name}-{action}",
             )
         except RuntimeError as exc:
-            logger.error("调度本机重启任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 重启任务未能排队", type="negative")
+            self._local_instance_busy.discard(name)
+            logger.error(
+                "调度本机服务任务失败 instance=%s action=%s: %s",
+                name,
+                action,
+                exc,
+            )
+            ui.notify(f"{name} {action} 任务未能排队", type="negative")
+            return False
+        return True
 
-    async def _async_systemctl_action(self, name: str, action: str) -> None:
-        """在线程池执行 start_instance / stop_instance / restart_instance，结束后再刷新列表。"""
-        if name in self._local_instance_busy:
-            self._notify_for_page(f"{name} 尚有本机操作进行中，请稍候", type="warning")
-            return
-        self._local_instance_busy.add(name)
+    async def _async_systemctl_action(
+        self,
+        name: str,
+        action: str,
+        *,
+        reserved: bool = False,
+    ) -> None:
+        """在线程池执行 systemctl；结束后释放互斥并刷新。"""
+
+        if not reserved:
+            if name in self._local_instance_busy:
+                self._notify_for_page(f"{name} 尚有本机操作进行中，请稍候", type="warning")
+                return
+            self._local_instance_busy.add(name)
+
         labels = {
             "start": ("正在启动", "已启动", "启动失败"),
             "stop": ("正在停止", "已停止", "停止失败"),
             "restart": ("正在重启", "已重启", "重启失败"),
         }
-        prog, ok_msg, fail_msg = labels[action]
+        progress_message, success_message, failure_message = labels[action]
         try:
-            self._notify_for_page(f"{prog} {name}…（后台执行 systemctl）", type="info")
+            self._notify_for_page(
+                f"{progress_message} {name}…（后台执行 systemctl）",
+                type="info",
+            )
             if action == "start":
                 ok = await run.io_bound(start_instance, name)
             elif action == "stop":
@@ -1021,17 +1069,24 @@ class ServicesPage:
             else:
                 ok = await run.io_bound(restart_instance, name)
         except Exception as exc:
-            logger.exception("本机实例 systemctl 异常 instance=%s action=%s", name, action)
-            self._notify_for_page(f"{name} {fail_msg}: {exc}", type="negative")
+            logger.exception(
+                "本机实例 systemctl 异常 instance=%s action=%s",
+                name,
+                action,
+            )
+            self._notify_for_page(
+                f"{name} {failure_message}: {exc}",
+                type="negative",
+            )
             self._refresh_list_with_client()
             return
         finally:
             self._local_instance_busy.discard(name)
 
         if ok:
-            self._notify_for_page(f"{name} {ok_msg}", type="positive")
+            self._notify_for_page(f"{name} {success_message}", type="positive")
         else:
-            self._notify_for_page(f"{name} {fail_msg}", type="negative")
+            self._notify_for_page(f"{name} {failure_message}", type="negative")
         self._refresh_list_with_client()
 
     def _open_config_editor(self, name: str):
