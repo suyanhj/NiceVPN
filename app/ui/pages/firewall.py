@@ -1155,8 +1155,8 @@ class FirewallPage:
                 secondary_action(
                     "复制原始规则",
                     icon="content_copy",
-                    on_click=lambda: self._schedule_center_rule_copy(
-                        {"rest": str(row.get("rest") or "")}
+                    on_click=lambda: self._schedule_remote_text_copy(
+                        str(row.get("rest") or "")
                     ),
                 )
                 danger_action(
@@ -1170,6 +1170,18 @@ class FirewallPage:
             secondary_action("关闭", on_click=dialog.close)
 
         dialog.open()
+
+    def _schedule_remote_text_copy(self, text: str) -> None:
+        """从同步菜单安全调度原始规则复制。"""
+
+        try:
+            background_tasks.create(
+                self._copy_text_to_clipboard(str(text or "")),
+                name="firewall-copy-remote-rule",
+            )
+        except RuntimeError as exc:
+            logger.error("调度对端规则复制失败: %s", exc)
+            self._notify_for_page("复制任务未能启动", type="negative")
 
     async def _set_remote_row_enabled(
         self,
