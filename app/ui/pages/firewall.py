@@ -51,6 +51,7 @@ from app.ui.components.list_selection import (
     sync_select_all_checkbox,
     update_visible_selection,
 )
+from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.utils.cidr import validate_cidr
 
 logger = logging.getLogger(__name__)
@@ -265,14 +266,6 @@ class FirewallPage:
                     return cl
         return None
 
-    def _run_javascript_in_page_client(self, code: str) -> None:
-        """不依赖协程 slot 栈执行 JS（与 ``ui.run_javascript`` 同效，用显式 client）。"""
-        c = self._page_client()
-        if c is not None:
-            c.run_javascript(code, timeout=1.0)
-            return
-        ui.run_javascript(code)
-
     def _notify_for_page(
         self,
         message: Any,
@@ -315,8 +308,6 @@ class FirewallPage:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
-        ui.add_head_html('<script src="/static/Sortable.min.js"></script>')
-
         with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
             with ui.element("div").classes("mgmt-header-row"):
                 with ui.element("div").classes("mgmt-header-copy"):
@@ -389,8 +380,6 @@ class FirewallPage:
                         self._build_remote_tab_static()
 
             self._refresh_rules()
-            # 对端链拖拽排序事件（同页只注册一次，与 ``firewall_reorder`` 一致）
-            ui.on("firewall_remote_reorder", self._on_remote_reorder)  # type: ignore[call-overload, misc]
 
     def _on_strat_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "center")
@@ -795,31 +784,15 @@ class FirewallPage:
                             ui.label("规则顺序").classes("mgmt-section-title")
                             ui.label(f"拉取：{t_pull}  同步：{t_sync}").classes("mgmt-section-sub")
                     ui.label(f"对端: {peer_badge}").classes("meta-badge")
-                list_id = "firewall-remote-rule-list"
-                with ui.element("div").classes("mgmt-panel-scroll flex-1").props(f'id="{list_id}"'):
+                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
                     for i, row in enumerate(rows):
                         self._render_remote_rule_card(i, row, row_index_1based=i + 1, n_rows=len(rows))
+                sortable_list.make_sortable(
+                    on_end=self._on_remote_sort_end,
+                    handle=".firewall-rule-drag",
+                    ghost_class="sortable-ghost",
+                )
                 self._sync_remote_select_all()
-        self._run_javascript_in_page_client(
-            """
-            if (typeof Sortable !== 'undefined') {
-                var el = document.getElementById('firewall-remote-rule-list');
-                if (el) {
-                    if (el._sortable) { el._sortable.destroy(); }
-                    el._sortable = new Sortable(el, {
-                        animation: 150,
-                        handle: '.firewall-rule-drag',
-                        ghostClass: 'sortable-ghost',
-                        onEnd: function() {
-                            var items = el.querySelectorAll('[data-remote-row-index]');
-                            var idxs = Array.from(items).map(function(n) { return n.getAttribute('data-remote-row-index'); });
-                            emitEvent('firewall_remote_reorder', { indices: idxs });
-                        }
-                    });
-                }
-            }
-            """
-        )
 
     def _peer_id_short_label(self, pid: str) -> str:
         p = str(pid or "")
@@ -827,14 +800,26 @@ class FirewallPage:
             return f"{p[:8]}…"
         return p or "—"
 
-    def _on_remote_reorder(self, e) -> None:
-        raw = (e.args or {}).get("indices")
-        if not raw or not isinstance(raw, list):
-            return
-        try:
-            new_order = [int(x) for x in raw]
-        except (TypeError, ValueError) as ex:
-            logger.error("对端重排索引非法: %s", ex)
+    @staticmethod
+    def _move_order(items: list[Any], old_index: int, new_index: int) -> list[Any]:
+        """按拖拽前后索引生成新顺序，不修改调用方列表。"""
+
+        if not items or not 0 <= old_index < len(items) or not 0 <= new_index < len(items):
+            logger.error("拖拽索引越界: old=%s new=%s count=%s", old_index, new_index, len(items))
+            return []
+        result = list(items)
+        result.insert(new_index, result.pop(old_index))
+        return result
+
+    def _on_remote_sort_end(self, event) -> None:
+        """处理 NiceGUI SortableJS 对端规则拖拽结果。"""
+
+        new_order = self._move_order(
+            list(range(len(self._visible_remote_indices))),
+            event.old_index,
+            event.new_index,
+        )
+        if not new_order:
             return
         self._schedule_remote_coro(self._do_remote_reorder_async(new_order))
 
@@ -1214,42 +1199,23 @@ class FirewallPage:
                                 ui.label(sub_hint).classes("mgmt-section-sub")
                     if scope_title:
                         ui.label(scope_title).classes("meta-badge")
-                list_id = "firewall-rule-list"
-                with ui.element("div").classes("mgmt-panel-scroll flex-1").props(f'id="{list_id}"'):
+                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
                     for rule in rules:
                         self._render_rule_card(rule, show_owner=show_owner)
+                sortable_list.make_sortable(
+                    on_end=self._on_center_sort_end,
+                    handle=".firewall-rule-drag",
+                    ghost_class="sortable-ghost",
+                )
                 self._sync_center_select_all()
-            self._run_javascript_in_page_client(
-                """
-                if (typeof Sortable !== 'undefined') {
-                    var el = document.getElementById('firewall-rule-list');
-                    if (el) {
-                        if (el._sortable) { el._sortable.destroy(); }
-                        el._sortable = new Sortable(el, {
-                            animation: 150,
-                            handle: '.firewall-rule-drag',
-                            ghostClass: 'sortable-ghost',
-                            onEnd: function(evt) {
-                                var items = evt.to.querySelectorAll('[data-rule-id]');
-                                var ids = Array.from(items).map(function(e) { return e.getAttribute('data-rule-id'); });
-                                emitEvent('firewall_reorder', { ids: ids });
-                            }
-                        });
-                    }
-                }
-                """
-            )
-            ui.on("firewall_reorder", lambda e: self._handle_reorder(e.args.get("ids", [])))
 
-    def _copy_text_to_clipboard(self, text: str) -> None:
+    async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
         t = (text or "").strip()
         if not t:
             return
-        self._run_javascript_in_page_client(
-            f"navigator.clipboard.writeText({json.dumps(t)});"
-        )
-        self._notify_for_page("已复制", type="positive")
+        if await copy_text_to_clipboard(t):
+            self._notify_for_page("已复制", type="positive")
 
     @staticmethod
     def _second_line_comment_text(
@@ -1405,6 +1371,17 @@ class FirewallPage:
             logger.error("reorder: %s", exc)
             self._notify_for_page(f"排序失败: {exc}", type="negative")
             self._refresh_rules()
+
+    def _on_center_sort_end(self, event) -> None:
+        """处理 NiceGUI SortableJS 中心规则拖拽结果。"""
+
+        new_order = self._move_order(
+            self._visible_center_rule_ids,
+            event.old_index,
+            event.new_index,
+        )
+        if new_order:
+            self._handle_reorder(new_order)
 
     def _show_create_dialog(self) -> None:
         self._open_create_rule_dialog("center")

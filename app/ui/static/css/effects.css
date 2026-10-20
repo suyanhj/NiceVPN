@@ -1,0 +1,79 @@
+body {
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.08), transparent 24%),
+    radial-gradient(circle at 90% 10%, rgba(245, 158, 11, 0.08), transparent 18%),
+    linear-gradient(180deg, #0c1322 0%, var(--vpn-bg) 100%);
+}
+
+.q-header {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  background: rgba(15, 23, 42, 0.76) !important;
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.18);
+  color: var(--vpn-text) !important;
+  backdrop-filter: blur(14px);
+}
+
+.q-drawer {
+  border-right: 1px solid rgba(148, 163, 184, 0.08) !important;
+  background: linear-gradient(180deg, var(--vpn-sidebar) 0%, var(--vpn-sidebar-2) 100%) !important;
+  color: #fff !important;
+}
+
+.vpn-nav-button:hover {
+  background: rgba(148, 163, 184, 0.08);
+  color: #fff;
+}
+
+.vpn-nav-button.is-active {
+  position: relative;
+  border: 1px solid rgba(94, 169, 255, 0.16);
+  background: rgba(94, 169, 255, 0.1);
+  color: #e8f1ff;
+}
+
+.vpn-nav-button.is-active::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--vpn-accent);
+  content: "";
+}
+
+.vpn-status-chip {
+  padding: 6px 12px;
+  border: 1px solid rgba(94, 169, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(94, 169, 255, 0.1);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vpn-tech-grid {
+  background-image:
+    linear-gradient(rgba(96, 165, 250, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(96, 165, 250, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.vpn-status-light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vpn-color-success);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--vpn-color-success) 72%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

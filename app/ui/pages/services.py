@@ -2,7 +2,6 @@
 """服务管理页面。"""
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Callable
@@ -29,8 +28,7 @@ from app.ui.components import confirm_dialog
 logger = logging.getLogger(__name__)
 
 # 日志正文外层可滚动视口（供实时 tail 判断是否贴底并自动跟随）
-_LOG_VIEWPORT_ID = "vpn-log-tail-viewport"
-_LOG_TAIL_CODE_STYLE = "max-height: 500px; overflow-y: auto; overflow-x: auto; font-size: 12px;"
+_LOG_TAIL_CODE_STYLE = "height: min(500px, 55vh); font-size: 12px;"
 _LOG_TAIL_STICK_PX = 48
 # 非实时「刷新」展示行数；实时模式仅保留最新若干行，控制内存与 DOM
 _LOG_SNAPSHOT_MAX_LINES = 200
@@ -265,49 +263,6 @@ class ServicesPage:
         tail = parts[-max_lines:] if len(parts) > max_lines else parts
         return "\n".join(p.decode("utf-8", errors="replace") for p in tail)
 
-    @staticmethod
-    def _install_log_viewport_tail_follow_binding() -> None:
-        """在 document 上监听日志视口滚动，维护 window.__vpn_log_follow_tail（贴底才在实时刷新时跟新行）。"""
-        vid = json.dumps(_LOG_VIEWPORT_ID)
-        thresh = _LOG_TAIL_STICK_PX
-        ui.run_javascript(
-            f"""
-            (function() {{
-              if (window.__vpn_log_tail_follow_installed) return;
-              window.__vpn_log_tail_follow_installed = true;
-              window.__vpn_log_follow_tail = true;
-              document.addEventListener(
-                "scroll",
-                function(ev) {{
-                  const t = ev.target;
-                  if (!t || t.id !== {vid}) return;
-                  window.__vpn_log_follow_tail =
-                    t.scrollHeight - t.clientHeight - t.scrollTop <= {thresh};
-                }},
-                true
-              );
-            }})();
-            """
-        )
-
-    @staticmethod
-    def _scroll_log_viewport_if_follow_tail() -> None:
-        """正文更新后若用户仍在底部，则滚到最新（等布局完成再设 scrollTop）。"""
-        vid = json.dumps(_LOG_VIEWPORT_ID)
-        ui.run_javascript(
-            f"""
-            requestAnimationFrame(function() {{
-              requestAnimationFrame(function() {{
-                setTimeout(function() {{
-                  if (!window.__vpn_log_follow_tail) return;
-                  const el = document.getElementById({vid});
-                  if (el) el.scrollTop = el.scrollHeight;
-                }}, 0);
-              }});
-            }});
-            """
-        )
-
     def _open_log_tail_dialog(
         self,
         title: str,
@@ -347,28 +302,32 @@ class ServicesPage:
             ui.label(title).classes("text-h6")
             header_ctrl = header_widget() if header_widget else None
             path_caption = ui.label(initial[0] if initial else "").classes("section-caption")
-            log_container = ui.column().classes("w-full log-frame")
-            log_label_ref: dict[str, Any] = {"lbl": None}
+            follow_tail = True
+
+            def on_log_scroll(event) -> None:
+                """用户离开底部时暂停自动跟随，回到底部后恢复。"""
+
+                nonlocal follow_tail
+                remaining = (
+                    event.vertical_size
+                    - event.vertical_container_size
+                    - event.vertical_position
+                )
+                follow_tail = remaining <= _LOG_TAIL_STICK_PX
+
+            with ui.scroll_area(on_scroll=on_log_scroll).classes(
+                "w-full log-frame vpn-log-tail-viewport"
+            ).style(_LOG_TAIL_CODE_STYLE) as log_viewport:
+                log_label = ui.label(initial[1] if initial else "").classes(
+                    "w-full whitespace-pre-wrap break-words font-mono text-left"
+                ).style("font-size: 12px;")
 
             def set_log_body(text: str, *, follow_tail_after: bool) -> None:
-                """固定外层滚动 div，只改 label 正文，避免 clear 掉视口导致滚动与贴底判断失效。"""
-                if log_label_ref["lbl"] is None:
-                    log_container.clear()
-                    with log_container:
-                        with ui.element("div").props(f"id={_LOG_VIEWPORT_ID}").classes(
-                            "w-full vpn-log-tail-viewport"
-                        ).style(_LOG_TAIL_CODE_STYLE):
-                            log_label_ref["lbl"] = ui.label(text).classes(
-                                "w-full whitespace-pre-wrap break-words font-mono text-left"
-                            ).style("font-size: 12px;")
-                    ServicesPage._install_log_viewport_tail_follow_binding()
-                else:
-                    cast(Any, log_label_ref["lbl"]).text = text
-                if follow_tail_after:
-                    ServicesPage._scroll_log_viewport_if_follow_tail()
+                """更新日志正文，并仅在用户仍贴底时滚到最新内容。"""
 
-            if initial:
-                set_log_body(initial[1], follow_tail_after=False)
+                log_label.text = text
+                if follow_tail_after and follow_tail:
+                    log_viewport.scroll_to(percent=1.0)
 
             def do_refresh() -> None:
                 if precheck_file:

@@ -241,13 +241,13 @@ class CertsPage:
             return serial
         return f"{serial[:8]}..."
 
-    def _copy_text(self, text: str, message: str):
+    async def _copy_text(self, text: str, message: str):
         """复制文本并提示。"""
         if not text:
             ui.notify("没有可复制的内容", type="warning")
             return
-        copy_text_to_clipboard(text)
-        ui.notify(message, type="positive")
+        if await copy_text_to_clipboard(text):
+            ui.notify(message, type="positive")
 
     def _toggle_advanced_panel(self):
         """切换高级面板展开状态。"""

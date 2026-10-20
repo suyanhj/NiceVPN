@@ -1,0 +1,10 @@
+schema_version = 1
+
+[[libraries]]
+name = "clipboard.js"
+version = "2.0.11"
+file = "clipboard-2.0.11.min.js"
+source_url = "https://github.com/zenorocha/clipboard.js/raw/v2.0.11/dist/clipboard.min.js"
+license = "MIT"
+purpose = "在局域网 HTTP 非安全上下文中兼容文本复制"
+sha256 = "e17a1d816e13c0826e0ed7febfabc3277f45571234bde0bf9120829a7169edc9"

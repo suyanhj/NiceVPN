@@ -11,6 +11,8 @@ from app.core.constants import CONFIG_FILE, DATA_DIR, ensure_openvpn_runtime_dir
 from app.models.config import SystemConfig
 
 _OPTIONAL_STRING_FIELDS = {
+    "admin_username",
+    "admin_password_hash",
     "global_subnet",
     "openvpn_bin",
     "easyrsa_dir",
@@ -20,6 +22,11 @@ _OPTIONAL_STRING_FIELDS = {
     "dingtalk_webhook",
     "dingtalk_secret",
     "wework_webhook",
+    "rocketchat_webhook",
+    "rocketchat_channel",
+    "rocketchat_username",
+    "rocketchat_icon_emoji",
+    "rocketchat_title",
     "download_base_url",
     "global_ssh_private_key",
     "global_ssh_private_key_passphrase",

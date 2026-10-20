@@ -501,13 +501,13 @@ class UsersPage:
         except Exception as exc:
             ui.notify(f"保存失败: {exc}", type="negative")
 
-    def _copy_text(self, text: str, message: str):
+    async def _copy_text(self, text: str, message: str):
         """复制文本并提示。"""
         if not text or text == "—":
             ui.notify("没有可复制的内容", type="warning")
             return
-        copy_text_to_clipboard(text)
-        ui.notify(message, type="positive")
+        if await copy_text_to_clipboard(text):
+            ui.notify(message, type="positive")
 
     def _toggle_select(self, username: str, selected: bool):
         """切换用户选中状态。"""
@@ -756,7 +756,7 @@ class UsersPage:
             logger.info("notify 下载链接推送成功 user=%s", username)
         else:
             ui.notify(
-                "推送失败：请确认「系统设置 → 通知」已启用并选对通道（钉钉需配置 Webhook）",
+                "推送失败：请确认「系统设置 → 通知」已启用并选对通道（钉钉 / 企业微信 / Rocket.Chat 需配置 Webhook）",
                 type="negative",
             )
             logger.warning("notify 下载链接推送失败 user=%s（详情见审计日志）", username)

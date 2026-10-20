@@ -286,13 +286,13 @@ class PeersPage:
                     ui.html(f"<pre><code>{html.escape(command)}</code></pre>").classes("peer-manual-command-code")
 
     @staticmethod
-    def _copy_manual_text(text: str, message: str) -> None:
+    async def _copy_manual_text(text: str, message: str) -> None:
         """复制部署说明文本并给出提示。"""
         if not str(text or "").strip():
             ui.notify("没有可复制的内容", type="warning")
             return
-        copy_text_to_clipboard(text)
-        ui.notify(message, type="positive")
+        if await copy_text_to_clipboard(text):
+            ui.notify(message, type="positive")
 
     def _show_peer_config_push_dialog(self, row: dict) -> None:
         """集中推送对端客户端配置、systemd service 与 iptables 规则。"""

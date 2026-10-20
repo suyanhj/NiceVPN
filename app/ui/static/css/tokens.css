@@ -1,0 +1,54 @@
+:root {
+  color-scheme: dark;
+
+  --vpn-color-brand: #4f8fc7;
+  --vpn-color-brand-soft: #76a8d4;
+  --vpn-color-accent: #f59e0b;
+  --vpn-color-success: #22c55e;
+  --vpn-color-warning: #f59e0b;
+  --vpn-color-danger: #fb7185;
+  --vpn-color-info: #60a5fa;
+
+  --vpn-bg: #0f172a;
+  --vpn-bg-soft: #111c31;
+  --vpn-panel: #182338;
+  --vpn-panel-2: #1d2a41;
+  --vpn-panel-3: #0f172a;
+  --vpn-sidebar: #0a1220;
+  --vpn-sidebar-2: #111b2d;
+
+  --vpn-text: #e5edf7;
+  --vpn-text-heading: #d9e2ec;
+  --vpn-text-display: #cfd9e4;
+  --vpn-text-muted: #94a3b8;
+  --vpn-text-soft: #64748b;
+
+  --vpn-border: rgba(148, 163, 184, 0.14);
+  --vpn-border-strong: rgba(148, 163, 184, 0.24);
+
+  --vpn-space-1: 0.25rem;
+  --vpn-space-2: 0.5rem;
+  --vpn-space-3: 0.75rem;
+  --vpn-space-4: 1rem;
+  --vpn-space-5: 1.25rem;
+  --vpn-space-6: 1.5rem;
+  --vpn-space-8: 2rem;
+
+  --vpn-radius-sm: 10px;
+  --vpn-radius-md: 14px;
+  --vpn-radius-lg: 18px;
+  --vpn-radius-xl: 22px;
+
+  --vpn-shadow-soft: 0 8px 24px rgba(2, 6, 23, 0.22);
+  --vpn-shadow: 0 18px 40px rgba(2, 6, 23, 0.35);
+
+  --vpn-font-sans: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --vpn-font-mono: "Cascadia Code", "Fira Mono", "Consolas", monospace;
+
+  /* 旧页面迁移期间保留的兼容别名，统一指向上方语义令牌。 */
+  --vpn-accent: var(--vpn-color-brand);
+  --vpn-accent-soft: var(--vpn-color-brand-soft);
+  --vpn-accent-2: var(--vpn-color-accent);
+  --vpn-success: var(--vpn-color-success);
+  --vpn-danger: var(--vpn-color-danger);
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import logging
 import sys
@@ -16,6 +17,7 @@ from app.utils.cidr import is_subnet_of, validate_cidr
 from app.utils.logging_setup import setup_logging
 from app.models.firewall import FirewallRule
 from app.services.group.subnet import check_subnet_conflict
+from app.services.auth import AdminAuthService
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +328,27 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
     return 0 if created else 1
 
 
+def cmd_hash_admin_password(args: argparse.Namespace) -> int:
+    """交互读取管理员密码并只输出 Argon2id 哈希。"""
+
+    del args
+    password = getpass.getpass("管理员密码: ")
+    confirmation = getpass.getpass("再次输入管理员密码: ")
+    if password != confirmation:
+        print("两次输入的管理员密码不一致。", file=sys.stderr)
+        return 1
+
+    try:
+        password_hash = AdminAuthService().hash_password(password)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(password_hash)
+    logger.info("已生成管理员密码哈希")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cli.py",
@@ -403,6 +426,12 @@ def build_parser() -> argparse.ArgumentParser:
     f.set_defaults(func=cmd_add_firewall, dry_run=False)
     if FilesCompleter is not None:
         iptables_file.completer = FilesCompleter()
+
+    auth = sub.add_parser(
+        "hash-admin-password",
+        help="交互生成管理后台使用的 Argon2id 密码哈希",
+    )
+    auth.set_defaults(func=cmd_hash_admin_password, dry_run=False)
 
     return p
 

@@ -168,10 +168,10 @@ class GroupsPage:
                 self.selected_ids,
             )
 
-    def _copy_group_id(self, group_id: str):
+    async def _copy_group_id(self, group_id: str):
         """复制完整组 ID。"""
-        copy_text_to_clipboard(group_id)
-        ui.notify("组 ID 已复制", type="positive")
+        if await copy_text_to_clipboard(group_id):
+            ui.notify("组 ID 已复制", type="positive")
 
     def _show_create_dialog(self):
         """显示新建分组弹窗。"""
