@@ -29,11 +29,13 @@ def test_static_resources_do_not_expose_sensitive_files() -> None:
         assert not any(name in lowered for name in blocked_names), path
 
 
-def test_firewall_uses_nicegui_sortable_without_duplicate_bundle() -> None:
-    """防火墙排序只使用 NiceGUI 自带 SortableJS。"""
+def test_firewall_uses_aggrid_row_drag_without_duplicate_sortable_bundle() -> None:
+    """中心与对端规则排序统一使用 AG Grid row drag，不再保留 SortableJS 路径。"""
 
     source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
-    assert ".make_sortable(" in source
+    assert '"rowDrag": bool(can_reorder)' in source
+    assert '"rowDragManaged"' in source
+    assert ".make_sortable(" not in source
     assert "new Sortable(" not in source
     assert not (STATIC_DIR / "Sortable.min.js").exists()
 
