@@ -331,6 +331,19 @@ body {
   white-space: nowrap;
 }
 
+
+/* 键盘焦点必须独立于颜色/hover 可见；统一共享组件焦点环。 */
+.vpn-action:focus-visible,
+.vpn-action-menu__item:focus-visible,
+.vpn-data-value__copy:focus-visible,
+.vpn-card--clickable:focus-visible,
+.vpn-confirm-dialog .q-btn:focus-visible,
+.vpn-form-dialog .q-btn:focus-visible {
+  outline: 2px solid var(--vpn-color-brand-soft) !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vpn-color-brand-soft) 22%, transparent);
+}
+
 @media (max-width: 767px) {
   .vpn-shell {
     padding: 14px 16px 22px;
