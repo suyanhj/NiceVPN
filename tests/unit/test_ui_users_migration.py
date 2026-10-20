@@ -215,3 +215,46 @@ def test_progress_dialog_reports_progress_and_final_summary() -> None:
     refs = state["refs"]
     assert refs["progress"].value == pytest.approx(0.5)
     assert refs["close"].visible is True
+
+
+def test_user_download_link_push_uses_notification_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = UsersPage()
+    messages: list[tuple[str, str]] = []
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        page,
+        "_ensure_one_time_download_url",
+        lambda username: f"https://vpn.example/download/{username}",
+    )
+    monkeypatch.setattr(
+        "app.services.notify.send_download_link",
+        lambda username, url: calls.append((username, url)) or True,
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.users.ui.notify",
+        lambda message, type="info", **_kwargs: messages.append(
+            (str(message), type)
+        ),
+    )
+
+    page._push_download_link_notify("alice")
+
+    assert calls == [
+        ("alice", "https://vpn.example/download/alice")
+    ]
+    assert messages[-1] == (
+        "已推送下载链接: alice",
+        "positive",
+    )
+
+    monkeypatch.setattr(
+        "app.services.notify.send_download_link",
+        lambda _username, _url: False,
+    )
+    page._push_download_link_notify("bob")
+
+    assert messages[-1][1] == "negative"
+    assert "系统设置 → 通知" in messages[-1][0]
