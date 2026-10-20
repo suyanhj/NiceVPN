@@ -409,6 +409,7 @@ class SettingsPage:
             with ui.column().classes(
                 "w-full gap-2 q-mt-sm"
             ) as dingtalk_fields:
+                self._dingtalk_fields = dingtalk_fields
                 ui.label("钉钉机器人参数").classes(
                     "settings-panel-title"
                 )
@@ -427,7 +428,7 @@ class SettingsPage:
                     password_toggle_button=True,
                     placeholder="未启用加签可留空",
                 ).classes("w-full")
-                secondary_action(
+                self._dingtalk_test_button = secondary_action(
                     "发送测试消息（钉钉）",
                     icon="send",
                     on_click=self._test_webhook,
@@ -441,6 +442,7 @@ class SettingsPage:
             with ui.column().classes(
                 "w-full gap-2 q-mt-sm"
             ) as wework_fields:
+                self._wework_fields = wework_fields
                 ui.label("企业微信机器人参数").classes(
                     "settings-panel-title"
                 )
@@ -452,7 +454,7 @@ class SettingsPage:
                         "webhook/send?key=..."
                     ),
                 ).classes("w-full")
-                secondary_action(
+                self._wework_test_button = secondary_action(
                     "发送测试消息（企业微信）",
                     icon="send",
                     on_click=self._test_wework_webhook,
@@ -466,6 +468,7 @@ class SettingsPage:
             with ui.column().classes(
                 "w-full gap-2 q-mt-sm"
             ) as rocketchat_fields:
+                self._rocketchat_fields = rocketchat_fields
                 ui.label("Rocket.Chat 参数").classes(
                     "settings-panel-title"
                 )
@@ -513,7 +516,7 @@ class SettingsPage:
                         or "OpenVPN"
                     ),
                 ).classes("w-full")
-                secondary_action(
+                self._rocketchat_test_button = secondary_action(
                     "发送测试消息（Rocket.Chat）",
                     icon="send",
                     on_click=self._test_rocketchat_webhook,
