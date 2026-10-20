@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from nicegui import ui
@@ -20,10 +21,12 @@ from app.ui.components.list_selection import (
     update_visible_selection,
 )
 from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
+
+logger = logging.getLogger(__name__)
 
 
 class GroupsPage:
@@ -43,7 +46,13 @@ class GroupsPage:
     def render(self):
         """渲染用户组管理页面。"""
 
-        groups = self.group_service.list_all()
+        try:
+            groups = self.group_service.list_all()
+            load_error: Exception | None = None
+        except Exception as exc:
+            logger.exception("加载用户组列表失败")
+            groups = []
+            load_error = exc
 
         def header_actions() -> None:
             primary_action(
@@ -96,10 +105,19 @@ class GroupsPage:
                             on_change=lambda e: self._toggle_select_all(bool(e.value)),
                         ).classes("mgmt-checkbox").tooltip("选择当前全部用户组")
                         ui.label("用户组列表").classes("mgmt-kicker")
-                    ui.label(f"共 {len(groups)} 个用户组").classes("group-list-count")
+                    ui.label(
+                        "加载失败" if load_error else f"共 {len(groups)} 个用户组"
+                    ).classes("group-list-count")
 
                 with ui.column().classes("w-full"):
-                    self._render_group_list(groups)
+                    if load_error is not None:
+                        error_state(
+                            str(load_error),
+                            title="用户组列表加载失败",
+                            on_retry=lambda: ui.navigate.to("/groups"),
+                        )
+                    else:
+                        self._render_group_list(groups)
 
         self._sync_bulk_state()
 
