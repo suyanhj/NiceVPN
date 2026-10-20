@@ -754,7 +754,7 @@ def test_center_import_prepare_simplified_requires_owner_and_builds_payloads(
     page._is_unified_list = False
     page.current_owner_id = "group-dev"
     monkeypatch.setattr(
-        "app.services.firewall.simple_rule_import.resolve_center_owner_type",
+        "app.ui.pages.firewall.resolve_center_owner_type",
         lambda _oid: "group",
     )
     monkeypatch.setattr(
