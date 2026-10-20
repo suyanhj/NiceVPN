@@ -45,7 +45,20 @@ from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
+from app.ui.adapters.firewall import adapt_center_rule_rows
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import (
+    MenuAction,
+    danger_action,
+    more_actions,
+    primary_action,
+    secondary_action,
+)
+from app.ui.components.data_grid import render_data_grid
+from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.page_header import render_page_header
+from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.toolbars import render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -251,6 +264,15 @@ class FirewallPage:
         self._center_import_running = False
         self._center_import_result: dict[str, Any] | None = None
         self._center_import_timer = None
+        self._center_grid_container = None
+        self._center_grid_view = None
+        self._center_search_controls = None
+        self._center_search_input = None
+        self._center_owner_filter = None
+        self._center_all_rows: list[dict[str, Any]] = []
+        self._center_display_rows: list[dict[str, Any]] = []
+        self._center_raw_by_id: dict[str, dict[str, Any]] = {}
+        self._center_reorder_allowed = False
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
 
@@ -304,70 +326,98 @@ class FirewallPage:
         return True
 
     def render(self) -> None:
+        """使用共享后台外壳渲染中心与对端策略入口。"""
+
         try:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
-        with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
-            with ui.element("div").classes("mgmt-header-row"):
-                with ui.element("div").classes("mgmt-header-copy"):
-                    ui.label("规则管理").classes("mgmt-title")
-                    ui.label("本机中心 JSON + 对端 iptables 链，分两个 Tab。").classes("mgmt-desc")
 
-            # 顶栏与 script/py/vpn/t.html 的 .control-header-row / .compact-tabs / .btn-group 同一套
-            with ui.element("div").classes("firewall-control-header firewall-tab-bar"):
-                with ui.tabs(value="center", on_change=self._on_strat_change).classes(
-                    "firewall-compact-tabs"
-                ) as self._strat_tabs:
-                    ui.tab("center", label="中心策略")
-                    ui.tab("remote", label="对端远端")
-                with ui.element("div").classes("firewall-btn-group"):
-                    # 与组管理条一致：仅「新建」主色，其余 outline
-                    ui.button("批量启用", on_click=self._batch_enable).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline")
-                    ui.button("批量停用", on_click=self._batch_disable).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline")
-                    ui.button("批量删除", on_click=self._batch_delete).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline is-danger")
-                    ui.button("导入", on_click=self._show_import_dialog).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline mgmt-toolbar-cjk-2")
-                    ui.button("导出", on_click=self._export_backup).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline mgmt-toolbar-cjk-2")
-                    ui.button("新建规则", on_click=self._on_new_rule_click).props(
-                        "unelevated dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-primary q-ml-sm")
+        def search_region() -> None:
+            with ui.row().classes("items-center gap-2 flex-wrap") as self._center_search_controls:
+                self._center_search_input = (
+                    ui.input(
+                        placeholder="搜索归属 / IP / 协议 / 动作 / 规则 ID",
+                        on_change=lambda _event: self._refresh_rules(),
+                    )
+                    .props("outlined dense clearable debounce=250")
+                    .classes("min-w-[18rem] flex-1")
+                )
+                self._center_owner_filter = (
+                    ui.select(
+                        {"": "全部归属"},
+                        value="",
+                        label="归属",
+                        on_change=lambda _event: self._refresh_rules(),
+                    )
+                    .props('outlined dense clearable behavior=menu popup-content-class="vpn-owner-select-menu"')
+                    .classes("min-w-[12rem]")
+                )
+
+        def primary_region() -> None:
+            primary_action(
+                "新建规则",
+                icon="add",
+                on_click=self._on_new_rule_click,
+            )
+
+        def secondary_region() -> None:
+            secondary_action("批量启用", on_click=self._batch_enable)
+            secondary_action("批量停用", on_click=self._batch_disable)
+            danger_action("批量删除", on_click=self._batch_delete)
+            more_actions(
+                (
+                    MenuAction("导入", icon="upload_file", on_click=self._show_import_dialog),
+                    MenuAction("导出", icon="download", on_click=self._export_backup),
+                ),
+                label="更多",
+            )
+
+        with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
+            render_page_header(
+                "规则管理",
+                description="集中管理中心 VPN_FORWARD 策略与对端 iptables 工作副本。",
+            )
+
+            with ui.tabs(
+                value="center",
+                on_change=self._on_strat_change,
+            ).classes("firewall-compact-tabs w-full") as self._strat_tabs:
+                ui.tab("center", label="中心策略")
+                ui.tab("remote", label="对端远端")
+
+            render_page_toolbar(
+                search=search_region,
+                primary=primary_region,
+                secondary=secondary_region,
+            )
 
             with ui.tab_panels(
-                self._strat_tabs, value="center", keep_alive=False
+                self._strat_tabs,
+                value="center",
+                keep_alive=False,
             ).classes("w-full h-full min-h-0 flex-1 firewall-tabpanels"):
                 with ui.tab_panel("center").classes("h-full min-h-0 flex-1"):
-                    with ui.column().classes("firewall-center-canvas w-full min-h-0 flex-1 gap-0"):
-                        with ui.element("div").classes("firewall-search-row w-full flex-shrink-0"):
-                            with ui.element("div").classes("w-full min-w-0"):
-                                self.owner_input = ui.input(
-                                    label="关键词",
-                                    placeholder="归属 / 组 ID / IP，回车跳转",
-                                    value=self.current_owner_id,
-                                ).classes("w-full").props("outlined dense").on(
-                                    "keydown.enter",
-                                    lambda _: self._switch_owner(self.owner_input.value),
-                                )
-                        # 与组管理「分组列表」同构：带边框的 mgmt-panel-list 作为唯一伸缩列，内层再铺规则卡片
+                    with ui.column().classes(
+                        "firewall-center-canvas w-full min-h-0 flex-1 gap-0"
+                    ):
                         with ui.element("section").classes(
                             "mgmt-panel mgmt-panel-list firewall-center-shell w-full min-h-0 flex-1"
                         ):
-                            self.rules_container = ui.column().classes("mgmt-stretch w-full min-h-0 flex-1")
-                            with self.rules_container:
-                                pass
-                                
-                        with ui.element("div").classes("mgmt-page-foot w-full mt-auto flex-shrink-0"):
-                            with ui.row().classes("mgmt-page-footer-row w-full items-center justify-between text-grey-6"):
-                                ui.label("DRAG TO CHANGE PRIORITY").classes("uppercase tracking-widest")
+                            self._center_grid_container = ui.column().classes(
+                                "w-full min-h-0 flex-1"
+                            )
+                            self.rules_container = self._center_grid_container
+
+                        with ui.element("div").classes(
+                            "mgmt-page-foot w-full mt-auto flex-shrink-0"
+                        ):
+                            with ui.row().classes(
+                                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+                            ):
+                                ui.label(
+                                    "排序请在无搜索/无归属筛选时操作"
+                                ).classes("uppercase tracking-widest")
                                 self._rules_total_footer = ui.label("0 RULES TOTAL").classes(
                                     "uppercase tracking-widest"
                                 )
@@ -379,12 +429,14 @@ class FirewallPage:
                     with self._remote_tab_shell:
                         self._build_remote_tab_static()
 
-            self._refresh_rules()
+        self._refresh_rules()
 
     def _on_strat_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "center")
         self._center_tab_active = v == "center"
         logger.debug("firewall 策略页签切换为 %s", v)
+        if self._center_search_controls is not None:
+            self._center_search_controls.set_visibility(self._center_tab_active)
         if self._center_tab_active:
             self._remote_fetch_generation += 1
             self._remote_fetch_running_peer = None
@@ -1153,61 +1205,451 @@ class FirewallPage:
         self._open_create_rule_dialog("remote")
 
     def _switch_owner(self, owner_id: str) -> None:
-        self.current_owner_id = owner_id.strip()
+        """兼容旧跳转入口：同步归属筛选并刷新 Grid。"""
+
+        normalized = str(owner_id or "").strip()
+        self.current_owner_id = normalized
+        if self._center_owner_filter is not None:
+            self._center_owner_filter.set_value(normalized or "")
         self._refresh_rules()
 
+    @staticmethod
+    def _center_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
+        """中心策略核心列定义。"""
+
+        return [
+            {
+                "field": "priority",
+                "headerName": "优先级",
+                "width": 105,
+                "pinned": "left",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "rowDrag": bool(can_reorder),
+            },
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "width": 100,
+            },
+            {
+                "field": "owner_label",
+                "headerName": "归属",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "kind_label",
+                "headerName": "部署",
+                "minWidth": 135,
+            },
+            {
+                "field": "protocol",
+                "headerName": "协议",
+                "width": 95,
+            },
+            {
+                "field": "action_label",
+                "headerName": "动作",
+                "width": 105,
+            },
+            {
+                "field": "source",
+                "headerName": "来源",
+                "minWidth": 180,
+                "flex": 1,
+            },
+            {
+                "field": "dest",
+                "headerName": "目标",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "dest_port",
+                "headerName": "端口",
+                "minWidth": 110,
+            },
+            {
+                "field": "description",
+                "headerName": "说明",
+                "minWidth": 220,
+                "flex": 1,
+            },
+            {
+                "field": "id",
+                "headerName": "规则 ID",
+                "minWidth": 210,
+            },
+            {
+                "field": "actions",
+                "headerName": "操作",
+                "width": 100,
+                "sortable": False,
+                "filter": False,
+                "pinned": "right",
+            },
+        ]
+
+    def _load_center_grid_rows(self) -> list[dict[str, Any]]:
+        """从 service 获取统一中心规则并转换为稳定 Grid 行。"""
+
+        rules = self.rule_service.list_unified_flat()
+        group_names = {
+            str(group.get("id") or ""): str(group.get("name") or "")
+            for group in GroupService().list_all()
+            if str(group.get("id") or "").strip()
+        }
+        peer_names = {
+            str(peer.get("id") or ""): str(peer.get("name") or "")
+            for peer in self._peer_service.list_all()
+            if str(peer.get("id") or "").strip()
+        }
+        rows = adapt_center_rule_rows(
+            rules,
+            group_names=group_names,
+            peer_names=peer_names,
+        )
+        self._center_raw_by_id = {
+            str(row["id"]): dict(row.get("raw") or {})
+            for row in rows
+        }
+        return rows
+
+    def _sync_center_owner_options(self, rows: list[dict[str, Any]]) -> None:
+        """根据当前数据维护归属筛选选项。"""
+
+        if self._center_owner_filter is None:
+            return
+        options: dict[str, str] = {"": "全部归属"}
+        for row in rows:
+            owner_id = str(row.get("owner_id") or "").strip()
+            if not owner_id:
+                continue
+            owner_type = str(row.get("owner_type") or "").strip()
+            label = str(row.get("owner_label") or owner_id)
+            prefix = {
+                "group": "组",
+                "user": "用户",
+                "peer": "对端",
+            }.get(owner_type, "归属")
+            options.setdefault(owner_id, f"{prefix} · {label}")
+
+        current = str(self._center_owner_filter.value or "").strip()
+        if current and current not in options:
+            current = ""
+            self.current_owner_id = ""
+        self._center_owner_filter.set_options(options, value=current)
+
+    def _filter_center_rows(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """应用关键词和归属筛选。"""
+
+        query = (
+            str(self._center_search_input.value or "").strip().casefold()
+            if self._center_search_input is not None
+            else ""
+        )
+        owner_id = (
+            str(self._center_owner_filter.value or "").strip()
+            if self._center_owner_filter is not None
+            else ""
+        )
+        self.current_owner_id = owner_id
+        self._is_unified_list = not bool(owner_id)
+
+        filtered = rows
+        if owner_id:
+            filtered = [
+                row
+                for row in filtered
+                if str(row.get("owner_id") or "") == owner_id
+            ]
+        if query:
+            filtered = [
+                row
+                for row in filtered
+                if query in str(row.get("search_text") or "")
+            ]
+        return filtered
+
     def _refresh_rules(self) -> None:
-        if self.rules_container is None:
+        """刷新中心策略 AG Grid，区分空数据、无匹配和读取失败。"""
+
+        if self._center_grid_container is None:
             return
         if not self._center_tab_active:
             return
-        self.rules_container.clear()
-        self._center_select_all_checkbox = None
-        self._visible_center_rule_ids = []
-        self._center_rule_checkboxes.clear()
-        self._is_unified_list = not (self.current_owner_id or "").strip()
-        with self.rules_container:
-            if self._is_unified_list:
-                rules = self.rule_service.list_unified_flat()
-                scope_title: str | None = None
-                sub_hint: str | None = None
-                show_owner = True
-            else:
-                rules = self.rule_service.list_by_owner(self.current_owner_id)
-                scope_title = f"归属: {self.current_owner_id}"
-                sub_hint = "拖拽排序（JSON 规则）。"
-                show_owner = False
 
-            n_rules = len(rules)
-            self._visible_center_rule_ids = [str(rule["id"]) for rule in rules]
+        try:
+            all_rows = self._load_center_grid_rows()
+        except Exception as exc:
+            logger.exception("加载中心防火墙规则失败")
+            self._center_all_rows = []
+            self._center_display_rows = []
+            self._center_grid_view = None
+            self._center_grid_container.clear()
             if self._rules_total_footer is not None:
-                self._rules_total_footer.set_text(f"{n_rules} RULES TOTAL")
-
-            if not rules:
-                self._render_empty("shield", "暂无规则", "点新建，或清空关键词看全部。")
-                return
-            with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self._center_select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_center_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前列表全部规则")
-                        with ui.column().classes("gap-1"):
-                            ui.label("规则顺序").classes("mgmt-section-title")
-                            if sub_hint:
-                                ui.label(sub_hint).classes("mgmt-section-sub")
-                    if scope_title:
-                        ui.label(scope_title).classes("meta-badge")
-                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
-                    for rule in rules:
-                        self._render_rule_card(rule, show_owner=show_owner)
-                sortable_list.make_sortable(
-                    on_end=self._on_center_sort_end,
-                    handle=".firewall-rule-drag",
-                    ghost_class="sortable-ghost",
+                self._rules_total_footer.set_text("LOAD FAILED")
+            with self._center_grid_container:
+                error_state(
+                    str(exc),
+                    title="中心规则加载失败",
+                    on_retry=self._refresh_rules,
                 )
-                self._sync_center_select_all()
+            return
+
+        self._center_all_rows = all_rows
+        self._sync_center_owner_options(all_rows)
+        rows = self._filter_center_rows(all_rows)
+        self._center_display_rows = rows
+        query = (
+            str(self._center_search_input.value or "").strip()
+            if self._center_search_input is not None
+            else ""
+        )
+        owner_filter = (
+            str(self._center_owner_filter.value or "").strip()
+            if self._center_owner_filter is not None
+            else ""
+        )
+        self._center_reorder_allowed = not bool(query or owner_filter)
+        for row in rows:
+            row["actions"] = "操作"
+
+        visible_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
+        self._visible_center_rule_ids = visible_ids
+        self.selected_rule_ids.intersection_update(set(visible_ids))
+
+        if self._rules_total_footer is not None:
+            if len(rows) == len(all_rows):
+                self._rules_total_footer.set_text(f"{len(all_rows)} RULES TOTAL")
+            else:
+                self._rules_total_footer.set_text(
+                    f"{len(rows)} MATCHED / {len(all_rows)} TOTAL"
+                )
+
+        self._center_grid_container.clear()
+        self._center_grid_view = None
+        with self._center_grid_container:
+            if not all_rows:
+                empty_state(
+                    "暂无中心规则",
+                    description="新建规则或从备份导入后会显示在这里。",
+                    action_label="新建规则",
+                    on_action=self._show_create_dialog,
+                    icon="shield",
+                )
+                return
+            if not rows:
+                no_match_state(
+                    description="当前关键词或归属筛选没有匹配规则。",
+                    on_clear=self._clear_center_filters,
+                )
+                return
+
+            self._center_grid_view = render_data_grid(
+                self._center_grid_columns(can_reorder=self._center_reorder_allowed),
+                rows,
+                row_id="id",
+                page_size=50,
+                selectable=True,
+                selected_ids=self.selected_rule_ids,
+                on_cell_click=self._on_center_grid_cell_click,
+            )
+            self._center_grid_view.grid.on(
+                "selectionChanged",
+                self._on_center_grid_selection_changed,
+            )
+            if self._center_reorder_allowed:
+                self._center_grid_view.grid.options["rowDragManaged"] = True
+                self._center_grid_view.grid.options["suppressMoveWhenRowDragging"] = False
+                self._center_grid_view.grid.on(
+                    "rowDragEnd",
+                    self._on_center_grid_row_drag_end,
+                )
+                self._center_grid_view.grid.update()
+
+    def _clear_center_filters(self) -> None:
+        if self._center_search_input is not None:
+            self._center_search_input.set_value("")
+        if self._center_owner_filter is not None:
+            self._center_owner_filter.set_value("")
+        self.current_owner_id = ""
+        self._refresh_rules()
+
+    async def _on_center_grid_selection_changed(self, *_args) -> None:
+        """同步 AG Grid 选中行到现有批量操作集合。"""
+
+        if self._center_grid_view is None:
+            self.selected_rule_ids.clear()
+            return
+        selected = await self._center_grid_view.get_selected_rows()
+        self.selected_rule_ids = {
+            str(row.get("id") or "").strip()
+            for row in selected
+            if str(row.get("id") or "").strip()
+        }
+
+    async def _on_center_grid_cell_click(self, event) -> None:
+        """复制结构化字段；点击“操作”列打开单项操作。"""
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            return
+        data = args.get("data") or {}
+        if not isinstance(data, dict):
+            return
+        col_id = str(args.get("colId") or "")
+        rule_id = str(data.get("id") or "").strip()
+
+        if col_id == "actions" and rule_id:
+            self._show_center_rule_actions(rule_id)
+            return
+
+        value = ""
+        if col_id == "id":
+            value = rule_id
+        elif col_id == "owner_label":
+            value = str(data.get("owner_id") or data.get("owner_label") or "")
+        elif col_id in {"source", "dest", "dest_port"}:
+            value = str(data.get(col_id) or "")
+        if value and value not in {"—", "*"}:
+            await self._copy_text_to_clipboard(value)
+
+    def _show_center_rule_actions(self, rule_id: str) -> None:
+        """打开单条中心规则操作面板。"""
+
+        raw = self._center_raw_by_id.get(str(rule_id))
+        if not raw:
+            self._notify_for_page("规则已变化，请刷新后重试", type="warning")
+            return
+        enabled = bool(raw.get("enabled", True))
+        is_center_peer = (
+            str(rule_id).startswith(CE_PEER_RULE_PREFIX)
+            or raw.get("_row_kind") == "center_peer"
+        )
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+            ui.label("规则操作").classes("text-h6")
+            ui.label(str(rule_id)).classes("font-mono text-caption break-all")
+            if is_center_peer:
+                ui.label(
+                    "这是对端在中心 VPN_FORWARD 的虚拟放行行；删除会清空该对端 LAN。"
+                ).classes("section-caption")
+
+            with ui.column().classes("w-full gap-2 q-mt-sm"):
+                secondary_action(
+                    "编辑",
+                    icon="edit",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._show_edit_dialog(dict(raw)),
+                    ),
+                )
+                secondary_action(
+                    "停用" if enabled else "启用",
+                    icon="pause_circle" if enabled else "play_circle",
+                    on_click=lambda: self._toggle_center_rule_enabled(
+                        str(rule_id),
+                        not enabled,
+                        dialog=dialog,
+                    ),
+                )
+                secondary_action(
+                    "复制规则 JSON",
+                    icon="content_copy",
+                    on_click=lambda: self._schedule_center_rule_copy(dict(raw)),
+                )
+                danger_action(
+                    "删除",
+                    icon="delete",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._confirm_delete(str(rule_id)),
+                    ),
+                )
+            secondary_action("关闭", on_click=dialog.close)
+
+        dialog.open()
+
+    def _schedule_center_rule_copy(self, raw: dict[str, Any]) -> None:
+        """复制单条规则 JSON；从同步按钮安全调度异步剪贴板。"""
+
+        try:
+            background_tasks.create(
+                self._copy_text_to_clipboard(
+                    json.dumps(raw, ensure_ascii=False, indent=2)
+                ),
+                name="firewall-copy-rule",
+            )
+        except RuntimeError as exc:
+            logger.error("调度规则复制失败: %s", exc)
+            self._notify_for_page("复制任务未能启动", type="negative")
+
+    def _toggle_center_rule_enabled(
+        self,
+        rule_id: str,
+        enabled: bool,
+        *,
+        dialog=None,
+    ) -> bool:
+        """单条规则启停并刷新。"""
+
+        try:
+            self.rule_service.set_enabled(rule_id, enabled)
+        except Exception as exc:
+            logger.error("切换中心规则状态失败 rule=%s: %s", rule_id, exc)
+            self._notify_for_page(str(exc), type="negative")
+            return False
+        if dialog is not None:
+            dialog.close()
+        self._notify_for_page("已启用" if enabled else "已停用", type="positive")
+        self._refresh_rules()
+        return True
+
+    def _on_center_grid_row_drag_end(self, event) -> None:
+        """AG Grid 拖动结束后持久化全局优先级顺序。"""
+
+        if not self._center_reorder_allowed:
+            self._notify_for_page("搜索或归属筛选状态下不能调整优先级", type="warning")
+            self._refresh_rules()
+            return
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            self._refresh_rules()
+            return
+        data = args.get("data")
+        if not isinstance(data, dict):
+            node = args.get("node")
+            data = node.get("data") if isinstance(node, dict) else None
+        rule_id = str((data or {}).get("id") or "").strip()
+        if not rule_id or rule_id not in self._visible_center_rule_ids:
+            self._refresh_rules()
+            return
+
+        old_index = self._visible_center_rule_ids.index(rule_id)
+        try:
+            new_index = int(args.get("overIndex", args.get("rowIndex", old_index)))
+        except (TypeError, ValueError):
+            new_index = old_index
+        if new_index < 0:
+            new_index = 0
+        if new_index >= len(self._visible_center_rule_ids):
+            new_index = len(self._visible_center_rule_ids) - 1
+
+        new_order = self._move_order(
+            self._visible_center_rule_ids,
+            old_index,
+            new_index,
+        )
+        if new_order and new_order != self._visible_center_rule_ids:
+            self._handle_reorder(new_order)
+        else:
+            self._refresh_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
@@ -1384,7 +1826,349 @@ class FirewallPage:
             self._handle_reorder(new_order)
 
     def _show_create_dialog(self) -> None:
-        self._open_create_rule_dialog("center")
+        self._show_create_center_dialog()
+
+    def _show_create_center_dialog(self) -> None:
+        """使用统一表单创建中心规则，保留组/用户/CCD/对端 LAN 预设语义。"""
+
+        if not self._require_center_strategy_tab():
+            return
+
+        groups = GroupService().list_all()
+        group_map = {str(group["id"]): group for group in groups}
+        users = UserService().list_all()
+        user_options = {
+            str(user["username"]): str(user["username"])
+            for user in users
+            if user.get("username")
+        }
+
+        from app.core.config import load_config
+
+        config = load_config()
+        instances = list((config or {}).get("instances", {}).keys()) if config else []
+        auto_instance = instances[0] if instances else "server"
+        default_group_id: str | None = None
+        if groups:
+            current = str(self.current_owner_id or "").strip()
+            default_group_id = (
+                current
+                if current in group_map
+                else str(groups[0]["id"])
+            )
+
+        fields: dict[str, Any] = {}
+        peer_src_ux: dict[str, bool] = {"user_picked": False}
+        peer_preset_holder: dict[str, dict] = {"by_key": {}}
+        peer_group_value_seeded: dict[str, bool] = {"done": False}
+
+        def body() -> None:
+            ui.label("归属与来源").classes("section-caption")
+            fields["owner_type"] = ui.select(
+                {"group": "组", "user": "用户"},
+                label="归属类型",
+                value="group",
+            ).classes("w-full")
+            fields["group"] = ui.select(
+                {
+                    str(group["id"]): f"{group['name']} ({group['subnet']})"
+                    for group in groups
+                },
+                label="选择组",
+                with_input=True,
+                value=default_group_id,
+            ).classes("w-full")
+            fields["users"] = ui.select(
+                user_options,
+                label="选择用户（多选）",
+                multiple=True,
+                with_input=True,
+            ).classes("w-full")
+            fields["users"].set_visibility(False)
+
+            fields["auto_source"] = ui.switch("源用本组子网", value=False)
+            fields["peer_lan"] = ui.select(
+                {},
+                label="对端内网 CIDR（任选；与上项二选一）",
+                with_input=True,
+            ).classes("w-full")
+            fields["source"] = ui.input(
+                "源地址",
+                placeholder="组可自动填子网；用户可从 CCD 读取",
+            ).classes("w-full")
+            fields["user_hint"] = ui.label(
+                "多选用户时可预填 CCD 虚拟 IP，或留空从 CCD 读。"
+            ).classes("section-caption")
+            fields["user_hint"].set_visibility(False)
+
+            ui.label("规则").classes("section-caption q-mt-sm")
+            with ui.row().classes("w-full gap-sm"):
+                fields["action"] = ui.select(
+                    {
+                        "accept": "放行 (ACCEPT)",
+                        "drop": "丢弃 (DROP)",
+                        "reject": "拒绝 (REJECT)",
+                    },
+                    label="动作",
+                    value="accept",
+                ).classes("w-full")
+                fields["protocol"] = ui.select(
+                    {
+                        "all": "不限 (ALL)",
+                        "tcp": "TCP",
+                        "udp": "UDP",
+                        "icmp": "ICMP",
+                    },
+                    label="协议",
+                    value="all",
+                    with_input=True,
+                    new_value_mode="add-unique",
+                ).classes("w-full")
+
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                placeholder="子网或多 IP；空=不限",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                placeholder="空=不限制",
+            ).classes("w-full")
+            fields["enabled"] = ui.switch("创建后启用", value=True)
+
+            ui.label("优先级").classes("section-caption q-mt-sm")
+            fields["priority_mode"] = ui.toggle(
+                {
+                    "insert": "插入（指定优先级）",
+                    "append": "追加（链尾）",
+                },
+                value="insert",
+            ).classes("w-full")
+            fields["priority"] = ui.number(
+                "优先级",
+                value=None,
+                min=1,
+                max=999999,
+                step=10,
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                placeholder="可选",
+            ).classes("w-full")
+
+            def mutex() -> None:
+                if fields["owner_type"].value != "group":
+                    return
+                auto = bool(fields["auto_source"].value)
+                key = str(fields["peer_lan"].value or "").strip()
+                cidr = (
+                    peer_preset_holder.get("by_key") or {}
+                ).get(key) if key else None
+                raw = str(fields["source"].value or "").strip()
+                cidr_lock = bool(cidr and raw and raw == cidr)
+                fields["peer_lan"].set_enabled(not auto)
+                fields["auto_source"].set_enabled(auto or not cidr_lock)
+
+            def sync_peer_presets() -> None:
+                if fields["owner_type"].value != "group":
+                    fields["peer_lan"].set_visibility(False)
+                    return
+                fields["peer_lan"].set_visibility(True)
+                if (
+                    not peer_group_value_seeded["done"]
+                    and default_group_id
+                    and not str(fields["group"].value or "").strip()
+                ):
+                    fields["group"].value = str(default_group_id)
+                peer_group_value_seeded["done"] = True
+
+                gid = str(fields["group"].value or "").strip()
+                presets = (
+                    self._peer_service.list_peer_lan_firewall_presets_for_center_form()
+                    if gid
+                    else []
+                )
+                peer_preset_holder["by_key"] = {
+                    str(preset["key"]): str(preset["cidr"])
+                    for preset in presets
+                }
+                options = {
+                    str(preset["key"]): str(preset["label"])
+                    for preset in presets
+                }
+                fields["peer_lan"].set_options(options)
+                if (
+                    fields["peer_lan"].value
+                    and fields["peer_lan"].value not in options
+                ):
+                    fields["peer_lan"].set_value(None)
+                if (
+                    fields["peer_lan"].value in options
+                    and not peer_src_ux["user_picked"]
+                ):
+                    fields["peer_lan"].set_value(None)
+                mutex()
+
+            def on_peer_change() -> None:
+                value = fields["peer_lan"].value
+                presets = peer_preset_holder.get("by_key") or {}
+                peer_src_ux["user_picked"] = value in presets
+                cidr = presets.get(value) if value else None
+                if cidr:
+                    fields["auto_source"].set_value(False)
+                    fields["source"].set_value(cidr)
+                    fields["source"].props(remove="readonly")
+                mutex()
+
+            def on_group_change() -> None:
+                group_id = str(fields["group"].value or "")
+                if (
+                    fields["auto_source"].value
+                    and group_id
+                    and group_id in group_map
+                ):
+                    fields["source"].set_value(
+                        group_map[group_id].get("subnet", "")
+                    )
+                peer_src_ux["user_picked"] = False
+                sync_peer_presets()
+
+            def on_auto_change() -> None:
+                if fields["auto_source"].value:
+                    fields["peer_lan"].set_value(None)
+                    peer_src_ux["user_picked"] = False
+                    group_id = str(fields["group"].value or "")
+                    if group_id and group_id in group_map:
+                        fields["source"].set_value(
+                            group_map[group_id].get("subnet", "")
+                        )
+                    fields["source"].props(add="readonly")
+                else:
+                    fields["source"].props(remove="readonly")
+                sync_peer_presets()
+
+            def on_owner_type_change() -> None:
+                is_group = fields["owner_type"].value == "group"
+                fields["group"].set_visibility(is_group)
+                fields["users"].set_visibility(not is_group)
+                fields["auto_source"].set_visibility(is_group)
+                fields["peer_lan"].set_visibility(is_group)
+                fields["user_hint"].set_visibility(not is_group)
+                if is_group:
+                    sync_peer_presets()
+                mutex()
+
+            def on_users_change() -> None:
+                selected = fields["users"].value
+                user_list = (
+                    list(selected)
+                    if isinstance(selected, list)
+                    else ([selected] if selected else [])
+                )
+                fields["user_hint"].set_visibility(bool(user_list))
+                if user_list:
+                    ips = _read_ccd_vpn_ips([str(value) for value in user_list])
+                    if ips:
+                        fields["source"].set_value(", ".join(ips))
+
+            def on_source_change() -> None:
+                if fields["owner_type"].value != "group":
+                    return
+                if not str(fields["source"].value or "").strip():
+                    fields["peer_lan"].set_value(None)
+                    peer_src_ux["user_picked"] = False
+                mutex()
+
+            fields["owner_type"].on_value_change(lambda _e: on_owner_type_change())
+            fields["group"].on_value_change(lambda _e: on_group_change())
+            fields["users"].on_value_change(lambda _e: on_users_change())
+            fields["source"].on_value_change(lambda _e: on_source_change())
+            fields["auto_source"].on_value_change(lambda _e: on_auto_change())
+            fields["peer_lan"].on_value_change(lambda _e: on_peer_change())
+            fields["priority_mode"].on_value_change(
+                lambda _e: fields["priority"].set_visibility(
+                    fields["priority_mode"].value == "insert"
+                )
+            )
+            on_group_change()
+
+        def submit() -> bool:
+            values = self._read_create_form_to_values(
+                fields["owner_type"],
+                fields["group"],
+                fields["users"],
+                group_map,
+                fields["auto_source"],
+                fields["peer_lan"],
+                peer_preset_holder,
+                fields["source"],
+                fields["action"],
+                fields["protocol"],
+                fields["dest_ip"],
+                fields["dest_port"],
+                fields["description"],
+            )
+            if values is None:
+                return False
+
+            try:
+                priority = self._resolve_priority(
+                    fields["priority_mode"].value,
+                    fields["priority"].value,
+                )
+            except (TypeError, ValueError) as exc:
+                self._notify_for_page(f"优先级无效: {exc}", type="negative")
+                return False
+
+            payload = {
+                "owner_type": values["owner_type"],
+                "owner_id": values["owner_id"],
+                "instance": auto_instance,
+                "deployment_target": "center",
+                "action": values["action"],
+                "protocol": values["protocol"],
+                "source_subnet": values["source_subnet"],
+                "source_ips": values["source_ips"],
+                "dest_ip": values["dest_ip"],
+                "dest_port": values["dest_port"],
+                "priority": priority,
+                "description": values["description"],
+                "enabled": bool(fields["enabled"].value),
+            }
+            return self._create_center_rule(payload)
+
+        form = create_form_dialog(
+            "新建中心规则",
+            body=body,
+            on_submit=submit,
+            submit_label="创建",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _create_center_rule(self, payload: dict[str, Any]) -> bool:
+        """创建中心规则；失败时让统一表单保留输入。"""
+
+        try:
+            normalized = dict(payload)
+            if str(normalized.get("protocol") or "").lower() in {
+                "",
+                "any",
+                "all",
+            }:
+                normalized["protocol"] = "all"
+            self.rule_service.create(normalized)
+        except Exception as exc:
+            logger.error("create center rule: %s", exc)
+            self._notify_for_page(f"创建失败: {exc}", type="negative")
+            return False
+
+        self._notify_for_page("规则创建成功", type="positive")
+        self._refresh_rules()
+        return True
 
     def _open_create_rule_dialog(self, target: str) -> None:
         """``target`` 为 ``center`` 时写中心 JSON；为 ``remote`` 时同表单生成对端链 ``rest`` 并写回。"""
@@ -1929,55 +2713,264 @@ class FirewallPage:
             self._refresh_rules()
 
     def _show_edit_dialog(self, rule: dict) -> None:
+        """使用统一表单编辑中心 JSON 规则或 center_peer 虚拟行。"""
+
         if not self._require_center_strategy_tab():
             return
-        rid = str(rule.get("id") or "")
-        is_center_peer = rid.startswith(CE_PEER_RULE_PREFIX) or rule.get("_row_kind") == "center_peer"
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full"
-        ):
-            ui.label("编辑对端·中心放行" if is_center_peer else "编辑中心规则").classes("text-h6")
+
+        rule = dict(rule)
+        rule_id = str(rule.get("id") or "").strip()
+        is_center_peer = (
+            rule_id.startswith(CE_PEER_RULE_PREFIX)
+            or rule.get("_row_kind") == "center_peer"
+        )
+        source_subnet = str(rule.get("source_subnet") or "").strip()
+        source_ips = [
+            str(value).strip()
+            for value in (rule.get("source_ips") or [])
+            if str(value).strip()
+        ]
+        source_value = source_subnet or ",".join(source_ips)
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
             if is_center_peer:
                 ui.label(
-                    "字段对应对端 JSON 的 center_forward_*；保存后与本机 VPN_FORWARD 一致；仅支持放行。"
-                ).classes("text-caption text-grey q-mb-sm")
-            action_select = ui.select(
-                {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
+                    "此行对应对端 center_forward_*；仅支持 ACCEPT。"
+                    " 修改 LAN 会同步影响中心 VPN_FORWARD。"
+                ).classes("section-caption")
+
+            fields["action"] = ui.select(
+                (
+                    {"accept": "放行 (ACCEPT)"}
+                    if is_center_peer
+                    else {
+                        "accept": "放行 (ACCEPT)",
+                        "drop": "丢弃 (DROP)",
+                        "reject": "拒绝 (REJECT)",
+                    }
+                ),
                 label="动作",
-                value=rule.get("action", "accept"),
+                value=(
+                    "accept"
+                    if is_center_peer
+                    else str(rule.get("action") or "accept").lower()
+                ),
             ).classes("w-full")
-            protocol_select = ui.select(
-                {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
+
+            fields["protocol"] = ui.select(
+                {
+                    "all": "不限 (ALL)",
+                    "tcp": "TCP",
+                    "udp": "UDP",
+                    "icmp": "ICMP",
+                },
                 label="协议",
-                value=(rule.get("protocol") or "all").replace("any", "all"),
+                value=str(rule.get("protocol") or "all").lower().replace("any", "all"),
                 with_input=True,
                 new_value_mode="add-unique",
             ).classes("w-full")
-            ssub = rule.get("source_subnet") or ""
-            sips = rule.get("source_ips")
-            src_val = ssub or (",".join(sips) if sips else "")
-            source_input = ui.input("源子网 CIDR 或源 IP 列表", value=src_val).classes("w-full")
-            dest_ip_input = ui.input("目标地址", value=rule.get("dest_ip") or "").classes("w-full")
-            dest_port_input = ui.input("目标端口", value=rule.get("dest_port") or "").classes("w-full")
-            desc_input = ui.input("规则描述", value=rule.get("description") or "").classes("w-full")
-            enabled_switch = ui.switch("启用", value=rule.get("enabled", True))
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "保存",
-                    on_click=lambda: self._do_edit(
-                        dialog,
-                        rule,
-                        action=action_select.value,
-                        protocol=protocol_select.value,
-                        source_input=source_input.value,
-                        dest_ip=dest_ip_input.value or None,
-                        dest_port=dest_port_input.value or None,
-                        description=desc_input.value or None,
-                        enabled=enabled_switch.value,
-                    ),
-                ).props("color=primary")
-        dialog.open()
+
+            fields["source"] = ui.input(
+                "源子网 CIDR 或源 IP 列表",
+                value=source_value,
+            ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                value=str(rule.get("dest_ip") or ""),
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                value=str(rule.get("dest_port") or ""),
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                value=str(rule.get("description") or ""),
+            ).classes("w-full")
+            fields["enabled"] = ui.switch(
+                "启用",
+                value=bool(rule.get("enabled", True)),
+            )
+
+            if not is_center_peer:
+                ui.label(
+                    f"归属：{rule.get('owner_type', 'group')} / "
+                    f"{rule.get('_owner_id') or rule.get('owner_id') or '—'}"
+                ).classes("section-caption")
+                ui.label(
+                    f"优先级：{int(rule.get('priority') or 0)}；"
+                    "优先级请在列表拖动调整。"
+                ).classes("section-caption")
+
+        def submit() -> bool:
+            return self._save_center_rule_edit(
+                rule,
+                action=str(fields["action"].value or "accept"),
+                protocol=str(fields["protocol"].value or "all"),
+                source_input=str(fields["source"].value or ""),
+                dest_ip=str(fields["dest_ip"].value or "").strip() or None,
+                dest_port=str(fields["dest_port"].value or "").strip() or None,
+                description=str(fields["description"].value or "").strip() or None,
+                enabled=bool(fields["enabled"].value),
+            )
+
+        form = create_form_dialog(
+            "编辑对端·中心放行" if is_center_peer else "编辑中心规则",
+            body=body,
+            on_submit=submit,
+            submit_label="保存",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _save_center_rule_edit(
+        self,
+        original: dict,
+        *,
+        action: str,
+        protocol: str,
+        source_input: str,
+        dest_ip,
+        dest_port,
+        description,
+        enabled: bool,
+    ) -> bool:
+        """保存中心规则；失败返回 False，让统一表单保留输入。"""
+
+        source_text = str(source_input or "").strip()
+        rule_id = str(original.get("id") or "").strip()
+        is_center_peer = (
+            rule_id.startswith(CE_PEER_RULE_PREFIX)
+            or original.get("_row_kind") == "center_peer"
+        )
+
+        normalized_protocol = str(protocol or "all").strip().lower()
+        if normalized_protocol in {"", "any"}:
+            normalized_protocol = "all"
+
+        if is_center_peer:
+            peer_id = str(original.get("_peer_id") or "").strip()
+            if not peer_id and rule_id.startswith(CE_PEER_RULE_PREFIX):
+                peer_id = rule_id[len(CE_PEER_RULE_PREFIX):].strip()
+            if not peer_id:
+                self._notify_for_page("对端 id 无效", type="negative")
+                return False
+            if not self._peer_service.get(peer_id):
+                self._notify_for_page("对端不存在", type="negative")
+                return False
+            if str(action or "").lower() != "accept":
+                self._notify_for_page(
+                    "对端·中心放行仅支持 ACCEPT",
+                    type="negative",
+                )
+                return False
+
+            lan_cidrs = _parse_lan_cidrs_text(source_text)
+            for cidr in lan_cidrs:
+                if not validate_cidr(cidr):
+                    self._notify_for_page(
+                        f"无效 CIDR: {cidr}",
+                        type="negative",
+                    )
+                    return False
+
+            port_text = str(dest_port or "").strip()
+            try:
+                FirewallRule(
+                    owner_type="group",
+                    owner_id="_",
+                    action="accept",
+                    priority=1,
+                    protocol=normalized_protocol,
+                    dest_ip=str(dest_ip or "").strip() or None,
+                    dest_port=port_text or None,
+                )
+            except (ValidationError, ValueError) as exc:
+                logger.error("对端·中心放行字段校验失败: %s", exc)
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            try:
+                self._peer_service.update(
+                    peer_id,
+                    {
+                        "lan_cidrs": lan_cidrs,
+                        "center_forward_enabled": bool(enabled),
+                        "center_forward_dest_ip": str(dest_ip or "").strip(),
+                        "center_forward_dest_port": port_text,
+                        "center_forward_protocol": normalized_protocol,
+                        "center_forward_rule_description": str(
+                            description or ""
+                        ).strip(),
+                    },
+                )
+            except Exception as exc:
+                logger.error(
+                    "对端·中心放行保存失败 peer=%s: %s",
+                    peer_id,
+                    exc,
+                )
+                self._notify_for_page(
+                    f"更新失败: {exc}",
+                    type="negative",
+                )
+                return False
+
+            self._notify_for_page("已更新", type="positive")
+            if os.name == "nt":
+                self._notify_for_page(
+                    "当前为 Windows，本机未落 iptables；请在 Linux 网关核对。",
+                    type="warning",
+                )
+            self._refresh_rules()
+            return True
+
+        owner_type = str(original.get("owner_type") or "group")
+        source_subnet = None
+        source_ips = None
+        if owner_type == "user" and source_text:
+            try:
+                source_subnet, source_ips = _parse_user_source_for_create(
+                    source_text
+                )
+            except ValueError as exc:
+                self._notify_for_page(str(exc), type="negative")
+                return False
+        else:
+            source_subnet = source_text or None
+
+        new_rule_data = {
+            **original,
+            "action": str(action or "accept").lower(),
+            "protocol": normalized_protocol,
+            "source_subnet": source_subnet,
+            "source_ips": source_ips,
+            "dest_ip": dest_ip,
+            "dest_port": dest_port,
+            "description": description,
+            "enabled": bool(enabled),
+            "updated_at": datetime.now().isoformat(),
+        }
+        for key in ("_owner_id", "_row_kind", "_peer_id", "_center_tag_line"):
+            new_rule_data.pop(key, None)
+
+        try:
+            self.rule_service.update_by_id(rule_id, new_rule_data)
+        except Exception as exc:
+            logger.error("编辑中心规则失败 rule=%s: %s", rule_id, exc)
+            self._notify_for_page(
+                f"更新失败: {exc}",
+                type="negative",
+            )
+            return False
+
+        self._notify_for_page("已更新", type="positive")
+        self._refresh_rules()
+        return True
 
     def _do_edit(
         self,
@@ -1991,93 +2984,39 @@ class FirewallPage:
         dest_port,
         description,
         enabled: bool,
-    ) -> None:
-        t = (source_input or "").strip()
-        rid = str(original.get("id") or "")
-        is_ce = rid.startswith(CE_PEER_RULE_PREFIX) or original.get("_row_kind") == "center_peer"
-        if is_ce:
-            peer_id = str(original.get("_peer_id") or "").strip()
-            if not peer_id and rid.startswith(CE_PEER_RULE_PREFIX):
-                peer_id = rid[len(CE_PEER_RULE_PREFIX) :]
-            peer_id = peer_id.strip()
-            if not peer_id:
-                self._notify_for_page("对端 id 无效", type="negative")
-                return
-            if not self._peer_service.get(peer_id):
-                self._notify_for_page("对端不存在", type="negative")
-                return
-            if (str(action or "").lower() != "accept"):
-                self._notify_for_page("对端·中心放行仅支持 ACCEPT", type="negative")
-                return
-            lans = _parse_lan_cidrs_text(t)
-            for c in lans:
-                if not validate_cidr(c):
-                    self._notify_for_page(f"无效 CIDR: {c}", type="negative")
-                    return
-            dp = (dest_port or "").strip()
-            try:
-                FirewallRule(
-                    owner_type="group",
-                    owner_id="_",
-                    action="accept",
-                    priority=1,
-                    dest_port=dp or None,
-                )
-            except ValidationError as exc:
-                logger.error("对端·中心放行端口校验: %s", exc)
-                self._notify_for_page(str(exc), type="negative")
-                return
-            try:
-                self._peer_service.update(
-                    peer_id,
-                    {
-                        "lan_cidrs": lans,
-                        "center_forward_enabled": bool(enabled),
-                        "center_forward_dest_ip": (dest_ip or "").strip(),
-                        "center_forward_dest_port": dp,
-                        "center_forward_protocol": (protocol or "all").strip().lower(),
-                        "center_forward_rule_description": (description or "").strip(),
-                    },
-                )
-            except Exception as exc:
-                logger.error("对端·中心放行保存: %s", exc)
-                self._notify_for_page(f"更新失败: {exc}", type="negative")
-                return
+    ) -> bool:
+        """兼容旧测试/调用入口。"""
+
+        success = self._save_center_rule_edit(
+            original,
+            action=action,
+            protocol=protocol,
+            source_input=source_input,
+            dest_ip=dest_ip,
+            dest_port=dest_port,
+            description=description,
+            enabled=enabled,
+        )
+        if success and dialog is not None:
             dialog.close()
-            self._notify_for_page("已更新", type="positive")
-            if os.name == "nt":
-                self._notify_for_page("当前为 Windows，本机未落 iptables；请在 Linux 网关核对。", type="warning")
-            self._refresh_rules()
-            return
-        otype = str(original.get("owner_type", "group"))
-        src_subnet = None
-        src_ips = None
-        if otype == "user" and t:
-            try:
-                src_subnet, src_ips = _parse_user_source_for_create(t)
-            except ValueError as exc:
-                self._notify_for_page(str(exc), type="negative")
-                return
-        else:
-            src_subnet = t or None
-        new_rule_data = {**original, "action": action, "protocol": protocol, "source_subnet": src_subnet, "source_ips": src_ips, "dest_ip": dest_ip, "dest_port": dest_port, "description": description, "enabled": enabled}
-        new_rule_data.pop("_owner_id", None)
-        new_rule_data.pop("_row_kind", None)
-        new_rule_data.pop("_peer_id", None)
-        new_rule_data["updated_at"] = datetime.now().isoformat()
-        try:
-            self.rule_service.update_by_id(str(original["id"]), new_rule_data)
-            dialog.close()
-            self._notify_for_page("已更新", type="positive")
-            self._refresh_rules()
-        except Exception as exc:
-            logger.error("edit: %s", exc)
-            self._notify_for_page(f"更新失败: {exc}", type="negative")
-            self._refresh_rules()
+        return success
 
     def _confirm_delete(self, rule_id: str) -> None:
+        raw = self._center_raw_by_id.get(str(rule_id), {})
+        is_center_peer = (
+            str(rule_id).startswith(CE_PEER_RULE_PREFIX)
+            or raw.get("_row_kind") == "center_peer"
+        )
+        impact = (
+            "会清空该对端的 LAN CIDR，并移除中心 VPN_FORWARD 对端放行。"
+            if is_center_peer
+            else "会删除该规则并立即刷新中心 VPN_FORWARD。"
+        )
         confirm_dialog.show(
-            f"删除规则 {str(rule_id)[:8]}…？（对端行会清该对端 LAN）",
+            f"确定删除规则 {str(rule_id)[:12]}？",
+            impact=impact,
+            object_count=1,
+            danger_level="danger",
             on_confirm=lambda: self._do_delete(rule_id),
         )
 
@@ -2144,9 +3083,332 @@ class FirewallPage:
         self._import_source_file_mode = None
         self._import_last_uploaded_text = None
 
+    def _prepare_center_import(
+        self,
+        text: str,
+        *,
+        file_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """识别并预检查中心导入内容，不产生任何写入。"""
+
+        normalized = str(text or "").strip().lstrip("\ufeff")
+        if not normalized:
+            raise ValueError("无内容")
+
+        mode = str(file_mode or "").strip() or None
+        backup_candidate = mode == "json_overwrite" or (
+            mode is None and normalized.startswith("{")
+        )
+
+        if backup_candidate:
+            if not is_center_backup_json_text(normalized):
+                raise ValueError("须为导出 backup（含 rules_by_owner）。")
+            try:
+                payload = json.loads(normalized)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"backup JSON 解析失败: {exc}") from exc
+            rules_by_owner = payload.get("rules_by_owner") or {}
+            if not isinstance(rules_by_owner, dict):
+                raise ValueError("backup 中 rules_by_owner 必须为对象")
+            rule_count = sum(
+                len(items)
+                for items in rules_by_owner.values()
+                if isinstance(items, list)
+            )
+            peer_items = payload.get("peers_center_forward") or []
+            peer_count = len(peer_items) if isinstance(peer_items, list) else 0
+            return {
+                "kind": "backup",
+                "text": normalized,
+                "count": rule_count + peer_count,
+                "rule_count": rule_count,
+                "peer_count": peer_count,
+            }
+
+        if mode == "json_overwrite":
+            raise ValueError("须为导出 backup（含 rules_by_owner）。")
+
+        owner_id = str(self.current_owner_id or "").strip()
+        if self._is_unified_list or not owner_id:
+            raise ValueError("简写导入请先在归属筛选中选择一个归属。")
+
+        try:
+            specs = parse_center_simplified_lines(normalized)
+        except ValueError as exc:
+            raise ValueError(f"简写解析失败: {exc}") from exc
+        if not specs:
+            raise ValueError("没有可导入的简写规则")
+
+        payloads = self._build_center_simplified_payloads(specs)
+        return {
+            "kind": "simplified",
+            "text": normalized,
+            "count": len(payloads),
+            "owner_id": owner_id,
+            "payloads": payloads,
+        }
+
+    def _build_center_simplified_payloads(self, specs) -> list[dict[str, Any]]:
+        """把已解析简写转换为中心规则 payload，失败时给出行号。"""
+
+        from app.core.config import load_config
+
+        owner_id = str(self.current_owner_id or "").strip()
+        if not owner_id:
+            raise ValueError("简写导入缺少归属")
+
+        try:
+            owner_type = resolve_center_owner_type(owner_id)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+        config = load_config()
+        instance_keys = list((config or {}).get("instances", {}).keys()) if config else []
+        instance = instance_keys[0] if instance_keys else "server"
+
+        payloads: list[dict[str, Any]] = []
+        for index, spec in enumerate(specs, start=1):
+            try:
+                source_subnet, source_ips = source_fields_for_center(
+                    spec,
+                    owner_type,
+                )
+            except ValueError as exc:
+                raise ValueError(f"第 {index} 行: {exc}") from exc
+
+            if owner_type == "user" and not source_subnet and not source_ips:
+                source_ips = _read_ccd_vpn_ips([owner_id])
+                if not source_ips:
+                    raise ValueError(
+                        f"第 {index} 行缺 -s 且 CCD 无虚拟 IP。"
+                    )
+
+            payload = center_rule_payload_from_simplified(
+                spec,
+                owner_type=owner_type,
+                owner_id=owner_id,
+                instance=instance,
+                source_subnet=source_subnet,
+                source_ips=source_ips,
+            )
+            if str(payload.get("protocol") or "").lower() in {"", "any", "all"}:
+                payload["protocol"] = "all"
+            payloads.append(payload)
+        return payloads
+
+    async def _execute_center_import(
+        self,
+        form,
+        status_label,
+        prepared: dict[str, Any],
+    ) -> bool:
+        """异步执行已预检查导入；失败保留表单与原始输入。"""
+
+        if self._center_import_running:
+            self._notify_for_page("中心规则正在导入，请稍候", type="warning")
+            return False
+
+        self._center_import_running = True
+        form.set_busy(True)
+        status_label.text = "导入中…正在刷新 VPN_FORWARD"
+        kind = str(prepared.get("kind") or "")
+        total = int(prepared.get("count") or 0)
+
+        try:
+            if kind == "backup":
+                ok = await run.io_bound(
+                    self.rule_service.restore,
+                    str(prepared.get("text") or ""),
+                )
+                if not ok:
+                    raise RuntimeError("backup 恢复失败")
+                success = total
+            elif kind == "simplified":
+                payloads = [
+                    dict(item)
+                    for item in (prepared.get("payloads") or [])
+                ]
+                result = await run.io_bound(
+                    self._run_center_simplified_import,
+                    payloads,
+                )
+                if not result.get("ok"):
+                    raise RuntimeError("简写导入失败")
+                success = int(result.get("count") or 0)
+            else:
+                raise RuntimeError("未知导入类型")
+        except Exception as exc:
+            logger.exception("中心规则导入失败 kind=%s", kind)
+            status_label.text = f"导入失败：{exc}"
+            self._notify_for_page(
+                f"导入失败：成功 0，跳过 0，失败 {max(total, 1)}；{exc}",
+                type="negative",
+                multi_line=True,
+            )
+            return False
+        finally:
+            self._center_import_running = False
+            form.set_busy(False)
+
+        status_label.text = (
+            f"导入完成：成功 {success}，跳过 0，失败 0"
+        )
+        self._notify_for_page(
+            f"导入完成：成功 {success}，跳过 0，失败 0",
+            type="positive",
+        )
+        form.close()
+        self._refresh_rules()
+        return True
+
+    def _show_center_import_dialog(self) -> None:
+        """统一中心规则导入表单：上传/粘贴、自动识别、预检查和异步执行。"""
+
+        state: dict[str, Any] = {
+            "file_mode": None,
+            "uploaded_text": None,
+        }
+        refs: dict[str, Any] = {}
+        holder: dict[str, Any] = {}
+
+        def body() -> None:
+            ui.label(
+                ".json = 整库 backup；.txt / 粘贴文本 = 简写追加到当前归属。"
+                " 纯粘贴以 { 开头时自动识别为 backup。"
+            ).classes("section-caption")
+            refs["textarea"] = (
+                ui.textarea("规则内容")
+                .classes("w-full")
+                .props("rows=16")
+            )
+            refs["status"] = ui.label("尚未执行预检查").classes(
+                "section-caption"
+            )
+
+            def on_text_change() -> None:
+                current = str(refs["textarea"].value or "").strip()
+                uploaded = str(state.get("uploaded_text") or "").strip()
+                if uploaded and current == uploaded:
+                    return
+                state["file_mode"] = None
+                state["uploaded_text"] = None
+                refs["status"].text = "内容已修改，将按粘贴内容自动识别格式"
+
+            refs["textarea"].on_value_change(lambda _e: on_text_change())
+
+            async def on_upload(event) -> None:
+                try:
+                    raw = await event.file.read()
+                    text = raw.decode("utf-8", errors="replace")
+                    name = str(getattr(event.file, "name", "") or "").strip()
+                    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                    if ext == "json":
+                        mode = "json_overwrite"
+                    elif ext in {"txt", "text"}:
+                        mode = "simplified_text"
+                    else:
+                        mode = None
+                    state["file_mode"] = mode
+                    state["uploaded_text"] = str(text or "").strip()
+                    refs["textarea"].set_value(text)
+                    refs["status"].text = (
+                        f"已载入 {name}；"
+                        + (
+                            "识别为 backup 覆盖"
+                            if mode == "json_overwrite"
+                            else (
+                                "识别为简写追加"
+                                if mode == "simplified_text"
+                                else "将自动识别格式"
+                            )
+                        )
+                    )
+                except Exception as exc:
+                    filename = str(
+                        getattr(event.file, "name", "") or ""
+                    ).strip()
+                    logger.exception("中心防火墙导入读文件失败: %s", filename)
+                    refs["status"].text = f"读取失败：{exc}"
+                    self._notify_for_page(
+                        f"读文件失败 ({filename}): {exc}",
+                        type="negative",
+                    )
+                    raise RuntimeError(f"读文件失败: {exc}") from exc
+
+            ui.upload(
+                label="从文件加载（.json / .txt）",
+                on_upload=on_upload,
+                auto_upload=True,
+                max_files=1,
+            ).props(
+                'accept=".json,.txt,.text,application/json,text/plain"'
+            ).classes("w-full")
+
+        def submit() -> bool:
+            try:
+                prepared = self._prepare_center_import(
+                    str(refs["textarea"].value or ""),
+                    file_mode=state.get("file_mode"),
+                )
+            except ValueError as exc:
+                refs["status"].text = f"预检查失败：{exc}"
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            count = int(prepared.get("count") or 0)
+            if prepared["kind"] == "backup":
+                refs["status"].text = (
+                    f"预检查通过：backup 共 {count} 项，等待覆盖确认"
+                )
+                confirm_dialog.show(
+                    "用 backup 覆盖全部中心规则？",
+                    impact=(
+                        f"将恢复 {prepared.get('rule_count', 0)} 条 JSON 规则和 "
+                        f"{prepared.get('peer_count', 0)} 条对端中心策略；"
+                        "服务层会在写入前生成回滚备份。"
+                    ),
+                    object_count=count,
+                    danger_level="danger",
+                    on_confirm=lambda: self._execute_center_import(
+                        holder["form"],
+                        refs["status"],
+                        prepared,
+                    ),
+                )
+            else:
+                refs["status"].text = (
+                    f"预检查通过：将向 {prepared['owner_id']} 追加 {count} 条"
+                )
+                confirm_dialog.show(
+                    f"向当前归属追加 {count} 条规则？",
+                    impact="将分配新的全局优先级并刷新中心 VPN_FORWARD。",
+                    object_count=count,
+                    danger_level="warning",
+                    on_confirm=lambda: self._execute_center_import(
+                        holder["form"],
+                        refs["status"],
+                        prepared,
+                    ),
+                )
+            return False
+
+        form = create_form_dialog(
+            "导入中心规则",
+            body=body,
+            on_submit=submit,
+            submit_label="预检查并导入",
+            close_on_success=False,
+        )
+        holder["form"] = form
+        form.card.classes("w-full max-w-3xl")
+        form.open()
+
     def _show_import_dialog(self) -> None:
         self._import_source_file_mode = None
         self._import_last_uploaded_text = None
+        if self._center_tab_active:
+            self._show_center_import_dialog()
+            return
         if self._center_tab_active:
             title = "导入中心规则"
             hint = (
@@ -2476,7 +3738,14 @@ class FirewallPage:
             if not self.selected_rule_ids:
                 self._notify_for_page("未勾选", type="warning")
                 return
-            confirm_dialog.show("批量删除所选中心规则？", on_confirm=self._do_batch_delete_center)
+            count = len(self.selected_rule_ids)
+            confirm_dialog.show(
+                f"批量删除所选 {count} 条中心规则？",
+                impact="删除后会逐条刷新中心策略；若其中某条失败，其余成功项不会自动回滚。",
+                object_count=count,
+                danger_level="danger",
+                on_confirm=self._do_batch_delete_center,
+            )
             return
         if not self._require_remote_strategy_tab():
             return
@@ -2493,12 +3762,23 @@ class FirewallPage:
         )
 
     def _do_batch_delete_center(self) -> None:
+        success = 0
+        failed = 0
         for rid in list(self.selected_rule_ids):
             try:
                 self.rule_service.delete(rid)
+                success += 1
             except Exception as exc:
-                self._notify_for_page(str(exc), type="negative")
+                failed += 1
+                logger.error("批量删除中心规则失败 rule=%s: %s", rid, exc)
         self.selected_rule_ids.clear()
+        if failed:
+            self._notify_for_page(
+                f"批量删除完成：成功 {success}，失败 {failed}",
+                type="warning" if success else "negative",
+            )
+        else:
+            self._notify_for_page(f"已删除 {success} 条规则", type="positive")
         self._refresh_rules()
 
     async def _do_batch_remote_delete_async(self) -> None:
@@ -2536,12 +3816,37 @@ class FirewallPage:
         if self._center_tab_active:
             if not self._require_center_strategy_tab():
                 return
+            if not self.selected_rule_ids:
+                self._notify_for_page("未勾选", type="warning")
+                return
+            success = 0
+            skipped = 0
+            failed = 0
             for rid in list(self.selected_rule_ids):
+                raw = self._center_raw_by_id.get(str(rid), {})
+                if raw and bool(raw.get("enabled", True)) == bool(en):
+                    skipped += 1
+                    continue
                 try:
                     self.rule_service.set_enabled(rid, en)
+                    success += 1
                 except Exception as exc:
-                    self._notify_for_page(str(exc), type="negative")
+                    failed += 1
+                    logger.error(
+                        "批量切换中心规则状态失败 rule=%s enabled=%s: %s",
+                        rid,
+                        en,
+                        exc,
+                    )
             self.selected_rule_ids.clear()
+            label = "启用" if en else "停用"
+            message = (
+                f"批量{label}完成：成功 {success}，跳过 {skipped}，失败 {failed}"
+            )
+            self._notify_for_page(
+                message,
+                type="warning" if failed else "positive",
+            )
             self._refresh_rules()
             return
         if not self._require_remote_strategy_tab():
