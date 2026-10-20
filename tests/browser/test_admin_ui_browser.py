@@ -59,7 +59,7 @@ def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     screen.selenium.set_window_size(1440, 900)
     screen.open("/")
     screen.should_contain("服务健康度")
-    screen.should_contain("流量快照")
+    screen.should_contain("当前累计流量分布")
     screen.should_contain("canvas")
 
 
