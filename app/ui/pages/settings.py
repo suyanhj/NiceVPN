@@ -674,111 +674,412 @@ class SettingsPage:
         safe_notify("OpenVPN 配置已保存", type="positive")
         return True
 
-    def _test_easyrsa_download(self):
-        """测试通过代理链路下载 EasyRSA 资源。"""
-        lines = [line.strip() for line in (self.github_proxy_input.value or "").splitlines() if line.strip()]
-        config = load_config()
-        config.github_proxy_urls = lines
-        save_config(config)
+    async def _test_easyrsa_download(self) -> bool:
+        """按当前表单代理顺序测试 EasyRSA 下载，不修改已保存配置。"""
 
-        candidates = _build_github_candidate_urls(_EASYRSA_TEST_URL)
-        last_error: str | None = None
+        if self._proxy_test_running:
+            safe_notify("代理测试正在进行，请稍候", type="info")
+            return False
 
-        for candidate in candidates:
-            try:
-                response = requests.get(
-                    candidate,
-                    headers={"Range": "bytes=0-0", "User-Agent": "openvpn-mgmt-settings-test"},
-                    stream=True,
-                    timeout=20,
-                    allow_redirects=True,
-                )
-                if response.status_code not in (200, 206):
-                    last_error = f"HTTP {response.status_code}"
-                    continue
-
-                content_length = response.headers.get("Content-Length") or response.headers.get("content-length") or "未知"
-                self.proxy_status.text = f"EasyRSA 下载成功：{candidate}，长度 {content_length}"
-                ui.notify("EasyRSA 下载成功", type="positive")
-                return
-            except Exception as exc:
-                last_error = str(exc)
-
-        self.proxy_status.text = f"EasyRSA 下载失败: {last_error or '未知'}"
-        ui.notify(f"下载失败: {last_error or '未知'}", type="negative")
-
-    def _save_github_proxies(self):
-        """保存 GitHub 下载代理。"""
-        config = load_config()
-        lines = [line.strip() for line in (self.github_proxy_input.value or "").splitlines()]
-        config.github_proxy_urls = [line for line in lines if line]
-        save_config(config)
-        ui.notify("代理列表已保存", type="positive")
-
-    def _save_notify(self):
-        """保存通知开关、通道与各机器人 Webhook。"""
-        data = load_config().to_dict()
-        data["notify_enabled"] = bool(self.notify_enabled_input.value)
-        prov = self.notify_provider_select.value or "none"
-        data["notify_provider"] = prov if prov in ("none", "dingtalk", "wework") else "none"
-        data["dingtalk_webhook"] = (self.webhook_input.value or "").strip() or None
-        data["dingtalk_secret"] = (self.dingtalk_secret_input.value or "").strip() or None
-        data["wework_webhook"] = (self.wework_webhook_input.value or "").strip() or None
         try:
-            merged = SystemConfig(**data)
+            proxies = parse_github_proxy_urls(
+                str(self.github_proxy_input.value or "")
+            )
+            candidates = build_github_candidate_urls(
+                _EASYRSA_TEST_URL,
+                proxies,
+            )
+        except ValueError as exc:
+            self.proxy_status.text = f"配置无效: {exc}"
+            safe_notify(str(exc), type="negative")
+            return False
+
+        self._proxy_test_running = True
+        self.proxy_status.text = (
+            f"测试中：共 {len(candidates)} 个候选地址…"
+        )
+        attempts: list[str] = []
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                try:
+                    response = await run.io_bound(
+                        lambda url=candidate: requests.get(
+                            url,
+                            headers={
+                                "Range": "bytes=0-0",
+                                "User-Agent": (
+                                    "openvpn-mgmt-settings-test"
+                                ),
+                            },
+                            stream=True,
+                            timeout=20,
+                            allow_redirects=True,
+                        )
+                    )
+                    try:
+                        status = int(response.status_code)
+                        if status not in (200, 206):
+                            attempts.append(
+                                f"{index}. {candidate} -> HTTP {status}"
+                            )
+                            continue
+                        content_length = (
+                            response.headers.get("Content-Length")
+                            or response.headers.get("content-length")
+                            or "未知"
+                        )
+                        self.proxy_status.text = (
+                            f"第 {index}/{len(candidates)} 个候选成功："
+                            f"{candidate}，长度 {content_length}"
+                        )
+                        safe_notify(
+                            "EasyRSA 下载测试成功",
+                            type="positive",
+                        )
+                        return True
+                    finally:
+                        close = getattr(response, "close", None)
+                        if callable(close):
+                            close()
+                except Exception as exc:
+                    attempts.append(
+                        f"{index}. {candidate} -> "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+            detail = "\n".join(attempts) or "无可用候选"
+            self.proxy_status.text = (
+                "EasyRSA 下载测试全部失败：\n" + detail
+            )
+            safe_notify(
+                "EasyRSA 下载测试失败，详情见页面",
+                type="negative",
+            )
+            return False
+        finally:
+            self._proxy_test_running = False
+
+    def _save_github_proxies(self) -> bool:
+        """校验并按当前顺序保存 GitHub 下载代理。"""
+
+        try:
+            proxies = parse_github_proxy_urls(
+                str(self.github_proxy_input.value or "")
+            )
+        except ValueError as exc:
+            self.proxy_status.text = f"配置无效: {exc}"
+            safe_notify(str(exc), type="negative")
+            return False
+
+        config = load_config()
+        config.github_proxy_urls = proxies
+        try:
+            save_config(config)
+            self.config = load_config()
         except Exception as exc:
-            logger.error("通知配置校验失败: %s", exc)
-            ui.notify(f"配置校验失败: {exc}", type="negative")
-            return
-        save_config(merged)
-        self.config = load_config()
-        ui.notify("通知配置已保存", type="positive")
+            logger.error("保存 GitHub 代理失败: %s", exc)
+            safe_notify(f"代理列表保存失败: {exc}", type="negative")
+            return False
 
-    def _test_webhook(self):
-        """发送测试消息到钉钉（与正式推送相同，走 dingtalkchatbot）。"""
-        url = (self.webhook_input.value or "").strip()
-        if not url:
-            ui.notify("请填写 Webhook", type="warning")
-            return
-        secret = (self.dingtalk_secret_input.value or "").strip() or None
+        self.proxy_status.text = (
+            f"已保存 {len(proxies)} 个代理，顺序保持不变"
+        )
+        safe_notify("代理列表已保存", type="positive")
+        return True
+
+    def _save_notify(self) -> bool:
+        """保存通知总开关、通道及三类机器人参数。"""
+
+        current = load_config()
         try:
-            data = send_dingtalk_text(
+            merged = build_notify_config(
+                current,
+                enabled=bool(self.notify_enabled_input.value),
+                provider=str(
+                    self.notify_provider_select.value or "none"
+                ),
+                dingtalk_webhook=str(
+                    self.webhook_input.value or ""
+                ),
+                dingtalk_secret=str(
+                    self.dingtalk_secret_input.value or ""
+                ),
+                wework_webhook=str(
+                    self.wework_webhook_input.value or ""
+                ),
+                rocketchat_webhook=str(
+                    self.rocketchat_webhook_input.value or ""
+                ),
+                rocketchat_channel=str(
+                    self.rocketchat_channel_input.value or ""
+                ),
+                rocketchat_username=str(
+                    self.rocketchat_username_input.value or ""
+                ),
+                rocketchat_icon_emoji=str(
+                    self.rocketchat_icon_input.value or ""
+                ),
+                rocketchat_title=str(
+                    self.rocketchat_title_input.value or ""
+                ),
+            )
+        except ValueError as exc:
+            self.notify_status.text = f"配置校验失败: {exc}"
+            safe_notify(str(exc), type="negative")
+            return False
+        except Exception as exc:
+            logger.error(
+                "通知配置校验异常 type=%s",
+                type(exc).__name__,
+            )
+            self.notify_status.text = "通知配置校验失败"
+            safe_notify("通知配置校验失败", type="negative")
+            return False
+
+        try:
+            save_config(merged)
+            self.config = load_config()
+        except Exception as exc:
+            logger.error(
+                "通知配置保存失败 type=%s",
+                type(exc).__name__,
+            )
+            self.notify_status.text = "通知配置保存失败"
+            safe_notify(
+                "通知配置保存失败，请检查配置文件权限",
+                type="negative",
+            )
+            return False
+
+        self.notify_status.text = (
+            f"已保存：{'启用' if merged.notify_enabled else '停用'} / "
+            f"{merged.notify_provider}"
+        )
+        safe_notify("通知配置已保存", type="positive")
+        return True
+
+    async def _test_webhook(self) -> bool:
+        """使用当前表单值发送钉钉测试消息。"""
+
+        if self._notify_test_running:
+            safe_notify("通知测试正在进行，请稍候", type="info")
+            return False
+        url = str(self.webhook_input.value or "").strip()
+        if not url:
+            safe_notify("请填写钉钉 Webhook", type="warning")
+            return False
+        secret = (
+            str(self.dingtalk_secret_input.value or "").strip()
+            or None
+        )
+
+        self._notify_test_running = True
+        self.notify_status.text = "正在发送钉钉测试消息…"
+        try:
+            data = await run.io_bound(
+                send_dingtalk_text,
                 url,
                 secret,
                 "【VPN 管理】钉钉测试成功",
             )
             if data.get("errcode") == 0:
-                ui.notify("测试已发送", type="positive")
-            else:
-                ui.notify(f"发送失败: {data.get('errmsg')}", type="negative")
+                self.notify_status.text = "钉钉测试已发送"
+                safe_notify("测试已发送", type="positive")
+                return True
+            message = str(data.get("errmsg") or "未知错误")
+            self.notify_status.text = f"钉钉发送失败: {message}"
+            safe_notify(
+                f"钉钉发送失败: {message}",
+                type="negative",
+            )
+            return False
         except ValueError as exc:
-            ui.notify(f"参数无效: {exc}", type="negative")
+            self.notify_status.text = f"钉钉参数无效: {exc}"
+            safe_notify(f"参数无效: {exc}", type="negative")
+            return False
         except Exception as exc:
-            ui.notify(f"发送失败: {exc}", type="negative")
+            logger.error(
+                "钉钉测试发送失败 type=%s",
+                type(exc).__name__,
+            )
+            self.notify_status.text = (
+                f"钉钉发送失败: {type(exc).__name__}"
+            )
+            safe_notify(
+                "钉钉发送失败，请检查 Webhook 与网络",
+                type="negative",
+            )
+            return False
+        finally:
+            self._notify_test_running = False
 
-    def _test_wework_webhook(self) -> None:
-        """发送测试消息到企业微信群机器人。"""
-        url = (self.wework_webhook_input.value or "").strip()
+    async def _test_wework_webhook(self) -> bool:
+        """使用当前表单值发送企业微信测试消息。"""
+
+        if self._notify_test_running:
+            safe_notify("通知测试正在进行，请稍候", type="info")
+            return False
+        url = str(self.wework_webhook_input.value or "").strip()
         if not url:
-            ui.notify("请填写企业微信 Webhook", type="warning")
-            return
-        try:
-            data = send_wework_text(url, "【VPN 管理】企业微信机器人测试成功")
-            if int(data.get("errcode", -1)) == 0:
-                ui.notify("测试已发送", type="positive")
-            else:
-                ui.notify(f"发送失败: {data.get('errmsg', data)}", type="negative")
-        except ValueError as exc:
-            ui.notify(f"参数无效: {exc}", type="negative")
-        except Exception as exc:
-            ui.notify(f"发送失败: {exc}", type="negative")
+            safe_notify("请填写企业微信 Webhook", type="warning")
+            return False
 
-    def _save_base_url(self):
-        """保存下载链接基础 URL。"""
-        config = load_config()
-        config.download_base_url = self.base_url_input.value or None
-        save_config(config)
-        ui.notify("下载基础 URL 已保存", type="positive")
+        self._notify_test_running = True
+        self.notify_status.text = "正在发送企业微信测试消息…"
+        try:
+            data = await run.io_bound(
+                send_wework_text,
+                url,
+                "【VPN 管理】企业微信机器人测试成功",
+            )
+            if int(data.get("errcode", -1)) == 0:
+                self.notify_status.text = "企业微信测试已发送"
+                safe_notify("测试已发送", type="positive")
+                return True
+            message = str(
+                data.get("errmsg") or data.get("errcode") or "未知错误"
+            )
+            self.notify_status.text = (
+                f"企业微信发送失败: {message}"
+            )
+            safe_notify(
+                f"企业微信发送失败: {message}",
+                type="negative",
+            )
+            return False
+        except ValueError as exc:
+            self.notify_status.text = f"企业微信参数无效: {exc}"
+            safe_notify(f"参数无效: {exc}", type="negative")
+            return False
+        except Exception as exc:
+            logger.error(
+                "企业微信测试发送失败 type=%s",
+                type(exc).__name__,
+            )
+            self.notify_status.text = (
+                f"企业微信发送失败: {type(exc).__name__}"
+            )
+            safe_notify(
+                "企业微信发送失败，请检查 Webhook 与网络",
+                type="negative",
+            )
+            return False
+        finally:
+            self._notify_test_running = False
+
+    async def _test_rocketchat_webhook(self) -> bool:
+        """使用当前表单值发送 Rocket.Chat 测试消息。"""
+
+        if self._notify_test_running:
+            safe_notify("通知测试正在进行，请稍候", type="info")
+            return False
+
+        url = str(self.rocketchat_webhook_input.value or "").strip()
+        channels = parse_rocketchat_channels(
+            str(self.rocketchat_channel_input.value or "")
+        )
+        if not url:
+            safe_notify(
+                "请填写 Rocket.Chat Webhook",
+                type="warning",
+            )
+            return False
+        if not channels:
+            safe_notify(
+                "请填写 Rocket.Chat 频道",
+                type="warning",
+            )
+            return False
+
+        username = (
+            str(self.rocketchat_username_input.value or "").strip()
+            or "VPN管理"
+        )
+        icon = (
+            str(self.rocketchat_icon_input.value or "").strip()
+            or ":lock:"
+        )
+        title = (
+            str(self.rocketchat_title_input.value or "").strip()
+            or "OpenVPN"
+        )
+
+        self._notify_test_running = True
+        self.notify_status.text = "正在发送 Rocket.Chat 测试消息…"
+        try:
+            result = await run.io_bound(
+                lambda: send_rocketchat_text(
+                    url,
+                    channels,
+                    "【VPN 管理】Rocket.Chat 测试成功",
+                    username=username,
+                    icon_emoji=icon,
+                    title=title,
+                )
+            )
+            self.notify_status.text = (
+                f"Rocket.Chat 测试已发送，HTTP "
+                f"{result.get('status_code', '2xx')}"
+            )
+            safe_notify("测试已发送", type="positive")
+            return True
+        except ValueError as exc:
+            self.notify_status.text = (
+                f"Rocket.Chat 参数无效: {exc}"
+            )
+            safe_notify(f"参数无效: {exc}", type="negative")
+            return False
+        except Exception as exc:
+            logger.error(
+                "Rocket.Chat 测试发送失败 type=%s",
+                type(exc).__name__,
+            )
+            self.notify_status.text = (
+                f"Rocket.Chat 发送失败: {type(exc).__name__}"
+            )
+            safe_notify(
+                "Rocket.Chat 发送失败，请检查 Webhook、频道与网络",
+                type="negative",
+            )
+            return False
+        finally:
+            self._notify_test_running = False
+
+    def _save_base_url(self) -> bool:
+        """校验并保存下载链接基础 URL；留空表示自动解析。"""
+
+        current = load_config()
+        try:
+            merged = build_download_config(
+                current,
+                download_base_url=str(
+                    self.base_url_input.value or ""
+                ),
+            )
+            save_config(merged)
+            self.config = load_config()
+        except ValueError as exc:
+            safe_notify(str(exc), type="negative")
+            return False
+        except Exception as exc:
+            logger.error("保存下载基础 URL 失败: %s", exc)
+            safe_notify(
+                f"下载基础 URL 保存失败: {exc}",
+                type="negative",
+            )
+            return False
+
+        if merged.download_base_url:
+            safe_notify(
+                "下载基础 URL 已保存",
+                type="positive",
+            )
+        else:
+            safe_notify(
+                "已清空固定基址，将按当前访问自动解析",
+                type="positive",
+            )
+        return True
 
     def _install_sysctl_dropin(self) -> bool:
         """安装并加载项目 sysctl.d 模板。"""
