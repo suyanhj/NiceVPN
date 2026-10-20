@@ -7,6 +7,9 @@ import pytest
 from nicegui.testing import Screen
 
 
+pytestmark = pytest.mark.nondestructive
+
+
 ROUTES = (
     ("/", "运行状态概览"),
     ("/users", "用户管理"),
