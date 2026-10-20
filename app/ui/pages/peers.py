@@ -1117,190 +1117,275 @@ class PeersPage:
         form.open()
 
     def _show_edit_dialog(self, row: dict) -> None:
-        pid = str(row.get("id") or "")
-        if not pid:
+        """使用统一表单编辑对端；敏感凭据不回填，仅按显式选择更新。"""
+
+        peer_id = str(row.get("id") or "")
+        if not peer_id:
             ui.notify("缺少对端 ID", type="negative")
             return
-        usernames = self._peer_bind_select_usernames(exclude_peer_id=pid)
-        cur_user = str(row.get("bound_username") or "")
-        if cur_user and cur_user not in usernames:
-            usernames = sorted(set(usernames) | {cur_user})
+
+        usernames = self._peer_bind_select_usernames(exclude_peer_id=peer_id)
+        current_user = str(row.get("bound_username") or "")
+        if current_user and current_user not in usernames:
+            usernames = sorted(set(usernames) | {current_user})
 
         group_options = dict(self._group_id_to_name())
-        cur_mesh = [str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()]
-        for gid in cur_mesh:
-            if gid not in group_options:
-                group_options[gid] = f"{gid[:8]}…（组可能已删）"
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full no-wrap overflow-y-auto"
-        ):
-            ui.label("编辑对端站点").classes("text-h6")
-            ui.label("基础信息").classes("text-caption text-grey q-mt-sm")
-            name_in = ui.input("显示名称", value=row.get("name") or "").classes("w-full")
-            user_sel = ui.select(
+        current_mesh = [
+            str(value).strip()
+            for value in (row.get("mesh_route_visible_group_ids") or [])
+            if str(value).strip()
+        ]
+        for group_id in current_mesh:
+            if group_id not in group_options:
+                group_options[group_id] = f"{group_id[:8]}…（组可能已删）"
+
+        has_saved_password = bool(str(row.get("ssh_password") or "").strip())
+        has_saved_key = bool(str(row.get("ssh_private_key") or "").strip())
+        saved_mode = str(row.get("ssh_auth") or "none")
+        if has_saved_password:
+            initial_auth_mode = "password"
+        elif has_saved_key:
+            initial_auth_mode = "key"
+        elif saved_mode in {"none", "password", "key"}:
+            initial_auth_mode = saved_mode
+        else:
+            initial_auth_mode = "none"
+
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
+            ui.label("基础信息").classes("section-caption")
+            fields["name"] = ui.input(
+                "显示名称",
+                value=row.get("name") or "",
+            ).classes("w-full")
+            fields["user"] = ui.select(
                 options=usernames,
                 label="绑定用户（每用户一个对端）",
-                value=cur_user if cur_user in usernames else (usernames[0] if usernames else None),
+                value=(
+                    current_user
+                    if current_user in usernames
+                    else (usernames[0] if usernames else None)
+                ),
             ).classes("w-full")
-            cidrs = row.get("lan_cidrs") or []
-            cidr_in = ui.textarea(
+            fields["cidrs"] = ui.textarea(
                 label="后方内网 CIDR",
-                value="\n".join(str(c) for c in cidrs),
+                value="\n".join(str(value) for value in (row.get("lan_cidrs") or [])),
             ).classes("w-full")
-            ui.label("路由策略").classes("text-caption text-grey q-mt-sm")
-            mesh_vis_sel = ui.select(
+
+            ui.label("路由策略").classes("section-caption q-mt-sm")
+            fields["mesh"] = ui.select(
                 options=group_options,
                 label="Mesh 仅对这些组可见（不选=全部活跃用户）",
                 multiple=True,
-                value=cur_mesh,
+                value=current_mesh,
             ).props("use-chips clearable").classes("w-full")
-            masq = ui.checkbox(
+            fields["masq"] = ui.checkbox(
                 "启用对端 SNAT 策略",
                 value=bool(row.get("masquerade_on_peer")),
             )
-            ui.label("SSH 连接").classes("text-caption text-grey q-mt-sm")
-            ssh_host = ui.input("SSH 主机", value=row.get("ssh_host") or "").classes("w-full")
-            ssh_user = ui.input("SSH 用户名", value=row.get("ssh_username") or "").classes("w-full")
-            ssh_port = ui.number(
+
+            ui.label("SSH 连接").classes("section-caption q-mt-sm")
+            fields["ssh_host"] = ui.input(
+                "SSH 主机",
+                value=row.get("ssh_host") or "",
+            ).classes("w-full")
+            fields["ssh_user"] = ui.input(
+                "SSH 用户名",
+                value=row.get("ssh_username") or "",
+            ).classes("w-full")
+            fields["ssh_port"] = ui.number(
                 "SSH 端口",
                 value=int(row.get("ssh_port") or 22),
                 min=1,
                 max=65535,
                 step=1,
             ).classes("w-full")
-            ui.label("SSH 凭据").classes("text-caption text-grey q-mt-sm")
-            ssh_auth = ui.select(
-                options={"none": "none", "password": "password", "key": "key"},
-                label="SSH 认证（占位）",
-                value=str(row.get("ssh_auth") or "none"),
+            fields["ssh_auth"] = ui.select(
+                options={
+                    "none": "不保存对端凭据（可使用系统全局私钥）",
+                    "password": "SSH 密码",
+                    "key": "SSH 私钥",
+                },
+                label="SSH 认证",
+                value=initial_auth_mode,
             ).classes("w-full")
             ui.label(
-                "凭据留空表示不改已存值；清除私钥后用系统全局私钥（若已配置）。"
-            ).classes("text-caption text-grey q-mt-sm")
-            ssh_pw_in = ui.input("SSH 密码（留空不改）", password=True, password_toggle_button=True).classes(
-                "w-full"
-            )
-            clear_pw = ui.checkbox("清除已存 SSH 密码")
-            has_saved_key = bool((row.get("ssh_private_key") or "").strip())
-            if has_saved_key:
-                ui.label("已保存私钥：可粘贴/上传覆盖，或勾选清除。").classes(
-                    "text-caption text-grey"
-                )
-            ssh_key_ta = ui.textarea(
-                label="SSH 私钥 PEM（留空不改；清除对端私钥后回退全局私钥）",
-                placeholder="粘贴新私钥或上传文件…",
-            ).classes("w-full").props('rows="5"')
+                "已保存的密码/私钥不会回显；留空表示保留，切换认证模式会清理另一类对端凭据。"
+            ).classes("section-caption")
 
-            async def handle_edit_key_upload(e) -> None:
-                try:
-                    raw = await e.file.read()
-                    ssh_key_ta.set_value(raw.decode("utf-8", errors="replace"))
-                    ui.notify(f"已载入私钥文件: {e.file.name}", type="positive")
-                except Exception as exc:
-                    fname = getattr(e.file, "name", "")
-                    logger.exception("编辑对端：读取上传私钥失败 file=%s", fname)
-                    ui.notify(f"读取上传失败 ({fname}): {exc}", type="negative")
-                    raise RuntimeError(f"读取上传私钥失败: {exc}") from exc
+            password_box = ui.column().classes("w-full")
+            with password_box:
+                fields["ssh_password"] = ui.input(
+                    "新 SSH 密码（留空保留已存密码）",
+                    password=True,
+                    password_toggle_button=True,
+                ).classes("w-full")
+                if has_saved_password:
+                    ui.label("当前已保存 SSH 密码。").classes("section-caption")
 
-            ui.upload(
-                label="或上传私钥文件",
-                on_upload=handle_edit_key_upload,
-                auto_upload=True,
-                max_files=1,
-            ).props('accept=".pem,.key,text/plain,*"').classes("w-full")
-            ssh_key_pp_in = ui.input(
-                "私钥口令（留空不改；填写新私钥时请一并填写）",
-                password=True,
-                password_toggle_button=True,
-            ).classes("w-full")
-            clear_key = ui.checkbox("清除已存 SSH 私钥及口令")
-            ui.label("远端运行参数").classes("text-caption text-grey q-mt-sm")
-            ssh_ovpn_bin = ui.input(
+            key_box = ui.column().classes("w-full gap-2")
+            with key_box:
+                if has_saved_key:
+                    ui.label("当前已保存 SSH 私钥。").classes("section-caption")
+                fields["ssh_key"] = ui.textarea(
+                    label="新 SSH 私钥 PEM（留空保留已存私钥）",
+                    placeholder="粘贴新私钥或上传文件…",
+                ).classes("w-full").props('rows="5"')
+
+                async def handle_key_upload(event) -> None:
+                    try:
+                        raw = await event.file.read()
+                        fields["ssh_key"].set_value(raw.decode("utf-8", errors="replace"))
+                        ui.notify(f"已载入私钥文件: {event.file.name}", type="positive")
+                    except Exception as exc:
+                        filename = getattr(event.file, "name", "")
+                        logger.exception("编辑对端：读取上传私钥失败 file=%s", filename)
+                        ui.notify(f"读取上传失败 ({filename}): {exc}", type="negative")
+                        raise RuntimeError(f"读取上传私钥失败: {exc}") from exc
+
+                ui.upload(
+                    label="或上传私钥文件",
+                    on_upload=handle_key_upload,
+                    auto_upload=True,
+                    max_files=1,
+                ).props('accept=".pem,.key,text/plain,*"').classes("w-full")
+                fields["ssh_key_passphrase"] = ui.input(
+                    "新私钥口令（留空保留已存口令）",
+                    password=True,
+                    password_toggle_button=True,
+                ).classes("w-full")
+
+            def sync_auth_fields() -> None:
+                mode = str(fields["ssh_auth"].value or "none")
+                password_box.set_visibility(mode == "password")
+                key_box.set_visibility(mode == "key")
+
+            fields["ssh_auth"].on_value_change(lambda _event: sync_auth_fields())
+            sync_auth_fields()
+
+            ui.label("远端运行参数").classes("section-caption q-mt-sm")
+            fields["ssh_openvpn_binary"] = ui.input(
                 "远端 openvpn 路径（可选）",
                 value=str(row.get("ssh_openvpn_binary") or ""),
                 placeholder="留空则 PATH 探测",
             ).classes("w-full")
-            ui.label("部署选项").classes("text-caption text-grey q-mt-sm")
-            auto_inst = ui.checkbox(
+            fields["auto_install"] = ui.checkbox(
                 "保存后自动安装",
                 value=bool(row.get("auto_install_on_peer")),
             )
 
-            async def do_save() -> None:
-                nm = (name_in.value or "").strip()
-                if not nm:
-                    ui.notify("请填写显示名称", type="warning")
-                    return
-                uname = str(user_sel.value or "").strip()
-                lan = _parse_lan_cidrs_text(cidr_in.value or "")
-                mesh_ids = [str(x).strip() for x in (mesh_vis_sel.value or []) if str(x).strip()]
-                payload = {
-                    "name": nm,
-                    "bound_username": uname,
-                    "lan_cidrs": lan,
-                    "mesh_route_visible_group_ids": mesh_ids,
-                    "ssh_host": (ssh_host.value or "").strip(),
-                    "ssh_username": (ssh_user.value or "").strip(),
-                    "ssh_port": int(ssh_port.value or 22),
-                    "ssh_openvpn_binary": (ssh_ovpn_bin.value or "").strip(),
-                    "ssh_auth": str(ssh_auth.value or "none"),
-                    "masquerade_on_peer": bool(masq.value),
-                    "auto_install_on_peer": bool(auto_inst.value),
-                }
-                if clear_pw.value:
-                    payload["ssh_password"] = ""
-                elif (ssh_pw_in.value or "").strip():
-                    payload["ssh_password"] = (ssh_pw_in.value or "").strip()
-                if clear_key.value:
-                    payload["ssh_private_key"] = ""
-                    payload["ssh_private_key_passphrase"] = ""
-                else:
-                    new_pem = (ssh_key_ta.value or "").strip()
-                    new_pp = (ssh_key_pp_in.value or "").strip()
-                    if new_pem:
-                        payload["ssh_private_key"] = new_pem
-                        payload["ssh_private_key_passphrase"] = new_pp
-                    elif new_pp and has_saved_key:
-                        payload["ssh_private_key_passphrase"] = new_pp
+        async def submit() -> bool:
+            name = str(fields["name"].value or "").strip()
+            if not name:
+                ui.notify("请填写显示名称", type="warning")
+                return False
+            username = str(fields["user"].value or "").strip()
+            if not username:
+                ui.notify("请选择绑定用户", type="warning")
+                return False
+
+            auth_mode = str(fields["ssh_auth"].value or "none")
+            payload: dict[str, Any] = {
+                "name": name,
+                "bound_username": username,
+                "lan_cidrs": _parse_lan_cidrs_text(fields["cidrs"].value or ""),
+                "mesh_route_visible_group_ids": [
+                    str(value).strip()
+                    for value in (fields["mesh"].value or [])
+                    if str(value).strip()
+                ],
+                "ssh_host": str(fields["ssh_host"].value or "").strip(),
+                "ssh_username": str(fields["ssh_user"].value or "").strip(),
+                "ssh_port": int(fields["ssh_port"].value or 22),
+                "ssh_openvpn_binary": str(fields["ssh_openvpn_binary"].value or "").strip(),
+                "ssh_auth": auth_mode,
+                "masquerade_on_peer": bool(fields["masq"].value),
+                "auto_install_on_peer": bool(fields["auto_install"].value),
+            }
+
+            if payload["ssh_host"] and not payload["ssh_username"]:
+                ui.notify("填写 SSH 主机后必须同时填写 SSH 用户名", type="warning")
+                return False
+
+            if auth_mode == "none":
+                payload["ssh_password"] = ""
+                payload["ssh_private_key"] = ""
+                payload["ssh_private_key_passphrase"] = ""
+            elif auth_mode == "password":
+                payload["ssh_private_key"] = ""
+                payload["ssh_private_key_passphrase"] = ""
+                new_password = str(fields["ssh_password"].value or "").strip()
+                if new_password:
+                    payload["ssh_password"] = new_password
+                elif not has_saved_password:
+                    ui.notify("请选择密码认证时需要填写 SSH 密码", type="warning")
+                    return False
+            elif auth_mode == "key":
+                payload["ssh_password"] = ""
+                new_key = str(fields["ssh_key"].value or "").strip()
+                new_passphrase = str(fields["ssh_key_passphrase"].value or "").strip()
+                if new_key:
+                    payload["ssh_private_key"] = new_key
+                    payload["ssh_private_key_passphrase"] = new_passphrase
+                elif not has_saved_key:
+                    ui.notify("请选择私钥认证时需要填写或上传 SSH 私钥", type="warning")
+                    return False
+                elif new_passphrase:
+                    payload["ssh_private_key_passphrase"] = new_passphrase
+
+            try:
+                self.peer_service.update(peer_id, payload)
+            except (ValueError, RuntimeError) as exc:
+                logger.error("更新对端失败: %s", exc)
+                ui.notify(str(exc), type="negative")
+                return False
+
+            form.close()
+            self._notify_for_page("已保存；Mesh / CCD 变更需重连生效。", type="positive")
+            self._refresh_list()
+
+            if bool(fields["auto_install"].value):
+                self._set_peer_row_busy(peer_id, True)
                 try:
-                    self.peer_service.update(pid, payload)
-                except ValueError as exc:
-                    logger.error("更新对端校验失败: %s", exc)
-                    ui.notify(str(exc), type="negative")
-                    return
-                except RuntimeError as exc:
-                    logger.error("更新对端 iptables/CCD 失败: %s", exc)
-                    ui.notify(str(exc), type="negative")
-                    return
-                dialog.close()
-                save_msg = "已保存；Mesh / CCD 变更需重连生效。"
-                self._notify_for_page(save_msg, type="positive")
-                self._refresh_list()
-                if bool(auto_inst.value) and pid:
-                    self._set_peer_row_busy(pid, True)
-                    try:
-                        data = await run.io_bound(lambda: self.peer_service.ensure_openvpn_on_peer_via_ssh(pid))
-                    except Exception as exc:
-                        logger.error("编辑后自动 SSH 装配失败 peer=%s: %s", pid, exc)
-                        peer_remote_log.error("编辑后自动 SSH 装配失败 peer=%s: %s", pid, exc)
-                        self._notify_for_page(f"自动 SSH 装配失败: {exc}", type="negative", multi_line=True)
+                    data = await run.io_bound(
+                        lambda: self.peer_service.ensure_openvpn_on_peer_via_ssh(peer_id)
+                    )
+                except Exception as exc:
+                    logger.error("编辑后自动 SSH 装配失败 peer=%s: %s", peer_id, exc)
+                    peer_remote_log.error("编辑后自动 SSH 装配失败 peer=%s: %s", peer_id, exc)
+                    self._notify_for_page(
+                        f"自动 SSH 装配失败: {exc}",
+                        type="negative",
+                        multi_line=True,
+                    )
+                else:
+                    if isinstance(data, dict) and data.get("skipped_install"):
+                        suffix = "，已安装未覆盖配置"
                     else:
-                        if isinstance(data, dict) and data.get("skipped_install"):
-                            fw_msg = "，已安装未覆盖配置"
-                        else:
-                            fw = data.get("peer_firewall") if isinstance(data, dict) else None
-                            fw_msg = "，对端防火墙已下发" if isinstance(fw, dict) and fw.get("ok") else ""
-                        self._notify_for_page(f"自动 SSH 装配已完成{fw_msg}", type="positive")
-                    finally:
-                        self._set_peer_row_busy(pid, False)
-                elif bool(masq.value) and pid:
-                    await self._apply_peer_snat_policy_after_save(pid, source="编辑")
+                        firewall = data.get("peer_firewall") if isinstance(data, dict) else None
+                        suffix = (
+                            "，对端防火墙已下发"
+                            if isinstance(firewall, dict) and firewall.get("ok")
+                            else ""
+                        )
+                    self._notify_for_page(f"自动 SSH 装配已完成{suffix}", type="positive")
+                finally:
+                    self._set_peer_row_busy(peer_id, False)
+            elif bool(fields["masq"].value):
+                await self._apply_peer_snat_policy_after_save(peer_id, source="编辑")
+            return True
 
-            with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button("保存", on_click=do_save).props("color=primary")
-
-        dialog.open()
+        form = create_form_dialog(
+            "编辑对端站点",
+            body=body,
+            on_submit=submit,
+            submit_label="保存",
+            close_on_success=False,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes("w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto")
+        form.open()
 
     def _confirm_delete(self, row: dict) -> None:
         pid = str(row.get("id") or "")
