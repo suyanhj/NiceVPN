@@ -123,3 +123,29 @@ def test_groups_page_uses_shared_header_status_bulk_bar_and_root_protection() ->
     assert page_object.bulk_enable_button._props["disable"] is True
     assert page_object.bulk_disable_button._props["disable"] is True
     assert page_object.bulk_delete_button._props["disable"] is True
+
+
+def test_group_view_model_covers_root_disabled_and_missing_fields() -> None:
+    """分组适配器统一根组、停用和字段缺失语义。"""
+
+    root = GroupsPage._build_group_view_model(
+        _group("root", "默认组", "10.224.0.0/16"),
+        root_id="root",
+    )
+    disabled = GroupsPage._build_group_view_model(
+        _group("dev", "开发组", "10.224.1.0/24", status="disabled", users=3),
+        root_id="root",
+    )
+    partial = GroupsPage._build_group_view_model(
+        {"id": "partial"},
+        root_id="root",
+    )
+
+    assert root["is_root"] is True
+    assert root["status"] == "active"
+    assert disabled["is_root"] is False
+    assert disabled["status"] == "disabled"
+    assert disabled["user_count"] == 3
+    assert partial["name"] == "未命名用户组"
+    assert partial["subnet"] == "未配置子网"
+    assert partial["user_count"] == 0
