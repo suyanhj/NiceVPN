@@ -16,6 +16,17 @@ from app.services.notify.dingtalk import send_dingtalk_text
 from app.services.notify.wework import send_wework_text
 from app.services.openvpn.detector import validate_custom_path
 from app.services.openvpn.installer import _build_github_candidate_urls
+from app.ui.adapters.settings import (
+    build_device_bind_config,
+    build_global_ssh_config,
+    build_openvpn_path_config,
+    build_server_connection_config,
+    validate_easyrsa_script_path,
+)
+from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components.feedback import safe_notify
+from app.ui.components.form_section import render_form_section
+from app.ui.components.page_header import render_page_header
 
 _EASYRSA_TEST_URL = "https://github.com/OpenVPN/easy-rsa/releases/download/v3.2.4/EasyRSA-3.2.4.tgz"
 
@@ -29,17 +40,23 @@ class SettingsPage:
     def render(self) -> None:
         """渲染系统设置页：顶栏 + 紧凑页签（含全局 SSH、下载、通知等）。"""
         self.config = load_config()
-        with ui.column().classes("page-shell mgmt-page w-full min-h-0 page-shell--settings"):
-            with ui.element("div").classes("mgmt-header-row"):
-                with ui.element("div").classes("mgmt-header-copy"):
-                    ui.label("系统设置").classes("mgmt-title")
-                    ui.label(
-                        "分 Tab：OpenVPN 路径、服务端、设备绑定、全局 SSH、下载与通知。"
-                    ).classes("mgmt-desc")
-            with ui.element("div").classes("firewall-control-header firewall-tab-bar"):
+        with ui.column().classes(
+            "page-shell mgmt-page w-full min-h-0 page-shell--settings"
+        ):
+            render_page_header(
+                "系统设置",
+                description=(
+                    "集中配置 OpenVPN、服务端、设备策略、SSH、下载与通知能力。"
+                ),
+            )
+            with ui.element("div").classes(
+                "firewall-control-header firewall-tab-bar w-full"
+            ):
                 with ui.tabs(
-                    value="openvpn", on_change=self._on_settings_tab_change
-                ).classes("firewall-compact-tabs") as st:
+                    value="openvpn",
+                    on_change=self._on_settings_tab_change,
+                ).classes("firewall-compact-tabs w-full") as st:
+                    self._settings_tabs = st
                     ui.tab("openvpn", label="OpenVPN")
                     ui.tab("server", label="服务端")
                     ui.tab("device", label="设备绑定")
@@ -75,147 +92,195 @@ class SettingsPage:
         logger.debug("系统设置页签切换: %s", v)
 
     def _render_openvpn_panel(self):
-        """渲染 OpenVPN 配置面板。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("OpenVPN").classes("settings-kicker")
-                    ui.label("OpenVPN 配置").classes("settings-panel-title")
-                    ui.label("可执行文件与 EasyRSA 目录。").classes("settings-panel-desc")
+        """渲染 OpenVPN / EasyRSA 路径配置。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.openvpn_input = ui.input(
-                    "OpenVPN 可执行文件路径",
-                    value=self.config.openvpn_bin or "",
-                ).classes("w-full")
-                self.easyrsa_input = ui.input(
-                    "EasyRSA 目录路径",
-                    value=self.config.easyrsa_dir or "",
-                ).classes("w-full")
-                self.path_status = ui.label("").classes("settings-status-text")
+        def body() -> None:
+            self.openvpn_input = ui.input(
+                "OpenVPN 可执行文件路径",
+                value=self.config.openvpn_bin or "",
+            ).classes("w-full")
+            self.easyrsa_input = ui.input(
+                "EasyRSA 可执行脚本路径",
+                value=self.config.easyrsa_dir or "",
+            ).classes("w-full")
+            self.path_status = ui.label(
+                "保存前建议先验证两个路径。"
+            ).classes("settings-status-text")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("验证路径", on_click=self._validate_path).props("outline no-caps no-ripple").classes(
-                    "settings-btn is-outline"
-                )
-                ui.button("保存", on_click=self._save_openvpn).props("unelevated no-caps no-ripple").classes(
-                    "settings-btn is-primary"
-                )
+        def actions() -> None:
+            secondary_action(
+                "验证路径",
+                icon="fact_check",
+                on_click=self._validate_path,
+            )
+            primary_action(
+                "保存",
+                icon="save",
+                on_click=self._save_openvpn,
+            )
+
+        render_form_section(
+            "OpenVPN 配置",
+            kicker="OpenVPN",
+            description="配置 OpenVPN 可执行文件与 EasyRSA 官方脚本路径。",
+            body=body,
+            actions=actions,
+        )
 
     def _render_server_connection_panel(self):
-        """渲染服务端连接地址配置面板。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("Server").classes("settings-kicker")
-                    ui.label("服务端连接配置").classes("settings-panel-title")
-                    ui.label(
-                        "写入 .ovpn 的 remote；保存后新生成的配置用新值。"
-                    ).classes("settings-panel-desc")
+        """渲染服务端连接、物理网路由与网关参数。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.server_ip_input = ui.input(
-                    "服务端公网 IP 或域名",
-                    value=self.config.server_ip or "",
-                    placeholder="如 1.2.3.4 或 vpn.example.com",
-                ).classes("w-full")
-                with ui.row().classes("w-full gap-sm"):
-                    self.server_port_input = ui.number(
-                        "端口",
-                        value=self.config.port or 1194,
-                        min=1, max=65535,
-                    ).classes("flex-1")
-                    self.server_proto_input = ui.select(
-                        {"udp": "UDP", "tcp": "TCP"},
-                        label="协议",
-                        value=self.config.proto or "udp",
-                    ).classes("flex-1")
-                self.push_lan_routes_input = ui.textarea(
-                    "内网 push route（每行 IPv4 CIDR）",
-                    value="\n".join(self.config.get("push_lan_routes") or []),
-                    placeholder="每行一条，如 172.16.22.0/24\n勿填 VPN 地址池。",
-                ).classes("w-full")
-                ui.label(
-                    "访问服务端物理网时，中心侧按 VPN 源网段做 MASQUERADE，无需指定出网网卡。"
-                ).classes("settings-panel-desc")
-                self.max_clients_input = ui.number(
-                    "单实例最大并发连接数（max-clients）",
-                    value=int(self.config.get("max_clients") or OPENVPN_DEFAULT_MAX_CLIENTS),
-                    min=16,
-                    max=65534,
-                    step=1,
-                    format="%.0f",
-                ).classes("w-full")
-                ui.label(
-                    "保存后重写 server.conf；须到服务管理重启 OpenVPN。"
-                    " root 可点「写入 sysctl.d 并加载」安装网关 sysctl 模板并 sysctl -p。"
-                ).classes("settings-panel-desc")
+        def body() -> None:
+            self.server_ip_input = ui.input(
+                "服务端公网 IP 或域名",
+                value=self.config.server_ip or "",
+                placeholder="如 1.2.3.4 或 vpn.example.com",
+            ).classes("w-full")
+            with ui.row().classes("w-full gap-sm flex-wrap"):
+                self.server_port_input = ui.number(
+                    "端口",
+                    value=self.config.port or 1194,
+                    min=1,
+                    max=65535,
+                ).classes("flex-1 min-w-[10rem]")
+                self.server_proto_input = ui.select(
+                    {"udp": "UDP", "tcp": "TCP"},
+                    label="协议",
+                    value=self.config.proto or "udp",
+                ).classes("flex-1 min-w-[10rem]")
+            self.push_lan_routes_input = ui.textarea(
+                "内网 push route（每行 IPv4 CIDR）",
+                value="\n".join(
+                    self.config.get("push_lan_routes") or []
+                ),
+                placeholder=(
+                    "每行一条，如 172.16.22.0/24\n"
+                    "勿填 VPN 地址池。"
+                ),
+            ).classes("w-full")
+            ui.label(
+                "客户端只会把这里配置的物理网段经 VPN 路由；"
+                "中心侧按 VPN 源网段自动 MASQUERADE。"
+            ).classes("settings-panel-desc")
+            self.max_clients_input = ui.number(
+                "单实例最大并发连接数（max-clients）",
+                value=int(
+                    self.config.get("max_clients")
+                    or OPENVPN_DEFAULT_MAX_CLIENTS
+                ),
+                min=16,
+                max=65534,
+                step=1,
+                format="%.0f",
+            ).classes("w-full")
+            ui.label(
+                "保存会重写 server.conf 并刷新 VPN_FORWARD；"
+                "OpenVPN 进程仍需在服务管理中重启。"
+            ).classes("settings-panel-desc")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button(
-                    "写入 sysctl.d 并加载",
-                    on_click=self._install_sysctl_dropin,
-                ).props("outline no-caps no-ripple").classes("settings-btn is-outline")
-                ui.button("保存", on_click=self._save_server_connection).props(
-                    "unelevated no-caps no-ripple"
-                ).classes("settings-btn is-primary")
+        def actions() -> None:
+            secondary_action(
+                "写入 sysctl.d 并加载",
+                icon="memory",
+                on_click=self._install_sysctl_dropin,
+            )
+            primary_action(
+                "保存",
+                icon="save",
+                on_click=self._save_server_connection,
+            )
+
+        render_form_section(
+            "服务端连接配置",
+            kicker="Server",
+            description=(
+                "配置客户端 remote、物理网 push route 与并发连接上限。"
+            ),
+            body=body,
+            actions=actions,
+        )
 
     def _render_device_bind_panel(self):
-        """渲染 client-connect 设备绑定策略（与 /etc/openvpn/mgmt/device_bind_mode 同步）。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("Device bind").classes("settings-kicker")
-                    ui.label("设备绑定策略").classes("settings-panel-title")
-                    ui.label(
-                        "client-connect 指纹策略：A 仅审计；B 分级指纹（HW / UUID / 平台信息）；C 必须 IV_HWADDR。"
-                        " 改策略后旧设备可能需重置绑定；保存后对新连接生效。"
-                    ).classes("settings-panel-desc")
+        """渲染 client-connect 设备绑定策略。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.device_bind_mode_input = ui.select(
-                    {
-                        "weak_log": "A 弱绑定 · 仅记录",
-                        "weak_fingerprint": "B 弱指纹 · 分级匹配",
-                        "strict_hwaddr": "C 强绑定 · 须 IV_HWADDR",
-                    },
-                    label="策略",
-                    value=self.config.get("device_bind_mode") or "weak_fingerprint",
-                ).classes("w-full")
+        def body() -> None:
+            self.device_bind_mode_input = ui.select(
+                {
+                    "weak_log": "A 弱绑定 · 仅记录",
+                    "weak_fingerprint": "B 弱指纹 · 分级匹配",
+                    "strict_hwaddr": "C 强绑定 · 须 IV_HWADDR",
+                },
+                label="策略",
+                value=(
+                    self.config.get("device_bind_mode")
+                    or "weak_fingerprint"
+                ),
+            ).classes("w-full")
+            ui.label(
+                "A 仅审计；B 按 HW/UUID/平台信息分级匹配；"
+                "C 强制 IV_HWADDR。切换策略后旧设备可能需要重置绑定。"
+            ).classes("settings-panel-desc")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("保存策略", on_click=self._save_device_bind).props(
-                    "unelevated no-caps no-ripple"
-                ).classes("settings-btn is-primary")
+        def actions() -> None:
+            primary_action(
+                "保存策略",
+                icon="save",
+                on_click=self._save_device_bind,
+            )
+
+        render_form_section(
+            "设备绑定策略",
+            kicker="Device bind",
+            description="控制 client-connect 的设备指纹匹配强度。",
+            body=body,
+            actions=actions,
+        )
 
     def _render_global_ssh_panel(self) -> None:
-        """全局 SSH 私钥：对端实例未填写私钥时使用。"""
-        with ui.element("section").classes("settings-panel"):
-            with ui.element("div").classes("settings-panel-head"):
-                with ui.element("div").classes("settings-panel-copy"):
-                    ui.label("SSH").classes("settings-kicker")
-                    ui.label("全局默认私钥").classes("settings-panel-title")
-                    ui.label(
-                        "对端未填私钥时用此处 PEM；对端已填则优先生效。配置在 data 下，注意文件权限。"
-                    ).classes("settings-panel-desc")
+        """渲染对端站点使用的全局 SSH 私钥与口令。"""
 
-            with ui.element("div").classes("settings-stack"):
-                self.global_ssh_key_input = ui.textarea(
-                    "PEM 私钥全文",
-                    value=self.config.get("global_ssh_private_key") or "",
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY----- 或 BEGIN RSA / EC PRIVATE KEY-----",
-                ).classes("w-full")
-                self.global_ssh_passphrase_input = ui.input(
-                    "私钥口令（若密钥有加密）",
-                    password=True,
-                    password_toggle_button=True,
-                    value=self.config.get("global_ssh_private_key_passphrase") or "",
-                ).classes("w-full")
+        def body() -> None:
+            self.global_ssh_key_input = ui.textarea(
+                "PEM 私钥全文",
+                value=(
+                    self.config.get("global_ssh_private_key")
+                    or ""
+                ),
+                placeholder=(
+                    "-----BEGIN OPENSSH PRIVATE KEY----- "
+                    "或 BEGIN RSA / EC PRIVATE KEY-----"
+                ),
+            ).classes("w-full").props("rows=8")
+            self.global_ssh_passphrase_input = ui.input(
+                "私钥口令（若密钥有加密）",
+                password=True,
+                password_toggle_button=True,
+                value=(
+                    self.config.get(
+                        "global_ssh_private_key_passphrase"
+                    )
+                    or ""
+                ),
+            ).classes("w-full")
+            ui.label(
+                "对端未单独配置私钥时才使用此处默认密钥；"
+                "保存反馈和日志不会回显 PEM 或口令。"
+            ).classes("settings-panel-desc")
 
-            with ui.element("div").classes("settings-toolbar"):
-                ui.button("保存", on_click=self._save_global_ssh).props("unelevated no-caps no-ripple").classes(
-                    "settings-btn is-primary"
-                )
+        def actions() -> None:
+            primary_action(
+                "保存",
+                icon="save",
+                on_click=self._save_global_ssh,
+            )
+
+        render_form_section(
+            "全局默认私钥",
+            kicker="SSH",
+            description="为未单独配置 SSH 私钥的对端提供默认认证。",
+            body=body,
+            actions=actions,
+        )
 
     def _save_global_ssh(self) -> None:
         """持久化全局 SSH 私钥与口令。"""
