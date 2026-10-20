@@ -698,3 +698,48 @@ def test_notification_save_failure_does_not_echo_secret(
         message for message, _type in messages
     )
     assert secret not in combined
+
+
+def test_settings_page_supports_initial_tab_and_switching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _config()
+    monkeypatch.setattr(
+        "app.ui.pages.settings.load_config",
+        lambda: cfg,
+    )
+    page = SettingsPage()
+
+    async def verify() -> None:
+        async with user_simulation(
+            lambda: page.render(initial_tab="notify")
+        ) as user:
+            await user.open("/")
+            assert page._settings_tabs.value == "notify"
+            await user.should_see("通知设置")
+
+            page._settings_tabs.set_value("server")
+            assert page._settings_tabs.value == "server"
+            await user.should_see("服务端连接")
+
+    asyncio.run(verify())
+
+
+def test_settings_page_invalid_initial_tab_falls_back_to_openvpn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.ui.pages.settings.load_config",
+        lambda: _config(),
+    )
+    page = SettingsPage()
+
+    async def verify() -> None:
+        async with user_simulation(
+            lambda: page.render(initial_tab="not-exists")
+        ) as user:
+            await user.open("/")
+            assert page._settings_tabs.value == "openvpn"
+            await user.should_see("OpenVPN 配置")
+
+    asyncio.run(verify())
