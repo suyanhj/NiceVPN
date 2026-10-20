@@ -282,23 +282,48 @@ class SettingsPage:
             actions=actions,
         )
 
-    def _save_global_ssh(self) -> None:
-        """持久化全局 SSH 私钥与口令。"""
-        data = load_config().to_dict()
-        pem = (self.global_ssh_key_input.value or "").strip() or None
-        pp = (self.global_ssh_passphrase_input.value or "").strip() or None
-        data["global_ssh_private_key"] = pem
-        data["global_ssh_private_key_passphrase"] = pp
+    def _save_global_ssh(self) -> bool:
+        """持久化全局 SSH 私钥与口令，不在反馈或日志中回显敏感值。"""
+
+        current = load_config()
         try:
-            merged = SystemConfig(**data)
+            merged = build_global_ssh_config(
+                current,
+                private_key=str(
+                    self.global_ssh_key_input.value or ""
+                ),
+                passphrase=str(
+                    self.global_ssh_passphrase_input.value or ""
+                ),
+            )
         except Exception as exc:
-            logger.error("全局 SSH 配置校验失败: %s", exc)
-            ui.notify(f"配置校验失败: {exc}", type="negative")
-            return
-        save_config(merged)
-        self.config = load_config()
+            logger.error(
+                "全局 SSH 配置校验失败 type=%s",
+                type(exc).__name__,
+            )
+            safe_notify(
+                "全局 SSH 配置校验失败，请检查配置",
+                type="negative",
+            )
+            return False
+
+        try:
+            save_config(merged)
+            self.config = load_config()
+        except Exception as exc:
+            logger.error(
+                "保存全局 SSH 配置失败 type=%s",
+                type(exc).__name__,
+            )
+            safe_notify(
+                "全局 SSH 保存失败，请检查配置文件权限",
+                type="negative",
+            )
+            return False
+
         logger.info("已保存全局 SSH 私钥配置")
-        ui.notify("全局 SSH 已保存", type="positive")
+        safe_notify("全局 SSH 已保存", type="positive")
+        return True
 
     def _render_github_proxy_panel(self):
         """渲染 GitHub 代理配置面板。"""
@@ -452,27 +477,107 @@ class SettingsPage:
                     "settings-btn is-primary"
                 )
 
-    def _validate_path(self):
-        """验证 OpenVPN 自定义路径。"""
-        path = self.openvpn_input.value
-        if not path:
-            self.path_status.text = "请输入路径"
-            return
-        result = validate_custom_path(path)
-        if result["valid"]:
-            self.path_status.text = f"验证通过，版本 {result['version']}"
-            ui.notify("路径验证通过", type="positive")
-        else:
-            self.path_status.text = result.get("error", "路径无效")
-            ui.notify(f"验证失败: {result.get('error')}", type="negative")
+    def _validate_path(self) -> bool:
+        """同时验证 OpenVPN 与 EasyRSA 可执行路径。"""
 
-    def _save_openvpn(self):
-        """保存 OpenVPN 路径配置。"""
-        config = load_config()
-        config.openvpn_bin = self.openvpn_input.value or None
-        config.easyrsa_dir = self.easyrsa_input.value or None
-        save_config(config)
-        ui.notify("OpenVPN 配置已保存", type="positive")
+        openvpn_path = str(self.openvpn_input.value or "").strip()
+        easyrsa_path = str(self.easyrsa_input.value or "").strip()
+
+        if not openvpn_path:
+            self.path_status.text = "请输入 OpenVPN 可执行文件路径"
+            safe_notify(self.path_status.text, type="warning")
+            return False
+        if not easyrsa_path:
+            self.path_status.text = "请输入 EasyRSA 脚本路径"
+            safe_notify(self.path_status.text, type="warning")
+            return False
+
+        try:
+            result = validate_custom_path(openvpn_path)
+        except Exception as exc:
+            logger.exception("OpenVPN 路径验证异常")
+            self.path_status.text = f"OpenVPN 路径验证异常: {exc}"
+            safe_notify("OpenVPN 路径验证失败", type="negative")
+            return False
+
+        if not result.get("valid"):
+            error = str(result.get("error") or "路径无效")
+            self.path_status.text = f"OpenVPN: {error}"
+            safe_notify(f"OpenVPN 验证失败: {error}", type="negative")
+            return False
+
+        easy_ok, easy_message = validate_easyrsa_script_path(
+            easyrsa_path
+        )
+        if not easy_ok:
+            self.path_status.text = f"EasyRSA: {easy_message}"
+            safe_notify(
+                f"EasyRSA 验证失败: {easy_message}",
+                type="negative",
+            )
+            return False
+
+        version = str(result.get("version") or "未知")
+        self.path_status.text = (
+            f"验证通过：OpenVPN {version}；EasyRSA 脚本可执行"
+        )
+        safe_notify("OpenVPN / EasyRSA 路径验证通过", type="positive")
+        return True
+
+    def _save_openvpn(self) -> bool:
+        """校验后保存 OpenVPN / EasyRSA 路径。"""
+
+        openvpn_path = str(self.openvpn_input.value or "").strip()
+        easyrsa_path = str(self.easyrsa_input.value or "").strip()
+        if not openvpn_path or not easyrsa_path:
+            safe_notify(
+                "OpenVPN 与 EasyRSA 路径均为必填",
+                type="negative",
+            )
+            return False
+
+        try:
+            openvpn_result = validate_custom_path(openvpn_path)
+        except Exception:
+            logger.exception("保存前验证 OpenVPN 路径异常")
+            safe_notify("OpenVPN 路径验证失败", type="negative")
+            return False
+        if not openvpn_result.get("valid"):
+            safe_notify(
+                f"OpenVPN 路径无效: {openvpn_result.get('error') or '未知'}",
+                type="negative",
+            )
+            return False
+
+        easy_ok, easy_message = validate_easyrsa_script_path(
+            easyrsa_path
+        )
+        if not easy_ok:
+            safe_notify(
+                f"EasyRSA 路径无效: {easy_message}",
+                type="negative",
+            )
+            return False
+
+        current = load_config()
+        try:
+            merged = build_openvpn_path_config(
+                current,
+                openvpn_bin=openvpn_path,
+                easyrsa_bin=easyrsa_path,
+            )
+            save_config(merged)
+            self.config = load_config()
+        except Exception as exc:
+            logger.error("保存 OpenVPN 路径配置失败: %s", exc)
+            safe_notify(
+                f"OpenVPN 配置保存失败: {exc}",
+                type="negative",
+            )
+            return False
+
+        safe_notify("OpenVPN 配置已保存", type="positive")
+        return True
 
     def _test_easyrsa_download(self):
         """测试通过代理链路下载 EasyRSA 资源。"""
@@ -580,72 +685,154 @@ class SettingsPage:
         save_config(config)
         ui.notify("下载基础 URL 已保存", type="positive")
 
-    def _install_sysctl_dropin(self):
-        """将仓库内 sysctl 模板安装到 /etc/sysctl.d/ 并 sysctl -p 立即加载。"""
+    def _install_sysctl_dropin(self) -> bool:
+        """安装并加载项目 sysctl.d 模板。"""
+
+        from app.utils.sysctl_tune import install_vpn_sysctl_dropin
+
+        logger.info("开始安装 VPN sysctl.d 模板")
         try:
-            from app.utils.sysctl_tune import install_vpn_sysctl_dropin
-
             install_vpn_sysctl_dropin()
+        except PermissionError as exc:
+            logger.warning("安装 sysctl.d 权限不足: %s", exc)
+            safe_notify(str(exc), type="negative")
+            return False
+        except FileNotFoundError as exc:
+            logger.error("sysctl.d 模板缺失: %s", exc)
+            safe_notify(str(exc), type="negative")
+            return False
+        except OSError as exc:
+            logger.error("当前系统不支持 sysctl.d: %s", exc)
+            safe_notify(str(exc), type="negative")
+            return False
+        except RuntimeError as exc:
+            logger.error("加载 sysctl.d 失败: %s", exc)
+            safe_notify(f"sysctl.d 加载失败: {exc}", type="negative")
+            return False
         except Exception as exc:
-            logger.exception("安装 sysctl.d 失败")
-            ui.notify(f"sysctl.d 安装失败: {exc}", type="negative")
-            return
-        ui.notify("sysctl.d 已安装并已加载", type="positive")
+            logger.exception("安装 sysctl.d 异常")
+            safe_notify(f"sysctl.d 安装失败: {exc}", type="negative")
+            return False
 
-    def _save_server_connection(self):
-        """保存服务端连接与内网 push 路由，并重写 server.conf、刷新 iptables（NAT 随 global_subnet 自动 MASQUERADE）。"""
+        logger.info("VPN sysctl.d 已安装并加载")
+        safe_notify("sysctl.d 已安装并已加载", type="positive")
+        return True
+
+    def _save_server_connection(self) -> bool:
+        """保存服务端连接配置；运行态更新失败时尽力回滚配置。"""
+
         from app.services.firewall.rule_service import FirewallRuleService
         from app.services.openvpn.instance import regenerate_all_server_confs
 
-        server_ip = (self.server_ip_input.value or "").strip()
-        if not server_ip:
-            ui.notify("服务端地址必填", type="negative")
-            return
-        lines_push = [
-            x.strip() for x in (self.push_lan_routes_input.value or "").splitlines() if x.strip()
-        ]
-        data = load_config().to_dict()
-        data["server_ip"] = server_ip
-        data["port"] = int(self.server_port_input.value or 1194)
-        data["proto"] = self.server_proto_input.value or "udp"
-        data["push_lan_routes"] = lines_push
-        data["max_clients"] = int(self.max_clients_input.value or OPENVPN_DEFAULT_MAX_CLIENTS)
+        previous = load_config()
         try:
-            merged = SystemConfig(**data)
+            merged = build_server_connection_config(
+                previous,
+                server_ip=str(self.server_ip_input.value or ""),
+                port=self.server_port_input.value,
+                proto=str(self.server_proto_input.value or ""),
+                push_lan_routes=str(
+                    self.push_lan_routes_input.value or ""
+                ),
+                max_clients=self.max_clients_input.value,
+            )
         except Exception as exc:
-            ui.notify(f"配置校验失败: {exc}", type="negative")
-            return
-        save_config(merged)
+            safe_notify(f"配置校验失败: {exc}", type="negative")
+            return False
+
+        try:
+            save_config(merged)
+        except Exception as exc:
+            logger.error("保存服务端配置失败: %s", exc)
+            safe_notify(f"配置保存失败: {exc}", type="negative")
+            return False
+
+        firewall = FirewallRuleService()
+
+        def rollback(reason: str) -> None:
+            try:
+                save_config(previous)
+                regenerate_all_server_confs()
+                firewall.refresh_vpn_forward_only()
+                logger.warning("服务端配置已回滚: %s", reason)
+            except Exception:
+                logger.exception(
+                    "服务端配置回滚失败，需人工核对 config/server.conf/VPN_FORWARD"
+                )
+
         try:
             regenerate_all_server_confs()
         except Exception as exc:
-            ui.notify(f"重写 server.conf 失败: {exc}", type="negative")
-            return
+            logger.error("重写 server.conf 失败: %s", exc)
+            rollback("server.conf 重写失败")
+            safe_notify(
+                f"重写 server.conf 失败，配置已尝试回滚: {exc}",
+                type="negative",
+            )
+            return False
+
         try:
-            FirewallRuleService().refresh_vpn_forward_only()
+            firewall.refresh_vpn_forward_only()
         except Exception as exc:
-            ui.notify(f"VPN_FORWARD 刷新失败: {exc}", type="negative")
-            return
-        ui.notify(
-            "已保存；server.conf 与 VPN_FORWARD 已更新。请到服务管理重启实例并让客户端重连。",
+            logger.error("刷新 VPN_FORWARD 失败: %s", exc)
+            rollback("VPN_FORWARD 刷新失败")
+            safe_notify(
+                f"VPN_FORWARD 刷新失败，配置已尝试回滚: {exc}",
+                type="negative",
+            )
+            return False
+
+        self.config = load_config()
+        safe_notify(
+            "已保存；server.conf 与 VPN_FORWARD 已更新。"
+            "请到服务管理重启实例并让客户端重连。",
             type="positive",
+            multi_line=True,
+        )
+        return True
+
+    def _save_device_bind(self) -> bool:
+        """保存设备绑定策略；运行时文件写失败时回滚 JSON 配置。"""
+
+        from app.services.user.device_bind_policy import (
+            sync_device_bind_mode_file,
         )
 
-    def _save_device_bind(self):
-        """保存设备绑定策略并写入 OpenVPN 运行时文件。"""
-        from app.services.user.device_bind_policy import sync_device_bind_mode_file
-
-        data = load_config().to_dict()
-        data["device_bind_mode"] = self.device_bind_mode_input.value or "weak_fingerprint"
+        previous = load_config()
         try:
-            merged = SystemConfig(**data)
+            merged = build_device_bind_config(
+                previous,
+                mode=str(self.device_bind_mode_input.value or ""),
+            )
         except Exception as exc:
-            ui.notify(f"配置校验失败: {exc}", type="negative")
-            return
-        save_config(merged)
+            safe_notify(f"配置校验失败: {exc}", type="negative")
+            return False
+
+        try:
+            save_config(merged)
+        except Exception as exc:
+            logger.error("保存设备绑定配置失败: %s", exc)
+            safe_notify(f"配置保存失败: {exc}", type="negative")
+            return False
+
         try:
             sync_device_bind_mode_file(merged.device_bind_mode)
         except OSError as exc:
-            ui.notify(f"写入 device_bind_mode 失败（需 Linux、可写 /etc/openvpn/mgmt）: {exc}", type="negative")
-            return
-        ui.notify("设备绑定已保存，新连接按新模式", type="positive")
+            try:
+                save_config(previous)
+            except Exception:
+                logger.exception("设备绑定配置回滚失败")
+            safe_notify(
+                "写入 device_bind_mode 失败，配置已尝试回滚: "
+                f"{exc}",
+                type="negative",
+                multi_line=True,
+            )
+            return False
+
+        self.config = load_config()
+        safe_notify(
+            "设备绑定已保存，新连接按新模式",
+            type="positive",
+        )
+        return True
