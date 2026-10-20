@@ -249,7 +249,7 @@ def test_peer_remote_dialogs_validate_credentials_and_build_when_available(
             await user.open("/")
             await user.should_see("OpenVPN 客户端安装")
             await user.should_see("安装")
-            await user.should_see("完整日志")
+            await user.should_see("详单见 data/logs/peer-remote.log")
 
     asyncio.run(verify_install())
 
