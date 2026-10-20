@@ -43,9 +43,17 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
+from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
-from app.ui.adapters.firewall import adapt_center_rule_rows
+from app.ui.adapters.firewall import (
+    adapt_center_rule_rows,
+    adapt_remote_cache_status,
+    adapt_remote_peer_capability,
+    adapt_remote_rule_rows,
+    format_remote_cache_timestamp,
+    parse_remote_rule_hints,
+)
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
@@ -56,8 +64,10 @@ from app.ui.components.actions import (
 )
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
+from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
@@ -94,37 +104,9 @@ def _parse_lan_cidrs_text(raw: str) -> list[str]:
 
 
 def _hints_from_iptables_rest_line(rest: str) -> dict[str, str]:
-    """从对端机链一行的 rest 中抽取常用字段，用于与中心卡同构展示；非完整解析。"""
-    t = (rest or "").strip()
-    out: dict[str, str] = {}
-    m = re.search(r"-p\s+(!?\S+)", t, re.IGNORECASE)
-    if m:
-        out["proto"] = m.group(1).upper()
-    m = re.search(r"-j\s+(\S+)", t, re.IGNORECASE)
-    if m:
-        out["action"] = m.group(1).upper()
-    m = re.search(r"-s\s+(\S+)", t)
-    if m:
-        out["source"] = m.group(1)
-    m = re.search(r"-d\s+(\S+)", t)
-    if m:
-        out["dest"] = m.group(1)
-    m = re.search(r"--dport(?:s)?\s+(!?\S+)", t, re.IGNORECASE)
-    if m:
-        out["dport"] = m.group(1)
-    m = re.search(r"-i\s+(\S+)", t)
-    if m:
-        out["in_if"] = m.group(1)
-    m = re.search(r"-o\s+(\S+)", t)
-    if m:
-        out["out_if"] = m.group(1)
-    m = re.search(r'--comment\s+"((?:\\.|[^"\\])*)"', t)
-    if not m:
-        m = re.search(r"--comment\s+(\S+)", t)
-    if m:
-        c = m.group(1).replace("\\'", "'")
-        out["comment"] = c if len(c) <= 120 else c[:117] + "…"
-    return out
+    """兼容旧调用入口；解析逻辑统一由纯适配层维护。"""
+
+    return parse_remote_rule_hints(rest)
 
 
 def _remote_row_to_edit_form_dict(row: dict) -> dict:
@@ -183,23 +165,9 @@ _TZ_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
 def _format_peer_cache_timestamp(raw: str | None) -> str:
-    """把缓存里 ISO 时间（存 UTC，如 ``…Z``）格式化为**上海/东八区**本地时间；无或解析失败则 — / 回退截断。"""
-    if not raw or not str(raw).strip():
-        return "—"
-    s = str(raw).strip()
-    try:
-        iso = s[:-1] + "+00:00" if s.endswith("Z") else s
-        dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(_TZ_UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        pass
-    if "T" in s:
-        s = s.replace("T", " ", 1)
-    if len(s) > 10 and s[10] == " " and len(s) >= 19:
-        return s[:19]
-    return s[:32]
+    """兼容旧调用入口；缓存时间格式化统一由纯适配层维护。"""
+
+    return format_remote_cache_timestamp(raw)
 
 
 def _firewall_export_json_filename(stem: str) -> str:
@@ -275,6 +243,16 @@ class FirewallPage:
         self._center_reorder_allowed = False
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
+        self._remote_fetch_error_by_peer: dict[str, str] = {}
+        self._remote_push_running_peer: str | None = None
+        self._remote_status_container = None
+        self._remote_cache_status_container = None
+        self._remote_cache_meta_label = None
+        self._remote_pull_button = None
+        self._remote_push_button = None
+        self._remote_grid_view = None
+        self._remote_grid_rows: list[dict[str, Any]] = []
+        self._remote_reorder_allowed = False
 
     def _page_client(self) -> Any:
         """当前页面浏览器会话。优先 render 时缓存的 client，否则从列表区容器解析。"""
@@ -510,6 +488,8 @@ class FirewallPage:
         self._remote_fetch_generation += 1
         generation = self._remote_fetch_generation
         self._remote_fetch_running_peer = target
+        self._remote_fetch_error_by_peer.pop(target, None)
+        self._refresh_remote_toolbar_state()
         try:
             background_tasks.create(
                 self._remote_fetch_chain_via_ssh(target, generation),
@@ -518,6 +498,7 @@ class FirewallPage:
         except RuntimeError:
             if self._remote_fetch_running_peer == target:
                 self._remote_fetch_running_peer = None
+            self._refresh_remote_toolbar_state()
             return
 
     async def _remote_fetch_chain_via_ssh(self, target: str, generation: int) -> None:
@@ -532,14 +513,18 @@ class FirewallPage:
             if self._center_tab_active or generation != self._remote_fetch_generation:
                 return
             logger.error("SSH 拉取对端链失败 peer=%s: %s", target, exc)
+            self._remote_fetch_error_by_peer[target] = str(exc)
             self._notify_for_page(f"从对端拉取失败: {exc}", type="negative")
+            self._refresh_remote_toolbar_state()
             return
         finally:
             if self._remote_fetch_running_peer == target:
                 self._remote_fetch_running_peer = None
+            self._refresh_remote_toolbar_state()
         if self._center_tab_active or generation != self._remote_fetch_generation:
             return
         remote_chain_cache.record_from_fetch(snap, target)
+        self._remote_fetch_error_by_peer.pop(target, None)
         show = target[:8] if len(target) > 8 else target
         logger.debug("对端链已拉取并落库 peer=%s", show)
         if self._active_remote_peer_id() != target:
@@ -547,34 +532,182 @@ class FirewallPage:
         self._refresh_remote_view()
 
     def _build_remote_tab_static(self) -> None:
-        """渲染对端区静态壳层；有对端时默认选第一项。进入本 Tab 时由 :meth:`_on_enter_remote_tab` 先拉后显。"""
+        """构建对端选择、SSH/缓存状态、拉取推送工具栏和规则视图容器。"""
+
         opts = self._peer_options_for_select()
-        with ui.element("div").classes("firewall-search-row w-full"):
-            with ui.element("div").classes("w-full min-w-0"):
+
+        with ui.element("section").classes("mgmt-panel w-full"):
+            with ui.row().classes("w-full items-end gap-3 flex-wrap"):
                 if opts:
                     first_id = next(iter(opts))
-                    self._remote_peer_select = ui.select(
-                        opts,
-                        label="对端节点",
-                        value=first_id,
-                        with_input=True,
-                    ).classes("w-full").props("outlined dense")
+                    self._remote_peer_select = (
+                        ui.select(
+                            opts,
+                            label="对端节点",
+                            value=first_id,
+                            with_input=True,
+                        )
+                        .classes("min-w-[18rem] flex-1")
+                        .props("outlined dense")
+                    )
                     self._remote_peer_select.on_value_change(
-                        lambda _: self._on_remote_peer_select_change()
+                        lambda _event: self._on_remote_peer_select_change()
                     )
                 else:
                     self._remote_peer_select = None
-                    ui.label("无对端，请先在「对端站点」添加。").classes("text-grey")
-        self._remote_list_container = ui.column().classes("firewall-remote-list-stretch w-full min-h-0 gap-0 h-full")
-        with self._remote_list_container:
-            pass
+                    ui.label("暂无对端站点").classes("mgmt-section-title")
 
-        with ui.element("div").classes("mgmt-page-foot w-full mt-auto flex-shrink-0"):
-            with ui.row().classes("mgmt-page-footer-row w-full items-center justify-between text-grey-6"):
-                ui.label("DRAG TO CHANGE PRIORITY").classes("uppercase tracking-widest")
-                self._remote_rules_total_footer = ui.label("0 RULES TOTAL").classes(
-                    "uppercase tracking-widest"
+                self._remote_status_container = ui.row().classes(
+                    "items-center gap-2"
                 )
+                self._remote_cache_status_container = ui.row().classes(
+                    "items-center gap-2"
+                )
+
+                self._remote_pull_button = secondary_action(
+                    "从对端拉取",
+                    icon="cloud_download",
+                    on_click=self._schedule_remote_fetch_via_ssh,
+                    disabled=not bool(opts),
+                )
+                self._remote_push_button = primary_action(
+                    "推送到对端",
+                    icon="cloud_upload",
+                    on_click=self._confirm_remote_push,
+                    disabled=True,
+                )
+
+            self._remote_cache_meta_label = ui.label(
+                "拉取：— · 推送：—"
+            ).classes("section-caption q-mt-sm")
+
+        self._remote_list_container = ui.column().classes(
+            "firewall-remote-list-stretch w-full min-h-0 gap-0 h-full"
+        )
+
+        with ui.element("div").classes(
+            "mgmt-page-foot w-full mt-auto flex-shrink-0"
+        ):
+            with ui.row().classes(
+                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+            ):
+                ui.label(
+                    "远端链以 SSH 真值为准；修改后立即写回"
+                ).classes("uppercase tracking-widest")
+                self._remote_rules_total_footer = ui.label(
+                    "0 RULES TOTAL"
+                ).classes("uppercase tracking-widest")
+
+        self._refresh_remote_toolbar_state()
+
+    def _selected_remote_peer_row(self) -> dict[str, Any] | None:
+        """返回当前对端记录。"""
+
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            return None
+        try:
+            row = self._peer_service.get(peer_id)
+        except Exception:
+            logger.exception("读取当前对端失败 peer=%s", peer_id)
+            return None
+        return dict(row) if row else None
+
+    def _refresh_remote_toolbar_state(self) -> None:
+        """按 SSH 条件、拉取忙碌和缓存状态刷新远端工具栏。"""
+
+        peer_id = self._active_remote_peer_id()
+        peer = self._selected_remote_peer_row()
+        fetch_running = bool(
+            peer_id and self._remote_fetch_running_peer == peer_id
+        )
+        try:
+            has_auth = bool(
+                peer and peer_row_has_usable_ssh_auth(peer)
+            )
+        except Exception:
+            logger.exception("判断对端 SSH 凭据失败 peer=%s", peer_id)
+            has_auth = False
+
+        capability = adapt_remote_peer_capability(
+            peer,
+            has_ssh_auth=has_auth,
+            fetch_running=fetch_running,
+        )
+        cache = (
+            remote_chain_cache.read_remote_chain_cache(peer_id)
+            if peer_id
+            else None
+        )
+        cache_view = adapt_remote_cache_status(
+            cache,
+            fetch_running=fetch_running,
+        )
+        fetch_error = str(
+            self._remote_fetch_error_by_peer.get(peer_id, "")
+        ).strip()
+
+        if self._remote_status_container is not None:
+            self._remote_status_container.clear()
+            with self._remote_status_container:
+                status_badge(
+                    (
+                        "failed"
+                        if fetch_error
+                        else str(capability["status_tone"])
+                    ),
+                    label=(
+                        "拉取失败"
+                        if fetch_error
+                        else str(capability["status_label"])
+                    ),
+                    tooltip=fetch_error or str(capability["reason"] or ""),
+                )
+
+        if self._remote_cache_status_container is not None:
+            self._remote_cache_status_container.clear()
+            with self._remote_cache_status_container:
+                status_badge(
+                    str(cache_view["status_tone"]),
+                    label=str(cache_view["status_label"]),
+                    tooltip=str(cache_view["last_sync_error"] or ""),
+                )
+
+        if self._remote_cache_meta_label is not None:
+            self._remote_cache_meta_label.text = (
+                f"拉取：{cache_view['last_pulled_at']} · "
+                f"推送：{cache_view['last_pushed_at']} · "
+                f"本地 {cache_view['row_count']} 条"
+            )
+
+        if self._remote_pull_button is not None:
+            if capability["can_fetch"]:
+                self._remote_pull_button.enable()
+            else:
+                self._remote_pull_button.disable()
+            if fetch_running:
+                self._remote_pull_button.props(add="loading")
+            else:
+                self._remote_pull_button.props(remove="loading")
+
+        if self._remote_push_button is not None:
+            any_push_running = self._remote_push_running_peer is not None
+            push_running = bool(
+                peer_id and self._remote_push_running_peer == peer_id
+            )
+            can_push = (
+                bool(capability["can_push"])
+                and bool(cache_view["can_push"])
+                and not any_push_running
+            )
+            if can_push:
+                self._remote_push_button.enable()
+            else:
+                self._remote_push_button.disable()
+            if push_running:
+                self._remote_push_button.props(add="loading")
+            else:
+                self._remote_push_button.props(remove="loading")
 
     def _active_remote_peer_id(self) -> str:
         if not self._remote_peer_select:
@@ -620,45 +753,96 @@ class FirewallPage:
             return False
         return True
 
-    async def _on_remote_push(self) -> None:
+    def _confirm_remote_push(self) -> None:
+        """确认后推送当前工作副本，避免误覆盖远端链。"""
+
         if not self._require_remote_strategy_tab():
             return
-        pid = self._active_remote_peer_id()
-        if not pid:
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
             self._notify_for_page("请选择对端", type="warning")
             return
-        c0 = remote_chain_cache.read_remote_chain_cache(pid) or {}
-        ch0 = str(c0.get("chain") or IptablesManager.peer_chain_name_for_id(pid))
-        ce0 = bool(c0.get("chain_exists"))
-        rw0 = list(c0.get("rows") or [])
-        remote_chain_cache.mark_pending_apply(pid, ch0, ce0, rw0)
-        if await self._apply_remote_cache_to_peer(pid):
-            self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        if self._remote_push_running_peer is not None:
+            self._notify_for_page(
+                "已有对端写回正在执行，请勿重复提交",
+                type="warning",
+            )
+            return
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        if not cache:
+            self._notify_for_page(
+                "尚无本地工作副本，请先从对端拉取或导入",
+                type="warning",
+            )
+            return
+        rows = list(cache.get("rows") or [])
+        confirm_dialog.show(
+            f"推送当前 {len(rows)} 条规则到对端？",
+            impact=(
+                "将通过 SSH 重写当前对端用户链；"
+                "失败时本地工作副本保留错误状态并按 prepush 备份恢复。"
+            ),
+            object_count=len(rows),
+            danger_level="warning",
+            on_confirm=lambda: self._schedule_remote_coro(
+                self._on_remote_push()
+            ),
+        )
+
+    async def _on_remote_push(self) -> bool:
+        """推送当前工作副本，带页面级重复提交保护。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
+            return False
+        if self._remote_push_running_peer is not None:
+            self._notify_for_page(
+                "已有对端写回正在执行，请勿重复提交",
+                type="warning",
+            )
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        if not cache:
+            self._notify_for_page(
+                "尚无本地工作副本，请先从对端拉取或导入",
+                type="warning",
+            )
+            return False
+
+        self._remote_push_running_peer = peer_id
+        self._refresh_remote_toolbar_state()
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        chain_exists = bool(cache.get("chain_exists"))
+        rows = list(cache.get("rows") or [])
+
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                chain_exists,
+                rows,
+            )
+            ok = await self._apply_remote_cache_to_peer(peer_id)
+            if ok:
+                self._notify_for_page("已写回对端", type="positive")
+            return ok
+        finally:
+            if self._remote_push_running_peer == peer_id:
+                self._remote_push_running_peer = None
+            self._refresh_remote_toolbar_state()
+            self._refresh_remote_view()
 
     async def _on_remote_row_enabled_change(self, idx: int, e) -> None:
-        """对端链规则启用开关：更新本地工作副本后立即 SSH 写回对端。"""
-        if not self._require_remote_strategy_tab():
-            return
-        pid = self._active_remote_peer_id()
-        if not pid:
-            self._notify_for_page("请选择对端", type="warning")
-            return
-        cname = IptablesManager.peer_chain_name_for_id(pid)
-        c2 = remote_chain_cache.read_remote_chain_cache(pid) or {}
-        rws = list(c2.get("rows") or [])
-        if not (0 <= idx < len(rws)):
-            logger.error("对端链行索引越界 peer=%s idx=%s n=%s", pid, idx, len(rws))
-            self._notify_for_page("数据已变，请重拉或换对端。", type="warning")
-            self._refresh_remote_view()
-            return
-        rws[idx]["enabled"] = bool(e.value)
-        remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
-        )
-        if await self._apply_remote_cache_to_peer(pid):
-            self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        """兼容旧开关入口。"""
+
+        await self._set_remote_row_enabled(idx, bool(e.value))
 
     @staticmethod
     def _rows_from_remote_import_payload(raw: dict) -> list[dict]:
@@ -675,7 +859,21 @@ class FirewallPage:
                     continue
                 if "\n" in r or "\r" in r:
                     raise ValueError("规则片段不得含换行")
-                out.append({"rest": r, "enabled": bool(x.get("enabled", True))})
+                item: dict[str, Any] = {
+                    "rest": r,
+                    "enabled": bool(x.get("enabled", True)),
+                }
+                description = str(x.get("description") or "").strip()
+                if description:
+                    item["description"] = description
+                if x.get("priority") is not None:
+                    try:
+                        item["priority"] = int(x.get("priority"))
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            f"规则优先级无效: {x.get('priority')!r}"
+                        )
+                out.append(item)
             return out
         rests = [str(s).strip() for s in (raw.get("rests") or []) if str(s).strip()]
         return [{"rest": s, "enabled": True} for s in rests]
@@ -691,13 +889,16 @@ class FirewallPage:
             raise ValueError("链名为空")
         prefix = f"-A {ch} "
         rows: list[dict] = []
-        for line in text.splitlines():
+        for line_number, line in enumerate(text.splitlines(), start=1):
             s = line.strip()
             if not s or s.startswith("#"):
                 continue
             if s.startswith("-A "):
                 if not s.startswith(prefix):
-                    raise ValueError(f"行不属于当前对端链 {ch}，请只贴本链规则：{s[:120]}")
+                    raise ValueError(
+                        f"第 {line_number} 行不属于当前对端链 {ch}，"
+                        f"请只贴本链规则：{s[:120]}"
+                    )
                 rest = s[len(prefix) :].strip()
                 if not rest:
                     continue
@@ -779,72 +980,370 @@ class FirewallPage:
         except RuntimeError:
             pass
 
+    @staticmethod
+    def _remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
+        """对端链规则核心列定义，原始 rest 始终保留。"""
+
+        return [
+            {
+                "field": "row_number",
+                "headerName": "#",
+                "width": 85,
+                "pinned": "left",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "rowDrag": bool(can_reorder),
+            },
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "width": 95,
+            },
+            {
+                "field": "priority",
+                "headerName": "优先级",
+                "width": 105,
+            },
+            {
+                "field": "protocol",
+                "headerName": "协议",
+                "width": 90,
+            },
+            {
+                "field": "action_label",
+                "headerName": "动作",
+                "width": 105,
+            },
+            {
+                "field": "source",
+                "headerName": "来源",
+                "minWidth": 170,
+                "flex": 1,
+            },
+            {
+                "field": "dest",
+                "headerName": "目标",
+                "minWidth": 160,
+                "flex": 1,
+            },
+            {
+                "field": "dest_port",
+                "headerName": "端口",
+                "minWidth": 105,
+            },
+            {
+                "field": "description",
+                "headerName": "说明",
+                "minWidth": 200,
+                "flex": 1,
+            },
+            {
+                "field": "raw_rest",
+                "headerName": "原始规则",
+                "minWidth": 320,
+                "flex": 2,
+            },
+            {
+                "field": "actions",
+                "headerName": "操作",
+                "width": 100,
+                "sortable": False,
+                "filter": False,
+                "pinned": "right",
+            },
+        ]
+
     def _refresh_remote_view(self) -> None:
+        """按当前对端缓存刷新 AG Grid；拉取失败时保留可用旧缓存。"""
+
         if not self._remote_list_container:
             return
+
+        self._refresh_remote_toolbar_state()
         self._remote_list_container.clear()
-        self._remote_select_all_checkbox = None
+        self._remote_grid_view = None
         self._visible_remote_indices = []
-        self._remote_row_checkboxes.clear()
-        pid = self._active_remote_peer_id()
-        with self._remote_list_container:
-            if not pid:
-                self._render_empty(
-                    "hub",
-                    "请先选对端",
-                    "在上方选对端；进页会自动尝试拉取链。",
-                )
-                if self._remote_rules_total_footer is not None:
-                    self._remote_rules_total_footer.set_text("0 RULES TOTAL")
-                return
-            cache = remote_chain_cache.read_remote_chain_cache(pid)
-            rows = list(cache.get("rows") or []) if cache else []
-            self._visible_remote_indices = list(range(len(rows)))
-            if cache and cache.get("rows") is not None:
-                n = len(cache.get("rows") or [])
-                self._selected_remote_indices = {i for i in self._selected_remote_indices if 0 <= i < n}
-            else:
-                self._selected_remote_indices.clear()
+
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._remote_grid_rows = []
+            self._selected_remote_indices.clear()
             if self._remote_rules_total_footer is not None:
-                self._remote_rules_total_footer.set_text(f"{len(rows)} RULES TOTAL")
-            if not cache:
-                self._render_empty(
-                    "cloud_off",
-                    "尚无本地副本",
-                    "可重进本页自动拉取，或用「导入 / 新建」后再写回。",
+                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
+            with self._remote_list_container:
+                empty_state(
+                    "请先选择对端",
+                    description="选择对端后会自动尝试通过 SSH 拉取远端链真值。",
+                    icon="hub",
                 )
-                return
+            return
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        fetch_running = self._remote_fetch_running_peer == peer_id
+        fetch_error = str(
+            self._remote_fetch_error_by_peer.get(peer_id, "")
+        ).strip()
+
+        if cache is None:
+            self._remote_grid_rows = []
+            self._selected_remote_indices.clear()
+            if self._remote_rules_total_footer is not None:
+                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
+            with self._remote_list_container:
+                if fetch_running:
+                    loading_state("正在从对端拉取规则…")
+                elif fetch_error:
+                    error_state(
+                        fetch_error,
+                        title="拉取对端规则失败",
+                        on_retry=self._schedule_remote_fetch_via_ssh,
+                    )
+                else:
+                    empty_state(
+                        "尚无本地工作副本",
+                        description="点击“从对端拉取”读取真实链；新建或导入后也可以建立工作副本。",
+                        action_label="从对端拉取",
+                        on_action=self._schedule_remote_fetch_via_ssh,
+                        icon="cloud_download",
+                    )
+            return
+
+        raw_rows = list(cache.get("rows") or [])
+        rows = adapt_remote_rule_rows(raw_rows, peer_id=peer_id)
+        for row in rows:
+            row["actions"] = "操作"
+        self._remote_grid_rows = rows
+        self._visible_remote_indices = [int(row["index"]) for row in rows]
+
+        valid_indices = set(self._visible_remote_indices)
+        self._selected_remote_indices.intersection_update(valid_indices)
+
+        if self._remote_rules_total_footer is not None:
+            self._remote_rules_total_footer.set_text(
+                f"{len(rows)} RULES TOTAL"
+            )
+
+        with self._remote_list_container:
+            if fetch_error:
+                with ui.element("div").classes("w-full q-mb-sm"):
+                    error_state(
+                        fetch_error,
+                        title="本次拉取失败，当前仍显示上次缓存",
+                        on_retry=self._schedule_remote_fetch_via_ssh,
+                    )
+
             if not rows:
-                self._render_empty(
-                    "shield",
-                    "暂无规则",
-                    "新建写回，或等拉取/导入；可拖拽排序。",
+                empty_state(
+                    "远端链暂无规则",
+                    description="当前工作副本为空；可以新建、导入或再次从对端拉取。",
+                    action_label="新建规则",
+                    on_action=self._show_create_remote_line_dialog,
+                    icon="shield",
                 )
                 return
-            peer_row = self._peer_service.get(pid) or {}
-            peer_badge = str(peer_row.get("name") or "").strip() or self._peer_id_short_label(pid)
-            t_pull = _format_peer_cache_timestamp(str(cache.get("last_pulled_at") or "") or None)
-            t_sync = _format_peer_cache_timestamp(str(cache.get("last_pushed_at") or "") or None)
-            with ui.element("div").classes("mgmt-panel mgmt-panel-flex w-full min-h-0 flex-1"):
-                with ui.element("div").classes("mgmt-list-head"):
-                    with ui.row().classes("items-center gap-2"):
-                        self._remote_select_all_checkbox = ui.checkbox(
-                            value=False,
-                            on_change=lambda e: self._toggle_remote_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择当前对端全部规则")
-                        with ui.column().classes("gap-1"):
-                            ui.label("规则顺序").classes("mgmt-section-title")
-                            ui.label(f"拉取：{t_pull}  同步：{t_sync}").classes("mgmt-section-sub")
-                    ui.label(f"对端: {peer_badge}").classes("meta-badge")
-                with ui.column().classes("mgmt-panel-scroll flex-1 gap-0") as sortable_list:
-                    for i, row in enumerate(rows):
-                        self._render_remote_rule_card(i, row, row_index_1based=i + 1, n_rows=len(rows))
-                sortable_list.make_sortable(
-                    on_end=self._on_remote_sort_end,
-                    handle=".firewall-rule-drag",
-                    ghost_class="sortable-ghost",
+
+            selected_ids = {
+                f"{peer_id}:{index}"
+                for index in self._selected_remote_indices
+            }
+            peer = self._selected_remote_peer_row()
+            try:
+                has_auth = bool(peer and peer_row_has_usable_ssh_auth(peer))
+            except Exception:
+                logger.exception("判断对端排序 SSH 条件失败 peer=%s", peer_id)
+                has_auth = False
+            self._remote_reorder_allowed = bool(
+                has_auth
+                and not fetch_running
+                and not fetch_error
+                and self._remote_push_running_peer is None
+            )
+
+            self._remote_grid_view = render_data_grid(
+                self._remote_grid_columns(
+                    can_reorder=self._remote_reorder_allowed
+                ),
+                rows,
+                row_id="id",
+                page_size=50,
+                selectable=True,
+                selected_ids=selected_ids,
+                on_cell_click=self._on_remote_grid_cell_click,
+            )
+            self._remote_grid_view.grid.on(
+                "selectionChanged",
+                self._on_remote_grid_selection_changed,
+            )
+            if self._remote_reorder_allowed:
+                self._remote_grid_view.grid.options["rowDragManaged"] = True
+                self._remote_grid_view.grid.options[
+                    "suppressMoveWhenRowDragging"
+                ] = False
+                self._remote_grid_view.grid.on(
+                    "rowDragEnd",
+                    self._on_remote_grid_row_drag_end,
                 )
-                self._sync_remote_select_all()
+                self._remote_grid_view.grid.update()
+
+    async def _on_remote_grid_selection_changed(self, *_args) -> None:
+        """同步 AG Grid 选择到现有远端批量操作索引集合。"""
+
+        if self._remote_grid_view is None:
+            self._selected_remote_indices.clear()
+            return
+        selected = await self._remote_grid_view.get_selected_rows()
+        self._selected_remote_indices = {
+            int(row.get("index"))
+            for row in selected
+            if isinstance(row.get("index"), int)
+        }
+
+    async def _on_remote_grid_cell_click(self, event) -> None:
+        """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            return
+        data = args.get("data") or {}
+        if not isinstance(data, dict):
+            return
+
+        col_id = str(args.get("colId") or "")
+        index = data.get("index")
+        if col_id == "actions" and isinstance(index, int):
+            self._show_remote_rule_actions(index)
+            return
+
+        value = ""
+        if col_id == "raw_rest":
+            value = str(data.get("raw_rest") or "")
+        elif col_id in {"source", "dest", "dest_port"}:
+            value = str(data.get(col_id) or "")
+        if value and value not in {"—", "*"}:
+            await self._copy_text_to_clipboard(value)
+
+    def _show_remote_rule_actions(self, index: int) -> None:
+        """远端单行操作面板；编辑路径继续使用现有写回逻辑。"""
+
+        peer_id = self._active_remote_peer_id()
+        cache = (
+            remote_chain_cache.read_remote_chain_cache(peer_id)
+            if peer_id
+            else None
+        )
+        rows = list(cache.get("rows") or []) if cache else []
+        if not (0 <= index < len(rows)):
+            self._notify_for_page(
+                "本地工作副本已变化，请刷新后重试",
+                type="warning",
+            )
+            return
+        row = dict(rows[index])
+        enabled = bool(row.get("enabled", True))
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+            ui.label(f"对端规则 #{index + 1}").classes("text-h6")
+            ui.label(str(row.get("rest") or "")).classes(
+                "font-mono text-caption break-all"
+            )
+            with ui.column().classes("w-full gap-2 q-mt-sm"):
+                secondary_action(
+                    "编辑",
+                    icon="edit",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._show_edit_remote_line_dialog(index, row),
+                    ),
+                )
+                secondary_action(
+                    "停用" if enabled else "启用",
+                    icon="pause_circle" if enabled else "play_circle",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._schedule_remote_coro(
+                            self._set_remote_row_enabled(index, not enabled)
+                        ),
+                    ),
+                )
+                secondary_action(
+                    "复制原始规则",
+                    icon="content_copy",
+                    on_click=lambda: self._schedule_remote_text_copy(
+                        str(row.get("rest") or "")
+                    ),
+                )
+                danger_action(
+                    "删除",
+                    icon="delete",
+                    on_click=lambda: (
+                        dialog.close(),
+                        self._confirm_delete_remote_line(index),
+                    ),
+                )
+            secondary_action("关闭", on_click=dialog.close)
+
+        dialog.open()
+
+    def _schedule_remote_text_copy(self, text: str) -> None:
+        """从同步菜单安全调度原始规则复制。"""
+
+        try:
+            background_tasks.create(
+                self._copy_text_to_clipboard(str(text or "")),
+                name="firewall-copy-remote-rule",
+            )
+        except RuntimeError as exc:
+            logger.error("调度对端规则复制失败: %s", exc)
+            self._notify_for_page("复制任务未能启动", type="negative")
+
+    async def _set_remote_row_enabled(
+        self,
+        index: int,
+        enabled: bool,
+    ) -> bool:
+        """按显式目标状态切换单行并立即写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= index < len(rows)):
+            self._notify_for_page(
+                "本地数据已变化，请重拉或切换对端",
+                type="warning",
+            )
+            self._refresh_remote_view()
+            return False
+
+        if bool(rows[index].get("enabled", True)) == bool(enabled):
+            return True
+
+        rows[index]["enabled"] = bool(enabled)
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        remote_chain_cache.mark_pending_apply(
+            peer_id,
+            chain,
+            bool(cache.get("chain_exists", True)),
+            rows,
+        )
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if ok:
+            self._notify_for_page(
+                "已启用并写回对端"
+                if enabled
+                else "已停用并写回对端",
+                type="positive",
+            )
+        self._refresh_remote_view()
+        return ok
 
     def _peer_id_short_label(self, pid: str) -> str:
         p = str(pid or "")
@@ -863,17 +1362,74 @@ class FirewallPage:
         result.insert(new_index, result.pop(old_index))
         return result
 
-    def _on_remote_sort_end(self, event) -> None:
-        """处理 NiceGUI SortableJS 对端规则拖拽结果。"""
+    def _on_remote_grid_row_drag_end(self, event) -> None:
+        """AG Grid 拖动结束后按缓存索引生成新顺序并立即写回。"""
 
-        new_order = self._move_order(
-            list(range(len(self._visible_remote_indices))),
-            event.old_index,
-            event.new_index,
-        )
-        if not new_order:
+        if not self._remote_reorder_allowed:
+            self._notify_for_page(
+                "当前正在拉取/推送、SSH 不可用或远端真值未知，不能调整顺序",
+                type="warning",
+            )
+            self._refresh_remote_view()
             return
-        self._schedule_remote_coro(self._do_remote_reorder_async(new_order))
+
+        args = getattr(event, "args", None) or {}
+        if not isinstance(args, dict):
+            self._refresh_remote_view()
+            return
+
+        data = args.get("data")
+        if not isinstance(data, dict):
+            node = args.get("node")
+            data = node.get("data") if isinstance(node, dict) else None
+        row_index = (data or {}).get("index")
+        if not isinstance(row_index, int):
+            self._refresh_remote_view()
+            return
+        if row_index not in self._visible_remote_indices:
+            self._refresh_remote_view()
+            return
+
+        old_position = self._visible_remote_indices.index(row_index)
+        try:
+            new_position = int(
+                args.get("overIndex", args.get("rowIndex", old_position))
+            )
+        except (TypeError, ValueError):
+            new_position = old_position
+        new_position = max(
+            0,
+            min(new_position, len(self._visible_remote_indices) - 1),
+        )
+        new_order = self._move_order(
+            self._visible_remote_indices,
+            old_position,
+            new_position,
+        )
+        if new_order and new_order != self._visible_remote_indices:
+            self._schedule_remote_coro(
+                self._do_remote_reorder_async(new_order)
+            )
+        else:
+            self._refresh_remote_view()
+
+    def _on_remote_sort_end(self, event) -> None:
+        """兼容旧测试入口；页面已改用 AG Grid rowDragEnd。"""
+
+        old_index = getattr(event, "old_index", None)
+        new_index = getattr(event, "new_index", None)
+        if not isinstance(old_index, int) or not isinstance(new_index, int):
+            self._refresh_remote_view()
+            return
+        new_order = self._move_order(
+            self._visible_remote_indices,
+            old_index,
+            new_index,
+        )
+        if new_order:
+            self._schedule_remote_coro(
+                self._do_remote_reorder_async(new_order)
+            )
 
     async def _do_remote_reorder_async(self, new_order: list[int]) -> None:
         if not self._require_remote_strategy_tab():
@@ -891,10 +1447,13 @@ class FirewallPage:
             return
         reordered = [rws[i] for i in new_order]
         remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), reordered
+            pid,
+            str(c2.get("chain") or cname),
+            bool(c2.get("chain_exists", True)),
+            reordered,
         )
-        self._selected_remote_indices.clear()
         if await self._apply_remote_cache_to_peer(pid):
+            self._selected_remote_indices.clear()
             self._notify_for_page("规则顺序已更新", type="positive")
         self._refresh_remote_view()
 
@@ -978,72 +1537,312 @@ class FirewallPage:
                     ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
 
     def _show_edit_remote_line_dialog(self, idx: int, row: dict) -> None:
-        """与 :meth:`_show_edit_dialog`（非对端·中心行）同套表单项，保存为 ``rest`` 并写回对端。"""
+        """统一表单编辑对端规则；可结构化编辑，也可直接修改原始 rest。"""
+
         if not self._require_remote_strategy_tab():
             return
-        pid = self._active_remote_peer_id()
-        if not pid:
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
             return
-        er = _remote_row_to_edit_form_dict(row)
-        ssub = er.get("source_subnet") or ""
-        sips = er.get("source_ips")
-        src_val = ssub or (",".join(sips) if sips else "")
-        cnm = IptablesManager.peer_chain_name_for_id(pid)
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full"
-        ):
-            ui.label("编辑对端链内规则").classes("text-h6")
+
+        edit = _remote_row_to_edit_form_dict(row)
+        source_subnet = edit.get("source_subnet") or ""
+        source_ips = edit.get("source_ips")
+        source_value = source_subnet or (
+            ",".join(source_ips) if source_ips else ""
+        )
+        original_rest = str(row.get("rest") or "").strip()
+        chain_name = IptablesManager.peer_chain_name_for_id(peer_id)
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
             ui.label(
-                f"链 {cnm}；保存后 SSH 写回。"
-            ).classes("text-caption text-grey q-mb-sm")
-            action_select = ui.select(
-                {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
+                f"链 {chain_name}；保存后立即 SSH 写回。"
+                " 原始 rest 改动优先于结构化字段。"
+            ).classes("section-caption")
+            fields["action"] = ui.select(
+                {
+                    "accept": "放行 (ACCEPT)",
+                    "drop": "丢弃 (DROP)",
+                    "reject": "拒绝 (REJECT)",
+                },
                 label="动作",
-                value=er.get("action", "accept"),
+                value=edit.get("action", "accept"),
             ).classes("w-full")
-            protocol_select = ui.select(
-                {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
+            fields["protocol"] = ui.select(
+                {
+                    "all": "不限 (ALL)",
+                    "tcp": "TCP",
+                    "udp": "UDP",
+                    "icmp": "ICMP",
+                },
                 label="协议",
-                value=(er.get("protocol") or "all").replace("any", "all"),
+                value=str(edit.get("protocol") or "all").replace("any", "all"),
                 with_input=True,
                 new_value_mode="add-unique",
             ).classes("w-full")
-            source_input = ui.input("源子网 CIDR 或源 IP 列表", value=src_val).classes("w-full")
-            dest_ip_input = ui.input("目标地址", value=er.get("dest_ip") or "").classes("w-full")
-            dest_port_input = ui.input("目标端口", value=er.get("dest_port") or "").classes("w-full")
-            desc_input = ui.input("规则描述", value=er.get("description") or "").classes("w-full")
-            enabled_switch = ui.switch("启用", value=er.get("enabled", True))
-            rest0 = str(row.get("rest") or "")
-            raw_ta = ui.textarea("原始 rest（与 ``iptables -A`` 后同形，高级）", value=rest0).classes("w-full").props(
-                "rows=3"
+            fields["source"] = ui.input(
+                "源子网 CIDR 或源 IP 列表",
+                value=source_value,
+            ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址",
+                value=edit.get("dest_ip") or "",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口",
+                value=edit.get("dest_port") or "",
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述",
+                value=edit.get("description") or "",
+            ).classes("w-full")
+            fields["enabled"] = ui.switch(
+                "启用",
+                value=bool(edit.get("enabled", True)),
             )
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
 
-                def _save_click() -> None:
-                    use_raw = (raw_ta.value or "").strip() != rest0.strip()
-                    if use_raw:
-                        self._schedule_remote_coro(
-                            self._do_edit_remote_line_raw_apply(
-                                dialog, pid, idx, (raw_ta.value or "").strip(), enabled_switch.value
-                            )
-                        )
-                    else:
-                        self._do_edit_remote_line_form(
-                            dialog,
-                            pid,
-                            idx,
-                            action=action_select.value,
-                            protocol=protocol_select.value,
-                            source_input=source_input.value,
-                            dest_ip=dest_ip_input.value or None,
-                            dest_port=dest_port_input.value or None,
-                            description=desc_input.value or None,
-                            enabled=enabled_switch.value,
-                        )
+            ui.separator().classes("q-my-sm")
+            ui.label("高级：原始 iptables rest").classes("section-caption")
+            fields["raw"] = (
+                ui.textarea(
+                    "原始 rest",
+                    value=original_rest,
+                )
+                .classes("w-full font-mono")
+                .props("rows=4")
+            )
+            fields["parse_status"] = ui.label("").classes("section-caption")
 
-                ui.button("保存", on_click=_save_click).props("color=primary")
-        dialog.open()
+            def update_parse_status() -> None:
+                raw = str(fields["raw"].value or "").strip()
+                if not raw:
+                    fields["parse_status"].text = "原始规则不能为空"
+                    return
+                if "\n" in raw or "\r" in raw:
+                    fields["parse_status"].text = "单条规则不能包含换行"
+                    return
+                hints = parse_remote_rule_hints(raw)
+                parsed = [
+                    f"协议 {hints.get('proto') or 'ALL'}",
+                    f"动作 {hints.get('action') or '—'}",
+                    f"源 {hints.get('source') or '*'}",
+                    f"目标 {hints.get('dest') or '*'}:{hints.get('dport') or '*'}",
+                ]
+                fields["parse_status"].text = " · ".join(parsed)
+
+            fields["raw"].on_value_change(lambda _event: update_parse_status())
+            update_parse_status()
+
+        async def submit() -> bool:
+            raw_value = str(fields["raw"].value or "").strip()
+            if raw_value != original_rest:
+                return await self._save_remote_raw_edit(
+                    peer_id,
+                    idx,
+                    raw_value,
+                    bool(fields["enabled"].value),
+                )
+
+            block_rows = self._build_remote_structured_block(
+                peer_id,
+                idx,
+                action=str(fields["action"].value or "accept"),
+                protocol=str(fields["protocol"].value or "all"),
+                source_input=str(fields["source"].value or ""),
+                dest_ip=str(fields["dest_ip"].value or "").strip() or None,
+                dest_port=str(fields["dest_port"].value or "").strip() or None,
+                description=str(fields["description"].value or "").strip() or None,
+                enabled=bool(fields["enabled"].value),
+            )
+            if block_rows is None:
+                return False
+            return await self._save_remote_block_replace_and_push(
+                peer_id,
+                idx,
+                block_rows,
+            )
+
+        form = create_form_dialog(
+            f"编辑对端规则 #{idx + 1}",
+            body=body,
+            on_submit=submit,
+            submit_label="保存并写回",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _build_remote_structured_block(
+        self,
+        peer_id: str,
+        idx: int,
+        *,
+        action: str,
+        protocol: str,
+        source_input: str,
+        dest_ip,
+        dest_port,
+        description,
+        enabled: bool,
+    ) -> list[dict[str, Any]] | None:
+        """把结构化表单生成可替换的工作副本规则块。"""
+
+        source_text = str(source_input or "").strip()
+        source_subnet, source_ips = _parse_source_text_for_remote_save(
+            source_text
+        )
+        port_text = str(dest_port or "").strip()
+        normalized_action = str(action or "accept").lower()
+        if normalized_action not in {"accept", "drop", "reject"}:
+            normalized_action = "accept"
+        normalized_protocol = str(protocol or "all").strip().lower()
+        if normalized_protocol in {"", "any"}:
+            normalized_protocol = "all"
+
+        try:
+            FirewallRule(
+                owner_type="group",
+                owner_id="_",
+                action=normalized_action,  # type: ignore[arg-type]
+                priority=1,
+                protocol=normalized_protocol,
+                dest_ip=str(dest_ip or "").strip() or None,
+                dest_port=port_text or None,
+            )
+        except (ValidationError, ValueError) as exc:
+            self._notify_for_page(str(exc), type="negative")
+            return None
+
+        try:
+            rests = remote_rests_from_create_fields(
+                source_subnet=source_subnet,
+                source_ips=source_ips,
+                action=normalized_action,
+                protocol=normalized_protocol,
+                dest_ip=str(dest_ip or "").strip() or None,
+                dest_port=port_text or None,
+            )
+        except (ValueError, ValidationError) as exc:
+            logger.error("对端编辑生成 rest 失败: %s", exc)
+            self._notify_for_page(str(exc), type="negative")
+            return None
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        priority = (
+            int(rows[idx].get("priority", 0) or 0) or ((idx + 1) * 10)
+            if 0 <= idx < len(rows)
+            else ((idx + 1) * 10)
+        )
+        desc = str(description or "").strip()
+        return [
+            {
+                "rest": rest,
+                "enabled": bool(enabled),
+                "priority": priority,
+                **({"description": desc} if desc else {}),
+            }
+            for rest in rests
+        ]
+
+    async def _save_remote_raw_edit(
+        self,
+        peer_id: str,
+        idx: int,
+        raw_rest: str,
+        enabled: bool,
+    ) -> bool:
+        """保存原始 rest，并经统一工作副本事务立即写回。"""
+
+        body = str(raw_rest or "").strip()
+        if not body:
+            self._notify_for_page("原始规则不能为空", type="negative")
+            return False
+        if "\n" in body or "\r" in body:
+            self._notify_for_page("单条规则不能含换行", type="negative")
+            return False
+        if self._active_remote_peer_id() != peer_id:
+            self._notify_for_page("对端已切换，已取消写回", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= idx < len(rows)):
+            self._notify_for_page("本地数据已变化，请重试", type="warning")
+            return False
+
+        rows[idx] = {
+            **rows[idx],
+            "rest": body,
+            "enabled": bool(enabled),
+        }
+        return await self._save_remote_rows_and_push(peer_id, rows)
+
+    async def _save_remote_block_replace_and_push(
+        self,
+        peer_id: str,
+        at_idx: int,
+        new_block: list[dict[str, Any]],
+    ) -> bool:
+        """用一段规则替换当前行，并经统一工作副本事务写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return False
+        if self._active_remote_peer_id() != peer_id:
+            self._notify_for_page("对端已切换，已取消写回", type="warning")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        if not (0 <= at_idx < len(rows)):
+            self._notify_for_page("本地数据已变化，请重试", type="warning")
+            return False
+        if not new_block:
+            self._notify_for_page("没有可保存的规则", type="negative")
+            return False
+
+        rows[at_idx : at_idx + 1] = [
+            dict(item)
+            for item in new_block
+        ]
+        return await self._save_remote_rows_and_push(peer_id, rows)
+
+    async def _save_remote_rows_and_push(
+        self,
+        peer_id: str,
+        rows: list[dict[str, Any]],
+    ) -> bool:
+        """统一对端工作副本写事务：prepush 备份 → pending → SSH → 成功/回滚。"""
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        chain_exists = bool(cache.get("chain_exists", True))
+
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                chain_exists,
+                rows,
+            )
+        except Exception as exc:
+            logger.error("对端工作副本预写失败 peer=%s: %s", peer_id, exc)
+            self._notify_for_page(f"本地工作副本保存失败: {exc}", type="negative")
+            return False
+
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if ok:
+            self._notify_for_page("已写回对端", type="positive")
+        self._refresh_remote_view()
+        return ok
 
     def _do_edit_remote_line_form(
         self,
@@ -1059,116 +1858,80 @@ class FirewallPage:
         description,
         enabled: bool,
     ) -> None:
-        t = (source_input or "").strip()
-        src_sub, src_ips = _parse_source_text_for_remote_save(t)
-        dp = (dest_port or "").strip()
-        a = str(action or "accept").lower()
-        if a not in ("accept", "drop", "reject"):
-            a = "accept"
-        try:
-            FirewallRule(
-                owner_type="group",
-                owner_id="_",
-                action=a,  # type: ignore[arg-type]
-                priority=1,
-                dest_port=dp or None,
-            )
-        except ValidationError as exc:
-            self._notify_for_page(str(exc), type="negative")
+        """兼容旧同步调用入口。"""
+
+        block_rows = self._build_remote_structured_block(
+            peer_id,
+            idx,
+            action=action,
+            protocol=protocol,
+            source_input=source_input,
+            dest_ip=dest_ip,
+            dest_port=dest_port,
+            description=description,
+            enabled=enabled,
+        )
+        if block_rows is None:
             return
-        try:
-            rests = remote_rests_from_create_fields(
-                source_subnet=src_sub,
-                source_ips=src_ips,
-                action=action,
-                protocol=protocol,
-                dest_ip=(dest_ip or "").strip() or None,
-                dest_port=dp or None,
-            )
-        except (ValueError, ValidationError) as exc:
-            logger.error("对端编辑生成 rest: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        pr = 0
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        rws0 = list(c2.get("rows") or [])
-        if 0 <= idx < len(rws0):
-            pr = int(rws0[idx].get("priority", 0) or 0) or (idx + 1) * 10
-        desc = (description or "").strip() or None
-        new_block = [
-            {
-                "rest": line,
-                "enabled": bool(enabled),
-                "priority": pr,
-                **({"description": desc} if desc else {}),
-            }
-            for line in rests
-        ]
         self._schedule_remote_coro(
-            self._do_edit_remote_block_replace_and_push(dialog, peer_id, idx, new_block)
+            self._do_edit_remote_block_replace_and_push(
+                dialog,
+                peer_id,
+                idx,
+                block_rows,
+            )
         )
 
     async def _do_edit_remote_line_raw_apply(
-        self, dialog, peer_id: str, idx: int, body: str, enabled: bool
-    ) -> None:
-        if not self._require_remote_strategy_tab() or not body or "\n" in body or "\r" in body:
-            if body and ("\n" in body or "\r" in body):
-                self._notify_for_page("单条规则不能含换行", type="negative")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
-        if not (0 <= idx < len(rws)):
-            self._notify_for_page("本地数据已变化，请重试", type="warning")
-            return
-        old = rws[idx]
-        rws[idx] = {**old, "rest": body, "enabled": bool(enabled)}
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        if await self._apply_remote_cache_to_peer(peer_id):
+        self,
+        dialog,
+        peer_id: str,
+        idx: int,
+        body: str,
+        enabled: bool,
+    ) -> bool:
+        """兼容旧异步调用入口。"""
+
+        ok = await self._save_remote_raw_edit(
+            peer_id,
+            idx,
+            body,
+            enabled,
+        )
+        if ok and dialog is not None:
             dialog.close()
-            self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        return ok
 
     async def _do_edit_remote_block_replace_and_push(
-        self, dialog, peer_id: str, at_idx: int, new_block: list[dict]
-    ) -> None:
-        if not self._require_remote_strategy_tab():
-            return
-        if self._active_remote_peer_id() != peer_id:
-            self._notify_for_page("对端已切换，已取消写回", type="warning")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
-        if not (0 <= at_idx < len(rws)):
-            self._notify_for_page("本地数据已变化，请重试", type="warning")
-            return
-        rws[at_idx : at_idx + 1] = new_block
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        try:
-            rests = remote_chain_cache.rests_to_push_list(rws)
-            await run.io_bound(
-                self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests
-            )
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, True, None)
-        except Exception as exc:
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, False, str(exc))
-            logger.error("对端编辑写回: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        logger.info("对端链行已按表单更新 peer=%s at=%s n=%s", peer_id, at_idx, len(new_block))
-        dialog.close()
-        self._notify_for_page("已写回对端", type="positive")
-        self._refresh_remote_view()
+        self,
+        dialog,
+        peer_id: str,
+        at_idx: int,
+        new_block: list[dict],
+    ) -> bool:
+        """兼容旧异步调用入口。"""
+
+        ok = await self._save_remote_block_replace_and_push(
+            peer_id,
+            at_idx,
+            new_block,
+        )
+        if ok and dialog is not None:
+            dialog.close()
+        return ok
 
     def _confirm_delete_remote_line(self, idx: int) -> None:
         confirm_dialog.show(
-            "删除本行并立即写回对端。确定？",
-            on_confirm=lambda: self._schedule_remote_coro(self._do_delete_remote_line_async(idx)),
+            f"确定删除对端规则 #{idx + 1}？",
+            impact=(
+                "删除后会立即通过 SSH 重写当前对端链；"
+                "若写回失败，工作副本会从 prepush 备份恢复并标记待同步。"
+            ),
+            object_count=1,
+            danger_level="danger",
+            on_confirm=lambda: self._schedule_remote_coro(
+                self._do_delete_remote_line_async(idx)
+            ),
         )
 
     async def _do_delete_remote_line_async(self, idx: int) -> None:
@@ -1185,10 +1948,13 @@ class FirewallPage:
             return
         rws.pop(idx)
         remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
+            pid,
+            str(c2.get("chain") or cname),
+            bool(c2.get("chain_exists", True)),
+            rws,
         )
-        self._reindex_selected_after_remote_delete(idx)
         if await self._apply_remote_cache_to_peer(pid):
+            self._reindex_selected_after_remote_delete(idx)
             self._notify_for_page("已写回对端", type="positive")
         self._refresh_remote_view()
 
@@ -1202,7 +1968,123 @@ class FirewallPage:
         self._selected_remote_indices = next_set
 
     def _show_create_remote_line_dialog(self) -> None:
-        self._open_create_rule_dialog("remote")
+        """使用共享规则字段新建对端规则并立即 SSH 写回。"""
+
+        if not self._require_remote_strategy_tab():
+            return
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请先选择对端", type="warning")
+            return
+        peer = self._selected_remote_peer_row()
+        if not peer:
+            self._notify_for_page("对端不存在", type="negative")
+            return
+        try:
+            if not peer_row_has_usable_ssh_auth(peer):
+                self._notify_for_page(
+                    "请先配置对端 SSH 凭据",
+                    type="warning",
+                )
+                return
+        except Exception as exc:
+            logger.error("检查对端 SSH 凭据失败: %s", exc)
+            self._notify_for_page("无法确认 SSH 凭据", type="negative")
+            return
+
+        groups = GroupService().list_all()
+        users = UserService().list_all()
+        default_group_id = (
+            str(groups[0].get("id") or "")
+            if groups
+            else None
+        )
+        holder: dict[str, Any] = {}
+
+        def load_peer_presets(group_id: str):
+            if not group_id:
+                return []
+            return (
+                self._peer_service
+                .list_peer_lan_firewall_presets_for_center_form()
+            )
+
+        def body() -> None:
+            ui.label(
+                f"对端：{peer.get('name') or peer_id} · "
+                f"链 {IptablesManager.peer_chain_name_for_id(peer_id)}；"
+                "创建成功后立即写回。"
+            ).classes("section-caption")
+            holder["fields"] = render_firewall_rule_create_fields(
+                groups=groups,
+                users=users,
+                peer_presets_loader=load_peer_presets,
+                ccd_reader=_read_ccd_vpn_ips,
+                parse_user_source=_parse_user_source_for_create,
+                default_group_id=default_group_id,
+                owner_type_label="来源类型",
+                peer_lan_label="对端内网 CIDR（可选）",
+                source_placeholder="可自动填组子网 / CCD，或手工填写",
+                user_hint_text="用户来源可从 CCD 预填虚拟 IP。",
+                dest_ip_placeholder="空=不限",
+                dest_port_placeholder="空=不限",
+            )
+
+        async def submit() -> bool:
+            fields = holder["fields"]
+            try:
+                values = fields.read_values()
+                priority = self._resolve_priority(
+                    values["priority_mode"],
+                    values["priority_value"],
+                    base=self._remote_priority_base_list(peer_id),
+                )
+                rests = remote_rests_from_create_fields(
+                    source_subnet=values["source_subnet"],
+                    source_ips=values["source_ips"],
+                    action=values["action"],
+                    protocol=values["protocol"],
+                    dest_ip=values["dest_ip"],
+                    dest_port=values["dest_port"],
+                )
+            except (ValueError, ValidationError, TypeError) as exc:
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            description = str(
+                values.get("description") or ""
+            ).strip() or None
+            new_rows = [
+                {
+                    "rest": line,
+                    "enabled": bool(values["enabled"]),
+                    "priority": priority,
+                    **(
+                        {"description": description}
+                        if description
+                        else {}
+                    ),
+                }
+                for line in rests
+            ]
+            return await self._insert_remote_rows_and_push(
+                peer_id,
+                new_rows,
+                priority,
+            )
+
+        form = create_form_dialog(
+            "新建对端规则",
+            body=body,
+            on_submit=submit,
+            submit_label="创建并写回",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
 
     def _switch_owner(self, owner_id: str) -> None:
         """兼容旧跳转入口：同步归属筛选并刷新 Grid。"""
@@ -1829,294 +2711,74 @@ class FirewallPage:
         self._show_create_center_dialog()
 
     def _show_create_center_dialog(self) -> None:
-        """使用统一表单创建中心规则，保留组/用户/CCD/对端 LAN 预设语义。"""
+        """使用共享规则字段创建中心规则。"""
 
         if not self._require_center_strategy_tab():
             return
 
         groups = GroupService().list_all()
-        group_map = {str(group["id"]): group for group in groups}
         users = UserService().list_all()
-        user_options = {
-            str(user["username"]): str(user["username"])
-            for user in users
-            if user.get("username")
-        }
 
         from app.core.config import load_config
 
         config = load_config()
         instances = list((config or {}).get("instances", {}).keys()) if config else []
         auto_instance = instances[0] if instances else "server"
-        default_group_id: str | None = None
-        if groups:
-            current = str(self.current_owner_id or "").strip()
-            default_group_id = (
-                current
-                if current in group_map
-                else str(groups[0]["id"])
-            )
 
-        fields: dict[str, Any] = {}
-        peer_src_ux: dict[str, bool] = {"user_picked": False}
-        peer_preset_holder: dict[str, dict] = {"by_key": {}}
-        peer_group_value_seeded: dict[str, bool] = {"done": False}
+        group_ids = {
+            str(group.get("id") or "")
+            for group in groups
+            if str(group.get("id") or "").strip()
+        }
+        current = str(self.current_owner_id or "").strip()
+        default_group_id = (
+            current
+            if current in group_ids
+            else (
+                str(groups[0].get("id") or "")
+                if groups
+                else None
+            )
+        )
+        holder: dict[str, Any] = {}
+
+        def load_peer_presets(group_id: str):
+            if not group_id:
+                return []
+            return (
+                self._peer_service
+                .list_peer_lan_firewall_presets_for_center_form()
+            )
 
         def body() -> None:
             ui.label("归属与来源").classes("section-caption")
-            fields["owner_type"] = ui.select(
-                {"group": "组", "user": "用户"},
-                label="归属类型",
-                value="group",
-            ).classes("w-full")
-            fields["group"] = ui.select(
-                {
-                    str(group["id"]): f"{group['name']} ({group['subnet']})"
-                    for group in groups
-                },
-                label="选择组",
-                with_input=True,
-                value=default_group_id,
-            ).classes("w-full")
-            fields["users"] = ui.select(
-                user_options,
-                label="选择用户（多选）",
-                multiple=True,
-                with_input=True,
-            ).classes("w-full")
-            fields["users"].set_visibility(False)
-
-            fields["auto_source"] = ui.switch("源用本组子网", value=False)
-            fields["peer_lan"] = ui.select(
-                {},
-                label="对端内网 CIDR（任选；与上项二选一）",
-                with_input=True,
-            ).classes("w-full")
-            fields["source"] = ui.input(
-                "源地址",
-                placeholder="组可自动填子网；用户可从 CCD 读取",
-            ).classes("w-full")
-            fields["user_hint"] = ui.label(
-                "多选用户时可预填 CCD 虚拟 IP，或留空从 CCD 读。"
-            ).classes("section-caption")
-            fields["user_hint"].set_visibility(False)
-
-            ui.label("规则").classes("section-caption q-mt-sm")
-            with ui.row().classes("w-full gap-sm"):
-                fields["action"] = ui.select(
-                    {
-                        "accept": "放行 (ACCEPT)",
-                        "drop": "丢弃 (DROP)",
-                        "reject": "拒绝 (REJECT)",
-                    },
-                    label="动作",
-                    value="accept",
-                ).classes("w-full")
-                fields["protocol"] = ui.select(
-                    {
-                        "all": "不限 (ALL)",
-                        "tcp": "TCP",
-                        "udp": "UDP",
-                        "icmp": "ICMP",
-                    },
-                    label="协议",
-                    value="all",
-                    with_input=True,
-                    new_value_mode="add-unique",
-                ).classes("w-full")
-
-            fields["dest_ip"] = ui.input(
-                "目标地址",
-                placeholder="子网或多 IP；空=不限",
-            ).classes("w-full")
-            fields["dest_port"] = ui.input(
-                "目标端口",
-                placeholder="空=不限制",
-            ).classes("w-full")
-            fields["enabled"] = ui.switch("创建后启用", value=True)
-
-            ui.label("优先级").classes("section-caption q-mt-sm")
-            fields["priority_mode"] = ui.toggle(
-                {
-                    "insert": "插入（指定优先级）",
-                    "append": "追加（链尾）",
-                },
-                value="insert",
-            ).classes("w-full")
-            fields["priority"] = ui.number(
-                "优先级",
-                value=None,
-                min=1,
-                max=999999,
-                step=10,
-            ).classes("w-full")
-            fields["description"] = ui.input(
-                "规则描述",
-                placeholder="可选",
-            ).classes("w-full")
-
-            def mutex() -> None:
-                if fields["owner_type"].value != "group":
-                    return
-                auto = bool(fields["auto_source"].value)
-                key = str(fields["peer_lan"].value or "").strip()
-                cidr = (
-                    peer_preset_holder.get("by_key") or {}
-                ).get(key) if key else None
-                raw = str(fields["source"].value or "").strip()
-                cidr_lock = bool(cidr and raw and raw == cidr)
-                fields["peer_lan"].set_enabled(not auto)
-                fields["auto_source"].set_enabled(auto or not cidr_lock)
-
-            def sync_peer_presets() -> None:
-                if fields["owner_type"].value != "group":
-                    fields["peer_lan"].set_visibility(False)
-                    return
-                fields["peer_lan"].set_visibility(True)
-                if (
-                    not peer_group_value_seeded["done"]
-                    and default_group_id
-                    and not str(fields["group"].value or "").strip()
-                ):
-                    fields["group"].value = str(default_group_id)
-                peer_group_value_seeded["done"] = True
-
-                gid = str(fields["group"].value or "").strip()
-                presets = (
-                    self._peer_service.list_peer_lan_firewall_presets_for_center_form()
-                    if gid
-                    else []
-                )
-                peer_preset_holder["by_key"] = {
-                    str(preset["key"]): str(preset["cidr"])
-                    for preset in presets
-                }
-                options = {
-                    str(preset["key"]): str(preset["label"])
-                    for preset in presets
-                }
-                fields["peer_lan"].set_options(options)
-                if (
-                    fields["peer_lan"].value
-                    and fields["peer_lan"].value not in options
-                ):
-                    fields["peer_lan"].set_value(None)
-                if (
-                    fields["peer_lan"].value in options
-                    and not peer_src_ux["user_picked"]
-                ):
-                    fields["peer_lan"].set_value(None)
-                mutex()
-
-            def on_peer_change() -> None:
-                value = fields["peer_lan"].value
-                presets = peer_preset_holder.get("by_key") or {}
-                peer_src_ux["user_picked"] = value in presets
-                cidr = presets.get(value) if value else None
-                if cidr:
-                    fields["auto_source"].set_value(False)
-                    fields["source"].set_value(cidr)
-                    fields["source"].props(remove="readonly")
-                mutex()
-
-            def on_group_change() -> None:
-                group_id = str(fields["group"].value or "")
-                if (
-                    fields["auto_source"].value
-                    and group_id
-                    and group_id in group_map
-                ):
-                    fields["source"].set_value(
-                        group_map[group_id].get("subnet", "")
-                    )
-                peer_src_ux["user_picked"] = False
-                sync_peer_presets()
-
-            def on_auto_change() -> None:
-                if fields["auto_source"].value:
-                    fields["peer_lan"].set_value(None)
-                    peer_src_ux["user_picked"] = False
-                    group_id = str(fields["group"].value or "")
-                    if group_id and group_id in group_map:
-                        fields["source"].set_value(
-                            group_map[group_id].get("subnet", "")
-                        )
-                    fields["source"].props(add="readonly")
-                else:
-                    fields["source"].props(remove="readonly")
-                sync_peer_presets()
-
-            def on_owner_type_change() -> None:
-                is_group = fields["owner_type"].value == "group"
-                fields["group"].set_visibility(is_group)
-                fields["users"].set_visibility(not is_group)
-                fields["auto_source"].set_visibility(is_group)
-                fields["peer_lan"].set_visibility(is_group)
-                fields["user_hint"].set_visibility(not is_group)
-                if is_group:
-                    sync_peer_presets()
-                mutex()
-
-            def on_users_change() -> None:
-                selected = fields["users"].value
-                user_list = (
-                    list(selected)
-                    if isinstance(selected, list)
-                    else ([selected] if selected else [])
-                )
-                fields["user_hint"].set_visibility(bool(user_list))
-                if user_list:
-                    ips = _read_ccd_vpn_ips([str(value) for value in user_list])
-                    if ips:
-                        fields["source"].set_value(", ".join(ips))
-
-            def on_source_change() -> None:
-                if fields["owner_type"].value != "group":
-                    return
-                if not str(fields["source"].value or "").strip():
-                    fields["peer_lan"].set_value(None)
-                    peer_src_ux["user_picked"] = False
-                mutex()
-
-            fields["owner_type"].on_value_change(lambda _e: on_owner_type_change())
-            fields["group"].on_value_change(lambda _e: on_group_change())
-            fields["users"].on_value_change(lambda _e: on_users_change())
-            fields["source"].on_value_change(lambda _e: on_source_change())
-            fields["auto_source"].on_value_change(lambda _e: on_auto_change())
-            fields["peer_lan"].on_value_change(lambda _e: on_peer_change())
-            fields["priority_mode"].on_value_change(
-                lambda _e: fields["priority"].set_visibility(
-                    fields["priority_mode"].value == "insert"
-                )
+            holder["fields"] = render_firewall_rule_create_fields(
+                groups=groups,
+                users=users,
+                peer_presets_loader=load_peer_presets,
+                ccd_reader=_read_ccd_vpn_ips,
+                parse_user_source=_parse_user_source_for_create,
+                default_group_id=default_group_id,
+                owner_type_label="归属类型",
+                peer_lan_label="对端内网 CIDR（任选；与上项二选一）",
+                source_placeholder="组可自动填子网；用户可从 CCD 读取",
+                user_hint_text=(
+                    "多选用户时可预填 CCD 虚拟 IP，或留空从 CCD 读。"
+                ),
+                dest_ip_placeholder="子网或多 IP；空=不限",
+                dest_port_placeholder="空=不限制",
             )
-            on_group_change()
 
         def submit() -> bool:
-            values = self._read_create_form_to_values(
-                fields["owner_type"],
-                fields["group"],
-                fields["users"],
-                group_map,
-                fields["auto_source"],
-                fields["peer_lan"],
-                peer_preset_holder,
-                fields["source"],
-                fields["action"],
-                fields["protocol"],
-                fields["dest_ip"],
-                fields["dest_port"],
-                fields["description"],
-            )
-            if values is None:
-                return False
-
+            fields = holder["fields"]
             try:
+                values = fields.read_values()
                 priority = self._resolve_priority(
-                    fields["priority_mode"].value,
-                    fields["priority"].value,
+                    values["priority_mode"],
+                    values["priority_value"],
                 )
-            except (TypeError, ValueError) as exc:
-                self._notify_for_page(f"优先级无效: {exc}", type="negative")
+            except (ValueError, TypeError) as exc:
+                self._notify_for_page(str(exc), type="negative")
                 return False
 
             payload = {
@@ -2132,7 +2794,7 @@ class FirewallPage:
                 "dest_port": values["dest_port"],
                 "priority": priority,
                 "description": values["description"],
-                "enabled": bool(fields["enabled"].value),
+                "enabled": bool(values["enabled"]),
             }
             return self._create_center_rule(payload)
 
@@ -2170,331 +2832,6 @@ class FirewallPage:
         self._refresh_rules()
         return True
 
-    def _open_create_rule_dialog(self, target: str) -> None:
-        """``target`` 为 ``center`` 时写中心 JSON；为 ``remote`` 时同表单生成对端链 ``rest`` 并写回。"""
-        if target not in ("center", "remote"):
-            return
-        if target == "center" and not self._require_center_strategy_tab():
-            return
-        if target == "remote":
-            if not self._require_remote_strategy_tab():
-                return
-            rpid = self._active_remote_peer_id()
-            if not rpid:
-                self._notify_for_page("请先在「对端远端」选对端", type="warning")
-                return
-            if not self._peer_service.get(rpid):
-                self._notify_for_page("对端不存在", type="negative")
-                return
-            c0 = remote_chain_cache.read_remote_chain_cache(rpid) or {}
-            if not (c0.get("rows") is not None) and not bool(c0.get("chain_exists", False)):
-                self._notify_for_page(
-                    "对端链可能尚未创建：可先 SSH 下发防火墙，或直接建规则后写回。",
-                    type="warning",
-                )
-        else:
-            rpid = ""
-        groups = GroupService().list_all()
-        group_map = {g["id"]: g for g in groups}
-        users = UserService().list_all()
-        user_options = {u["username"]: u["username"] for u in users if u.get("username")}
-        from app.core.config import load_config
-
-        config = load_config()
-        instances = list((config or {}).get("instances", {}).keys()) if config else []
-        auto_instance = instances[0] if instances else "server"
-        default_group_id: str | None = None
-        if groups:
-            cur = str(self.current_owner_id or "").strip()
-            default_group_id = cur if cur in group_map else str(groups[0]["id"])
-        with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full no-wrap overflow-y-auto"
-        ):
-            ui.label("新建对端链规则" if target == "remote" else "新建中心规则").classes("text-h6")
-            if target == "remote" and rpid:
-                cnm = IptablesManager.peer_chain_name_for_id(rpid)
-                prn = self._peer_service.get(rpid) or {}
-                ui.label(
-                    f"对端 {str(prn.get('name') or rpid)[:40]} · 链 {cnm}；保存后 SSH 写回。"
-                ).classes("text-caption text-grey")
-            owner_type_select = ui.select(
-                {"group": "组", "user": "用户"},
-                label="归属类型",
-                value="group",
-            ).classes("w-full")
-            group_options = {g["id"]: f"{g['name']} ({g['subnet']})" for g in groups}
-            group_select = ui.select(
-                group_options, label="选择组", with_input=True, value=default_group_id
-            ).classes("w-full")
-            user_select = ui.select(
-                user_options, label="选择用户（多选）", multiple=True, with_input=True
-            ).classes("w-full")
-            user_select.set_visibility(False)
-            peer_src_ux: dict = {"user_picked": False}
-            peer_preset_holder: dict = {"by_key": {}}
-            # 首帧部分环境下 select 的 value 尚未就绪，用 default_group_id 补一次，否则对端 CIDR 下拉 gid 为空
-            peer_group_value_seeded: dict = {"done": False}
-            auto_src_switch = ui.switch("源用本组子网", value=False)
-            peer_lan_for_src = ui.select(
-                {},
-                label="对端内网 CIDR（任选；与上项二选一）",
-                with_input=True,
-            ).classes("w-full")
-            source_cidr_input = ui.input(
-                "源地址", placeholder="可走自动 / CCD"
-            ).classes("w-full")
-            source_user_hint = ui.label("多选用户时可预填 CCD 虚拟 IP，或留空从 CCD 读。").classes(
-                "text-caption text-grey"
-            )
-            source_user_hint.set_visibility(False)
-            with ui.row().classes("w-full gap-sm"):
-                action_select = ui.select(
-                    {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
-                    label="动作",
-                    value="accept",
-                ).classes("w-full")
-                protocol_select = ui.select(
-                    {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
-                    label="协议",
-                    value="all",
-                    with_input=True,
-                    new_value_mode="add-unique",
-                ).classes("w-full")
-            dest_ip_input = ui.input("目标地址", placeholder="子网或多 IP；空=不限").classes("w-full")
-            dest_port_input = ui.input("目标端口", placeholder="空=不限制").classes("w-full")
-            priority_mode = ui.toggle(
-                {"insert": "插入（指定行号）", "append": "追加（链尾）"},
-                value="insert",
-            ).classes("w-full")
-            priority_input = ui.number("插入行号", value=None, min=1, max=9999, step=10).classes("w-full")
-            priority_mode.on_value_change(lambda: priority_input.set_visibility(priority_mode.value == "insert"))
-            desc_input = ui.input("规则描述", placeholder="可选").classes("w-full")
-
-            def _mutex() -> None:
-                if owner_type_select.value != "group":
-                    return
-                a = bool(auto_src_switch.value)
-                k = str(peer_lan_for_src.value or "").strip()
-                c = (peer_preset_holder.get("by_key") or {}).get(k) if k else None
-                raw = (source_cidr_input.value or "").strip()
-                # 对端 CIDR 与源框绑定仅当源内容仍为该网段时生效；手改/清空后解除互斥
-                c_lock = bool(c and raw and raw == c)
-                peer_lan_for_src.set_enabled(not a)
-                auto_src_switch.set_enabled(a or (not c_lock))
-
-            def _on_source_cidr_in_group() -> None:
-                if owner_type_select.value != "group":
-                    return
-                if not (source_cidr_input.value or "").strip():
-                    peer_lan_for_src.value = None
-                    peer_src_ux["user_picked"] = False
-                _mutex()
-
-            def _sync_peer() -> None:
-                if owner_type_select.value != "group":
-                    peer_lan_for_src.set_visibility(False)
-                    return
-                peer_lan_for_src.set_visibility(True)
-                if not peer_group_value_seeded["done"] and default_group_id and not str(
-                    group_select.value or ""
-                ).strip():
-                    group_select.value = str(default_group_id)
-                peer_group_value_seeded["done"] = True
-                gid = str(group_select.value or "").strip()
-                presets = (
-                    self._peer_service.list_peer_lan_firewall_presets_for_center_form()
-                    if gid
-                    else []
-                )
-                peer_preset_holder["by_key"] = {p["key"]: p["cidr"] for p in presets}
-                peer_lan_for_src.options = {p["key"]: p["label"] for p in presets}
-                peer_lan_for_src.update()
-                if peer_lan_for_src.value and peer_lan_for_src.value not in peer_lan_for_src.options:
-                    peer_lan_for_src.value = None
-                if (peer_lan_for_src.value in peer_lan_for_src.options) and not peer_src_ux["user_picked"]:
-                    peer_lan_for_src.value = None
-                peer_lan_for_src.update()
-                _mutex()
-
-            def _on_peer_ch() -> None:
-                v = peer_lan_for_src.value
-                if v in (peer_preset_holder.get("by_key") or {}):
-                    peer_src_ux["user_picked"] = True
-                else:
-                    peer_src_ux["user_picked"] = False
-                cidr = (peer_preset_holder.get("by_key") or {}).get(v) if v else None
-                if cidr:
-                    auto_src_switch.value = False
-                    source_cidr_input.value = cidr
-                    source_cidr_input.props(remove="readonly")
-                _mutex()
-
-            def _on_group() -> None:
-                if auto_src_switch.value and group_select.value and str(group_select.value) in group_map:
-                    source_cidr_input.value = group_map[str(group_select.value)].get("subnet", "")
-                peer_src_ux["user_picked"] = False
-                _sync_peer()
-
-            def _on_auto() -> None:
-                if auto_src_switch.value:
-                    peer_lan_for_src.value = None
-                    peer_src_ux["user_picked"] = False
-                    g = str(group_select.value or "")
-                    if g and g in group_map:
-                        source_cidr_input.value = group_map[g].get("subnet", "")
-                    source_cidr_input.props(add="readonly")
-                else:
-                    source_cidr_input.props(remove="readonly")
-                _sync_peer()
-
-            def _ot() -> None:
-                ig = owner_type_select.value == "group"
-                group_select.set_visibility(ig)
-                user_select.set_visibility(not ig)
-                auto_src_switch.set_visibility(ig)
-                peer_lan_for_src.set_visibility(ig)
-                source_user_hint.set_visibility(not ig)
-                if ig:
-                    _sync_peer()
-                _mutex()
-
-            owner_type_select.on_value_change(_ot)
-            group_select.on_value_change(_on_group)
-            def _on_users_ch() -> None:
-                sel = user_select.value
-                ulist = list(sel) if isinstance(sel, list) else ([sel] if sel else [])
-                source_user_hint.set_visibility(bool(ulist))
-                if ulist:
-                    ips = _read_ccd_vpn_ips([str(x) for x in ulist])
-                    if ips:
-                        source_cidr_input.value = ", ".join(ips)
-
-            user_select.on_value_change(_on_users_ch)
-            source_cidr_input.on_value_change(lambda _: _on_source_cidr_in_group())
-            auto_src_switch.on_value_change(_on_auto)
-            peer_lan_for_src.on_value_change(_on_peer_ch)
-            _on_group()
-
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                def _ok() -> None:
-                    if target == "center":
-                        self._collect_center_create(
-                            dialog,
-                            owner_type_select,
-                            group_select,
-                            user_select,
-                            group_map,
-                            auto_src_switch,
-                            peer_lan_for_src,
-                            peer_preset_holder,
-                            source_cidr_input,
-                            action_select,
-                            protocol_select,
-                            dest_ip_input,
-                            dest_port_input,
-                            priority_mode,
-                            priority_input,
-                            desc_input,
-                            auto_instance,
-                        )
-                    else:
-                        self._collect_remote_create_like_center(
-                            dialog,
-                            rpid,
-                            owner_type_select,
-                            group_select,
-                            user_select,
-                            group_map,
-                            auto_src_switch,
-                            peer_lan_for_src,
-                            peer_preset_holder,
-                            source_cidr_input,
-                            action_select,
-                            protocol_select,
-                            dest_ip_input,
-                            dest_port_input,
-                            priority_mode,
-                            priority_input,
-                            desc_input,
-                        )
-
-                ui.button("创建", on_click=_ok).props("color=primary")
-        dialog.open()
-
-    def _read_create_form_to_values(
-        self,
-        owner_type_select,
-        group_select,
-        user_select,
-        group_map,
-        auto_src_switch,
-        peer_lan_for_src,
-        peer_preset_holder,
-        source_cidr_input,
-        action_select,
-        protocol_select,
-        dest_ip_input,
-        dest_port_input,
-        desc_input,
-    ) -> dict | None:
-        """与中心「新建」表单一致，读入为 dict；缺省项已通知并返回 None。"""
-        ot = owner_type_select.value
-        if ot == "group":
-            oid = str(group_select.value or "").strip()
-            if not oid:
-                self._notify_for_page("请选择组", type="negative")
-                return None
-            if auto_src_switch.value and oid in group_map:
-                src_sub = group_map[oid].get("subnet", "") or None
-                src_ips = None
-            else:
-                k = str(peer_lan_for_src.value or "").strip()
-                cidr = (peer_preset_holder.get("by_key") or {}).get(k) if k else None
-                if cidr:
-                    src_sub, src_ips = cidr, None
-                else:
-                    raw = (source_cidr_input.value or "").strip()
-                    if raw:
-                        src_sub, src_ips = raw, None
-                    else:
-                        src_sub, src_ips = None, None
-        else:
-            sel = user_select.value or []
-            if not sel:
-                self._notify_for_page("请选择用户", type="negative")
-                return None
-            ulist = list(sel) if isinstance(sel, list) else [sel]
-            oid = ulist[0] if ulist else ""
-            if not oid:
-                self._notify_for_page("请选择用户", type="negative")
-                return None
-            raw = (source_cidr_input.value or "").strip()
-            if raw:
-                try:
-                    ssub, sips = _parse_user_source_for_create(raw)
-                except ValueError as exc:
-                    self._notify_for_page(str(exc), type="negative")
-                    return None
-                src_sub, src_ips = ssub, sips
-            else:
-                src_ips = _read_ccd_vpn_ips([str(x) for x in ulist])
-                src_sub = None
-                if not src_ips:
-                    self._notify_for_page("无 CCD 或读不到虚拟 IP", type="negative")
-                    return None
-        return {
-            "owner_type": ot,
-            "owner_id": oid,
-            "source_subnet": src_sub,
-            "source_ips": src_ips,
-            "action": str(action_select.value or "accept"),
-            "protocol": str(protocol_select.value or "all"),
-            "dest_ip": (dest_ip_input.value or "").strip() or None,
-            "dest_port": (dest_port_input.value or "").strip() or None,
-            "description": (desc_input.value or "").strip() or None,
-        }
-
     def _remote_priority_base_list(self, peer_id: str) -> list[dict]:
         """供与中心相同的优先级选择：按当前对端工作副本行推算 priority 集合。"""
         cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
@@ -2505,171 +2842,65 @@ class FirewallPage:
             out.append({"id": f"r{i}", "priority": p})
         return out
 
-    def _collect_center_create(
+    async def _insert_remote_rows_and_push(
         self,
-        dialog,
-        owner_type_select,
-        group_select,
-        user_select,
-        group_map,
-        auto_src_switch,
-        peer_lan_for_src,
-        peer_preset_holder,
-        source_cidr_input,
-        action_select,
-        protocol_select,
-        dest_ip_input,
-        dest_port_input,
-        priority_mode,
-        priority_input,
-        desc_input,
-        auto_instance: str,
-    ) -> None:
-        v = self._read_create_form_to_values(
-            owner_type_select,
-            group_select,
-            user_select,
-            group_map,
-            auto_src_switch,
-            peer_lan_for_src,
-            peer_preset_holder,
-            source_cidr_input,
-            action_select,
-            protocol_select,
-            dest_ip_input,
-            dest_port_input,
-            desc_input,
-        )
-        if v is None:
-            return
-        pr = self._resolve_priority(priority_mode.value, priority_input.value)
-        self._do_create(
-            dialog,
-            owner_type=v["owner_type"],
-            owner_id=v["owner_id"],
-            instance=auto_instance,
-            deployment_target="center",
-            action=v["action"],
-            protocol=v["protocol"],
-            source_subnet=v["source_subnet"],
-            source_ips=v["source_ips"],
-            dest_ip=v["dest_ip"],
-            dest_port=v["dest_port"],
-            priority=pr,
-            description=v["description"],
-        )
-
-    def _collect_remote_create_like_center(
-        self,
-        dialog,
-        peer_id: str,
-        owner_type_select,
-        group_select,
-        user_select,
-        group_map,
-        auto_src_switch,
-        peer_lan_for_src,
-        peer_preset_holder,
-        source_cidr_input,
-        action_select,
-        protocol_select,
-        dest_ip_input,
-        dest_port_input,
-        priority_mode,
-        priority_input,
-        desc_input,
-    ) -> None:
-        v = self._read_create_form_to_values(
-            owner_type_select,
-            group_select,
-            user_select,
-            group_map,
-            auto_src_switch,
-            peer_lan_for_src,
-            peer_preset_holder,
-            source_cidr_input,
-            action_select,
-            protocol_select,
-            dest_ip_input,
-            dest_port_input,
-            desc_input,
-        )
-        if v is None:
-            return
-        base = self._remote_priority_base_list(peer_id)
-        pr = self._resolve_priority(priority_mode.value, priority_input.value, base=base)
-        try:
-            rests = remote_rests_from_create_fields(
-                source_subnet=v["source_subnet"],
-                source_ips=v["source_ips"],
-                action=v["action"],
-                protocol=v["protocol"],
-                dest_ip=v["dest_ip"],
-                dest_port=v["dest_port"],
-            )
-        except (ValueError, ValidationError) as exc:
-            logger.error("对端新建 rest 生成失败: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        desc = (v.get("description") or "").strip() or None
-        new_rows: list[dict] = [
-            {
-                "rest": line,
-                "enabled": True,
-                "priority": pr,
-                **({"description": desc} if desc else {}),
-            }
-            for line in rests
-        ]
-        self._schedule_remote_coro(
-            self._do_remote_create_insert_and_push(dialog, str(peer_id).strip(), new_rows, pr)
-        )
-
-    async def _do_remote_create_insert_and_push(
-        self,
-        dialog,
         peer_id: str,
         new_rows: list[dict],
         priority: int,
-    ) -> None:
+    ) -> bool:
+        """按优先级插入工作副本并立即写回；失败由缓存 prepush 语义回滚。"""
+
         if not self._require_remote_strategy_tab():
-            return
+            return False
         if self._active_remote_peer_id() != peer_id:
-            self._notify_for_page("对端已切换，已取消写回", type="warning")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
-        cname = IptablesManager.peer_chain_name_for_id(peer_id)
-        rws = list(c2.get("rows") or [])
-
-        def row_pri(i: int) -> int:
-            r = rws[i]
-            return int(r.get("priority", 0) or 0) or (i + 1) * 10
-
-        insert_at = len(rws)
-        for i in range(len(rws)):
-            if row_pri(i) > int(priority):
-                insert_at = i
-                break
-        for j, nr in enumerate(new_rows):
-            rws.insert(insert_at + j, nr)
-        chn = str(c2.get("chain") or cname)
-        cex = bool(c2.get("chain_exists", True))
-        remote_chain_cache.mark_pending_apply(peer_id, chn, cex, rws)
-        try:
-            rests = remote_chain_cache.rests_to_push_list(rws)
-            await run.io_bound(
-                self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests
+            self._notify_for_page(
+                "对端已切换，已取消写回",
+                type="warning",
             )
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, True, None)
-        except Exception as exc:
-            remote_chain_cache.record_after_apply(peer_id, chn, cex, rws, False, str(exc))
-            logger.error("对端新建规则写回: %s", exc)
-            self._notify_for_page(str(exc), type="negative")
-            return
-        logger.info("对端链已插入新建行 peer=%s n=%s pri=%s", peer_id, len(new_rows), priority)
-        dialog.close()
-        self._notify_for_page("已写回对端", type="positive")
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        rows = list(cache.get("rows") or [])
+
+        def row_priority(index: int) -> int:
+            row = rows[index]
+            return int(row.get("priority", 0) or 0) or (
+                (index + 1) * 10
+            )
+
+        insert_at = len(rows)
+        for index in range(len(rows)):
+            if row_priority(index) > int(priority):
+                insert_at = index
+                break
+
+        for offset, new_row in enumerate(new_rows):
+            rows.insert(insert_at + offset, dict(new_row))
+
+        remote_chain_cache.mark_pending_apply(
+            peer_id,
+            chain,
+            bool(cache.get("chain_exists", True)),
+            rows,
+        )
+        ok = await self._apply_remote_cache_to_peer(peer_id)
+        if not ok:
+            self._refresh_remote_view()
+            return False
+
+        logger.info(
+            "对端链已插入新建行 peer=%s n=%s pri=%s",
+            peer_id,
+            len(new_rows),
+            priority,
+        )
+        self._notify_for_page("已创建并写回对端", type="positive")
         self._refresh_remote_view()
+        return True
 
     def _resolve_priority(self, mode: str, input_value, *, base: list[dict] | None = None) -> int:
         if base is None:
@@ -2692,25 +2923,6 @@ class FirewallPage:
         if not existing:
             return 10
         return max(r.get("priority", 0) for r in base) + 10
-
-    def _do_create(self, dialog, **kwargs) -> None:
-        owner_id = str(kwargs.get("owner_id", "") or "")
-        if not owner_id:
-            self._notify_for_page("请选择归属", type="negative")
-            return
-        try:
-            ot = kwargs.pop("owner_type", "group")
-            payload = {"owner_type": ot, **kwargs}
-            if "protocol" in payload and str(payload.get("protocol") or "").lower() in ("any", "all"):
-                payload["protocol"] = "all"
-            self.rule_service.create(payload)
-            dialog.close()
-            self._notify_for_page("规则创建成功", type="positive")
-            self._refresh_rules()
-        except Exception as exc:
-            logger.error("create rule: %s", exc)
-            self._notify_for_page(f"创建失败: {exc}", type="negative")
-            self._refresh_rules()
 
     def _show_edit_dialog(self, rule: dict) -> None:
         """使用统一表单编辑中心 JSON 规则或 center_peer 虚拟行。"""
@@ -3403,77 +3615,225 @@ class FirewallPage:
         form.card.classes("w-full max-w-3xl")
         form.open()
 
+    def _prepare_remote_import(
+        self,
+        text: str,
+        *,
+        peer_id: str | None = None,
+    ) -> dict[str, Any]:
+        """预检查远端备份 / iptables 粘贴 / 混合文本，不产生写入。"""
+
+        target = str(peer_id or self._active_remote_peer_id() or "").strip()
+        if not target:
+            raise ValueError("请先选择对端")
+        normalized = str(text or "").strip().lstrip("\ufeff")
+        if not normalized:
+            raise ValueError("无内容")
+
+        chain = IptablesManager.peer_chain_name_for_id(target)
+        rows, parsed_chain, chain_exists = (
+            FirewallPage._rows_from_remote_import_text_mixed(
+                normalized,
+                target,
+                chain,
+            )
+        )
+        if normalized.startswith("{"):
+            kind = "backup"
+        elif any(
+            line.strip().startswith("-A ")
+            for line in normalized.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ):
+            kind = "iptables"
+        else:
+            kind = "mixed"
+
+        return {
+            "peer_id": target,
+            "kind": kind,
+            "rows": [dict(row) for row in rows],
+            "chain": parsed_chain,
+            "chain_exists": bool(chain_exists),
+            "count": len(rows),
+            "text": normalized,
+        }
+
+    async def _execute_remote_import(
+        self,
+        form,
+        status_label,
+        prepared: dict[str, Any],
+    ) -> bool:
+        """写入已预检查的远端工作副本；失败保留表单与输入。"""
+
+        peer_id = str(prepared.get("peer_id") or "").strip()
+        if not peer_id or self._active_remote_peer_id() != peer_id:
+            self._notify_for_page(
+                "对端已切换，已取消导入",
+                type="warning",
+            )
+            return False
+        if self._remote_push_running_peer is not None:
+            self._notify_for_page(
+                "已有对端写回正在执行，请勿重复提交",
+                type="warning",
+            )
+            return False
+
+        rows = [
+            dict(row)
+            for row in (prepared.get("rows") or [])
+        ]
+        chain = str(
+            prepared.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
+        )
+        chain_exists = bool(prepared.get("chain_exists", True))
+        total = len(rows)
+
+        self._remote_push_running_peer = peer_id
+        form.set_busy(True)
+        status_label.text = f"导入中…准备写回 {total} 条规则"
+        self._refresh_remote_toolbar_state()
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                chain_exists,
+                rows,
+            )
+            ok = await self._apply_remote_cache_to_peer(peer_id)
+            if not ok:
+                status_label.text = (
+                    f"导入失败：成功 0，跳过 0，失败 {max(total, 1)}"
+                )
+                return False
+
+            self._selected_remote_indices.clear()
+            status_label.text = (
+                f"导入完成：成功 {total}，跳过 0，失败 0"
+            )
+            self._notify_for_page(
+                status_label.text,
+                type="positive",
+            )
+            form.close()
+            return True
+        finally:
+            if self._remote_push_running_peer == peer_id:
+                self._remote_push_running_peer = None
+            form.set_busy(False)
+            self._refresh_remote_toolbar_state()
+            self._refresh_remote_view()
+
+    def _show_remote_import_dialog(self) -> None:
+        """统一远端导入表单：上传/粘贴、预检查、确认后一次写回。"""
+
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请先选择对端", type="warning")
+            return
+
+        refs: dict[str, Any] = {}
+        holder: dict[str, Any] = {}
+
+        def body() -> None:
+            ui.label(
+                "支持对端副本 JSON、iptables -S 输出、"
+                "每行 rest 片段与简化规则；预检查不会写入远端。"
+            ).classes("section-caption")
+            refs["textarea"] = (
+                ui.textarea("规则内容")
+                .classes("w-full")
+                .props("rows=16")
+            )
+            refs["status"] = ui.label(
+                "尚未执行预检查"
+            ).classes("section-caption")
+
+            async def on_upload(event) -> None:
+                try:
+                    raw = await event.file.read()
+                    text = raw.decode("utf-8", errors="replace")
+                    refs["textarea"].set_value(text)
+                    name = str(
+                        getattr(event.file, "name", "") or ""
+                    ).strip()
+                    refs["status"].text = f"已载入 {name}，等待预检查"
+                except Exception as exc:
+                    logger.exception("远端规则导入读文件失败")
+                    refs["status"].text = f"读取失败：{exc}"
+                    self._notify_for_page(
+                        f"读文件失败: {exc}",
+                        type="negative",
+                    )
+
+            ui.upload(
+                label="从文件加载（.json / .txt）",
+                on_upload=on_upload,
+                auto_upload=True,
+                max_files=1,
+            ).props(
+                'accept=".json,.txt,.text,application/json,text/plain"'
+            ).classes("w-full")
+
+        def submit() -> bool:
+            try:
+                prepared = self._prepare_remote_import(
+                    str(refs["textarea"].value or ""),
+                    peer_id=peer_id,
+                )
+            except ValueError as exc:
+                refs["status"].text = f"预检查失败：{exc}"
+                self._notify_for_page(str(exc), type="negative")
+                return False
+
+            count = int(prepared.get("count") or 0)
+            kind_label = {
+                "backup": "备份 JSON",
+                "iptables": "iptables 输出",
+                "mixed": "混合/简化文本",
+            }.get(str(prepared.get("kind") or ""), "规则文本")
+            refs["status"].text = (
+                f"预检查通过：{kind_label}，共 {count} 条"
+            )
+            confirm_dialog.show(
+                f"用预检查结果覆盖当前对端链（{count} 条）？",
+                impact=(
+                    "会覆盖本地工作副本并立即通过 SSH 重写对端链；"
+                    "失败时按 prepush 备份恢复，输入内容保留。"
+                ),
+                object_count=count,
+                danger_level="danger",
+                on_confirm=lambda: self._schedule_remote_coro(
+                    self._execute_remote_import(
+                        holder["form"],
+                        refs["status"],
+                        prepared,
+                    )
+                ),
+            )
+            return False
+
+        form = create_form_dialog(
+            "导入对端规则",
+            body=body,
+            on_submit=submit,
+            submit_label="预检查并导入",
+            close_on_success=False,
+        )
+        holder["form"] = form
+        form.card.classes("w-full max-w-3xl")
+        form.open()
+
     def _show_import_dialog(self) -> None:
         self._import_source_file_mode = None
         self._import_last_uploaded_text = None
         if self._center_tab_active:
             self._show_center_import_dialog()
-            return
-        if self._center_tab_active:
-            title = "导入中心规则"
-            hint = (
-                ".json = 整库 backup；.txt = 简写追加到当前关键词选中的归属。"
-                " 纯粘贴：`{` 开头为 backup，否则为简写。"
-            )
         else:
-            title = "导入对端链规则"
-            hint = (
-                "粘贴或上传 .json / .txt：iptables -S、每行片段、简写、或对端副本 JSON。# 为注释。"
-            )
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl"):
-            ui.label(title).classes("text-h6")
-            ui.label(hint).classes("text-caption text-grey")
-            ta = ui.textarea("规则内容").classes("w-full q-mt-sm").props("rows=16")
-            ta.on_value_change(lambda _: self._on_import_textarea_value_change(ta))
-
-            async def on_import_file_upload(e) -> None:
-                try:
-                    data = await e.file.read()
-                    text = data.decode("utf-8", errors="replace")
-                    self._import_last_uploaded_text = (text or "").strip()
-                    ta.set_value(text)
-                    name = (getattr(e.file, "name", "") or "").strip()
-                    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-                    if ext == "json":
-                        self._import_source_file_mode = "json_overwrite"
-                    elif ext in ("txt", "text"):
-                        self._import_source_file_mode = "simplified_text"
-                    else:
-                        self._import_source_file_mode = None
-                    self._notify_for_page(
-                        f"已载入: {name}"
-                        + (
-                            "（.json 覆盖 / .txt 追加）"
-                            if self._center_tab_active and self._import_source_file_mode
-                            else ""
-                        ),
-                        type="positive",
-                    )
-                    logger.info(
-                        "防火墙导入已读入文件 name=%s mode=%s center=%s",
-                        name,
-                        self._import_source_file_mode,
-                        self._center_tab_active,
-                    )
-                except Exception as exc:
-                    fname = (getattr(e.file, "name", "") or "").strip()
-                    self._import_last_uploaded_text = None
-                    self._import_source_file_mode = None
-                    logger.exception("防火墙导入读文件失败: %s", fname)
-                    self._notify_for_page(f"读文件失败 ({fname}): {exc}", type="negative")
-                    raise RuntimeError(f"读文件失败: {exc}") from exc
-
-            ul = ui.upload(
-                label="从文件加载（.json / .txt）",
-                on_upload=on_import_file_upload,
-                auto_upload=True,
-                max_files=1,
-            ).props('accept=".json,.txt,.text,application/json,text/plain"')
-            ul.classes("w-full q-mt-sm")
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button("导入", on_click=lambda: self._do_import(dialog, ta.value)).props("color=primary")
-        dialog.open()
+            self._show_remote_import_dialog()
 
     def _do_import(self, dialog, text: str) -> None:
         if not (text or "").strip():
@@ -3700,9 +4060,9 @@ class FirewallPage:
             return
         remote_chain_cache.mark_pending_apply(pid, chn, cex, rows)
         if await self._apply_remote_cache_to_peer(pid):
+            self._selected_remote_indices.clear()
             dialog.close()
             self._notify_for_page("已导入并写回", type="positive")
-        self._selected_remote_indices.clear()
         self._refresh_remote_view()
 
     def _toggle_selection(self, rule_id: str, checked: bool) -> None:
@@ -3756,9 +4116,17 @@ class FirewallPage:
         if not self._selected_remote_indices:
             self._notify_for_page("未勾选", type="warning")
             return
+        count = len(self._selected_remote_indices)
         confirm_dialog.show(
-            "删除勾选行并写回对端。确定？",
-            on_confirm=lambda: self._schedule_remote_coro(self._do_batch_remote_delete_async()),
+            f"删除所选 {count} 条对端规则？",
+            impact=(
+                "会一次性重写当前对端链；失败时整批按 prepush 备份恢复。"
+            ),
+            object_count=count,
+            danger_level="danger",
+            on_confirm=lambda: self._schedule_remote_coro(
+                self._do_batch_remote_delete_async()
+            ),
         )
 
     def _do_batch_delete_center(self) -> None:
@@ -3781,30 +4149,66 @@ class FirewallPage:
             self._notify_for_page(f"已删除 {success} 条规则", type="positive")
         self._refresh_rules()
 
-    async def _do_batch_remote_delete_async(self) -> None:
+    async def _do_batch_remote_delete_async(self) -> bool:
         if not self._require_remote_strategy_tab():
-            return
-        pid = self._active_remote_peer_id()
-        if not pid:
+            return False
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
             self._notify_for_page("请先选择对端", type="warning")
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(pid) or {}
-        cname = IptablesManager.peer_chain_name_for_id(pid)
-        rws = list(c2.get("rows") or [])
-        if not rws or not self._selected_remote_indices:
-            self._notify_for_page("未勾选或无可删行", type="warning")
-            return
-        to_drop = sorted(self._selected_remote_indices, reverse=True)
-        for j in to_drop:
-            if 0 <= j < len(rws):
-                rws.pop(j)
-        remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
+            return False
+        if self._remote_push_running_peer is not None:
+            self._notify_for_page(
+                "已有对端写回正在执行，请勿重复提交",
+                type="warning",
+            )
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        selected = sorted(self._selected_remote_indices)
+        valid = [index for index in selected if 0 <= index < len(rows)]
+        skipped = len(selected) - len(valid)
+        if not valid:
+            self._notify_for_page("未勾选有效规则", type="warning")
+            return False
+
+        for index in sorted(valid, reverse=True):
+            rows.pop(index)
+
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
         )
-        if await self._apply_remote_cache_to_peer(pid):
-            self._notify_for_page("已写回对端", type="positive")
-        self._selected_remote_indices.clear()
-        self._refresh_remote_view()
+        self._remote_push_running_peer = peer_id
+        self._refresh_remote_toolbar_state()
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                bool(cache.get("chain_exists", True)),
+                rows,
+            )
+            ok = await self._apply_remote_cache_to_peer(peer_id)
+            if ok:
+                self._selected_remote_indices.clear()
+                self._notify_for_page(
+                    f"批量删除完成：成功 {len(valid)}，"
+                    f"跳过 {skipped}，失败 0",
+                    type="positive",
+                )
+                return True
+
+            self._notify_for_page(
+                f"批量删除失败：成功 0，跳过 {skipped}，"
+                f"失败 {len(valid)}",
+                type="negative",
+            )
+            return False
+        finally:
+            if self._remote_push_running_peer == peer_id:
+                self._remote_push_running_peer = None
+            self._refresh_remote_toolbar_state()
+            self._refresh_remote_view()
 
     def _batch_enable(self) -> None:
         self._batch_set_enabled(True)
@@ -3860,22 +4264,79 @@ class FirewallPage:
             return
         self._schedule_remote_coro(self._do_batch_remote_set_enabled_async(en))
 
-    async def _do_batch_remote_set_enabled_async(self, en: bool) -> None:
+    async def _do_batch_remote_set_enabled_async(self, en: bool) -> bool:
         if not self._require_remote_strategy_tab():
-            return
-        pid = self._active_remote_peer_id()
-        if not pid:
-            return
-        c2 = remote_chain_cache.read_remote_chain_cache(pid) or {}
-        cname = IptablesManager.peer_chain_name_for_id(pid)
-        rws = list(c2.get("rows") or [])
-        for j in self._selected_remote_indices:
-            if 0 <= j < len(rws):
-                rws[j]["enabled"] = en
-        remote_chain_cache.mark_pending_apply(
-            pid, str(c2.get("chain") or cname), bool(c2.get("chain_exists", True)), rws
+            return False
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            return False
+        if self._remote_push_running_peer is not None:
+            self._notify_for_page(
+                "已有对端写回正在执行，请勿重复提交",
+                type="warning",
+            )
+            return False
+
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id) or {}
+        rows = list(cache.get("rows") or [])
+        selected = sorted(self._selected_remote_indices)
+        valid = [index for index in selected if 0 <= index < len(rows)]
+        invalid_count = len(selected) - len(valid)
+        if not valid:
+            self._notify_for_page("未勾选有效规则", type="warning")
+            return False
+
+        changed = 0
+        already = 0
+        for index in valid:
+            if bool(rows[index].get("enabled", True)) == bool(en):
+                already += 1
+                continue
+            rows[index]["enabled"] = bool(en)
+            changed += 1
+
+        skipped = invalid_count + already
+        label = "启用" if en else "停用"
+        if changed == 0:
+            self._selected_remote_indices.clear()
+            self._notify_for_page(
+                f"批量{label}完成：成功 0，跳过 {skipped}，失败 0",
+                type="positive",
+            )
+            self._refresh_remote_view()
+            return True
+
+        chain = str(
+            cache.get("chain")
+            or IptablesManager.peer_chain_name_for_id(peer_id)
         )
-        if await self._apply_remote_cache_to_peer(pid):
-            self._notify_for_page("已写回对端", type="positive")
-        self._selected_remote_indices.clear()
-        self._refresh_remote_view()
+        self._remote_push_running_peer = peer_id
+        self._refresh_remote_toolbar_state()
+        try:
+            remote_chain_cache.mark_pending_apply(
+                peer_id,
+                chain,
+                bool(cache.get("chain_exists", True)),
+                rows,
+            )
+            ok = await self._apply_remote_cache_to_peer(peer_id)
+            if ok:
+                self._selected_remote_indices.clear()
+                self._notify_for_page(
+                    f"批量{label}完成：成功 {changed}，"
+                    f"跳过 {skipped}，失败 0",
+                    type="positive",
+                )
+                return True
+
+            self._notify_for_page(
+                f"批量{label}失败：成功 0，跳过 {skipped}，"
+                f"失败 {changed}",
+                type="negative",
+            )
+            return False
+        finally:
+            if self._remote_push_running_peer == peer_id:
+                self._remote_push_running_peer = None
+            self._refresh_remote_toolbar_state()
+            self._refresh_remote_view()
