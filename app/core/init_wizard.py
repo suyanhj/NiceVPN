@@ -236,11 +236,11 @@ class InitWizard:
             logger.warning("步骤 3/5：全局 VPN 子网格式无效: %s", subnet)
             return StepResult(False, f"无效的 CIDR 格式: {subnet}")
 
-        # 前缀长度必须 >= 16，拒绝 /8、/12 等过大网段
+        # 地址池只允许 /16～/30：过大会扩散地址空间，/31、/32 无可用客户端池。
         network = IPv4Network(subnet, strict=False)
-        if network.prefixlen < self.GLOBAL_SUBNET_MIN_PREFIX:
+        if not self.GLOBAL_SUBNET_MIN_PREFIX <= network.prefixlen <= 30:
             msg = (
-                f"全局子网前缀长度 /{network.prefixlen} 过大，"
+                f"全局子网前缀 /{network.prefixlen} 不在允许范围，"
                 f"仅允许 /{self.GLOBAL_SUBNET_MIN_PREFIX}～/30 的子网"
                 f"（如 10.224.0.0/16）。"
             )
