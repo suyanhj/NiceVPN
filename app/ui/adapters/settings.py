@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from app.models.config import SystemConfig
 
@@ -149,5 +150,213 @@ def build_global_ssh_config(
     )
     data["global_ssh_private_key_passphrase"] = (
         str(passphrase or "").strip() or None
+    )
+    return SystemConfig(**data)
+
+
+def _normalize_http_url(
+    value: str,
+    *,
+    label: str,
+    allow_blank: bool = False,
+) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        if allow_blank:
+            return None
+        raise ValueError(f"{label}不能为空")
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{label}须为 http/https 完整 URL")
+    if parsed.username or parsed.password:
+        raise ValueError(f"{label}不能包含 URL 用户名或密码")
+    if parsed.query or parsed.fragment:
+        raise ValueError(f"{label}不能包含 query 或 fragment")
+    return text.rstrip("/")
+
+
+def parse_github_proxy_urls(text: str) -> list[str]:
+    """按输入顺序校验并规范化 GitHub 代理前缀。"""
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for line_number, raw in enumerate(
+        str(text or "").splitlines(),
+        start=1,
+    ):
+        value = raw.strip()
+        if not value:
+            continue
+        try:
+            normalized = _normalize_http_url(
+                value,
+                label=f"第 {line_number} 行代理",
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assert normalized is not None
+        prefix = normalized + "/"
+        if prefix not in seen:
+            seen.add(prefix)
+            result.append(prefix)
+    if not result:
+        raise ValueError("至少配置一个 GitHub 下载代理")
+    return result
+
+
+def build_github_candidate_urls(
+    source_url: str,
+    proxies: list[str],
+) -> list[str]:
+    """使用当前表单代理列表构造候选，顺序与安装器一致。"""
+
+    url = str(source_url or "").strip()
+    if not url:
+        raise ValueError("源下载 URL 不能为空")
+    normalized = [
+        str(prefix).strip().rstrip("/") + "/"
+        for prefix in proxies
+        if str(prefix).strip()
+    ]
+    if any(url.startswith(prefix) for prefix in normalized):
+        return [url]
+    if not any(
+        marker in url
+        for marker in (
+            "github.com",
+            "githubusercontent.com",
+            "api.github.com",
+        )
+    ):
+        return [url]
+
+    candidates = [prefix + url for prefix in normalized]
+    candidates.append(url)
+    return list(dict.fromkeys(candidates))
+
+
+def normalize_download_base_url(value: str) -> str | None:
+    """校验固定下载基址；空值表示继续按当前请求自动解析。"""
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("下载基础 URL 须为 http/https 完整 URL")
+    if parsed.username or parsed.password:
+        raise ValueError("下载基础 URL 不能包含 URL 用户名或密码")
+    if parsed.query or parsed.fragment:
+        raise ValueError("下载基础 URL 不能包含 query 或 fragment")
+    return text.rstrip("/")
+
+
+def build_download_config(
+    base: Mapping[str, Any] | Any,
+    *,
+    download_base_url: str,
+) -> SystemConfig:
+    data = _base_dict(base)
+    data["download_base_url"] = normalize_download_base_url(
+        download_base_url
+    )
+    return SystemConfig(**data)
+
+
+def parse_rocketchat_channels(value: str | list[str] | None) -> str | list[str] | None:
+    """把换行/逗号分隔频道规范化，单个频道保存为字符串。"""
+
+    if value is None:
+        return None
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = re.split(r"[\n,]+", str(value))
+    channels = [
+        str(item).strip()
+        for item in raw_items
+        if str(item).strip()
+    ]
+    channels = list(dict.fromkeys(channels))
+    if not channels:
+        return None
+    return channels[0] if len(channels) == 1 else channels
+
+
+def build_notify_config(
+    base: Mapping[str, Any] | Any,
+    *,
+    enabled: bool,
+    provider: str,
+    dingtalk_webhook: str,
+    dingtalk_secret: str,
+    wework_webhook: str,
+    rocketchat_webhook: str,
+    rocketchat_channel: str | list[str] | None,
+    rocketchat_username: str,
+    rocketchat_icon_emoji: str,
+    rocketchat_title: str,
+) -> SystemConfig:
+    """构建三通道通知配置，并在启用时验证当前通道必填项。"""
+
+    normalized_provider = str(provider or "none").strip().lower()
+    allowed = {"none", "dingtalk", "wework", "rocketchat"}
+    if normalized_provider not in allowed:
+        raise ValueError("通知通道无效")
+    if enabled and normalized_provider == "none":
+        raise ValueError("启用通知时必须选择通知通道")
+
+    ding = _normalize_http_url(
+        dingtalk_webhook,
+        label="钉钉 Webhook",
+        allow_blank=True,
+    )
+    wework = _normalize_http_url(
+        wework_webhook,
+        label="企业微信 Webhook",
+        allow_blank=True,
+    )
+    rocket = _normalize_http_url(
+        rocketchat_webhook,
+        label="Rocket.Chat Webhook",
+        allow_blank=True,
+    )
+    channels = parse_rocketchat_channels(rocketchat_channel)
+
+    if enabled and normalized_provider == "dingtalk" and not ding:
+        raise ValueError("启用钉钉通知时必须填写 Webhook")
+    if enabled and normalized_provider == "wework" and not wework:
+        raise ValueError("启用企业微信通知时必须填写 Webhook")
+    if enabled and normalized_provider == "rocketchat":
+        if not rocket:
+            raise ValueError("启用 Rocket.Chat 通知时必须填写 Webhook")
+        if not channels:
+            raise ValueError("启用 Rocket.Chat 通知时必须填写频道")
+
+    data = _base_dict(base)
+    data.update(
+        {
+            "notify_enabled": bool(enabled),
+            "notify_provider": normalized_provider,
+            "dingtalk_webhook": ding,
+            "dingtalk_secret": (
+                str(dingtalk_secret or "").strip() or None
+            ),
+            "wework_webhook": wework,
+            "rocketchat_webhook": rocket,
+            "rocketchat_channel": channels,
+            "rocketchat_username": (
+                str(rocketchat_username or "").strip()
+                or "VPN管理"
+            ),
+            "rocketchat_icon_emoji": (
+                str(rocketchat_icon_emoji or "").strip()
+                or ":lock:"
+            ),
+            "rocketchat_title": (
+                str(rocketchat_title or "").strip()
+                or "OpenVPN"
+            ),
+        }
     )
     return SystemConfig(**data)
