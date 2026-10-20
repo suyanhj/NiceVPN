@@ -45,6 +45,7 @@ class InitPage:
         self._pki_running = False
         self._pki_timer = None
         self._client_deleted = False
+        self._complete_timer = None
 
     def render(self):
         """渲染统一品牌、步骤指示和内容面板。"""
@@ -203,7 +204,7 @@ class InitPage:
         """页面删除时停止安装/PKI UI 轮询，避免向已销毁 client 写入。"""
 
         self._client_deleted = True
-        for attr in ("_install_timer", "_pki_timer"):
+        for attr in ("_install_timer", "_pki_timer", "_complete_timer"):
             timer = getattr(self, attr, None)
             if timer is not None:
                 try:
@@ -258,6 +259,8 @@ class InitPage:
             elif self.current_step == WizardStep.START_SERVICE:
                 if result.success:
                     self._render_complete()
+                else:
+                    self._render_start_service()
 
     def _render_detect_result(self, result: StepResult):
         """渲染环境检查结果与安装/自定义路径分支。"""
@@ -431,11 +434,18 @@ class InitPage:
         self._render_step_result(result)
 
     def _render_install_result(self, result: StepResult):
-        """渲染安装步骤结果。"""
-        with self.content:
-            if result.success:
-                self.status_label.text = "OpenVPN 已就绪，下一步建立证书。"
-                self._render_pki_form()
+        """渲染安装/自定义路径结果，并保留失败后的重试入口。"""
+
+        if result.success:
+            self.status_label.text = "OpenVPN 已就绪，下一步建立证书。"
+            self._render_pki_form()
+            return
+
+        if self.current_step == WizardStep.CUSTOM_PATH:
+            self._render_custom_path_form()
+            return
+
+        self._render_detect_result(result)
 
     def _handle_pki_init(self):
         """后台执行 PKI 初始化，并保护重复提交与 UI 生命周期。"""
@@ -558,92 +568,154 @@ class InitPage:
             )
 
     def _render_subnet_form(self):
-        """渲染全局子网 + 服务端连接配置表单。"""
+        """渲染共享接入规划表单。"""
+
+        refs: dict[str, object] = {}
+
+        def body() -> None:
+            refs["subnet"] = ui.input(
+                "接入地址池",
+                placeholder="10.224.0.0/16",
+                validation={
+                    "CIDR 格式不正确或前缀超出 /16～/30": (
+                        lambda value: _quick_cidr_check(value)
+                    )
+                },
+            ).classes("w-full")
+
+            ui.label("客户端连接入口").classes("settings-panel-title q-mt-sm")
+            refs["server_ip"] = ui.input(
+                "公网 IP 或域名",
+                placeholder="如 1.2.3.4 或 vpn.example.com",
+            ).classes("w-full")
+            with ui.element("div").classes("settings-inline-grid"):
+                refs["port"] = ui.number(
+                    "端口",
+                    value=1194,
+                    min=1,
+                    max=65535,
+                ).classes("w-full")
+                refs["proto"] = ui.select(
+                    {"udp": "UDP", "tcp": "TCP"},
+                    label="协议",
+                    value="udp",
+                ).classes("w-full")
+
+            ui.label("访问服务端物理局域网").classes(
+                "settings-panel-title q-mt-sm"
+            )
+            refs["push_lan"] = ui.textarea(
+                "推送给客户端的内网路由（每行一条 CIDR）",
+                value="\n".join(
+                    self.wizard.config.get("push_lan_routes") or []
+                ),
+                placeholder="例如：\n172.16.22.0/24",
+            ).classes("w-full")
+            ui.label(
+                "留空表示只使用 VPN 隧道；这里不要填写 VPN 地址池本身。"
+            ).classes("section-caption")
+
+        def actions() -> None:
+            primary_action(
+                "保存接入规划",
+                icon="arrow_forward",
+                on_click=lambda: self._run_step(
+                    WizardStep.CONFIG_SUBNET,
+                    {
+                        "subnet": refs["subnet"].value,
+                        "server_ip": str(
+                            refs["server_ip"].value or ""
+                        ).strip(),
+                        "port": int(refs["port"].value or 1194),
+                        "proto": refs["proto"].value or "udp",
+                        "push_lan_routes": [
+                            line.strip()
+                            for line in str(
+                                refs["push_lan"].value or ""
+                            ).splitlines()
+                            if line.strip()
+                        ],
+                    },
+                ),
+            )
+
         with self.content:
             self.status_label.text = (
-                "填写地址池与连接入口；需访问服务端局域网时在下方填写内网 CIDR（右栏内容较多时可向下滚动）。"
+                "配置 VPN 地址池、客户端连接入口和可选物理网路由。"
             )
-            with ui.card().classes("page-panel"):
-                ui.label("规划接入地址池").classes("section-title")
-                ui.label("客户端与站点共用的 IPv4 地址池，CIDR 前缀须在 /16～/30。").classes("section-caption")
-                subnet_input = ui.input(
-                    "接入地址池",
-                    placeholder="10.224.0.0/16",
-                    validation={"CIDR 格式不正确或前缀超出 /16~/30 范围": lambda value: _quick_cidr_check(value)},
-                ).classes("w-full q-mt-md")
-
-                ui.separator().classes("q-my-md")
-                ui.label("客户端连接入口").classes("section-title")
-                ui.label("写入客户端配置的 remote：公网 IP 或域名、端口、协议。").classes("section-caption")
-                server_ip_input = ui.input(
-                    "公网 IP 或域名",
-                    placeholder="如 1.2.3.4 或 vpn.example.com",
-                ).classes("w-full q-mt-sm")
-                with ui.row().classes("w-full gap-sm"):
-                    server_port_input = ui.number(
-                        "端口", value=1194, min=1, max=65535,
-                    ).classes("flex-1")
-                    server_proto_input = ui.select(
-                        {"udp": "UDP", "tcp": "TCP"},
-                        label="协议", value="udp",
-                    ).classes("flex-1")
-
-                ui.separator().classes("q-my-md")
-                ui.label("访问服务端物理局域网").classes("section-title")
-                ui.label(
-                    "访问本机物理局域网时，每行一条要推送的 CIDR（勿填 VPN 地址池）。"
-                    "留空则仅走隧道；可与系统设置一致，后续仍可改。"
-                ).classes("section-caption")
-                push_lan_input = ui.textarea(
-                    "推送给客户端的内网路由（每行一条 CIDR）",
-                    value="\n".join(self.wizard.config.get("push_lan_routes") or []),
-                    placeholder="例如服务端局域网：\n172.16.22.0/24",
-                ).classes("w-full q-mt-sm")
-
-                ui.button(
-                    "保存接入规划",
-                    icon="arrow_forward",
-                    on_click=lambda: self._run_step(
-                        WizardStep.CONFIG_SUBNET,
-                        {
-                            "subnet": subnet_input.value,
-                            "server_ip": (server_ip_input.value or "").strip(),
-                            "port": int(server_port_input.value or 1194),
-                            "proto": server_proto_input.value or "udp",
-                            "push_lan_routes": [
-                                x.strip()
-                                for x in (push_lan_input.value or "").splitlines()
-                                if x.strip()
-                            ],
-                        },
-                    ),
-                ).props("unelevated color=primary").classes("primary-action q-mt-md")
+            render_form_section(
+                "规划接入地址池",
+                description=(
+                    "客户端与站点共用 IPv4 地址池，"
+                    "CIDR 前缀必须在 /16～/30。"
+                ),
+                kicker="Network",
+                body=body,
+                actions=actions,
+            )
 
     def _render_start_service(self):
-        """渲染启动服务按钮。"""
+        """渲染服务启动/重试步骤。"""
+
+        def body() -> None:
+            ui.label(
+                "将生成默认 server.conf、同步脚本与运行目录，"
+                "刷新项目防火墙规则并启动 server 实例。"
+            ).classes("section-caption")
+
+        def actions() -> None:
+            primary_action(
+                "启动并进入平台",
+                icon="play_circle",
+                on_click=lambda: self._run_step(
+                    WizardStep.START_SERVICE,
+                    {"instance_name": "server"},
+                ),
+            )
+
         with self.content:
             self.status_label.text = "配置已完成，可启动默认接入服务。"
-            with ui.card().classes("page-panel"):
-                ui.label("启动默认接入服务").classes("section-title")
-                ui.label("启动后由平台托管，首页可看服务与连接概况。").classes("section-caption")
-                ui.button(
-                    "启动并进入平台",
-                    icon="play_circle",
-                    on_click=lambda: self._run_step(
-                        WizardStep.START_SERVICE,
-                        {"instance_name": "server"},
-                    ),
-                ).props("unelevated color=primary size=lg").classes("primary-action q-mt-md")
+            render_form_section(
+                "启动默认接入服务",
+                description="若启动失败，可修复系统问题后直接在本步骤重试。",
+                kicker="Service",
+                body=body,
+                actions=actions,
+            )
 
     def _render_complete(self):
-        """渲染初始化完成界面。"""
+        """渲染完成状态，并允许立即进入后台。"""
+
+        self.current_step = WizardStep.DONE
         self.content.clear()
         self._update_step_indicator()
 
+        def actions() -> None:
+            primary_action(
+                "进入后台",
+                icon="dashboard",
+                on_click=lambda: ui.navigate.to("/"),
+            )
+
         with self.content:
-            self.status_label.text = "初始化完成，正在进入控制台…"
-            alert_card.show("info", "平台已就绪", "初始化完成，即将跳转首页。")
-            ui.timer(2.0, lambda: ui.navigate.to("/"), once=True)
+            self.status_label.text = "初始化完成，平台已就绪。"
+            render_form_section(
+                "平台已就绪",
+                description="OpenVPN、PKI、地址池和默认服务均已完成初始化。",
+                kicker="Ready",
+                body=lambda: ui.label(
+                    "你可以立即进入后台管理用户、站点、证书与策略。"
+                ).classes("section-caption"),
+                actions=actions,
+            )
+            self._complete_timer = ui.timer(
+                2.0,
+                lambda: None
+                if self._client_deleted
+                else ui.navigate.to("/"),
+                once=True,
+            )
+
 
 
 def _quick_cidr_check(value: str) -> bool:
@@ -655,6 +727,7 @@ def _quick_cidr_check(value: str) -> bool:
         return False
     from ipaddress import IPv4Network
     try:
-        return IPv4Network(value, strict=False).prefixlen >= 16
+        prefix = IPv4Network(value, strict=False).prefixlen
+        return 16 <= prefix <= 30
     except ValueError:
         return False
