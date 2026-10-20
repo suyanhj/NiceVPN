@@ -27,6 +27,13 @@ from app.ui.components.status import status_badge
 
 logger = logging.getLogger(__name__)
 
+_SHORTCUT_ROUTES = {
+    "users": "/users",
+    "services": "/services",
+    "certs": "/certs",
+    "firewall": "/firewall",
+}
+
 
 def _format_bytes(size: int) -> str:
     """将字节数转换为易读格式。"""
@@ -47,6 +54,8 @@ class DashboardPage:
         self._content = None
         self._updated_label = None
         self._snapshot: DashboardSnapshot | None = None
+        self._health_chart = None
+        self._traffic_chart = None
 
     def _collect_snapshot(self) -> DashboardSnapshot:
         """采集当前仪表盘快照；配置读取失败也返回可渲染对象。"""
@@ -182,7 +191,7 @@ class DashboardPage:
 
     def _render_charts(self, snapshot: DashboardSnapshot) -> None:
         with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
-            render_chart_card(
+            self._health_chart = render_chart_card(
                 "服务健康度与状态分布",
                 service_health_chart_options(snapshot),
                 description=(
@@ -190,7 +199,7 @@ class DashboardPage:
                 ),
                 empty_message="尚未配置 OpenVPN 实例。",
             )
-            render_chart_card(
+            self._traffic_chart = render_chart_card(
                 "当前累计流量分布",
                 traffic_snapshot_chart_options(snapshot),
                 description=(
@@ -309,25 +318,25 @@ class DashboardPage:
                 "用户管理",
                 description="用户、连接与下载配置",
                 icon="people",
-                route="/users",
+                on_click=lambda: self._navigate_shortcut("users"),
             )
             quick_link_card(
                 "服务管理",
                 description="实例状态、日志与配置",
                 icon="dns",
-                route="/services",
+                on_click=lambda: self._navigate_shortcut("services"),
             )
             quick_link_card(
                 "证书管理",
                 description="证书有效期、续签与吊销",
                 icon="verified_user",
-                route="/certs",
+                on_click=lambda: self._navigate_shortcut("certs"),
             )
             quick_link_card(
                 "防火墙规则",
                 description="中心与对端访问策略",
                 icon="shield",
-                route="/firewall",
+                on_click=lambda: self._navigate_shortcut("firewall"),
             )
             quick_link_card(
                 "刷新安全告警",
@@ -335,6 +344,18 @@ class DashboardPage:
                 icon="notifications_active",
                 on_click=self._refresh_dashboard,
             )
+
+    @staticmethod
+    def shortcut_routes() -> dict[str, str]:
+        """返回可测试的快捷入口路由映射。"""
+
+        return dict(_SHORTCUT_ROUTES)
+
+    def _navigate_shortcut(self, key: str) -> None:
+        route = _SHORTCUT_ROUTES.get(str(key))
+        if not route:
+            raise ValueError(f"未知快捷入口: {key}")
+        ui.navigate.to(route)
 
     @staticmethod
     def _summary_row(
