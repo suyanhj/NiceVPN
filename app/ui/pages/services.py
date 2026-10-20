@@ -739,14 +739,6 @@ class ServicesPage:
             render_status(adapt_peer_service_view(peer, data))
 
         async def do_action(action: str) -> None:
-            if not peer_id:
-                ui.notify("缺少对端 ID", type="negative")
-                return
-            if peer_id in self._peer_action_busy:
-                ui.notify("该对端已有服务操作执行中，请稍候", type="info")
-                return
-
-            self._peer_action_busy.add(peer_id)
             render_status(
                 adapt_peer_service_view(
                     peer,
@@ -760,25 +752,7 @@ class ServicesPage:
                     busy=True,
                 )
             )
-            try:
-                await run.io_bound(
-                    lambda: self._peer_service.control_peer_client_service_via_ssh(
-                        peer_id,
-                        action,
-                    )
-                )
-            except Exception as exc:
-                logger.error(
-                    "对端客户端实例操作失败 peer=%s action=%s: %s",
-                    peer_id,
-                    action,
-                    exc,
-                )
-                ui.notify(f"{action} 失败: {exc}", type="negative")
-            else:
-                ui.notify(f"已执行 {action}", type="positive")
-            finally:
-                self._peer_action_busy.discard(peer_id)
+            await self._run_peer_service_action(peer_id, action)
             await refresh_status()
 
         async def do_toggle_power() -> None:
@@ -790,6 +764,42 @@ class ServicesPage:
             await do_action(action)
 
         return refresh_status
+
+    async def _run_peer_service_action(self, peer_id: str, action: str) -> bool:
+        """执行对端 systemd 动作，并按 peer_id 互斥。"""
+
+        peer_id = str(peer_id or "").strip()
+        if not peer_id:
+            ui.notify("缺少对端 ID", type="negative")
+            return False
+        if action not in {"start", "stop", "restart", "enable", "disable"}:
+            raise ValueError(f"不支持的对端服务操作: {action}")
+        if peer_id in self._peer_action_busy:
+            ui.notify("该对端已有服务操作执行中，请稍候", type="info")
+            return False
+
+        self._peer_action_busy.add(peer_id)
+        try:
+            await run.io_bound(
+                lambda: self._peer_service.control_peer_client_service_via_ssh(
+                    peer_id,
+                    action,
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "对端客户端实例操作失败 peer=%s action=%s: %s",
+                peer_id,
+                action,
+                exc,
+            )
+            ui.notify(f"{action} 失败: {exc}", type="negative")
+            return False
+        finally:
+            self._peer_action_busy.discard(peer_id)
+
+        ui.notify(f"已执行 {action}", type="positive")
+        return True
 
     def _show_peer_client_file_log_viewer(self, peer_id: str, peer_name: str) -> None:
         """查看对端 openvpn-client 文件日志；关闭后不再写入失效元素。"""
