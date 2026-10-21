@@ -56,7 +56,6 @@ def test_settings_page_uses_shared_header_tabs_and_form_section(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("系统设置")
             await user.should_see("OpenVPN")
             await user.should_see("服务端")
             await user.should_see("设备绑定")

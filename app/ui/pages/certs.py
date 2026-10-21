@@ -21,7 +21,6 @@ from app.ui.components.actions import (
 )
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.feedback import AsyncOperationGuard
-from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
@@ -114,10 +113,6 @@ class CertsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "证书管理",
-                description="查看证书有效性和到期状态，执行续签、吊销、CRL 更新及 CA 高风险维护。",
-            )
             render_page_toolbar(
                 search=search_region,
                 secondary=secondary_region,

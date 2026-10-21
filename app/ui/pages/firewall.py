@@ -65,7 +65,6 @@ from app.ui.components.actions import (
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
-from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_page_toolbar
@@ -352,11 +351,6 @@ class FirewallPage:
             )
 
         with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
-            render_page_header(
-                "规则管理",
-                description="集中管理中心 VPN_FORWARD 策略与对端 iptables 工作副本。",
-            )
-
             with ui.tabs(
                 value="center",
                 on_change=self._on_strat_change,

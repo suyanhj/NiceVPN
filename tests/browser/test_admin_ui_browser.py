@@ -69,6 +69,10 @@ def test_all_primary_routes_have_no_outer_horizontal_overflow(
         screen.open(route)
         screen.should_contain(title)
         screen.wait(0.2)
+        duplicate_headers = screen.selenium.execute_script(
+            "return document.querySelectorAll('.vpn-page-header').length"
+        )
+        assert int(duplicate_headers) == 0
         _assert_no_outer_horizontal_overflow(screen)
 
 

@@ -106,7 +106,6 @@ def test_groups_page_uses_shared_header_status_bulk_bar_and_root_protection() ->
         async with user_simulation(page_object.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("用户组管理")
             await user.should_see("新建用户组")
             await user.should_see("已选择 0 项")
             await user.should_see("默认组")

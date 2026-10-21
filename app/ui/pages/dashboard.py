@@ -20,8 +20,8 @@ from app.ui.adapters.dashboard import (
 from app.ui.components.actions import secondary_action
 from app.ui.components.cards import info_card, metric_card
 from app.ui.components.charts import render_chart_card
-from app.ui.components.page_header import render_page_header
 from app.ui.components.status import status_badge
+from app.ui.components.toolbars import render_page_toolbar
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +81,8 @@ class DashboardPage:
             )
 
         with ui.column().classes("page-shell mgmt-page dashboard-page"):
-            render_page_header(
-                "运行状态概览",
-                actions=header_actions,
-            )
+            toolbar = render_page_toolbar(secondary=header_actions)
+            toolbar.container.classes(add="vpn-toolbar--end")
             self._content = ui.column().classes("w-full gap-4")
 
         self._refresh_dashboard()
@@ -174,66 +172,46 @@ class DashboardPage:
             )
 
     def _render_summary(self, snapshot: DashboardSnapshot) -> None:
-        with ui.element("div").classes("dashboard-summary-grid"):
-            with ui.card().classes("vpn-info-card"):
-                ui.label("运行摘要").classes("vpn-info-card__title")
-                self._summary_row(
-                    "已纳管实例",
-                    str(snapshot.configured_instance_count),
-                )
-                self._summary_row(
-                    "运行实例",
-                    str(snapshot.active_count),
-                )
-                self._summary_row(
-                    "防火墙规则",
-                    (
-                        f"{snapshot.enabled_rule_count} 启用 / "
-                        f"{snapshot.rule_count} 总计"
-                    ),
-                )
-                self._summary_row("用户组", str(snapshot.group_count))
-                self._summary_row("注册用户", str(snapshot.user_count))
-                with ui.row().classes("items-center gap-2 q-mt-sm"):
-                    ui.label("综合健康度").classes("dashboard-summary-name")
-                    status_badge(
-                        (
-                            "success"
-                            if snapshot.health_score >= 80
-                            else (
-                                "warning"
-                                if snapshot.health_score >= 50
-                                else "failed"
-                            )
-                        ),
-                        label=f"{snapshot.health_score}%",
-                    )
+        cert_label, cert_tone = cert_status(
+            snapshot.cert_min_expiry_days,
+            warn_days=CERT_EXPIRY_WARN_DAYS,
+        )
+        cert_error = snapshot.source_errors.get("certs")
+        cert_status_tone = (
+            "warning" if cert_error else cert_tone
+        )
+        cert_status_label = (
+            "读取失败" if cert_error else cert_label
+        )
+        health_tone = (
+            "success"
+            if snapshot.health_score >= 80
+            else ("warning" if snapshot.health_score >= 50 else "failed")
+        )
 
-            cert_label, cert_tone = cert_status(
-                snapshot.cert_min_expiry_days,
-                warn_days=CERT_EXPIRY_WARN_DAYS,
+        with ui.card().classes("dashboard-status-strip"):
+            self._status_item(
+                "实例",
+                f"{snapshot.active_count}/{snapshot.configured_instance_count} 运行",
             )
-            cert_error = snapshot.source_errors.get("certs")
-            info_card(
-                "证书状态",
-                (
-                    f"证书数据读取失败：{cert_error}"
-                    if cert_error
-                    else cert_label
-                ),
-                icon="verified_user",
-                tone=(
-                    "warning"
-                    if cert_error
-                    else {
-                        "success": "success",
-                        "warning": "warning",
-                        "failed": "danger",
-                        "unknown": "default",
-                    }[cert_tone]
-                ),
+            self._status_item("用户", str(snapshot.user_count))
+            self._status_item("用户组", str(snapshot.group_count))
+            self._status_item(
+                "防火墙",
+                f"{snapshot.enabled_rule_count}/{snapshot.rule_count} 启用",
             )
-
+            with ui.element("div").classes("dashboard-status-item"):
+                ui.label("证书").classes("dashboard-status-item__label")
+                status_badge(
+                    cert_status_tone,
+                    label=cert_status_label,
+                )
+            with ui.element("div").classes("dashboard-status-item"):
+                ui.label("健康度").classes("dashboard-status-item__label")
+                status_badge(
+                    health_tone,
+                    label=f"{snapshot.health_score}%",
+                )
 
         if snapshot.instance_errors or snapshot.source_errors:
             messages: list[str] = []
@@ -249,16 +227,9 @@ class DashboardPage:
             )
 
     @staticmethod
-    def _summary_row(
-        label: str,
-        value: str,
-        value_class: str = "",
-    ) -> None:
-        """渲染摘要行。"""
+    def _status_item(label: str, value: str) -> None:
+        """渲染首页横向运行状态项。"""
 
-        with ui.element("div").classes("dashboard-summary-row"):
-            ui.label(label).classes("dashboard-summary-name")
-            classes = "dashboard-summary-val"
-            if value_class:
-                classes += f" {value_class}"
-            ui.label(value).classes(classes)
+        with ui.element("div").classes("dashboard-status-item"):
+            ui.label(label).classes("dashboard-status-item__label")
+            ui.label(value).classes("dashboard-status-item__value")

@@ -61,7 +61,6 @@ def test_peers_page_uses_shared_header_toolbar_status_and_cards(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("对端站点")
             await user.should_see("新建对端")
             await user.should_see("刷新 Mesh 路由")
             await user.should_see("广州站点")
@@ -322,7 +321,6 @@ def test_peer_manual_page_uses_shared_shell_and_exposes_downloads(
     async def verify_manual() -> None:
         async with user_simulation(lambda: page.render_manual_page(row["id"])) as user:
             await user.open("/")
-            await user.should_see("对端部署说明")
             await user.should_see("广州站点")
             await user.should_see("下载配置")
             await user.should_see("下载 Markdown")

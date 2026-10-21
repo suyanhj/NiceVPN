@@ -188,7 +188,6 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("规则管理")
             await user.should_see("中心策略")
             await user.should_see("对端远端")
             await user.should_see("新建规则")

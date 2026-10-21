@@ -20,10 +20,9 @@ from app.ui.components.list_selection import (
     sync_select_all_checkbox,
     update_visible_selection,
 )
-from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar
+from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
 from app.ui.copy_clipboard import copy_text_to_clipboard
 
 logger = logging.getLogger(__name__)
@@ -86,11 +85,8 @@ class GroupsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "用户组管理",
-                description="管理 VPN 子网划分、成员归属、启停状态与根组约束。",
-                actions=header_actions,
-            )
+            toolbar = render_page_toolbar(primary=header_actions)
+            toolbar.container.classes(add="vpn-toolbar--end")
 
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_ids),

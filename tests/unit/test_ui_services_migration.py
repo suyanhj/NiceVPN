@@ -87,7 +87,6 @@ def test_services_page_shared_shell_local_status_and_empty_peer_state(
         async with user_simulation(lambda: page.render(initial_tab="local")) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("服务管理")
             await user.should_see("本机实例")
             await user.should_see("对端实例")
             await user.should_see("刷新")
@@ -159,7 +158,6 @@ def test_peer_focus_is_rendered_first(
             lambda: page.render(initial_tab="peers", focus_peer_id="peer-b")
         ) as user:
             await user.open("/")
-            await user.should_see("服务管理")
 
     asyncio.run(verify())
     assert order[:2] == ["peer-b", "peer-a"]

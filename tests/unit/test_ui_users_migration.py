@@ -92,7 +92,6 @@ def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("用户管理")
             await user.should_see("新建用户")
             await user.should_see("批量导入")
             await user.should_see("刷新")

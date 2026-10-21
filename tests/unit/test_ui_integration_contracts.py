@@ -76,10 +76,11 @@ def test_theme_is_the_only_static_style_and_script_registration_entry() -> None:
 def test_page_sources_use_shared_admin_components() -> None:
     source = _page_source()
 
-    # 至少覆盖统一页头、操作、状态、表单、表格/图表能力；
-    # 防止最终集成时退回整页手写实现。
+    # 至少覆盖统一帮助、工具栏、操作、状态、表单、表格/图表能力；
+    # 内容区不再重复渲染页级大标题。
     expected_import_fragments = (
-        "app.ui.components.page_header",
+        "app.ui.components.help",
+        "app.ui.components.toolbars",
         "app.ui.components.actions",
         "app.ui.components.states",
         "app.ui.components.form",
@@ -88,6 +89,9 @@ def test_page_sources_use_shared_admin_components() -> None:
     )
     for fragment in expected_import_fragments:
         assert fragment in source
+
+    assert "app.ui.components.page_header" not in source
+    assert "render_page_header(" not in source
 
 
 def test_legacy_css_does_not_contain_replacement_character_or_old_sortable() -> None:

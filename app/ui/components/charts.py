@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 
 from nicegui import ui
 
+from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
 
 
@@ -35,6 +36,7 @@ class ChartCard:
     container: Any
     chart: Any | None
     placeholder: Any | None
+    help: Any | None
 
 
 def chart_options(options: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -82,10 +84,15 @@ def render_chart_card(
         raise ValueError("图表标题不能为空")
 
     merged = chart_options(options)
+    help_element = None
     with ui.card().classes("vpn-chart-card w-full") as container:
-        ui.label(normalized_title).classes("vpn-chart-card__title")
-        if description:
-            ui.label(str(description)).classes("vpn-chart-card__description")
+        with ui.row().classes("items-center gap-1 no-wrap"):
+            ui.label(normalized_title).classes("vpn-chart-card__title")
+            if description and str(description).strip():
+                help_element = help_hint(
+                    str(description).strip(),
+                    aria_label=f"{normalized_title}说明",
+                )
 
         chart = None
         placeholder = None
@@ -106,4 +113,9 @@ def render_chart_card(
                 )
                 .classes("vpn-chart-card__chart w-full")
             )
-    return ChartCard(container=container, chart=chart, placeholder=placeholder)
+    return ChartCard(
+        container=container,
+        chart=chart,
+        placeholder=placeholder,
+        help=help_element,
+    )

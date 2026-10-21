@@ -61,7 +61,6 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("运行状态概览")
             await user.should_see("在线设备")
             await user.should_see("3")
             await user.should_see("共 12 个注册用户")
@@ -72,8 +71,7 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
             await user.should_see("↓ 10.0 KB · 当前快照")
             await user.should_see("服务健康度与状态分布")
             await user.should_see("当前累计流量分布")
-            await user.should_see("不是历史趋势")
-            await user.should_see("6 启用 / 8 总计")
+            await user.should_see("6/8 启用")
             await user.should_see("15 天后到期")
 
     asyncio.run(verify())
@@ -83,6 +81,8 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
     assert page._health_chart.chart is not None
     assert page._traffic_chart is not None
     assert page._traffic_chart.chart is not None
+    assert page._health_chart.help is not None
+    assert page._traffic_chart.help is not None
     assert page._updated_label.text.startswith("最后更新 ")
 
 
@@ -126,7 +126,7 @@ def test_dashboard_partial_errors_do_not_hide_other_metrics(
             await user.should_see("在线设备")
             await user.should_see("共 12 个注册用户")
             await user.should_see("1 采集失败")
-            await user.should_see("证书数据读取失败")
+            await user.should_see("读取失败")
             await user.should_see("部分数据不可用")
             await user.should_see("实例 broken: status read failed")
             await user.should_see("certs: cert index broken")
@@ -167,7 +167,7 @@ def test_dashboard_manual_refresh_recollects_snapshot(
             assert page._snapshot is second
             await user.should_see("共 20 个注册用户")
             await user.should_see("9")
-            await user.should_see("10 启用 / 10 总计")
+            await user.should_see("10/10 启用")
 
     asyncio.run(verify())
 

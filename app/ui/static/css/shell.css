@@ -207,48 +207,9 @@ body {
   font-size: 12px;
 }
 
-.vpn-page-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  width: 100%;
-  min-width: 0;
-  padding: var(--vpn-space-5);
-  gap: var(--vpn-space-4);
-  border: 1px solid var(--vpn-border);
-  border-radius: var(--vpn-radius-lg);
-  background: var(--vpn-panel);
-  box-shadow: var(--vpn-shadow);
-}
-
-.vpn-page-header__copy {
-  flex: 1 1 320px;
-  min-width: 0;
-}
-
-.vpn-page-header__title {
-  color: var(--vpn-text-heading);
-  font-size: clamp(22px, 2vw, 28px);
-  font-weight: 700;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-
-.vpn-page-header__actions {
-  display: flex;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
-  gap: var(--vpn-space-2);
-}
-
 /* 首页按真实模块数量布局，避免删除模块后留下空列或窄屏横向溢出。 */
 .dashboard-overview-grid,
-.dashboard-chart-grid,
-.dashboard-summary-grid {
+.dashboard-chart-grid {
   display: grid;
   width: 100%;
   min-width: 0;
@@ -263,13 +224,9 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.dashboard-summary-grid {
-  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
-}
 
 .dashboard-overview-grid > *,
-.dashboard-chart-grid > *,
-.dashboard-summary-grid > * {
+.dashboard-chart-grid > * {
   width: 100%;
   min-width: 0;
 }
@@ -313,6 +270,69 @@ body {
 
 .vpn-toolbar {
   flex-wrap: wrap;
+}
+
+
+.vpn-toolbar--end {
+  justify-content: flex-end;
+}
+
+.vpn-help-hint {
+  flex: 0 0 auto;
+  color: var(--vpn-text-soft);
+  font-size: 16px;
+  cursor: help;
+  opacity: 0.78;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+
+.vpn-help-hint:hover,
+.vpn-help-hint:focus-visible {
+  color: var(--vpn-color-brand-soft);
+  opacity: 1;
+  outline: none;
+}
+
+.dashboard-status-strip {
+  display: grid !important;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--vpn-border);
+  background: var(--vpn-panel) !important;
+}
+
+.dashboard-status-item {
+  display: flex;
+  min-width: 0;
+  min-height: 72px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 16px;
+  gap: 5px;
+  border-right: 1px solid var(--vpn-border);
+}
+
+.dashboard-status-item:last-child {
+  border-right: 0;
+}
+
+.dashboard-status-item__label {
+  color: var(--vpn-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.dashboard-status-item__value {
+  overflow: hidden;
+  color: var(--vpn-text-heading);
+  font-family: var(--vpn-font-mono);
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vpn-toolbar__search {
@@ -367,6 +387,20 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--vpn-color-brand-soft) 22%, transparent);
 }
 
+@media (max-width: 1100px) {
+  .dashboard-status-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-status-item:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .dashboard-status-item:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--vpn-border);
+  }
+}
+
 @media (max-width: 1023px) {
   .dashboard-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -376,13 +410,30 @@ body {
     grid-column: 1 / -1;
   }
 
-  .dashboard-chart-grid,
-  .dashboard-summary-grid {
+  .dashboard-chart-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 767px) {
+  .dashboard-status-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-status-item {
+    min-height: 68px;
+    border-right: 1px solid var(--vpn-border);
+    border-bottom: 1px solid var(--vpn-border);
+  }
+
+  .dashboard-status-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .dashboard-status-item:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
   .dashboard-overview-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -391,20 +442,6 @@ body {
     padding: 14px 16px 22px;
   }
 
-  .vpn-page-header {
-    align-items: stretch;
-    flex-direction: column;
-    padding: var(--vpn-space-4);
-  }
-
-  .vpn-page-header__copy {
-    flex-basis: auto;
-  }
-
-  .vpn-page-header__actions {
-    justify-content: flex-start;
-    width: 100%;
-  }
 
   .vpn-toolbar {
     align-items: stretch;

@@ -27,7 +27,6 @@ from app.ui.adapters.services import adapt_local_service_view, adapt_peer_servic
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import MenuAction, more_actions, primary_action, secondary_action
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
@@ -136,11 +135,8 @@ class ServicesPage:
             )
 
         with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "服务管理",
-                description="集中查看本机 OpenVPN 实例与对端客户端服务，执行启停、日志查看和配置维护。",
-            )
-            render_page_toolbar(secondary=refresh_region)
+            toolbar = render_page_toolbar(secondary=refresh_region)
+            toolbar.container.classes(add="vpn-toolbar--end")
 
             with ui.tabs(
                 value=self._active_tab,

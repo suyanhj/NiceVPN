@@ -31,7 +31,7 @@ from app.ui.adapters.settings import (
 from app.ui.components.actions import primary_action, secondary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
-from app.ui.components.page_header import render_page_header
+from app.ui.components.help import help_hint
 from app.ui.components.states import error_state
 
 _EASYRSA_TEST_URL = "https://github.com/OpenVPN/easy-rsa/releases/download/v3.2.4/EasyRSA-3.2.4.tgz"
@@ -64,10 +64,6 @@ class SettingsPage:
             with ui.column().classes(
                 "page-shell mgmt-page w-full min-h-0 page-shell--settings"
             ):
-                render_page_header(
-                    "系统设置",
-                    description="集中配置 OpenVPN、服务端、设备策略、SSH、下载与通知能力。",
-                )
                 error_state(
                     str(exc),
                     title="系统设置加载失败",
@@ -91,12 +87,6 @@ class SettingsPage:
         with ui.column().classes(
             "page-shell mgmt-page w-full min-h-0 page-shell--settings"
         ):
-            render_page_header(
-                "系统设置",
-                description=(
-                    "集中配置 OpenVPN、服务端、设备策略、SSH、下载与通知能力。"
-                ),
-            )
             with ui.element("div").classes(
                 "firewall-control-header firewall-tab-bar w-full"
             ):
@@ -206,10 +196,11 @@ class SettingsPage:
                     "勿填 VPN 地址池。"
                 ),
             ).classes("w-full")
-            ui.label(
+            help_hint(
                 "客户端只会把这里配置的物理网段经 VPN 路由；"
-                "中心侧按 VPN 源网段自动 MASQUERADE。"
-            ).classes("settings-panel-desc")
+                "中心侧按 VPN 源网段自动 MASQUERADE。",
+                aria_label="内网路由说明",
+            )
             self.max_clients_input = ui.number(
                 "单实例最大并发连接数（max-clients）",
                 value=int(
@@ -221,10 +212,11 @@ class SettingsPage:
                 step=1,
                 format="%.0f",
             ).classes("w-full")
-            ui.label(
+            help_hint(
                 "保存会重写 server.conf 并刷新 VPN_FORWARD；"
-                "OpenVPN 进程仍需在服务管理中重启。"
-            ).classes("settings-panel-desc")
+                "OpenVPN 进程仍需在服务管理中重启。",
+                aria_label="保存生效说明",
+            )
 
         def actions() -> None:
             secondary_action(
@@ -264,10 +256,11 @@ class SettingsPage:
                     or "weak_fingerprint"
                 ),
             ).classes("w-full")
-            ui.label(
+            help_hint(
                 "A 仅审计；B 按 HW/UUID/平台信息分级匹配；"
-                "C 强制 IV_HWADDR。切换策略后旧设备可能需要重置绑定。"
-            ).classes("settings-panel-desc")
+                "C 强制 IV_HWADDR。切换策略后旧设备可能需要重置绑定。",
+                aria_label="设备绑定策略说明",
+            )
 
         def actions() -> None:
             primary_action(
@@ -310,10 +303,11 @@ class SettingsPage:
                     or ""
                 ),
             ).classes("w-full")
-            ui.label(
+            help_hint(
                 "对端未单独配置私钥时才使用此处默认密钥；"
-                "保存反馈和日志不会回显 PEM 或口令。"
-            ).classes("settings-panel-desc")
+                "保存反馈和日志不会回显 PEM 或口令。",
+                aria_label="SSH 默认密钥说明",
+            )
 
         def actions() -> None:
             primary_action(
@@ -595,9 +589,10 @@ class SettingsPage:
                 value=self.config.download_base_url or "",
                 placeholder="留空自动；例 https://vpn.example.com",
             ).classes("w-full")
-            ui.label(
-                "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。"
-            ).classes("settings-panel-desc")
+            help_hint(
+                "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。",
+                aria_label="基础 URL 说明",
+            )
 
         def actions() -> None:
             primary_action(
