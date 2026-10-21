@@ -38,8 +38,8 @@ def test_page_header_without_optional_content_keeps_simple_layout() -> None:
     assert "vpn-page-header" in header.container._classes
 
 
-def test_page_header_with_breadcrumbs_description_and_actions() -> None:
-    """完整页头可同时承载说明、面包屑和多个右侧操作。"""
+def test_page_header_with_breadcrumbs_and_actions_ignores_description() -> None:
+    """旧 description 参数保持兼容，但页面不再渲染副标题。"""
 
     def actions() -> None:
         ui.button("刷新", icon="refresh")
@@ -57,7 +57,7 @@ def test_page_header_with_breadcrumbs_description_and_actions() -> None:
             actions=actions,
         )
     )["header"]
-    assert header.description.text.startswith("展示当前对端元数据")
+    assert header.description is None
     assert header.breadcrumbs is not None
     assert header.actions is not None
     assert len(header.actions.default_slot.children) == 3

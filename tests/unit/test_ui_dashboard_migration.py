@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""仪表盘共享组件、图表、刷新与快捷入口测试。"""
+"""仪表盘共享组件、图表、刷新与响应式内容测试。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from app.ui.pages.dashboard import DashboardPage, _format_bytes
 def _snapshot(
     *,
     errors: bool = False,
-    alerts: list[dict] | None = None,
 ) -> DashboardSnapshot:
     return DashboardSnapshot(
         updated_at=datetime(2026, 10, 20, 10, 30, tzinfo=timezone.utc),
@@ -40,7 +39,6 @@ def _snapshot(
         instance_errors=(
             {"broken": "status read failed"} if errors else {}
         ),
-        alerts=list(alerts or []),
         user_count=12,
         group_count=3,
         rule_count=8,
@@ -52,11 +50,11 @@ def _snapshot(
     )
 
 
-def test_dashboard_uses_shared_metrics_charts_summary_and_shortcuts(
+def test_dashboard_uses_shared_metrics_charts_and_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = DashboardPage()
-    snap = _snapshot(alerts=[{"title": "证书即将到期"}])
+    snap = _snapshot()
     monkeypatch.setattr(page, "_collect_snapshot", lambda: snap)
 
     async def verify() -> None:
@@ -72,18 +70,11 @@ def test_dashboard_uses_shared_metrics_charts_summary_and_shortcuts(
             await user.should_see("累计流量")
             await user.should_see("↑ 5.0 KB")
             await user.should_see("↓ 10.0 KB · 当前快照")
-            await user.should_see("安全告警")
-            await user.should_see("证书即将到期")
             await user.should_see("服务健康度与状态分布")
             await user.should_see("当前累计流量分布")
             await user.should_see("不是历史趋势")
             await user.should_see("6 启用 / 8 总计")
             await user.should_see("15 天后到期")
-            await user.should_see("用户管理")
-            await user.should_see("服务管理")
-            await user.should_see("证书管理")
-            await user.should_see("防火墙规则")
-            await user.should_see("刷新安全告警")
 
     asyncio.run(verify())
 
@@ -139,7 +130,6 @@ def test_dashboard_partial_errors_do_not_hide_other_metrics(
             await user.should_see("部分数据不可用")
             await user.should_see("实例 broken: status read failed")
             await user.should_see("certs: cert index broken")
-            await user.should_see("当前无活动告警记录")
 
     asyncio.run(verify())
 
@@ -181,43 +171,6 @@ def test_dashboard_manual_refresh_recollects_snapshot(
 
     asyncio.run(verify())
 
-
-def test_dashboard_shortcut_routes_navigate_to_expected_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    page = DashboardPage()
-    visited: list[str] = []
-    monkeypatch.setattr(
-        "app.ui.pages.dashboard.ui.navigate.to",
-        lambda route: visited.append(str(route)),
-    )
-
-    expected = {
-        "users": "/users",
-        "services": "/services",
-        "certs": "/certs",
-        "firewall": "/firewall",
-    }
-    assert page.shortcut_routes() == expected
-
-    for key in expected:
-        page._navigate_shortcut(key)
-
-    assert visited == list(expected.values())
-    with pytest.raises(ValueError, match="未知快捷入口"):
-        page._navigate_shortcut("alerts")
-
-
-def test_dashboard_alert_shortcut_is_refresh_action(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    page = DashboardPage()
-    calls: list[int] = []
-    monkeypatch.setattr(page, "_refresh_dashboard", lambda: calls.append(1))
-
-    # 告警没有独立路由，页面约定其快捷动作就是重新采集告警快照。
-    page._refresh_dashboard()
-    assert calls == [1]
 
 
 @pytest.mark.parametrize(

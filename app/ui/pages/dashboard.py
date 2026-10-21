@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
-
 from nicegui import ui
 
 from app.core.config import load_config
@@ -20,19 +18,12 @@ from app.ui.adapters.dashboard import (
     traffic_snapshot_chart_options,
 )
 from app.ui.components.actions import secondary_action
-from app.ui.components.cards import info_card, metric_card, quick_link_card
+from app.ui.components.cards import info_card, metric_card
 from app.ui.components.charts import render_chart_card
 from app.ui.components.page_header import render_page_header
 from app.ui.components.status import status_badge
 
 logger = logging.getLogger(__name__)
-
-_SHORTCUT_ROUTES = {
-    "users": "/users",
-    "services": "/services",
-    "certs": "/certs",
-    "firewall": "/firewall",
-}
 
 
 def _format_bytes(size: int) -> str:
@@ -92,10 +83,6 @@ class DashboardPage:
         with ui.column().classes("page-shell mgmt-page dashboard-page"):
             render_page_header(
                 "运行状态概览",
-                description=(
-                    "查看当前连接、服务、累计流量与安全状态。"
-                    "仪表盘展示实时快照，不伪造历史趋势。"
-                ),
                 actions=header_actions,
             )
             self._content = ui.column().classes("w-full gap-4")
@@ -121,10 +108,9 @@ class DashboardPage:
             self._render_metrics(snapshot)
             self._render_charts(snapshot)
             self._render_summary(snapshot)
-            self._render_shortcuts()
 
     def _render_metrics(self, snapshot: DashboardSnapshot) -> None:
-        with ui.element("div").classes("dashboard-metric-grid"):
+        with ui.element("div").classes("dashboard-overview-grid"):
             metric_card(
                 "在线设备",
                 snapshot.total_clients,
@@ -168,35 +154,13 @@ class DashboardPage:
                 tone="info",
             )
 
-            alert_tone = "danger" if snapshot.alerts else (
-                "warning" if "alerts" in snapshot.source_errors else "success"
-            )
-            alert_helper = (
-                "告警文件读取失败"
-                if "alerts" in snapshot.source_errors
-                else (
-                    "存在待处理事件"
-                    if snapshot.alerts
-                    else "当前无活动告警"
-                )
-            )
-            metric_card(
-                "安全告警",
-                len(snapshot.alerts),
-                helper=alert_helper,
-                icon="security",
-                tone=alert_tone,
-                on_click=self._refresh_dashboard,
-            )
 
     def _render_charts(self, snapshot: DashboardSnapshot) -> None:
-        with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
+        with ui.element("div").classes("dashboard-chart-grid"):
             self._health_chart = render_chart_card(
                 "服务健康度与状态分布",
                 service_health_chart_options(snapshot),
-                description=(
-                    "基于当前实例运行状态、采集失败和活动告警计算。"
-                ),
+                description="基于当前实例运行状态和采集失败计算。",
                 empty_message="尚未配置 OpenVPN 实例。",
             )
             self._traffic_chart = render_chart_card(
@@ -210,7 +174,7 @@ class DashboardPage:
             )
 
     def _render_summary(self, snapshot: DashboardSnapshot) -> None:
-        with ui.element("div").classes("dashboard-bottom-grid items-stretch"):
+        with ui.element("div").classes("dashboard-summary-grid"):
             with ui.card().classes("vpn-info-card"):
                 ui.label("运行摘要").classes("vpn-info-card__title")
                 self._summary_row(
@@ -270,33 +234,6 @@ class DashboardPage:
                 ),
             )
 
-            alert_error = snapshot.source_errors.get("alerts")
-            if alert_error:
-                info_card(
-                    "最新告警",
-                    f"告警文件读取失败：{alert_error}",
-                    icon="error_outline",
-                    tone="warning",
-                )
-            elif snapshot.alerts:
-                latest = snapshot.alerts[0]
-                info_card(
-                    "最新告警",
-                    str(
-                        latest.get("title")
-                        or latest.get("message")
-                        or "存在待处理告警"
-                    ),
-                    icon="error_outline",
-                    tone="danger",
-                )
-            else:
-                info_card(
-                    "最新告警",
-                    "当前无活动告警记录。",
-                    icon="check_circle",
-                    tone="success",
-                )
 
         if snapshot.instance_errors or snapshot.source_errors:
             messages: list[str] = []
@@ -310,52 +247,6 @@ class DashboardPage:
                 icon="warning",
                 tone="warning",
             )
-
-    def _render_shortcuts(self) -> None:
-        ui.label("快捷入口").classes("mgmt-kicker")
-        with ui.element("div").classes("dashboard-metric-grid"):
-            quick_link_card(
-                "用户管理",
-                description="用户、连接与下载配置",
-                icon="people",
-                on_click=lambda: self._navigate_shortcut("users"),
-            )
-            quick_link_card(
-                "服务管理",
-                description="实例状态、日志与配置",
-                icon="dns",
-                on_click=lambda: self._navigate_shortcut("services"),
-            )
-            quick_link_card(
-                "证书管理",
-                description="证书有效期、续签与吊销",
-                icon="verified_user",
-                on_click=lambda: self._navigate_shortcut("certs"),
-            )
-            quick_link_card(
-                "防火墙规则",
-                description="中心与对端访问策略",
-                icon="shield",
-                on_click=lambda: self._navigate_shortcut("firewall"),
-            )
-            quick_link_card(
-                "刷新安全告警",
-                description="重新读取当前 alerts.json 快照",
-                icon="notifications_active",
-                on_click=self._refresh_dashboard,
-            )
-
-    @staticmethod
-    def shortcut_routes() -> dict[str, str]:
-        """返回可测试的快捷入口路由映射。"""
-
-        return dict(_SHORTCUT_ROUTES)
-
-    def _navigate_shortcut(self, key: str) -> None:
-        route = _SHORTCUT_ROUTES.get(str(key))
-        if not route:
-            raise ValueError(f"未知快捷入口: {key}")
-        ui.navigate.to(route)
 
     @staticmethod
     def _summary_row(

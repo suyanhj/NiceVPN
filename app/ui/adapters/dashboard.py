@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from app.core.constants import (
-    ALERTS_FILE,
     CERT_EXPIRY_WARN_DAYS,
     GROUPS_DIR,
     USERS_DIR,
@@ -28,7 +26,6 @@ class DashboardSnapshot:
     updated_at: datetime
     instances: list[InstanceStatus] = field(default_factory=list)
     instance_errors: dict[str, str] = field(default_factory=dict)
-    alerts: list[dict[str, Any]] = field(default_factory=list)
     user_count: int = 0
     group_count: int = 0
     rule_count: int = 0
@@ -67,7 +64,7 @@ class DashboardSnapshot:
             base = 100
         else:
             base = int((self.active_count / total) * 100)
-        penalty = len(self.alerts) * 2 + len(self.instance_errors) * 5
+        penalty = len(self.instance_errors) * 5
         return max(0, min(100, base - penalty))
 
 
@@ -75,15 +72,6 @@ def _count_json_files(directory: Path) -> int:
     if not directory.exists():
         return 0
     return sum(1 for _ in directory.glob("*.json"))
-
-
-def _read_alerts(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        raise ValueError("alerts.json 根节点必须为数组")
-    return [dict(item) for item in data if isinstance(item, Mapping)]
 
 
 def _cert_min_expiry_days(cert_service: Any) -> int | None:
@@ -110,7 +98,6 @@ def collect_dashboard_snapshot(
     instance_names: list[str],
     *,
     monitor: ServiceMonitor | None = None,
-    alerts_file: Path = ALERTS_FILE,
     users_dir: Path = USERS_DIR,
     groups_dir: Path = GROUPS_DIR,
     cert_service_factory: Callable[[], Any] | None = None,
@@ -135,11 +122,6 @@ def collect_dashboard_snapshot(
             logger.exception("采集仪表盘实例失败 instance=%s", name)
             snapshot.instance_errors[name] = str(exc)
 
-    try:
-        snapshot.alerts = _read_alerts(alerts_file)
-    except Exception as exc:
-        logger.error("读取仪表盘告警失败: %s", exc)
-        snapshot.source_errors["alerts"] = str(exc)
 
     try:
         snapshot.user_count = _count_json_files(users_dir)
