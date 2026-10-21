@@ -87,3 +87,64 @@ jobs:
         run: >
           python -m pytest -c tests/browser/pytest.ini tests/browser -q
           --driver Chrome
+
+
+  integration-validate:
+    name: OpenSpec strict validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DO_NOT_TRACK: "1"
+      OPENSPEC_TELEMETRY: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Validate Git diff whitespace
+        run: git diff --check HEAD^
+
+      - name: Validate UTF-8 and replacement characters
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          roots = (
+              Path("app/ui"),
+              Path("tests/unit"),
+              Path("tests/browser"),
+              Path("openspec/changes/vpn-admin-ui"),
+          )
+          failures = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob("*"):
+                  if not path.is_file():
+                      continue
+                  if path.suffix.lower() not in {".py", ".css", ".js", ".md", ".yaml", ".yml", ".json"}:
+                      continue
+                  try:
+                      text = path.read_text(encoding="utf-8")
+                  except UnicodeDecodeError as exc:
+                      failures.append(f"{path}: invalid UTF-8: {exc}")
+                      continue
+                  if "\ufffd" in text:
+                      failures.append(f"{path}: contains U+FFFD replacement character")
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
+
+      - name: OpenSpec strict validation
+        run: >-
+          npx --yes @fission-ai/openspec@1.14.2
+          validate vpn-admin-ui --strict --no-interactive
+
+      - name: Verify clean repository after validation
+        run: |
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
