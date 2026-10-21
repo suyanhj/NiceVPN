@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from nicegui.testing import Screen
+from selenium.webdriver.common.by import By
 
 
 pytestmark = pytest.mark.nondestructive
@@ -22,6 +23,22 @@ ROUTES = (
     ("/settings", "系统设置"),
     ("/init", "安全接入平台初始化"),
 )
+
+
+def _click_q_tab(screen: Screen, label: str) -> None:
+    """精确点击 Quasar Tab，避免 Screen.click 的子串匹配命中说明文字。"""
+
+    tabs = screen.selenium.find_elements(By.CSS_SELECTOR, ".q-tab")
+    target = next(
+        (
+            tab for tab in tabs
+            if tab.is_displayed() and tab.text.strip() == label
+        ),
+        None,
+    )
+    assert target is not None, f"missing visible q-tab: {label}"
+    target.click()
+    screen.wait(0.2)
 
 
 def _assert_no_outer_horizontal_overflow(screen: Screen) -> None:
@@ -105,7 +122,7 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
         ("下载配置", "GitHub 下载代理"),
         ("通知", "通知推送"),
     ):
-        screen.click(tab)
+        _click_q_tab(screen, tab)
         screen.should_contain(expected)
 
     screen.open("/init")
