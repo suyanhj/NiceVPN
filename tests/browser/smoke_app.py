@@ -201,6 +201,16 @@ class FakePeerService:
             }
         ]
 
+    def fetch_remote_peer_filter_chain_snapshot(self, peer_id: str):
+        return {
+            "peer_id": peer_id,
+            "chain": "NICEVPN-PEER",
+            "chain_exists": True,
+            "chain_rests": [
+                "-p tcp -s 10.224.10.0/24 -d 172.16.0.10 --dport 443 -j ACCEPT"
+            ],
+        }
+
     def export_peer_manual_markdown(self, _peer_id: str):
         return "# 广州站点\n\n执行示例。\n"
 
@@ -330,6 +340,9 @@ def _firewall() -> None:
     import app.ui.pages.firewall as firewall_module
     firewall_module.GroupService.list_all = lambda _self: [dict(row) for row in GROUPS]
     firewall_module.UserService.list_all = lambda _self: [dict(row) for row in USERS]
+    # Browser smoke 不落盘远端链缓存，保持 nondestructive。
+    firewall_module.remote_chain_cache.record_from_fetch = lambda _snap, _peer_id: None
+    firewall_module.remote_chain_cache.read_remote_chain_cache = lambda _peer_id: None
     page.render()
 
 
