@@ -12,12 +12,12 @@ pytestmark = pytest.mark.nondestructive
 
 
 ROUTES = (
-    ("/", "运行状态概览"),
+    ("/", "仪表盘"),
     ("/users", "用户管理"),
-    ("/groups", "用户组管理"),
+    ("/groups", "组管理"),
     ("/peers", "对端站点"),
     ("/peers/manual", "对端部署说明"),
-    ("/firewall", "规则管理"),
+    ("/firewall", "防火墙规则"),
     ("/certs", "证书管理"),
     ("/services", "服务管理"),
     ("/settings", "系统设置"),

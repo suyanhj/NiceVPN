@@ -295,6 +295,10 @@ class PeersPage:
 
                 with ui.element("div").classes("peer-manual-summary-card"):
                     ui.label("对端信息").classes("peer-manual-section-title")
+                    self._render_manual_meta(
+                        "站点名称",
+                        str(row.get("name") or peer_id),
+                    )
                     self._render_manual_meta("对端 ID", overview["peer_id"])
                     self._render_manual_meta("绑定用户", overview["bound_username"])
                     self._render_manual_meta("VPN 地址池", overview["global_subnet"])
