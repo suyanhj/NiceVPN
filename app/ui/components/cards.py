@@ -37,6 +37,18 @@ class QuickLinkCard:
     icon: Any | None
 
 
+
+
+def _make_card_keyboard_clickable(container: Any, callback: Callable[..., Any]) -> None:
+    """让可点击卡片具备按钮等价的键盘与语义行为。"""
+
+    container.classes(add="vpn-card--clickable")
+    container.props("tabindex=0 role=button")
+    container.on("click", callback)
+    container.on("keydown.enter", callback)
+    container.on("keydown.space", callback)
+
+
 def _validate_tone(tone: CardTone) -> None:
     if tone not in {"default", "success", "warning", "danger", "info"}:
         raise ValueError(f"不支持的卡片状态: {tone}")
@@ -60,8 +72,7 @@ def metric_card(
 
     with ui.card().classes(f"vpn-metric-card vpn-card-tone--{tone}") as container:
         if on_click is not None:
-            container.on("click", on_click)
-            container.classes(add="vpn-card--clickable")
+            _make_card_keyboard_clickable(container, on_click)
         with ui.row().classes("items-start justify-between no-wrap w-full"):
             with ui.column().classes("gap-1 min-w-0"):
                 label_element = ui.label(normalized_label).classes("vpn-metric-card__label")
@@ -126,8 +137,7 @@ def quick_link_card(
 
     with ui.card().classes("vpn-quick-card") as container:
         if callback is not None:
-            container.on("click", callback)
-            container.classes(add="vpn-card--clickable")
+            _make_card_keyboard_clickable(container, callback)
         with ui.row().classes("items-center no-wrap w-full gap-3"):
             icon_element = ui.icon(icon).classes("vpn-quick-card__icon") if icon else None
             with ui.column().classes("gap-1 min-w-0 grow"):

@@ -9,6 +9,8 @@ from typing import Any
 
 from nicegui import ui
 
+from app.ui.components.help import help_hint
+
 
 @dataclass(slots=True)
 class FormSection:
@@ -39,11 +41,13 @@ def render_form_section(
             with ui.element("div").classes("settings-panel-copy"):
                 if kicker and str(kicker).strip():
                     ui.label(str(kicker).strip()).classes("settings-kicker")
-                ui.label(normalized).classes("settings-panel-title")
-                if description and str(description).strip():
-                    ui.label(str(description).strip()).classes(
-                        "settings-panel-desc"
-                    )
+                with ui.row().classes("items-center gap-1 no-wrap"):
+                    ui.label(normalized).classes("settings-panel-title")
+                    if description and str(description).strip():
+                        help_hint(
+                            str(description).strip(),
+                            aria_label=f"{normalized}说明",
+                        )
 
         with ui.element("div").classes(
             "settings-stack vpn-form-section__body"

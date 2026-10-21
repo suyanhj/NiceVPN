@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 
 from app.services.monitor.service_monitor import InstanceStatus
@@ -67,16 +66,10 @@ def test_snapshot_normal_values(tmp_path) -> None:
     (users / "alice.json").write_text("{}", encoding="utf-8")
     (users / "bob.json").write_text("{}", encoding="utf-8")
     (groups / "default.json").write_text("{}", encoding="utf-8")
-    alerts = tmp_path / "alerts.json"
-    alerts.write_text(
-        json.dumps([{"title": "cert warning"}]),
-        encoding="utf-8",
-    )
 
     snap = collect_dashboard_snapshot(
         ["server1", "stopped"],
         monitor=FakeMonitor(),
-        alerts_file=alerts,
         users_dir=users,
         groups_dir=groups,
         cert_service_factory=lambda: FakeCertService(20),
@@ -94,7 +87,6 @@ def test_snapshot_normal_values(tmp_path) -> None:
     assert snap.rule_count == 3
     assert snap.enabled_rule_count == 2
     assert snap.cert_min_expiry_days in {19, 20}
-    assert len(snap.alerts) == 1
     assert snap.source_errors == {}
 
 
@@ -102,7 +94,6 @@ def test_snapshot_partial_instance_failure_is_isolated(tmp_path) -> None:
     snap = collect_dashboard_snapshot(
         ["server1", "broken", "stopped"],
         monitor=FakeMonitor(fail={"broken"}),
-        alerts_file=tmp_path / "missing-alerts.json",
         users_dir=tmp_path / "missing-users",
         groups_dir=tmp_path / "missing-groups",
         cert_service_factory=lambda: FakeCertService(30),
@@ -121,14 +112,10 @@ def test_snapshot_partial_instance_failure_is_isolated(tmp_path) -> None:
     assert snap.health_score < 100
 
 
-def test_snapshot_no_instances_and_broken_alert_file(tmp_path) -> None:
-    alerts = tmp_path / "alerts.json"
-    alerts.write_text("{bad-json", encoding="utf-8")
-
+def test_snapshot_no_instances_stays_healthy(tmp_path) -> None:
     snap = collect_dashboard_snapshot(
         [],
         monitor=FakeMonitor(),
-        alerts_file=alerts,
         users_dir=tmp_path / "users",
         groups_dir=tmp_path / "groups",
         cert_service_factory=lambda: FakeCertService(90),
@@ -139,8 +126,7 @@ def test_snapshot_no_instances_and_broken_alert_file(tmp_path) -> None:
     assert snap.configured_instance_count == 0
     assert snap.total_clients == 0
     assert snap.health_score == 100
-    assert "alerts" in snap.source_errors
-    assert snap.alerts == []
+    assert snap.source_errors == {}
 
 
 def test_service_health_chart_normal_empty_and_single() -> None:

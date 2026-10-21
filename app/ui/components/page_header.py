@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""统一页面标题、说明、面包屑和操作区。"""
+"""统一页面标题、面包屑和操作区。"""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def render_page_header(
     breadcrumbs: Sequence[BreadcrumbItem] = (),
     actions: Callable[[], None] | None = None,
 ) -> PageHeader:
-    """渲染页面信息和可选操作，所有插槽均保持响应式布局。"""
+    """渲染页面标题和可选操作；description 仅保留为兼容参数，不再展示。"""
 
     normalized_title = str(title).strip()
     if not normalized_title:
@@ -63,10 +63,6 @@ def render_page_header(
                             )
 
             title_element = ui.label(normalized_title).classes("vpn-page-header__title")
-            if description and str(description).strip():
-                description_element = ui.label(str(description).strip()).classes(
-                    "vpn-page-header__description"
-                )
 
         if actions is not None:
             with ui.element("div").classes("vpn-page-header__actions") as actions_element:

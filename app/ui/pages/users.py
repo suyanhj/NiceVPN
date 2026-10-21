@@ -25,7 +25,6 @@ from app.ui.components.actions import (
 )
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.page_header import render_page_header
 from app.ui.components.states import empty_state, error_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
@@ -140,10 +139,6 @@ class UsersPage:
             )
 
         with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "用户管理",
-                description="统一查看账号状态、在线会话、虚拟 IP、证书、流量与设备绑定，并执行配置和链接操作。",
-            )
             render_page_toolbar(
                 search=search_region,
                 primary=primary_region,

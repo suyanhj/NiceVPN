@@ -29,7 +29,7 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.page_header import BreadcrumbItem, render_page_header
+from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
@@ -124,10 +124,6 @@ class PeersPage:
             )
 
         with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "对端站点",
-                description="管理站点绑定、后方 LAN、Mesh 路由与远程 OpenVPN 运维能力。",
-            )
             render_page_toolbar(
                 primary=primary_region,
                 secondary=secondary_region,
@@ -135,13 +131,14 @@ class PeersPage:
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
-                    ui.label("对端列表").classes("mgmt-kicker")
+                    with ui.row().classes("items-center gap-1"):
+                        ui.label("对端列表").classes("mgmt-kicker")
+                        help_hint(
+                            "修改 LAN、Mesh 或用户归属后，需要让对端重新连接 OpenVPN 才会完全生效。",
+                            aria_label="对端变更生效说明",
+                        )
                     self._peers_total_label = ui.label("共 0 个").classes("group-list-count")
                 self.list_container = ui.column().classes("w-full")
-
-            ui.label(
-                "修改 LAN、Mesh 或用户归属后，需要让对端重新连接 OpenVPN 才会完全生效。"
-            ).classes("section-caption mgmt-page-foot")
 
         self._refresh_list()
 
@@ -219,14 +216,6 @@ class PeersPage:
         except Exception as exc:
             logger.exception("读取对端部署说明失败 peer=%s", peer_id)
             with ui.column().classes("page-shell peer-manual-page"):
-                render_page_header(
-                    "对端部署说明",
-                    description="加载对端信息失败。",
-                    breadcrumbs=(
-                        BreadcrumbItem("对端站点", "/peers"),
-                        BreadcrumbItem("部署说明"),
-                    ),
-                )
                 error_state(
                     str(exc),
                     title="部署说明加载失败",
@@ -236,14 +225,6 @@ class PeersPage:
 
         if not row:
             with ui.column().classes("page-shell peer-manual-page"):
-                render_page_header(
-                    "对端部署说明",
-                    description="未找到指定对端。",
-                    breadcrumbs=(
-                        BreadcrumbItem("对端站点", "/peers"),
-                        BreadcrumbItem("部署说明"),
-                    ),
-                )
                 empty_state(
                     "对端部署说明不可用",
                     description="未找到该对端，请返回列表重新选择。",
@@ -259,14 +240,6 @@ class PeersPage:
         except Exception as exc:
             logger.exception("生成对端部署说明失败 peer=%s", peer_id)
             with ui.column().classes("page-shell peer-manual-page"):
-                render_page_header(
-                    "对端部署说明",
-                    description=str(row.get("name") or peer_id),
-                    breadcrumbs=(
-                        BreadcrumbItem("对端站点", "/peers"),
-                        BreadcrumbItem("部署说明"),
-                    ),
-                )
                 error_state(
                     str(exc),
                     title="部署说明生成失败",
@@ -309,16 +282,8 @@ class PeersPage:
             )
 
         with ui.column().classes("page-shell peer-manual-page"):
-            render_page_header(
-                "对端部署说明",
-                description="按步骤完成对端 OpenVPN 部署；命令、说明和绑定用户配置均可直接下载或复制。",
-                breadcrumbs=(
-                    BreadcrumbItem("对端站点", "/peers"),
-                    BreadcrumbItem(str(row.get("name") or peer_id)),
-                    BreadcrumbItem("部署说明"),
-                ),
-                actions=header_actions,
-            )
+            toolbar = render_page_toolbar(secondary=header_actions)
+            toolbar.container.classes(add="vpn-toolbar--end")
 
             with ui.element("section").classes("peer-manual-grid"):
                 with ui.element("div").classes("peer-manual-summary-card"):
@@ -330,6 +295,10 @@ class PeersPage:
 
                 with ui.element("div").classes("peer-manual-summary-card"):
                     ui.label("对端信息").classes("peer-manual-section-title")
+                    self._render_manual_meta(
+                        "站点名称",
+                        str(row.get("name") or peer_id),
+                    )
                     self._render_manual_meta("对端 ID", overview["peer_id"])
                     self._render_manual_meta("绑定用户", overview["bound_username"])
                     self._render_manual_meta("VPN 地址池", overview["global_subnet"])
@@ -855,8 +824,20 @@ class PeersPage:
         if self._peers_total_label is not None:
             self._peers_total_label.text = f"共 {len(peers)} 个"
         self.list_container.clear()
-        with self.list_container:
-            self._render_peer_list(peers)
+        try:
+            with self.list_container:
+                self._render_peer_list(peers)
+        except Exception as exc:
+            logger.exception("渲染对端辅助数据失败")
+            if self._peers_total_label is not None:
+                self._peers_total_label.text = "辅助数据失败"
+            self.list_container.clear()
+            with self.list_container:
+                error_state(
+                    str(exc),
+                    title="对端辅助数据加载失败",
+                    on_retry=self._refresh_list,
+                )
 
     def _render_peer_list(self, peers: list[dict]) -> None:
         if not peers:
