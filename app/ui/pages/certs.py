@@ -115,10 +115,6 @@ class CertsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
-            with ui.element("div").classes("vpn-v2-page-intro"):
-                ui.label("CERTIFICATES").classes("vpn-v2-page-eyebrow")
-                ui.label("生命周期 · 信任状态 · 批量运维").classes("vpn-v2-page-meta")
-
             render_page_toolbar(
                 search=search_region,
                 secondary=secondary_region,
