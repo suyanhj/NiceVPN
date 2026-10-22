@@ -41,6 +41,7 @@ def render_data_grid(
     selectable: bool = True,
     selected_ids: Iterable[object] | None = None,
     on_cell_click: Callable[..., Any] | None = None,
+    suppress_horizontal_scroll: bool = False,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
 
@@ -61,6 +62,8 @@ def render_data_grid(
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if suppress_horizontal_scroll:
+        options["suppressHorizontalScroll"] = True
     if selectable:
         options["rowSelection"] = {"mode": "multiRow"}
         options["selectionColumnDef"] = {
