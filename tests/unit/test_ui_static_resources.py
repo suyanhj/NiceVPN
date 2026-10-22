@@ -120,3 +120,17 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     assert "@media (max-width: 767px)" in shell_source
     assert ".vpn-tech-grid" in effects_source
     assert "prefers-reduced-motion" in effects_source
+
+
+def test_theme_fingerprints_static_assets() -> None:
+    """CSS/JS 使用内容哈希版本，避免 pull+重启后浏览器继续命中旧缓存。"""
+
+    from app.ui.theme import _versioned_static_url
+
+    css_url = _versioned_static_url("/static/css/shell.css")
+    js_url = _versioned_static_url("/static/js/clipboard-adapter.js")
+
+    assert css_url.startswith("/static/css/shell.css?v=")
+    assert js_url.startswith("/static/js/clipboard-adapter.js?v=")
+    assert len(css_url.rsplit("=", 1)[1]) == 12
+    assert len(js_url.rsplit("=", 1)[1]) == 12
