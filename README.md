@@ -118,10 +118,15 @@ systemctl enable --now openvpn-mgmt
 
 ### Docker
 
-生产镜像使用多阶段构建：Node 22 只存在于 `frontend-builder` 阶段，最终 runtime 为 Python 3.14，不携带 Node/npm。
+生产镜像使用多阶段构建：Node 22 只存在于 `frontend-builder` 阶段，最终 runtime 为 Python 3.14，不携带 Node/npm。默认针对国内网络优化：
+
+- Node / Python 基础镜像：华为 SWR 公共镜像路径
+- Debian APT：中科大 `mirrors.ustc.edu.cn`
+- npm：阿里/npmmirror `https://registry.npmmirror.com`
+- apt、pip、npm 下载缓存使用 BuildKit cache mount，不写入最终 runtime 层
 
 ```bash
-docker build -t nicevpn:latest -f deploy/docker/Dockerfile .
+DOCKER_BUILDKIT=1 docker build -t nicevpn:latest -f deploy/docker/Dockerfile .
 
 docker run -d \
   --name nicevpn \
@@ -135,6 +140,19 @@ docker run -d \
 - 默认 Web UI 监听 `0.0.0.0:8880`；使用 `--network host` 时无需额外 `-p`。
 - 目标环境以 **Linux + OpenVPN + EasyRSA** 与控制台能力匹配为准。
 - 须配置 `download_base_url` 或反代 `Host` / `X-Forwarded-*`，否则创建用户可能无法生成可达下载链接。
+
+构建源均可通过 build arg 覆盖，例如：
+
+```bash
+docker build \
+  --build-arg NODE_IMAGE=your-registry/node:22-alpine \
+  --build-arg PYTHON_IMAGE=your-registry/python:3.14-slim \
+  --build-arg NPM_REGISTRY=https://registry.npmjs.org \
+  --build-arg DEBIAN_MIRROR=deb.debian.org \
+  -t nicevpn:latest \
+  -f deploy/docker/Dockerfile \
+  .
+```
 
 ## 开发约定
 

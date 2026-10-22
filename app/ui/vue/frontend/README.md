@@ -18,6 +18,8 @@ This directory is the build-time Vue visual layer for NiceGUI.
 - motion-v
 - selectively adapted Inspira UI presentation components
 
+The Docker build defaults npm to `https://registry.npmmirror.com`; override it with build arg `NPM_REGISTRY` when needed.
+
 ## Build model
 
 Production and local startup share the Docker stages in `deploy/docker/Dockerfile`:

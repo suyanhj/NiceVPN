@@ -29,3 +29,4 @@
 - [x] 3.3 Docker runtime 切换 Python 3.14，多阶段复制 Vue 构建产物且不携带 Node/npm。
 - [x] 3.4 GitHub Actions Python 单测收敛到 3.14；Chrome smoke 在启动应用前构建正式 Vue dist。
 - [x] 3.5 新增独立 `build-ui.sh`，只构建前端产物并支持自定义输出目录；`start.sh` 与 CI 统一复用该脚本。
+- [x] 3.6 优化 Dockerfile 层数与国内构建链：华为公共基础镜像、中科大 Debian 源、npmmirror npm 源，并使用 BuildKit cache mount 避免下载缓存进入 runtime 镜像。
