@@ -752,3 +752,189 @@ body {
   border-radius: var(--vpn-radius-sm);
   background: color-mix(in srgb, var(--vpn-color-warning) 7%, var(--vpn-panel));
 }
+
+
+/* ---------- NiceVPN UI V2 homepage proof-of-concept ---------- */
+
+.vpn-nav-brand {
+  margin-bottom: 4px;
+}
+
+.vpn-nav-mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(110, 168, 255, 0.18);
+  border-radius: 11px;
+  background:
+    linear-gradient(145deg, rgba(110, 168, 255, 0.14), rgba(88, 219, 199, 0.04)),
+    rgba(255, 255, 255, 0.02);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.vpn-nav-mark__icon {
+  color: #9fc4ff;
+  font-size: 20px;
+  filter: drop-shadow(0 0 8px rgba(110, 168, 255, 0.28));
+}
+
+.dashboard-page--v2 {
+  position: relative;
+}
+
+.dashboard-v2-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  gap: 12px;
+}
+
+.dashboard-v2-eyebrow {
+  color: rgba(139, 185, 255, 0.78);
+  font-family: var(--vpn-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.dashboard-v2-meta {
+  color: var(--vpn-text-soft);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.vpn-metric-card--v2 {
+  position: relative;
+  isolation: isolate;
+  min-height: 142px;
+  overflow: hidden;
+  padding: 22px !important;
+  border-color: rgba(255, 255, 255, 0.075) !important;
+  border-radius: 16px !important;
+  background:
+    linear-gradient(145deg, rgba(19, 26, 37, 0.92), rgba(10, 14, 21, 0.88)) !important;
+  box-shadow: var(--vpn-glow-brand);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.vpn-metric-card--v2:hover {
+  border-color: rgba(110, 168, 255, 0.22) !important;
+  box-shadow:
+    0 0 0 1px rgba(110, 168, 255, 0.06),
+    0 18px 56px rgba(24, 71, 122, 0.16);
+  transform: translateY(-2px);
+}
+
+.vpn-metric-card--v2::after {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.035), transparent 28%),
+    linear-gradient(180deg, transparent 58%, rgba(88, 219, 199, 0.025));
+  content: "";
+  pointer-events: none;
+}
+
+.vpn-metric-card--v2 > *:not(.vpn-v2-spotlight-host) {
+  position: relative;
+  z-index: 2;
+}
+
+.vpn-v2-spotlight-host {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  border-radius: inherit;
+}
+
+.vpn-metric-card--v2 .vpn-metric-card__label {
+  color: #95a4b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.vpn-metric-card--v2 .vpn-metric-card__value {
+  margin-top: 5px;
+  color: #f7f9fc;
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  text-shadow: 0 0 24px rgba(110, 168, 255, 0.08);
+}
+
+.vpn-metric-card--v2 .vpn-metric-card__helper {
+  margin-top: 5px;
+  color: #74849a;
+  font-size: 11px;
+}
+
+.vpn-metric-card--v2 .vpn-metric-card__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(110, 168, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(110, 168, 255, 0.055);
+  color: #8eb9fb;
+  font-size: 19px;
+}
+
+.dashboard-page--v2 .vpn-chart-card {
+  border-color: rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background:
+    linear-gradient(155deg, rgba(16, 22, 32, 0.88), rgba(9, 13, 19, 0.92)) !important;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
+}
+
+.dashboard-page--v2 .vpn-chart-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-page--v2 .dashboard-status-strip {
+  border-color: rgba(255, 255, 255, 0.075);
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, rgba(15, 21, 30, 0.88), rgba(10, 15, 22, 0.9)) !important;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.16);
+}
+
+.dashboard-page--v2 .dashboard-status-item {
+  min-height: 68px;
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.dashboard-page--v2 .dashboard-status-item__label {
+  color: #68788f;
+}
+
+.dashboard-page--v2 .dashboard-status-item__value {
+  color: #dfe7f2;
+}
+
+@media (max-width: 767px) {
+  .dashboard-v2-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .vpn-metric-card--v2 {
+    min-height: 126px;
+    padding: 18px !important;
+  }
+}

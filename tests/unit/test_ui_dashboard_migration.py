@@ -184,3 +184,27 @@ def test_dashboard_manual_refresh_recollects_snapshot(
 )
 def test_dashboard_byte_format(value: int, expected: str) -> None:
     assert _format_bytes(value) == expected
+
+
+def test_dashboard_v2_visual_contract_files_exist() -> None:
+    """首页 V2 只增强视觉层，不把业务文本搬进 Vue。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    vue_source = (
+        root / "app" / "ui" / "vue" / "VpnSpotlightSurface.vue"
+    ).read_text(encoding="utf-8")
+    dashboard_source = (
+        root / "app" / "ui" / "pages" / "dashboard.py"
+    ).read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "vpn-v2-spotlight" in vue_source
+    assert "prefers-reduced-motion" in vue_source
+    assert "v2_effect=True" in dashboard_source
+    assert "dashboard-page--v2" in dashboard_source
+    assert "vpn-metric-card--v2" in shell_css
+    assert "dashboard-v2-title" not in dashboard_source

@@ -86,6 +86,15 @@ def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     )
     assert int(canvas_count) >= 2
 
+    v2_cards = screen.selenium.execute_script(
+        "return document.querySelectorAll('.vpn-metric-card--v2').length"
+    )
+    spotlight_hosts = screen.selenium.execute_script(
+        "return document.querySelectorAll('.vpn-v2-spotlight-host').length"
+    )
+    assert int(v2_cards) == 3
+    assert int(spotlight_hosts) == 3
+
 
 def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen: Screen,

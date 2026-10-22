@@ -80,7 +80,10 @@ class DashboardPage:
                 on_click=self._refresh_dashboard,
             )
 
-        with ui.column().classes("page-shell mgmt-page dashboard-page"):
+        with ui.column().classes("page-shell mgmt-page dashboard-page dashboard-page--v2"):
+            with ui.element("div").classes("dashboard-v2-intro"):
+                ui.label("OVERVIEW").classes("dashboard-v2-eyebrow")
+                ui.label("实时状态 · 安全接入 · 统一运维").classes("dashboard-v2-meta")
             toolbar = render_page_toolbar(secondary=header_actions)
             toolbar.container.classes(add="vpn-toolbar--end")
             self._content = ui.column().classes("w-full gap-4")
@@ -116,6 +119,7 @@ class DashboardPage:
                 icon="devices",
                 tone="success" if snapshot.total_clients else "default",
                 on_click=lambda: ui.navigate.to("/users"),
+                v2_effect=True,
             )
 
             configured = snapshot.configured_instance_count
@@ -142,6 +146,7 @@ class DashboardPage:
                 icon="dns",
                 tone=service_tone,
                 on_click=lambda: ui.navigate.to("/services"),
+                v2_effect=True,
             )
 
             metric_card(
@@ -150,6 +155,7 @@ class DashboardPage:
                 helper=f"↓ {_format_bytes(snapshot.total_tx)} · 当前快照",
                 icon="swap_vert",
                 tone="info",
+                v2_effect=True,
             )
 
 

@@ -8,6 +8,8 @@ from typing import Any, Callable, Literal
 
 from nicegui import ui
 
+from app.ui.vue import VpnSpotlightSurface
+
 
 CardTone = Literal["default", "success", "warning", "danger", "info"]
 
@@ -62,6 +64,7 @@ def metric_card(
     icon: str | None = None,
     tone: CardTone = "default",
     on_click: Callable[..., Any] | None = None,
+    v2_effect: bool = False,
 ) -> MetricCard:
     """渲染可选状态与导航动作的指标卡。"""
 
@@ -70,7 +73,12 @@ def metric_card(
     if not normalized_label:
         raise ValueError("指标名称不能为空")
 
-    with ui.card().classes(f"vpn-metric-card vpn-card-tone--{tone}") as container:
+    with ui.card().classes(
+        f"vpn-metric-card vpn-card-tone--{tone}"
+        + (" vpn-metric-card--v2" if v2_effect else "")
+    ) as container:
+        if v2_effect:
+            VpnSpotlightSurface()
         if on_click is not None:
             _make_card_keyboard_clickable(container, on_click)
         with ui.row().classes("items-start justify-between no-wrap w-full"):

@@ -92,8 +92,12 @@ def render_app_shell(
     ) as drawer:
         drawer.props('aria-label="主导航"')
         with ui.column().classes("w-full q-pa-lg"):
-            ui.label("OpenVPN").classes("vpn-nav-title")
-            ui.label("Operations Console").classes("vpn-nav-subtitle")
+            with ui.row().classes("items-center no-wrap gap-3 vpn-nav-brand"):
+                with ui.element("div").classes("vpn-nav-mark"):
+                    ui.icon("shield").classes("vpn-nav-mark__icon")
+                with ui.column().classes("gap-0 min-w-0"):
+                    ui.label("NiceVPN").classes("vpn-nav-title")
+                    ui.label("Secure Network Console").classes("vpn-nav-subtitle")
             ui.label("主导航").classes("vpn-nav-group-label")
 
             with ui.column().classes("w-full gap-sm"):
