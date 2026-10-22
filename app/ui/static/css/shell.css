@@ -530,7 +530,20 @@ body {
 
   .vpn-toolbar__search {
     flex-basis: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
     order: 1;
+  }
+
+  .vpn-toolbar__search > .q-field {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .vpn-toolbar__search > .q-btn {
+    flex: 1 1 calc(50% - var(--vpn-space-1));
+    min-width: 0;
   }
 
   .vpn-toolbar__primary {
