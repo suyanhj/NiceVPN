@@ -154,7 +154,7 @@ jobs:
         run: |
           bash -n build-ui.sh
           bash -n start.sh
-          grep -F './build-ui.sh' start.sh
+          grep -F 'build-ui.sh' start.sh
 
       - name: OpenSpec strict validation
         run: |
