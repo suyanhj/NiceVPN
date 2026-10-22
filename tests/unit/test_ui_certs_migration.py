@@ -182,8 +182,8 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
 
     assert "certs-page--v2" in source
     assert "vpn-v2-page-intro" in source
-    assert "certs-overview-grid" in source
+    assert "vpn-v2-overview-grid" in source
     assert "v2_effect=True" in source
     assert ".vpn-v2-page-intro" in shell_css
-    assert ".certs-overview-grid" in shell_css
+    assert ".vpn-v2-overview-grid" in shell_css
     assert "fetch(" not in source
