@@ -206,23 +206,44 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".certs-toolbar .q-btn" in shell_css
     assert "min-height: 42px;" in shell_css
     assert ".ag-body-horizontal-scroll" in shell_css
+    assert "cert-grid-identity__name" in shell_css
+    assert "cert-grid-status--success" in shell_css
+    assert "cert-grid-expiry__detail" in shell_css
+    assert "cert-grid-action" in shell_css
+    assert "--ag-row-height: 62px" in shell_css
     assert "fetch(" not in source
 
 
-def test_cert_grid_columns_pin_edges_and_flex_center() -> None:
-    """用户/CN 与操作固定两端，中间列弹性铺满，避免桌面横向滚动。"""
+def test_cert_grid_columns_use_premium_list_information_hierarchy() -> None:
+    """证书列表用主次信息列替代传统六列表格，同时保留固定两端。"""
 
     columns = {column["field"]: column for column in CertsPage._grid_columns()}
 
-    assert columns["common_name"]["pinned"] == "left"
-    assert columns["common_name"]["lockPinned"] is True
-    assert columns["common_name"]["width"] == 138
-    assert columns["common_name"]["maxWidth"] == 168
+    identity = columns["common_name"]
+    assert identity["pinned"] == "left"
+    assert identity["lockPinned"] is True
+    assert identity["width"] == 230
+    assert identity["maxWidth"] == 260
+    assert ":valueGetter" in identity
+    assert "serial" in identity[":valueGetter"]
+    assert ":cellRenderer" in identity
+    assert "cert-grid-identity" in identity[":cellRenderer"]
 
-    assert columns["actions"]["pinned"] == "right"
-    assert columns["actions"]["lockPinned"] is True
-    assert columns["actions"]["width"] == 82
-    assert columns["actions"]["resizable"] is False
+    status = columns["status_label"]
+    assert status["flex"] > 0
+    assert "cert-grid-status" in status[":cellRenderer"]
 
-    for field in ("status_label", "serial_display", "expires_display", "days_left"):
-        assert columns[field]["flex"] > 0
+    expiry = columns["expires_display"]
+    assert expiry["flex"] > 0
+    assert "days_left" in expiry[":cellRenderer"]
+    assert "cert-grid-expiry" in expiry[":cellRenderer"]
+
+    actions = columns["actions"]
+    assert actions["pinned"] == "right"
+    assert actions["lockPinned"] is True
+    assert actions["width"] == 64
+    assert actions["resizable"] is False
+    assert "cert-grid-action" in actions[":cellRenderer"]
+
+    assert "serial_display" not in columns
+    assert "days_left" not in columns
