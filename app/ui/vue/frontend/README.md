@@ -28,15 +28,29 @@ Production and local startup share the Docker stages in `deploy/docker/Dockerfil
 
 The Python wrapper prefers `app/ui/vue/dist/VpnSpotlightSurface.js`. If the compiled file is absent, it falls back to the original NiceGUI-compatible SFC for development resilience.
 
-## Local startup
+## Standalone build
 
 From the repository root:
+
+```bash
+./build-ui.sh
+```
+
+This only builds the Vue assets and writes them to `app/ui/vue/dist/`. It does not start Python.
+
+A custom destination is supported for debugging or container workflows:
+
+```bash
+./build-ui.sh /tmp/nicevpn-ui-dist
+```
+
+## Local startup
 
 ```bash
 ./start.sh
 ```
 
-`start.sh` uses Docker to export the `frontend-assets` stage into `app/ui/vue/dist/` and then starts `python3 main.py`.
+`start.sh` reuses `build-ui.sh` and then starts `python3 main.py`.
 
 To skip rebuilding when a valid dist already exists:
 

@@ -28,3 +28,4 @@
 - [x] 3.2 systemd 服务切换为调用 `start.sh`，支持通过 `NICEVPN_BUILD_UI=0` 使用预构建 dist。
 - [x] 3.3 Docker runtime 切换 Python 3.14，多阶段复制 Vue 构建产物且不携带 Node/npm。
 - [x] 3.4 GitHub Actions Python 单测收敛到 3.14；Chrome smoke 在启动应用前构建正式 Vue dist。
+- [x] 3.5 新增独立 `build-ui.sh`，只构建前端产物并支持自定义输出目录；`start.sh` 与 CI 统一复用该脚本。

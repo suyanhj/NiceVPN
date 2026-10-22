@@ -42,7 +42,19 @@ pip install -r requirements.txt
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
 
-如已存在 `app/ui/vue/dist/` 构建产物，可跳过前端构建：
+如只想构建前端产物、不启动服务：
+
+```bash
+./build-ui.sh
+```
+
+默认输出到 `app/ui/vue/dist/`。也可以指定输出目录，方便本地调试、CI 或其他容器流程直接复用：
+
+```bash
+./build-ui.sh /tmp/nicevpn-ui-dist
+```
+
+如已存在 `app/ui/vue/dist/` 构建产物，可跳过启动前的前端构建：
 
 ```bash
 NICEVPN_BUILD_UI=0 ./start.sh

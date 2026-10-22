@@ -29,15 +29,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Build V2 frontend asset stage
-        run: |
-          rm -rf /tmp/nicevpn-ui-dist
-          DOCKER_BUILDKIT=1 docker build \
-            --file deploy/docker/Dockerfile \
-            --target frontend-assets \
-            --output type=local,dest=/tmp/nicevpn-ui-dist \
-            .
-          test -s /tmp/nicevpn-ui-dist/VpnSpotlightSurface.js
-          test -s /tmp/nicevpn-ui-dist/VpnInteractiveGrid.js
+        run: ./build-ui.sh /tmp/nicevpn-ui-dist
 
   unit:
     name: Unit tests (Python 3.14)
@@ -82,15 +74,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Build V2 frontend assets with Docker
-        run: |
-          rm -rf app/ui/vue/dist
-          mkdir -p app/ui/vue/dist
-          DOCKER_BUILDKIT=1 docker build \
-            --file deploy/docker/Dockerfile \
-            --target frontend-assets \
-            --output type=local,dest=app/ui/vue/dist \
-            .
-          test -s app/ui/vue/dist/VpnSpotlightSurface.js
+        run: ./build-ui.sh
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -166,8 +150,11 @@ jobs:
               raise SystemExit("\n".join(failures))
           PY
 
-      - name: Validate startup shell
-        run: bash -n start.sh
+      - name: Validate shell entrypoints
+        run: |
+          bash -n build-ui.sh
+          bash -n start.sh
+          grep -F './build-ui.sh' start.sh
 
       - name: OpenSpec strict validation
         run: |
