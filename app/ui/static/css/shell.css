@@ -374,35 +374,45 @@ body {
   white-space: nowrap;
 }
 
+.groups-page--v2 .vpn-bulk-bar {
+  padding: 10px 12px;
+  border-color: rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+}
+
+.groups-page--v2 .vpn-bulk-bar__count {
+  color: var(--vpn-text-muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
 .groups-page--v2 .groups-create-action {
-  min-height: 34px;
-  padding-inline: 14px;
-  border: 1px solid rgba(139, 185, 255, 0.22);
-  border-radius: 10px;
-  background:
-    linear-gradient(135deg, rgba(110, 168, 255, 0.92), rgba(73, 127, 207, 0.92)) !important;
-  color: #f8fbff !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 7px 18px rgba(30, 84, 148, 0.16);
-  font-weight: 650;
-  letter-spacing: 0.01em;
+  min-height: 32px;
+  padding-inline: 12px;
+  border: 1px solid rgba(110, 168, 255, 0.20) !important;
+  border-radius: 9px;
+  background: rgba(110, 168, 255, 0.055) !important;
+  color: var(--vpn-color-brand-soft) !important;
+  box-shadow: none !important;
+  font-weight: 600;
+  letter-spacing: 0;
   transition:
-    transform 140ms ease,
-    box-shadow 140ms ease,
-    border-color 140ms ease;
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .groups-page--v2 .groups-create-action:hover {
-  border-color: rgba(169, 204, 255, 0.36);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 9px 22px rgba(30, 84, 148, 0.22);
-  transform: translateY(-1px);
+  border-color: rgba(139, 185, 255, 0.34) !important;
+  background: rgba(110, 168, 255, 0.10) !important;
+  color: #c7dcff !important;
+  transform: none;
 }
 
 .groups-page--v2 .groups-create-action .q-icon {
-  font-size: 18px;
+  font-size: 17px;
 }
 
 
@@ -758,17 +768,52 @@ body {
 }
 
 .vpn-data-grid__grid .ag-root-wrapper {
-  border-color: var(--vpn-border) !important;
+  border: 1px solid rgba(110, 168, 255, 0.11) !important;
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(17, 23, 33, 0.98), rgba(10, 14, 21, 0.98));
+  background: #0b1119 !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.025),
     0 16px 42px rgba(0, 0, 0, 0.16);
 }
 
+.vpn-data-grid__grid .ag-header,
+.vpn-data-grid__grid .ag-header-viewport,
+.vpn-data-grid__grid .ag-header-container {
+  background: #111a26 !important;
+}
+
 .vpn-data-grid__grid .ag-header {
-  border-bottom-color: rgba(139, 185, 255, 0.11);
+  border-bottom: 1px solid rgba(110, 168, 255, 0.12) !important;
+}
+
+.vpn-data-grid__grid .ag-center-cols-viewport,
+.vpn-data-grid__grid .ag-center-cols-container,
+.vpn-data-grid__grid .ag-body-viewport,
+.vpn-data-grid__grid .ag-body {
+  background: #0b1119 !important;
+}
+
+.vpn-data-grid__grid .ag-row {
+  background: #0d141e !important;
+  border-color: rgba(255, 255, 255, 0.045) !important;
+}
+
+.vpn-data-grid__grid .ag-row-odd {
+  background: #0b121b !important;
+}
+
+.vpn-data-grid__grid .ag-row-hover {
+  background: rgba(110, 168, 255, 0.065) !important;
+}
+
+.vpn-data-grid__grid .ag-row-selected {
+  background: rgba(110, 168, 255, 0.11) !important;
+  box-shadow: inset 2px 0 0 rgba(110, 168, 255, 0.72);
+}
+
+.vpn-data-grid__grid .ag-cell,
+.vpn-data-grid__grid .ag-header-cell {
+  border-color: rgba(255, 255, 255, 0.045) !important;
 }
 
 .vpn-data-grid__grid .ag-header-cell-text {
@@ -795,10 +840,6 @@ body {
   transition: background-color 120ms ease;
 }
 
-.vpn-data-grid__grid .ag-row-selected {
-  box-shadow: inset 2px 0 0 rgba(110, 168, 255, 0.72);
-}
-
 .vpn-data-grid__grid .ag-paging-panel {
   min-height: 44px;
   border-top-color: rgba(255, 255, 255, 0.065);
@@ -822,20 +863,23 @@ body {
 
 /* 数据型页面让表格吃满 Header/摘要/工具栏之后的剩余高度。 */
 .certs-page--v2 .certs-data-region {
-  flex: 1 1 0%;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
 .certs-page--v2 .certs-data-region > .vpn-data-grid {
-  flex: 1 1 0%;
   min-height: 0;
-  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
-  flex: 1 1 0%;
-  min-height: 420px;
-  height: 100% !important;
+  height: clamp(480px, calc(100dvh - 360px), 820px) !important;
+  min-height: 480px;
+}
+
+@supports not (height: 100dvh) {
+  .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
+    height: clamp(480px, calc(100vh - 360px), 820px) !important;
+  }
 }
 
 .vpn-chart-card {
