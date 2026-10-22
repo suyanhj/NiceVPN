@@ -83,7 +83,7 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
     assert page._traffic_chart.chart is not None
     assert page._health_chart.help is not None
     assert page._traffic_chart.help is not None
-    assert page._updated_label.text.startswith("最后更新 ")
+    assert page._updated_label is None
 
 
 def test_dashboard_no_instances_renders_chart_empty_states(
@@ -206,5 +206,10 @@ def test_dashboard_v2_visual_contract_files_exist() -> None:
     assert "prefers-reduced-motion" in vue_source
     assert "v2_effect=True" in dashboard_source
     assert "dashboard-page--v2" in dashboard_source
+    assert "OVERVIEW" not in dashboard_source
+    assert "实时状态 · 安全接入 · 统一运维" not in dashboard_source
+    assert "最后更新 " not in dashboard_source
+    assert "render_page_toolbar(" not in dashboard_source
     assert "vpn-metric-card--v2" in shell_css
     assert "dashboard-v2-title" not in dashboard_source
+    assert "vpn-v2-page-intro" not in dashboard_source
