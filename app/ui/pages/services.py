@@ -135,10 +135,6 @@ class ServicesPage:
             )
 
         with ui.column().classes("page-shell mgmt-page services-page--v2"):
-            with ui.element("div").classes("vpn-v2-page-intro"):
-                ui.label("SERVICES").classes("vpn-v2-page-eyebrow")
-                ui.label("本机实例 · 对端服务 · 日志运维").classes("vpn-v2-page-meta")
-
             toolbar = render_page_toolbar(secondary=refresh_region)
             toolbar.container.classes(add="vpn-toolbar--end")
 
