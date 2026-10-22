@@ -374,6 +374,37 @@ body {
   white-space: nowrap;
 }
 
+.groups-page--v2 .groups-create-action {
+  min-height: 34px;
+  padding-inline: 14px;
+  border: 1px solid rgba(139, 185, 255, 0.22);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(110, 168, 255, 0.92), rgba(73, 127, 207, 0.92)) !important;
+  color: #f8fbff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 7px 18px rgba(30, 84, 148, 0.16);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease;
+}
+
+.groups-page--v2 .groups-create-action:hover {
+  border-color: rgba(169, 204, 255, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 9px 22px rgba(30, 84, 148, 0.22);
+  transform: translateY(-1px);
+}
+
+.groups-page--v2 .groups-create-action .q-icon {
+  font-size: 18px;
+}
+
 
 /* 键盘焦点必须独立于颜色/hover 可见；统一共享组件焦点环。 */
 .vpn-action:focus-visible,
@@ -703,10 +734,109 @@ body {
 
 .vpn-data-grid__grid {
   min-height: 360px;
+
+  /* AG Grid Quartz 直接继承 NiceVPN V2 Design Tokens。 */
+  --ag-background-color: color-mix(in srgb, var(--vpn-panel) 92%, transparent);
+  --ag-foreground-color: var(--vpn-text);
+  --ag-header-background-color: color-mix(in srgb, var(--vpn-panel-2) 90%, transparent);
+  --ag-header-foreground-color: var(--vpn-text-heading);
+  --ag-border-color: rgba(255, 255, 255, 0.075);
+  --ag-row-border-color: rgba(255, 255, 255, 0.055);
+  --ag-odd-row-background-color: rgba(255, 255, 255, 0.012);
+  --ag-row-hover-color: rgba(110, 168, 255, 0.055);
+  --ag-selected-row-background-color: rgba(110, 168, 255, 0.10);
+  --ag-checkbox-checked-color: var(--vpn-color-brand);
+  --ag-checkbox-unchecked-color: rgba(226, 232, 240, 0.34);
+  --ag-input-focus-border-color: var(--vpn-color-brand);
+  --ag-font-family: var(--vpn-font-sans);
+  --ag-font-size: 13px;
+  --ag-cell-horizontal-padding: 14px;
+  --ag-header-height: 46px;
+  --ag-row-height: 42px;
+  --ag-wrapper-border-radius: 14px;
+  --ag-browser-color-scheme: dark;
+}
+
+.vpn-data-grid__grid .ag-root-wrapper {
+  overflow: hidden;
+  border-color: var(--vpn-border) !important;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(17, 23, 33, 0.98), rgba(10, 14, 21, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 16px 42px rgba(0, 0, 0, 0.16);
+}
+
+.vpn-data-grid__grid .ag-header {
+  border-bottom-color: rgba(139, 185, 255, 0.11);
+}
+
+.vpn-data-grid__grid .ag-header-cell-text {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+}
+
+.vpn-data-grid__grid .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-icon,
+.vpn-data-grid__grid .ag-sort-indicator-icon {
+  color: var(--vpn-text-soft);
+  opacity: 0.75;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-icon {
+  color: var(--vpn-color-brand-soft);
+  opacity: 1;
+}
+
+.vpn-data-grid__grid .ag-row {
+  transition: background-color 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-row-selected {
+  box-shadow: inset 2px 0 0 rgba(110, 168, 255, 0.72);
+}
+
+.vpn-data-grid__grid .ag-paging-panel {
+  min-height: 44px;
+  border-top-color: rgba(255, 255, 255, 0.065);
+  background: color-mix(in srgb, var(--vpn-panel-2) 78%, transparent);
+  color: var(--vpn-text-muted);
+}
+
+.vpn-data-grid__grid .ag-paging-button {
+  border-radius: 8px;
+  color: var(--vpn-text-muted);
+}
+
+.vpn-data-grid__grid .ag-paging-button:not(.ag-disabled):hover {
+  color: var(--vpn-color-brand-soft);
+  background: rgba(110, 168, 255, 0.07);
 }
 
 .vpn-data-grid__summary {
   align-self: flex-end;
+}
+
+/* 数据型页面让表格吃满 Header/摘要/工具栏之后的剩余高度。 */
+.certs-page--v2 .certs-data-region {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.certs-page--v2 .certs-data-region > .vpn-data-grid {
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+}
+
+.certs-page--v2 .certs-data-region .vpn-data-grid__grid {
+  flex: 1 1 0%;
+  min-height: 420px;
+  height: 100% !important;
 }
 
 .vpn-chart-card {
