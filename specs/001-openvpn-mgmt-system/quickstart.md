@@ -28,10 +28,10 @@ pip install -r requirements.txt
 ### 2. 启动系统
 
 ```bash
-python main.py
+./start.sh
 ```
 
-首次启动后，浏览器访问 `http://<服务器IP>:8080`，进入初始化引导页。
+首次启动后，浏览器访问 `http://<服务器IP>:8880`，进入初始化引导页。
 
 ### 3. 初始化引导流程
 
@@ -110,7 +110,6 @@ docker run -d \
   --network host \
   -v /opt/openvpn-mgmt/data:/app/data \
   -v /opt/openvpn-mgmt/backups:/app/backups \
-  -p 8080:8080 \
   openvpn-mgmt:latest
 ```
 
@@ -122,8 +121,8 @@ docker run -d \
 
 | 服务 | 地址 |
 |---|---|
-| 管理界面 | `http://<服务器IP>:8080` |
-| 配置文件下载 | `http://<服务器IP>:8080/download/{token}` |
+| 管理界面 | `http://<服务器IP>:8880` |
+| 配置文件下载 | `http://<服务器IP>:8880/download/{token}` |
 
 ---
 

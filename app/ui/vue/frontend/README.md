@@ -18,16 +18,38 @@ This directory is the build-time Vue visual layer for NiceGUI.
 - motion-v
 - selectively adapted Inspira UI presentation components
 
-## Local development
+## Build model
 
-The currently approved homepage still uses the pre-Vite NiceGUI SFC, so `python main.py` remains sufficient to preview V2.
+Production and local startup share the Docker stages in `deploy/docker/Dockerfile`:
 
-To validate the formal frontend build layer:
+- `frontend-builder`: installs Node dependencies, typechecks and builds the Vue SFCs.
+- `frontend-assets`: scratch export target containing only `app/ui/vue/dist/` contents.
+- `runtime`: Python 3.14 image with compiled frontend assets copied in; Node/npm are absent.
+
+The Python wrapper prefers `app/ui/vue/dist/VpnSpotlightSurface.js`. If the compiled file is absent, it falls back to the original NiceGUI-compatible SFC for development resilience.
+
+## Local startup
+
+From the repository root:
 
 ```bash
-cd app/ui/vue/frontend
-npm install --no-audit --no-fund --package-lock=false
-npm run check
+./start.sh
 ```
 
-The build output is written to `app/ui/vue/dist/`. It is intentionally ignored until the runtime wrapper is switched to compiled components in a later task.
+`start.sh` uses Docker to export the `frontend-assets` stage into `app/ui/vue/dist/` and then starts `python3 main.py`.
+
+To skip rebuilding when a valid dist already exists:
+
+```bash
+NICEVPN_BUILD_UI=0 ./start.sh
+```
+
+For frontend-only validation:
+
+```bash
+DOCKER_BUILDKIT=1 docker build \
+  -f deploy/docker/Dockerfile \
+  --target frontend-assets \
+  --output type=local,dest=/tmp/nicevpn-ui-dist \
+  .
+```

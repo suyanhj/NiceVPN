@@ -2,7 +2,7 @@
 
 基于 **NiceGUI** 与 **FastAPI** 的 OpenVPN 运维控制台：Web 管理用户、组、证书、防火墙与对端站点；并提供 **HTTP Basic** 下的 `**/api/vpn`** 创建账号、批量分发、删除与重置设备绑定等接口。
 
-- **Python**：3.10+
+- **Python**：3.10+（GitHub Actions 当前以 Python 3.14 作为唯一测试基线）
 - **默认监听**：`0.0.0.0:8880`（`app/core/constants.py`）
 
 ## 主要能力（摘要）
@@ -33,13 +33,26 @@
 
 ## 快速开始
 
+推荐使用根目录 `start.sh`。它会先通过 Docker 多阶段构建导出 V2 前端静态产物，再启动 NiceGUI；宿主机无需安装 Node/npm。
+
 ```bash
-cd script/py/vpn
 pip install -r requirements.txt
-python main.py
+./start.sh
 ```
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
+
+如已存在 `app/ui/vue/dist/` 构建产物，可跳过前端构建：
+
+```bash
+NICEVPN_BUILD_UI=0 ./start.sh
+```
+
+CLI 不需要前端构建：
+
+```bash
+./start.sh cli --help
+```
 
 **命令行（可选）**：`python main.py cli --help`（逻辑见 `app/cli/entry.py`）
 
@@ -64,7 +77,7 @@ python main.py
 python -m pytest tests/unit -q
 ```
 
-GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Python 3.10 和 3.14。
+GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Python 3.14，并单独通过 Docker 构建 V2 Vue 前端、运行 Chrome smoke 与 OpenSpec strict validation。
 
 ## 目录结构（摘）
 
@@ -79,8 +92,37 @@ api.md                  # 对外 API
 
 ## 生产部署
 
-- 目标环境以 **Linux + OpenVPN + EasyRSA** 与控制台能力匹配为准；可参考 `deploy/systemd/openvpn-mgmt.service`。
-- 须配置 `**download_base_url`** 或反代 `**Host` / `X-Forwarded-***`，否则创建用户可能无法生成可达下载链接。
+### systemd
+
+`deploy/systemd/openvpn-mgmt.service` 默认调用根目录 `start.sh`。首次启动或前端源码变化时，由 Docker 构建 `frontend-assets` 并写入 `app/ui/vue/dist/`，随后启动 Python 服务。
+
+```bash
+cp deploy/systemd/openvpn-mgmt.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now openvpn-mgmt
+```
+
+如果发布包已经预置 V2 前端产物，可通过 systemd override 设置 `NICEVPN_BUILD_UI=0`，启动时不再调用 Docker。
+
+### Docker
+
+生产镜像使用多阶段构建：Node 22 只存在于 `frontend-builder` 阶段，最终 runtime 为 Python 3.14，不携带 Node/npm。
+
+```bash
+docker build -t nicevpn:latest -f deploy/docker/Dockerfile .
+
+docker run -d \
+  --name nicevpn \
+  --privileged \
+  --network host \
+  -v /opt/openvpn-mgmt/data:/app/data \
+  -v /opt/openvpn-mgmt/backups:/app/backups \
+  nicevpn:latest
+```
+
+- 默认 Web UI 监听 `0.0.0.0:8880`；使用 `--network host` 时无需额外 `-p`。
+- 目标环境以 **Linux + OpenVPN + EasyRSA** 与控制台能力匹配为准。
+- 须配置 `download_base_url` 或反代 `Host` / `X-Forwarded-*`，否则创建用户可能无法生成可达下载链接。
 
 ## 开发约定
 
