@@ -28,6 +28,75 @@ from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolb
 
 logger = logging.getLogger(__name__)
 
+_CERT_IDENTITY_RENDERER = r"""(params) => {
+  const root = document.createElement('div');
+  root.className = 'cert-grid-identity';
+
+  const name = document.createElement('div');
+  name.className = 'cert-grid-identity__name';
+  name.textContent = String(params.data?.common_name ?? '—');
+
+  const meta = document.createElement('div');
+  meta.className = 'cert-grid-identity__meta';
+
+  const sn = document.createElement('span');
+  sn.className = 'cert-grid-identity__sn';
+  sn.textContent = 'SN';
+
+  const serial = document.createElement('span');
+  serial.className = 'cert-grid-identity__serial';
+  serial.textContent = String(params.data?.serial_display ?? '—');
+
+  meta.append(sn, serial);
+  root.append(name, meta);
+  return root;
+}"""
+
+_CERT_STATUS_RENDERER = r"""(params) => {
+  const rawTone = String(params.data?.status_tone ?? 'unknown');
+  const tone = ['success', 'warning', 'failed'].includes(rawTone) ? rawTone : 'unknown';
+  const pill = document.createElement('span');
+  pill.className = 'cert-grid-status cert-grid-status--' + tone;
+  pill.textContent = String(params.data?.status_label ?? '未知');
+  return pill;
+}"""
+
+_CERT_EXPIRY_RENDERER = r"""(params) => {
+  const root = document.createElement('div');
+  root.className = 'cert-grid-expiry';
+
+  const date = document.createElement('div');
+  date.className = 'cert-grid-expiry__date';
+  date.textContent = String(params.data?.expires_display ?? '—');
+
+  const days = params.data?.days_left;
+  const detail = document.createElement('div');
+  detail.className = 'cert-grid-expiry__detail';
+
+  if (days === null || days === undefined) {
+    detail.textContent = '有效期未知';
+  } else if (Number(days) < 0) {
+    detail.classList.add('cert-grid-expiry__detail--danger');
+    detail.textContent = '已过期 ' + Math.abs(Number(days)) + ' 天';
+  } else {
+    if (String(params.data?.status) === 'expiring') {
+      detail.classList.add('cert-grid-expiry__detail--warning');
+    }
+    detail.textContent = '剩余 ' + Number(days) + ' 天';
+  }
+
+  root.append(date, detail);
+  return root;
+}"""
+
+_CERT_ACTION_RENDERER = r"""(_params) => {
+  const action = document.createElement('span');
+  action.className = 'cert-grid-action';
+  action.textContent = '•••';
+  action.title = '证书操作';
+  return action;
+}"""
+
 
 class CertsPage:
     """证书管理页面。"""
@@ -148,6 +217,8 @@ class CertsPage:
 
     @staticmethod
     def _grid_columns() -> tuple[dict, ...]:
+        """高密度数据能力保留，视觉按高级列表组织为四个信息区。"""
+
         return (
             {
                 "field": "common_name",
@@ -155,51 +226,47 @@ class CertsPage:
                 "pinned": "left",
                 "lockPinned": True,
                 "suppressMovable": True,
-                "width": 138,
-                "minWidth": 118,
-                "maxWidth": 168,
+                "width": 230,
+                "minWidth": 190,
+                "maxWidth": 260,
+                ":valueGetter": (
+                    "(params) => String(params.data?.common_name ?? '') + ' ' + "
+                    "String(params.data?.serial ?? '')"
+                ),
+                ":cellRenderer": _CERT_IDENTITY_RENDERER,
+                "cellClass": "cert-grid-cell cert-grid-cell--identity",
             },
             {
                 "field": "status_label",
                 "headerName": "状态",
-                "flex": 0.72,
-                "minWidth": 82,
-                "maxWidth": 110,
-            },
-            {
-                "field": "serial_display",
-                "headerName": "序列号",
-                "flex": 1.45,
-                "minWidth": 170,
-                "cellClass": "vpn-grid-mono",
+                "flex": 0.55,
+                "minWidth": 112,
+                "maxWidth": 150,
+                ":cellRenderer": _CERT_STATUS_RENDERER,
+                "cellClass": "cert-grid-cell cert-grid-cell--status",
             },
             {
                 "field": "expires_display",
-                "headerName": "到期日期",
-                "flex": 0.95,
-                "minWidth": 120,
-                "maxWidth": 150,
-            },
-            {
-                "field": "days_left",
-                "headerName": "剩余天数",
-                "flex": 0.72,
-                "minWidth": 88,
-                "maxWidth": 112,
+                "headerName": "有效期",
+                "flex": 1,
+                "minWidth": 180,
+                ":cellRenderer": _CERT_EXPIRY_RENDERER,
+                "cellClass": "cert-grid-cell cert-grid-cell--expiry",
             },
             {
                 "field": "actions",
-                "headerName": "操作",
+                "headerName": "",
                 "pinned": "right",
                 "lockPinned": True,
                 "suppressMovable": True,
-                "width": 82,
-                "minWidth": 82,
-                "maxWidth": 82,
+                "width": 64,
+                "minWidth": 64,
+                "maxWidth": 64,
                 "sortable": False,
                 "filter": False,
                 "resizable": False,
-                "cellClass": "vpn-grid-action-cell",
+                ":cellRenderer": _CERT_ACTION_RENDERER,
+                "cellClass": "cert-grid-cell cert-grid-cell--actions",
             },
         )
 
