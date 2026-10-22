@@ -570,7 +570,7 @@ class ServicesPage:
             finally:
                 if refresh_generation == self._peer_refresh_generation:
                     self._peer_refresh_running = False
-        
+
         ui.timer(0.1, refresh_all_peer_rows, once=True)
 
     def _render_peer_client_row(self, peer: dict) -> Callable[[], Any]:
