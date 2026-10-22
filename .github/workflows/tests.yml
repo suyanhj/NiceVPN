@@ -19,6 +19,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend-build:
+    name: Frontend build (Vue V2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app/ui/vue/frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install pinned frontend dependencies
+        run: npm install --no-audit --no-fund --package-lock=false
+
+      - name: Typecheck and build Vue V2 components
+        run: npm run check
+
   unit:
     name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -129,7 +152,7 @@ jobs:
               for path in root.rglob("*"):
                   if not path.is_file():
                       continue
-                  if path.suffix.lower() not in {".py", ".css", ".js", ".md", ".yaml", ".yml", ".json"}:
+                  if path.suffix.lower() not in {".py", ".css", ".js", ".md", ".yaml", ".yml", ".json", ".vue", ".ts"}:
                       continue
                   try:
                       text = path.read_text(encoding="utf-8")
