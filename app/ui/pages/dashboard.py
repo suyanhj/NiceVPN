@@ -17,11 +17,9 @@ from app.ui.adapters.dashboard import (
     service_health_chart_options,
     traffic_snapshot_chart_options,
 )
-from app.ui.components.actions import secondary_action
 from app.ui.components.cards import info_card, metric_card
 from app.ui.components.charts import render_chart_card
 from app.ui.components.status import status_badge
-from app.ui.components.toolbars import render_page_toolbar
 
 logger = logging.getLogger(__name__)
 
@@ -68,25 +66,10 @@ class DashboardPage:
         )
 
     def render(self) -> None:
-        """渲染共享首页外壳，并立即采集一次快照。"""
-
-        def header_actions() -> None:
-            self._updated_label = ui.label("尚未刷新").classes(
-                "section-caption"
-            )
-            secondary_action(
-                "刷新",
-                icon="refresh",
-                on_click=self._refresh_dashboard,
-            )
+        """渲染首页内容：指标、图表、异常提示、底部状态条。"""
 
         with ui.column().classes("page-shell mgmt-page dashboard-page dashboard-page--v2"):
-            with ui.element("div").classes("vpn-v2-page-intro"):
-                ui.label("OVERVIEW").classes("vpn-v2-page-eyebrow")
-                ui.label("实时状态 · 安全接入 · 统一运维").classes("vpn-v2-page-meta")
-            toolbar = render_page_toolbar(secondary=header_actions)
-            toolbar.container.classes(add="vpn-toolbar--end")
-            self._content = ui.column().classes("w-full gap-4")
+            self._content = ui.column().classes("w-full gap-4 dashboard-v2-layout")
 
         self._refresh_dashboard()
 
@@ -98,16 +81,11 @@ class DashboardPage:
 
         snapshot = self._collect_snapshot()
         self._snapshot = snapshot
-        if self._updated_label is not None:
-            local = snapshot.updated_at.astimezone()
-            self._updated_label.text = (
-                "最后更新 " + local.strftime("%Y-%m-%d %H:%M:%S")
-            )
-
         self._content.clear()
         with self._content:
             self._render_metrics(snapshot)
             self._render_charts(snapshot)
+            self._render_errors(snapshot)
             self._render_summary(snapshot)
 
     def _render_metrics(self, snapshot: DashboardSnapshot) -> None:
@@ -219,18 +197,24 @@ class DashboardPage:
                     label=f"{snapshot.health_score}%",
                 )
 
-        if snapshot.instance_errors or snapshot.source_errors:
-            messages: list[str] = []
-            for name, error in snapshot.instance_errors.items():
-                messages.append(f"实例 {name}: {error}")
-            for source, error in snapshot.source_errors.items():
-                messages.append(f"{source}: {error}")
-            info_card(
-                "部分数据不可用",
-                "；".join(messages),
-                icon="warning",
-                tone="warning",
-            )
+    @staticmethod
+    def _render_errors(snapshot: DashboardSnapshot) -> None:
+        """异常提示位于图表之后，确保状态条始终是首页最后一块。"""
+
+        if not (snapshot.instance_errors or snapshot.source_errors):
+            return
+
+        messages: list[str] = []
+        for name, error in snapshot.instance_errors.items():
+            messages.append(f"实例 {name}: {error}")
+        for source, error in snapshot.source_errors.items():
+            messages.append(f"{source}: {error}")
+        info_card(
+            "部分数据不可用",
+            "；".join(messages),
+            icon="warning",
+            tone="warning",
+        )
 
     @staticmethod
     def _status_item(label: str, value: str) -> None:
