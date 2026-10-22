@@ -87,8 +87,6 @@ def test_services_page_shared_shell_local_status_and_empty_peer_state(
         async with user_simulation(lambda: page.render(initial_tab="local")) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("SERVICES")
-            await user.should_see("本机实例 · 对端服务 · 日志运维")
             await user.should_see("本机实例")
             await user.should_see("对端实例")
             await user.should_see("刷新")
@@ -379,7 +377,7 @@ def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
     ).read_text(encoding="utf-8")
 
     assert "services-page--v2" in source
-    assert "vpn-v2-page-intro" in source
+    assert "vpn-v2-page-intro" not in source
     assert "start_instance" in source
     assert "stop_instance" in source
     assert "restart_instance" in source
