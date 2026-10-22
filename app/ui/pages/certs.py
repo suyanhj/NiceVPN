@@ -73,7 +73,7 @@ class CertsPage:
             self.search_input = (
                 ui.input(placeholder="搜索用户名、序列号或状态")
                 .props("clearable")
-                .classes("w-full cert-search-input")
+                .classes("cert-search-input")
             )
             self.search_input.on("keydown.enter", self._handle_search)
             secondary_action("搜索", icon="search", on_click=self._handle_search)
