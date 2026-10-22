@@ -86,10 +86,6 @@ class GroupsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page groups-page--v2"):
-            with ui.element("div").classes("vpn-v2-page-intro"):
-                ui.label("GROUPS").classes("vpn-v2-page-eyebrow")
-                ui.label("网络分区 · 成员归属 · 访问边界").classes("vpn-v2-page-meta")
-
             toolbar = render_page_toolbar(primary=header_actions)
             toolbar.container.classes(add="vpn-toolbar--end")
 
