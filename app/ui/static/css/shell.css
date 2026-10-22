@@ -876,6 +876,10 @@ body {
   min-height: 480px;
 }
 
+.certs-page--v2 .vpn-data-grid__summary {
+  display: none;
+}
+
 @supports not (height: 100dvh) {
   .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
     height: clamp(480px, calc(100vh - 360px), 820px) !important;
