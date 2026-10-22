@@ -63,6 +63,17 @@ def render_data_grid(
     }
     if selectable:
         options["rowSelection"] = {"mode": "multiRow"}
+        options["selectionColumnDef"] = {
+            "pinned": "left",
+            "lockPosition": "left",
+            "width": 48,
+            "maxWidth": 48,
+            "minWidth": 48,
+            "sortable": False,
+            "filter": False,
+            "resizable": False,
+            "suppressMovable": True,
+        }
         selected = [str(value) for value in (selected_ids or []) if value is not None]
         if selected:
             selected_json = json.dumps(selected, ensure_ascii=False)
