@@ -65,10 +65,14 @@ def metric_card(
     tone: CardTone = "default",
     on_click: Callable[..., Any] | None = None,
     v2_effect: bool = False,
+    compact: bool = False,
 ) -> MetricCard:
     """渲染可选状态与导航动作的指标卡。"""
 
     _validate_tone(tone)
+    if v2_effect and compact:
+        raise ValueError("紧凑指标卡不能同时启用 V2 Spotlight")
+
     normalized_label = str(label).strip()
     if not normalized_label:
         raise ValueError("指标名称不能为空")
@@ -76,6 +80,7 @@ def metric_card(
     with ui.card().classes(
         f"vpn-metric-card vpn-card-tone--{tone}"
         + (" vpn-metric-card--v2" if v2_effect else "")
+        + (" vpn-metric-card--compact" if compact else "")
     ) as container:
         if v2_effect:
             VpnSpotlightSurface()
