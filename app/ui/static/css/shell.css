@@ -337,14 +337,20 @@ body {
 
 .vpn-toolbar__search {
   display: flex;
-  flex: 1 1 260px;
-  min-width: min(100%, 220px);
+  flex: 1 1 420px;
+  min-width: min(100%, 280px);
+  align-items: center;
   gap: var(--vpn-space-2);
 }
 
-.vpn-toolbar__search > * {
-  flex: 1 1 auto;
-  min-width: 0;
+.vpn-toolbar__search > .q-field {
+  flex: 1 1 320px;
+  min-width: 180px;
+}
+
+.vpn-toolbar__search > .q-btn {
+  flex: 0 0 auto;
+  min-width: fit-content;
 }
 
 .vpn-toolbar__primary,
@@ -355,6 +361,33 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--vpn-space-2);
+}
+
+/* Certs 工具栏输入与按钮统一高度，避免搜索框与操作按钮上下错位。 */
+.certs-toolbar {
+  align-items: center;
+}
+
+.certs-toolbar .q-btn {
+  min-height: 42px;
+  height: 42px;
+  padding-block: 0;
+}
+
+.certs-toolbar .q-field--dense .q-field__control,
+.certs-toolbar .q-field--dense .q-field__marginal {
+  min-height: 42px;
+  height: 42px;
+}
+
+.certs-toolbar .q-field--dense .q-field__native,
+.certs-toolbar .q-field--dense .q-field__input {
+  min-height: 42px;
+  padding-block: 0;
+}
+
+.certs-toolbar .vpn-toolbar__secondary {
+  align-items: center;
 }
 
 .vpn-bulk-bar {
@@ -878,6 +911,13 @@ body {
 
 .certs-page--v2 .vpn-data-grid__summary {
   display: none;
+}
+
+.certs-page--v2 .ag-body-horizontal-scroll,
+.certs-page--v2 .ag-body-horizontal-scroll-viewport {
+  min-height: 0 !important;
+  height: 0 !important;
+  max-height: 0 !important;
 }
 
 @supports not (height: 100dvh) {
