@@ -107,6 +107,10 @@ def test_groups_page_uses_shared_header_status_bulk_bar_and_root_protection() ->
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("新建用户组")
+            await user.should_see("用户组总数")
+            await user.should_see("启用分组")
+            await user.should_see("停用分组")
+            await user.should_see("组内用户")
             await user.should_see("已选择 0 项")
             await user.should_see("默认组")
             await user.should_see("根组")
@@ -148,3 +152,20 @@ def test_group_view_model_covers_root_disabled_and_missing_fields() -> None:
     assert partial["name"] == "未命名用户组"
     assert partial["subnet"] == "未配置子网"
     assert partial["user_count"] == 0
+
+
+def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
+    """Groups 与 Certs 共用 V2 页面原语，不新增页面专用 Vue 业务层。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "groups.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "groups-page--v2" in source
+    assert "vpn-v2-page-intro" in source
+    assert "vpn-v2-overview-grid" in source
+    assert "v2_effect=True" in source
+    assert ".vpn-v2-overview-grid" in shell_css
+    assert "fetch(" not in source
