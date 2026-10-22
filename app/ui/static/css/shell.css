@@ -782,7 +782,8 @@ body {
 }
 
 
-.groups-page--v2 .mgmt-panel-list {
+.groups-page--v2 .mgmt-panel-list,
+.services-page--v2 .mgmt-panel-list {
   overflow: hidden;
   border-color: rgba(255, 255, 255, 0.075);
   border-radius: 16px;
@@ -791,7 +792,8 @@ body {
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
 }
 
-.groups-page--v2 .mgmt-record-card {
+.groups-page--v2 .mgmt-record-card,
+.services-page--v2 .mgmt-record-card {
   border-color: rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.012);
   transition:
@@ -800,10 +802,28 @@ body {
     transform 160ms ease;
 }
 
-.groups-page--v2 .mgmt-record-card:hover {
+.groups-page--v2 .mgmt-record-card:hover,
+.services-page--v2 .mgmt-record-card:hover {
   border-color: rgba(110, 168, 255, 0.14);
   background: rgba(110, 168, 255, 0.025);
   transform: translateY(-1px);
+}
+
+
+.services-page--v2 .firewall-compact-tabs {
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.018);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.services-page--v2 .firewall-tabpanels {
+  background: transparent !important;
+}
+
+.services-page--v2 .q-tab-panel {
+  padding-inline: 0;
 }
 
 
