@@ -75,6 +75,16 @@ def test_theme_is_the_only_static_style_and_script_registration_entry() -> None:
     assert "add_head_html(" not in source
 
 
+def test_content_area_does_not_duplicate_page_identity() -> None:
+    """页名只由 App Header / 侧边导航表达，内容区不得再加 V2 页头。"""
+
+    source = _page_source()
+
+    assert "vpn-v2-page-intro" not in source
+    assert "vpn-v2-page-eyebrow" not in source
+    assert "vpn-v2-page-meta" not in source
+
+
 def test_page_sources_use_shared_admin_components() -> None:
     source = _page_source()
 
