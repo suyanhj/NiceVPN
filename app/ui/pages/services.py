@@ -29,7 +29,6 @@ from app.ui.components.actions import MenuAction, more_actions, primary_action, 
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_page_toolbar
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,6 @@ class ServicesPage:
         self._peer_refresh_generation = 0
         self._peer_refresh_concurrency = 4
         self._peer_refresh_running = False
-        self._refresh_button: Any = None
         # 本机 systemctl 启停与事件循环解耦：同实例不并发重复点
         self._local_instance_busy: set[str] = set()
         self._peer_action_busy: set[str] = set()
@@ -127,17 +125,7 @@ class ServicesPage:
         self._active_tab = "peers" if initial_tab == "peers" else "local"
         self._focus_peer_id = str(focus_peer_id or "").strip()
 
-        def refresh_region() -> None:
-            self._refresh_button = secondary_action(
-                "刷新",
-                icon="refresh",
-                on_click=self._refresh_current_tab,
-            )
-
         with ui.column().classes("page-shell mgmt-page services-page--v2"):
-            toolbar = render_page_toolbar(secondary=refresh_region)
-            toolbar.container.classes(add="vpn-toolbar--end")
-
             with ui.tabs(
                 value=self._active_tab,
                 on_change=self._on_service_tab_change,
@@ -174,7 +162,6 @@ class ServicesPage:
             self._peer_refresh_generation += 1
             self._peer_status_refreshers = []
             self._peer_refresh_running = False
-            self._set_refresh_button_busy(False)
         self._refresh_current_tab()
 
     def _refresh_current_tab(self) -> None:
@@ -185,16 +172,6 @@ class ServicesPage:
             self._refresh_peer_client_list()
         else:
             self._refresh_list()
-
-    def _set_refresh_button_busy(self, busy: bool) -> None:
-        if self._refresh_button is None:
-            return
-        if busy:
-            self._refresh_button.disable()
-            self._refresh_button.set_text("刷新中")
-        else:
-            self._refresh_button.enable()
-            self._refresh_button.set_text("刷新")
 
     def _refresh_list(self):
         """刷新本机实例列表，并把单个监控失败隔离为页面错误状态。"""
@@ -521,14 +498,12 @@ class ServicesPage:
         if self._peer_list_container is None:
             return
         self._peer_refresh_running = True
-        self._set_refresh_button_busy(True)
 
         try:
             peers = self._peer_service.list_all()
         except Exception as exc:
             logger.exception("读取对端服务列表失败")
             self._peer_refresh_running = False
-            self._set_refresh_button_busy(False)
             if self._peer_total_chip is not None:
                 self._peer_total_chip.text = "加载失败"
             self._peer_list_container.clear()
@@ -550,7 +525,6 @@ class ServicesPage:
 
         if not peers:
             self._peer_refresh_running = False
-            self._set_refresh_button_busy(False)
             with self._peer_list_container:
                 empty_state(
                     "暂无对端服务",
@@ -596,8 +570,7 @@ class ServicesPage:
             finally:
                 if refresh_generation == self._peer_refresh_generation:
                     self._peer_refresh_running = False
-                    self._set_refresh_button_busy(False)
-
+        
         ui.timer(0.1, refresh_all_peer_rows, once=True)
 
     def _render_peer_client_row(self, peer: dict) -> Callable[[], Any]:
@@ -919,7 +892,7 @@ class ServicesPage:
                     busy=bool(view["busy"]),
                 ).props("dense")
 
-                more_actions(
+                more_menu = more_actions(
                     (
                         MenuAction(
                             "守护进程日志",
@@ -943,8 +916,11 @@ class ServicesPage:
                             disabled=not bool(view["can_edit_config"]),
                         ),
                     ),
-                    label="更多",
+                    label="…",
+                    icon="",
+                    tooltip="更多操作",
                 )
+                more_menu.button.classes(add="services-more-action")
 
     @staticmethod
     def _format_traffic(n: int) -> str:
