@@ -758,7 +758,6 @@ body {
 }
 
 .vpn-data-grid__grid .ag-root-wrapper {
-  overflow: hidden;
   border-color: var(--vpn-border) !important;
   border-radius: 14px;
   background:
