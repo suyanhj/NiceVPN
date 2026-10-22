@@ -89,7 +89,6 @@ def test_services_page_shared_shell_local_status_and_empty_peer_state(
             assert response.status_code == 200
             await user.should_see("本机实例")
             await user.should_see("对端实例")
-            await user.should_see("刷新")
             await user.should_see("server1")
             await user.should_see("运行中")
             await user.should_see("在线 3")
@@ -378,6 +377,13 @@ def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
 
     assert "services-page--v2" in source
     assert "vpn-v2-page-intro" not in source
+    assert "render_page_toolbar" not in source
+    assert "_refresh_button" not in source
+    assert 'label="更多"' not in source
+    assert 'label="…"' in source
+    assert "services-more-action" in source
+    assert ".services-page--v2 .services-more-action" in shell_css
+    assert source.index("with ui.tabs(") < source.index("with ui.tab_panels(")
     assert "start_instance" in source
     assert "stop_instance" in source
     assert "restart_instance" in source
