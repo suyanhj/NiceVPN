@@ -73,12 +73,14 @@ class CertsPage:
             self.search_input = (
                 ui.input(placeholder="搜索用户名、序列号或状态")
                 .props("clearable")
-                .classes("w-full")
+                .classes("w-full cert-search-input")
             )
             self.search_input.on("keydown.enter", self._handle_search)
             secondary_action("搜索", icon="search", on_click=self._handle_search)
-            ui.button("清除", icon="filter_alt_off", on_click=self._clear_search).props(
-                "flat no-caps color=primary"
+            secondary_action(
+                "清除",
+                icon="filter_alt_off",
+                on_click=self._clear_search,
             )
 
         def secondary_region() -> None:
@@ -116,10 +118,11 @@ class CertsPage:
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
             self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
-            render_page_toolbar(
+            toolbar = render_page_toolbar(
                 search=search_region,
                 secondary=secondary_region,
             )
+            toolbar.container.classes(add="certs-toolbar")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
@@ -150,24 +153,52 @@ class CertsPage:
                 "field": "common_name",
                 "headerName": "用户 / CN",
                 "pinned": "left",
-                "minWidth": 170,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 138,
+                "minWidth": 118,
+                "maxWidth": 168,
             },
-            {"field": "status_label", "headerName": "状态", "width": 110},
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "flex": 0.72,
+                "minWidth": 82,
+                "maxWidth": 110,
+            },
             {
                 "field": "serial_display",
                 "headerName": "序列号",
+                "flex": 1.45,
                 "minWidth": 170,
                 "cellClass": "vpn-grid-mono",
             },
-            {"field": "expires_display", "headerName": "到期日期", "width": 135},
-            {"field": "days_left", "headerName": "剩余天数", "width": 115},
+            {
+                "field": "expires_display",
+                "headerName": "到期日期",
+                "flex": 0.95,
+                "minWidth": 120,
+                "maxWidth": 150,
+            },
+            {
+                "field": "days_left",
+                "headerName": "剩余天数",
+                "flex": 0.72,
+                "minWidth": 88,
+                "maxWidth": 112,
+            },
             {
                 "field": "actions",
                 "headerName": "操作",
                 "pinned": "right",
-                "width": 100,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 82,
+                "minWidth": 82,
+                "maxWidth": 82,
                 "sortable": False,
                 "filter": False,
+                "resizable": False,
                 "cellClass": "vpn-grid-action-cell",
             },
         )
@@ -219,6 +250,7 @@ class CertsPage:
                     page_size=self.page_size,
                     selected_ids=self.selected_certs,
                     on_cell_click=self._on_grid_cell_clicked,
+                    suppress_horizontal_scroll=True,
                 )
                 self.grid_view.summary.text = f"共 {len(rows)} 个证书"
                 self.grid_view.grid.on("selectionChanged", self._on_selection_changed)
