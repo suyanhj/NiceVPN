@@ -164,7 +164,7 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     ).read_text(encoding="utf-8")
 
     assert "groups-page--v2" in source
-    assert "vpn-v2-page-intro" in source
+    assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
     assert "v2_effect=True" in source
     assert ".vpn-v2-overview-grid" in shell_css
