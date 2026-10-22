@@ -183,7 +183,12 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "certs-page--v2" in source
     assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
-    assert "v2_effect=True" in source
+    assert "compact=True" in source
+    assert "v2_effect=True" not in source
+    assert source.index('self.summary_container = ui.element("div")') < source.index(
+        "render_page_toolbar("
+    )
     assert ".vpn-v2-page-intro" not in shell_css
+    assert ".vpn-metric-card--compact" in shell_css
     assert ".vpn-v2-overview-grid" in shell_css
     assert "fetch(" not in source
