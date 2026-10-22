@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [
     vue(),
     tailwindcss(),
-    checker({ vueTsc: true, typescript: true }),
+    checker({ vueTsc: true }),
     cssInjectedByJsPlugin(),
   ],
   build: {
