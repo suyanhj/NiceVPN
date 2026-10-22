@@ -181,7 +181,7 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     ).read_text(encoding="utf-8")
 
     assert "certs-page--v2" in source
-    assert "vpn-v2-page-intro" in source
+    assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
     assert "v2_effect=True" in source
     assert ".vpn-v2-page-intro" in shell_css
