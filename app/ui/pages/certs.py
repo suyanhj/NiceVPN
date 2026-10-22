@@ -123,7 +123,7 @@ class CertsPage:
                 search=search_region,
                 secondary=secondary_region,
             )
-            self.summary_container = ui.element("div").classes("certs-overview-grid")
+            self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
