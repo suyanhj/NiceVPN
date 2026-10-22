@@ -212,6 +212,7 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid.options["selectionColumnDef"]["lockPosition"] == "left"
     assert view.grid.options["selectionColumnDef"]["width"] == 48
     assert view.grid.options["selectionColumnDef"]["suppressMovable"] is True
+    assert "suppressHorizontalScroll" not in view.grid.options
     assert ":getRowId" in view.grid.options
     assert view.grid._event_listeners
 
