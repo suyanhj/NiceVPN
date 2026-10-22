@@ -115,11 +115,11 @@ class CertsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
+            self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
             render_page_toolbar(
                 search=search_region,
                 secondary=secondary_region,
             )
-            self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
@@ -244,7 +244,7 @@ class CertsPage:
                 helper="当前证书库",
                 icon="verified_user",
                 tone="info",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "有效证书",
@@ -252,7 +252,7 @@ class CertsPage:
                 helper="状态正常，可继续使用",
                 icon="task_alt",
                 tone="success" if valid_count else "default",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "临期证书",
@@ -260,7 +260,7 @@ class CertsPage:
                 helper=f"{CERT_EXPIRY_WARN_DAYS} 天阈值内",
                 icon="schedule",
                 tone="warning" if expiring_count else "default",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "失效 / 吊销",
@@ -268,7 +268,7 @@ class CertsPage:
                 helper=f"{expired_count} 过期 · {revoked_count} 吊销",
                 icon="gpp_bad",
                 tone="danger" if invalid_count else "default",
-                v2_effect=True,
+                compact=True,
             )
 
     def _render_expiry_alerts(self):
