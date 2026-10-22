@@ -23,7 +23,7 @@ from app.ui.components.list_selection import (
 )
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
 
 logger = logging.getLogger(__name__)
@@ -54,14 +54,12 @@ class GroupsPage:
             groups = []
             load_error = exc
 
-        def header_actions() -> None:
+        def bulk_actions() -> None:
             primary_action(
                 "新建用户组",
                 icon="group_add",
                 on_click=self._show_create_dialog,
             )
-
-        def bulk_actions() -> None:
             disabled = not self.selected_ids
             self.bulk_enable_button = secondary_action(
                 "批量启用",
@@ -86,9 +84,6 @@ class GroupsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page groups-page--v2"):
-            toolbar = render_page_toolbar(primary=header_actions)
-            toolbar.container.classes(add="vpn-toolbar--end")
-
             self._render_summary_metrics(groups)
 
             self.bulk_bar = render_bulk_action_bar(
@@ -135,7 +130,7 @@ class GroupsPage:
                 helper="含根组与业务子组",
                 icon="folder_shared",
                 tone="info",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "启用分组",
@@ -143,7 +138,7 @@ class GroupsPage:
                 helper="当前可用",
                 icon="check_circle",
                 tone="success" if active_count else "default",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "停用分组",
@@ -151,7 +146,7 @@ class GroupsPage:
                 helper="暂停参与后续管理操作",
                 icon="block",
                 tone="warning" if disabled_count else "default",
-                v2_effect=True,
+                compact=True,
             )
             metric_card(
                 "组内用户",
@@ -159,7 +154,7 @@ class GroupsPage:
                 helper="按当前分组快照汇总",
                 icon="people",
                 tone="default",
-                v2_effect=True,
+                compact=True,
             )
 
     def _render_group_list(self, groups: list[dict]):
