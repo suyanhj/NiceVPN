@@ -756,7 +756,7 @@ body {
 
 /* ---------- NiceVPN UI V2 shared page primitives ---------- */
 
-.certs-overview-grid {
+.vpn-v2-overview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   width: 100%;
@@ -764,21 +764,46 @@ body {
   gap: var(--vpn-space-4);
 }
 
-.certs-overview-grid > * {
+.vpn-v2-overview-grid > * {
   width: 100%;
   min-width: 0;
 }
 
 @media (max-width: 1023px) {
-  .certs-overview-grid {
+  .vpn-v2-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 767px) {
-  .certs-overview-grid {
+  .vpn-v2-overview-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+
+.groups-page--v2 .mgmt-panel-list {
+  overflow: hidden;
+  border-color: rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background:
+    linear-gradient(155deg, rgba(16, 22, 32, 0.88), rgba(9, 13, 19, 0.92));
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
+}
+
+.groups-page--v2 .mgmt-record-card {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.012);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.groups-page--v2 .mgmt-record-card:hover {
+  border-color: rgba(110, 168, 255, 0.14);
+  background: rgba(110, 168, 255, 0.025);
+  transform: translateY(-1px);
 }
 
 
