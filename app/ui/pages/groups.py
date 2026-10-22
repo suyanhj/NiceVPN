@@ -14,6 +14,7 @@ from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import danger_action, primary_action, secondary_action
+from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
@@ -84,9 +85,15 @@ class GroupsPage:
                 tooltip="请先选择用户组" if disabled else None,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
+        with ui.column().classes("page-shell mgmt-page groups-page--v2"):
+            with ui.element("div").classes("vpn-v2-page-intro"):
+                ui.label("GROUPS").classes("vpn-v2-page-eyebrow")
+                ui.label("网络分区 · 成员归属 · 访问边界").classes("vpn-v2-page-meta")
+
             toolbar = render_page_toolbar(primary=header_actions)
             toolbar.container.classes(add="vpn-toolbar--end")
+
+            self._render_summary_metrics(groups)
 
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_ids),
@@ -116,6 +123,48 @@ class GroupsPage:
                         self._render_group_list(groups)
 
         self._sync_bulk_state()
+
+    @staticmethod
+    def _render_summary_metrics(groups: list[dict]) -> None:
+        """基于当前列表快照渲染分组摘要，不增加额外业务请求。"""
+
+        active_count = sum(str(group.get("status") or "active") == "active" for group in groups)
+        disabled_count = len(groups) - active_count
+        user_count = sum(int(group.get("user_count") or 0) for group in groups)
+
+        with ui.element("div").classes("vpn-v2-overview-grid"):
+            metric_card(
+                "用户组总数",
+                len(groups),
+                helper="含根组与业务子组",
+                icon="folder_shared",
+                tone="info",
+                v2_effect=True,
+            )
+            metric_card(
+                "启用分组",
+                active_count,
+                helper="当前可用",
+                icon="check_circle",
+                tone="success" if active_count else "default",
+                v2_effect=True,
+            )
+            metric_card(
+                "停用分组",
+                disabled_count,
+                helper="暂停参与后续管理操作",
+                icon="block",
+                tone="warning" if disabled_count else "default",
+                v2_effect=True,
+            )
+            metric_card(
+                "组内用户",
+                user_count,
+                helper="按当前分组快照汇总",
+                icon="people",
+                tone="default",
+                v2_effect=True,
+            )
 
     def _render_group_list(self, groups: list[dict]):
         """少量流程对象使用卡片列表，不强制表格化。"""
