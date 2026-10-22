@@ -1089,6 +1089,24 @@ body {
   padding-inline: 0;
 }
 
+.services-page--v2 .services-more-action {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 !important;
+  border-radius: 9px;
+  color: var(--vpn-text-soft) !important;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.services-page--v2 .services-more-action:hover {
+  background: rgba(110, 168, 255, 0.075) !important;
+  color: var(--vpn-color-brand-soft) !important;
+}
+
 
 /* ---------- NiceVPN UI V2 homepage proof-of-concept ---------- */
 
