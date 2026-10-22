@@ -11,8 +11,8 @@
 
   --vpn-bg: #070a0f;
   --vpn-bg-soft: #0b1018;
-  --vpn-panel: rgba(16, 21, 30, 0.82);
-  --vpn-panel-2: rgba(21, 28, 39, 0.88);
+  --vpn-panel: #10151e;
+  --vpn-panel-2: #151c27;
   --vpn-panel-3: #0a0e15;
   --vpn-sidebar: #080c12;
   --vpn-sidebar-2: #0b111a;
@@ -21,7 +21,7 @@
   --vpn-text-heading: #f5f7fb;
   --vpn-text-display: #dce5f2;
   --vpn-text-muted: #8d9aae;
-  --vpn-text-soft: #718096;
+  --vpn-text-soft: #77869a;
 
   --vpn-border: rgba(255, 255, 255, 0.075);
   --vpn-border-strong: rgba(139, 185, 255, 0.18);
