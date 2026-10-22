@@ -754,6 +754,34 @@ body {
 }
 
 
+/* ---------- NiceVPN UI V2 shared page primitives ---------- */
+
+.certs-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+  gap: var(--vpn-space-4);
+}
+
+.certs-overview-grid > * {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1023px) {
+  .certs-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .certs-overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
 /* ---------- NiceVPN UI V2 homepage proof-of-concept ---------- */
 
 .vpn-nav-brand {
@@ -785,7 +813,7 @@ body {
   position: relative;
 }
 
-.dashboard-v2-intro {
+.vpn-v2-page-intro {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -793,7 +821,7 @@ body {
   gap: 12px;
 }
 
-.dashboard-v2-eyebrow {
+.vpn-v2-page-eyebrow {
   color: rgba(139, 185, 255, 0.78);
   font-family: var(--vpn-font-mono);
   font-size: 10px;
@@ -801,7 +829,7 @@ body {
   letter-spacing: 0.18em;
 }
 
-.dashboard-v2-meta {
+.vpn-v2-page-meta {
   color: var(--vpn-text-soft);
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -927,7 +955,7 @@ body {
 }
 
 @media (max-width: 767px) {
-  .dashboard-v2-intro {
+  .vpn-v2-page-intro {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;

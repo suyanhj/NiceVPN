@@ -30,3 +30,15 @@
 - [x] 3.4 GitHub Actions Python 单测收敛到 3.14；Chrome smoke 在启动应用前构建正式 Vue dist。
 - [x] 3.5 新增独立 `build-ui.sh`，只构建前端产物并支持自定义输出目录；`start.sh` 与 CI 统一复用该脚本。
 - [x] 3.6 优化 Dockerfile 层数与国内构建链：华为公共基础镜像、中科大 Debian 源、npmmirror npm 源，并使用 BuildKit cache mount 避免下载缓存进入 runtime 镜像。
+
+
+## 4. V2 页面迁移
+
+- [x] 4.1 将首页专用 intro 样式抽为共享 V2 页面视觉原语，并用 CI 锁定 Service/UI 与 Vue/业务 I/O 边界。
+- [x] 4.2 Certs：增加 V2 状态摘要与共享视觉层，保留证书续签、吊销、CRL、CA 操作原 Python 业务路径。
+- [ ] 4.3 Groups：复用共享 V2 页面原语与列表/状态组件。
+- [ ] 4.4 Services：升级信息层级与运行状态视觉，不改服务控制业务路径。
+- [ ] 4.5 Peers：升级站点/远端运维视觉，保持 Python 状态管理。
+- [ ] 4.6 Users：升级高密度用户与会话视图。
+- [ ] 4.7 Settings：按设置域拆分视觉层级并减少页面私有 CSS。
+- [ ] 4.8 Firewall：最后迁移，并同步拆分超大页面模块；不整页 Vue 化。

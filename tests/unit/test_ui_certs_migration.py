@@ -58,6 +58,10 @@ def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.M
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("1 个证书将到期")
+            await user.should_see("证书总数")
+            await user.should_see("有效证书")
+            await user.should_see("临期证书")
+            await user.should_see("失效 / 吊销")
             await user.should_see("共 3 个证书")
             await user.should_see("已选择 0 项")
 
@@ -163,3 +167,23 @@ def test_cert_adapter_handles_5000_rows_as_lightweight_grid_data() -> None:
     assert rows[0]["common_name"] == "user-0000"
     assert rows[-1]["common_name"] == "user-4999"
     assert CertsPage._row_matches_query(rows[-1], "user-4999")
+
+
+def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
+    """证书页复用 V2 视觉原语，不建立第二套 Vue 业务层。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "certs.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "certs-page--v2" in source
+    assert "vpn-v2-page-intro" in source
+    assert "certs-overview-grid" in source
+    assert "v2_effect=True" in source
+    assert ".vpn-v2-page-intro" in shell_css
+    assert ".certs-overview-grid" in shell_css
+    assert "fetch(" not in source

@@ -19,6 +19,7 @@ from app.ui.components.actions import (
     more_actions,
     secondary_action,
 )
+from app.ui.components.cards import metric_card
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.feedback import AsyncOperationGuard
 from app.ui.components.states import empty_state, error_state, no_match_state
@@ -43,6 +44,7 @@ class CertsPage:
         self.cert_service = CertService()
         self.search_input = None
         self.data_container = None
+        self.summary_container = None
         self.search_state_container = None
         self.grid_view = None
         self.all_rows: list[dict[str, Any]] = []
@@ -112,11 +114,16 @@ class CertsPage:
                 tooltip="请先选择证书" if disabled else None,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
+        with ui.column().classes("page-shell mgmt-page certs-page--v2"):
+            with ui.element("div").classes("vpn-v2-page-intro"):
+                ui.label("CERTIFICATES").classes("vpn-v2-page-eyebrow")
+                ui.label("生命周期 · 信任状态 · 批量运维").classes("vpn-v2-page-meta")
+
             render_page_toolbar(
                 search=search_region,
                 secondary=secondary_region,
             )
+            self.summary_container = ui.element("div").classes("certs-overview-grid")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
@@ -179,6 +186,8 @@ class CertsPage:
             rows = self._load_rows()
         except Exception as exc:
             logger.exception("加载证书列表失败")
+            if self.summary_container is not None:
+                self.summary_container.clear()
             self.data_container.clear()
             with self.data_container:
                 error_state(
@@ -187,6 +196,8 @@ class CertsPage:
                     on_retry=self._refresh_cert_list,
                 )
             return
+
+        self._render_summary_metrics(rows)
 
         existing = {str(row["id"]) for row in rows if row.get("id")}
         self.selected_certs.intersection_update(existing)
@@ -216,6 +227,53 @@ class CertsPage:
 
         self._sync_bulk_state()
         self._handle_search()
+
+    def _render_summary_metrics(self, rows: list[dict[str, Any]]) -> None:
+        """渲染证书库状态摘要；只消费已适配行，不增加业务请求。"""
+
+        if self.summary_container is None:
+            return
+
+        valid_count = sum(row.get("status") == "valid" for row in rows)
+        expiring_count = sum(row.get("status") == "expiring" for row in rows)
+        expired_count = sum(row.get("status") == "expired" for row in rows)
+        revoked_count = sum(row.get("status") == "revoked" for row in rows)
+        invalid_count = expired_count + revoked_count
+
+        self.summary_container.clear()
+        with self.summary_container:
+            metric_card(
+                "证书总数",
+                len(rows),
+                helper="当前证书库",
+                icon="verified_user",
+                tone="info",
+                v2_effect=True,
+            )
+            metric_card(
+                "有效证书",
+                valid_count,
+                helper="状态正常，可继续使用",
+                icon="task_alt",
+                tone="success" if valid_count else "default",
+                v2_effect=True,
+            )
+            metric_card(
+                "临期证书",
+                expiring_count,
+                helper=f"{CERT_EXPIRY_WARN_DAYS} 天阈值内",
+                icon="schedule",
+                tone="warning" if expiring_count else "default",
+                v2_effect=True,
+            )
+            metric_card(
+                "失效 / 吊销",
+                invalid_count,
+                helper=f"{expired_count} 过期 · {revoked_count} 吊销",
+                icon="gpp_bad",
+                tone="danger" if invalid_count else "default",
+                v2_effect=True,
+            )
 
     def _render_expiry_alerts(self):
         """渲染即将到期告警；告警源失败不影响主证书库。"""

@@ -5,6 +5,7 @@ on:
     branches:
       - admin-ui
       - main
+      - "feature/**"
   pull_request:
     branches:
       - main

@@ -81,9 +81,9 @@ class DashboardPage:
             )
 
         with ui.column().classes("page-shell mgmt-page dashboard-page dashboard-page--v2"):
-            with ui.element("div").classes("dashboard-v2-intro"):
-                ui.label("OVERVIEW").classes("dashboard-v2-eyebrow")
-                ui.label("实时状态 · 安全接入 · 统一运维").classes("dashboard-v2-meta")
+            with ui.element("div").classes("vpn-v2-page-intro"):
+                ui.label("OVERVIEW").classes("vpn-v2-page-eyebrow")
+                ui.label("实时状态 · 安全接入 · 统一运维").classes("vpn-v2-page-meta")
             toolbar = render_page_toolbar(secondary=header_actions)
             toolbar.container.classes(add="vpn-toolbar--end")
             self._content = ui.column().classes("w-full gap-4")

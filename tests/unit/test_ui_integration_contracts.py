@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 UI_DIR = ROOT / "app" / "ui"
 PAGES_DIR = UI_DIR / "pages"
 CSS_DIR = UI_DIR / "static" / "css"
+SERVICES_DIR = ROOT / "app" / "services"
+VUE_DIR = UI_DIR / "vue"
 
 
 def _page_source() -> str:
@@ -102,3 +104,28 @@ def test_legacy_css_does_not_contain_replacement_character_or_old_sortable() -> 
     assert "\ufffd" not in source
     assert "Sortable.min.js" not in source
     assert re.search(r"\.firewall-rule-drag\b", source) is None
+
+
+def test_service_layer_does_not_depend_on_ui_layer() -> None:
+    """业务服务层不得反向依赖 NiceGUI/Vue UI。"""
+
+    pattern = re.compile(r"^\s*(?:from\s+app\.ui\b|import\s+app\.ui\b)", re.MULTILINE)
+    for path in SERVICES_DIR.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert pattern.search(source) is None, path
+
+
+def test_vue_visual_layer_does_not_call_business_api_directly() -> None:
+    """V2 Vue 仅负责视觉增强，不直接承担 VPN 业务 I/O。"""
+
+    sources = [VUE_DIR / "VpnSpotlightSurface.vue"]
+    sources.extend(
+        path
+        for path in (VUE_DIR / "frontend" / "src").rglob("*")
+        if path.is_file() and path.suffix in {".vue", ".ts", ".js"}
+    )
+    blocked = ("fetch(", "axios", "WebSocket", "/api/", "app.services")
+    for path in sources:
+        source = path.read_text(encoding="utf-8")
+        for marker in blocked:
+            assert marker not in source, f"{path}: {marker}"
