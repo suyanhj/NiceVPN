@@ -87,6 +87,8 @@ def test_services_page_shared_shell_local_status_and_empty_peer_state(
         async with user_simulation(lambda: page.render(initial_tab="local")) as user:
             response = await user.open("/")
             assert response.status_code == 200
+            await user.should_see("SERVICES")
+            await user.should_see("本机实例 · 对端服务 · 日志运维")
             await user.should_see("本机实例")
             await user.should_see("对端实例")
             await user.should_see("刷新")
@@ -365,3 +367,21 @@ def test_config_editor_uses_shared_form_and_does_not_open_missing_file(
             await user.should_see("保存")
 
     asyncio.run(verify())
+
+
+def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
+    """Services 只迁移视觉层，不把服务控制或日志逻辑搬进 Vue。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "services.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "services-page--v2" in source
+    assert "vpn-v2-page-intro" in source
+    assert "start_instance" in source
+    assert "stop_instance" in source
+    assert "restart_instance" in source
+    assert ".services-page--v2 .firewall-compact-tabs" in shell_css
+    assert "fetch(" not in source
