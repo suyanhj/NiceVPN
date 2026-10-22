@@ -761,12 +761,45 @@ body {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   width: 100%;
   min-width: 0;
-  gap: var(--vpn-space-4);
+  gap: var(--vpn-space-3);
 }
 
 .vpn-v2-overview-grid > * {
   width: 100%;
   min-width: 0;
+}
+
+.vpn-metric-card--compact {
+  min-height: 74px;
+  padding: 12px 14px !important;
+  border-radius: 12px !important;
+  box-shadow: none;
+}
+
+.vpn-metric-card--compact .vpn-metric-card__label {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.vpn-metric-card--compact .vpn-metric-card__value {
+  margin-top: 2px;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.vpn-metric-card--compact .vpn-metric-card__helper {
+  margin-top: 1px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-metric-card--compact .vpn-metric-card__icon {
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
 }
 
 @media (max-width: 1023px) {
