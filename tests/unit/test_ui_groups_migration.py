@@ -170,7 +170,9 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert "v2_effect=True" not in source
     assert "render_page_toolbar" not in source
     assert "groups-create-action" in source
+    assert "primary_action" not in source
     assert ".groups-page--v2 .groups-create-action" in shell_css
+    assert ".groups-page--v2 .vpn-bulk-bar" in shell_css
     assert source.index("self._render_summary_metrics(groups)") < source.index(
         "self.bulk_bar = render_bulk_action_bar"
     )
