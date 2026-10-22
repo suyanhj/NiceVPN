@@ -75,6 +75,7 @@ def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.M
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
     assert page.grid_view.grid.options["paginationPageSize"] == 50
+    assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
     assert ":getRowId" in page.grid_view.grid.options
     assert page.bulk_renew_button._props["disable"] is True
     assert page.bulk_revoke_button._props["disable"] is True
@@ -200,4 +201,28 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".vpn-data-grid__grid .ag-row-odd" in shell_css
     assert ".vpn-data-grid__grid .ag-row-hover" in shell_css
     assert ".certs-page--v2 .vpn-data-grid__summary" in shell_css
+    assert "certs-toolbar" in source
+    assert "cert-search-input" in source
+    assert ".certs-toolbar .q-btn" in shell_css
+    assert "min-height: 42px;" in shell_css
+    assert ".ag-body-horizontal-scroll" in shell_css
     assert "fetch(" not in source
+
+
+def test_cert_grid_columns_pin_edges_and_flex_center() -> None:
+    """用户/CN 与操作固定两端，中间列弹性铺满，避免桌面横向滚动。"""
+
+    columns = {column["field"]: column for column in CertsPage._grid_columns()}
+
+    assert columns["common_name"]["pinned"] == "left"
+    assert columns["common_name"]["lockPinned"] is True
+    assert columns["common_name"]["width"] == 138
+    assert columns["common_name"]["maxWidth"] == 168
+
+    assert columns["actions"]["pinned"] == "right"
+    assert columns["actions"]["lockPinned"] is True
+    assert columns["actions"]["width"] == 82
+    assert columns["actions"]["resizable"] is False
+
+    for field in ("status_label", "serial_display", "expires_display", "days_left"):
+        assert columns[field]["flex"] > 0
