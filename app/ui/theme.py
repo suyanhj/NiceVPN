@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """VPN 管理系统主题注册入口。"""
 
+from hashlib import sha256
+from pathlib import Path
+
 from nicegui import ui
 
 
@@ -14,6 +17,21 @@ _JS_FILES = (
     "/static/vendor/clipboard-2.0.11.min.js",
     "/static/js/clipboard-adapter.js",
 )
+_STATIC_ROOT = Path(__file__).resolve().parent / "static"
+
+
+def _versioned_static_url(url: str) -> str:
+    """为本地静态资源附加内容哈希，避免浏览器继续使用旧 CSS/JS。"""
+
+    normalized = str(url).strip()
+    relative = normalized.removeprefix("/static/")
+    path = _STATIC_ROOT / relative
+    if not path.is_file():
+        return normalized
+
+    digest = sha256(path.read_bytes()).hexdigest()[:12]
+    separator = "&" if "?" in normalized else "?"
+    return f"{normalized}{separator}v={digest}"
 
 
 def _register_component_defaults() -> None:
@@ -44,6 +62,8 @@ def setup_theme() -> None:
     ui.dark_mode(True)
     _register_component_defaults()
     for css_file in _CSS_FILES:
-        ui.add_head_html(f'<link rel="stylesheet" href="/static/css/{css_file}">')
+        url = _versioned_static_url(f"/static/css/{css_file}")
+        ui.add_head_html(f'<link rel="stylesheet" href="{url}">')
     for script_file in _JS_FILES:
-        ui.add_head_html(f'<script defer src="{script_file}"></script>')
+        url = _versioned_static_url(script_file)
+        ui.add_head_html(f'<script defer src="{url}"></script>')
