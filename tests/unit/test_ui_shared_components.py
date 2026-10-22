@@ -38,6 +38,13 @@ def test_status_values_cards_and_states_build_without_business_services() -> Non
             icon="devices",
             tone="success",
         )
+        state["compact_metric"] = metric_card(
+            "证书总数",
+            8,
+            helper="当前证书库",
+            icon="verified_user",
+            compact=True,
+        )
         state["info"] = info_card(
             "配置影响",
             "修改后需要客户端重新连接。",
@@ -81,6 +88,8 @@ def test_status_values_cards_and_states_build_without_business_services() -> Non
     assert state["running"].label.text == "运行"
     assert state["value"].label.text == "10.255.0.2/32"
     assert state["metric"].value.text == "12"
+    assert "vpn-metric-card--compact" in state["compact_metric"].container._classes
+    assert "vpn-metric-card--v2" not in state["compact_metric"].container._classes
     assert "vpn-card--clickable" in state["quick"].container._classes
 
 
@@ -93,6 +102,8 @@ def test_status_and_card_validation_rejects_invalid_inputs() -> None:
         metric_card(" ", 1)
     with pytest.raises(ValueError, match="只能设置一个"):
         quick_link_card("入口", route="/users", on_click=lambda: None)
+    with pytest.raises(ValueError, match="紧凑指标卡"):
+        metric_card("冲突", 1, compact=True, v2_effect=True)
 
 
 def test_confirm_dialog_supports_impact_count_and_required_text() -> None:
@@ -197,6 +208,10 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid.options["pagination"] is True
     assert view.grid.options["paginationPageSize"] == 25
     assert view.grid.options["rowSelection"] == {"mode": "multiRow"}
+    assert view.grid.options["selectionColumnDef"]["pinned"] == "left"
+    assert view.grid.options["selectionColumnDef"]["lockPosition"] == "left"
+    assert view.grid.options["selectionColumnDef"]["width"] == 48
+    assert view.grid.options["selectionColumnDef"]["suppressMovable"] is True
     assert ":getRowId" in view.grid.options
     assert view.grid._event_listeners
 
