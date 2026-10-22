@@ -6,7 +6,7 @@
 
 - V2 继续采用 **Python/NiceGUI 负责业务与交互，Vue 只做视觉增强** 的路线。
 - 不引入 Vue Bits 与 TresJS；后续只有出现明确、不可由现有栈低成本完成的需求时再按组件级评估。
-- 页面迁移顺序固定为 Dashboard → Certs → Groups → Services → Peers → Users → Settings → Firewall；当前 Dashboard、Certs、Groups 已进入 V2。
+- 页面迁移顺序固定为 Dashboard → Certs → Groups → Services → Peers → Users → Settings → Firewall；当前 Dashboard、Certs、Groups、Services 已进入 V2。
 - Firewall 继续放最后，并在迁移时同步拆分页面模块，不做整页 Vue 重写。
 
 ## 当前页面规模
@@ -55,5 +55,6 @@ CI 单元测试新增两条架构契约：
 - Dashboard：V2 首页基线；
 - Certs：共享 V2 intro + 4 项证书状态摘要，证书业务路径未改；
 - Groups：复用同一 `vpn-v2-overview-grid` 与页面 intro，保留现有列表、表单和批量操作实现。
+- Services：复用共享 V2 intro 与 Surface；本机 systemd、对端 SSH、实时日志状态仍由 Python/NiceGUI 管理，不创建虚假的汇总状态。
 
-后续 Services 继续优先复用现有视觉原语，不新增新的前端框架或页面专用视觉依赖。
+后续 Peers 继续优先复用现有视觉原语，不新增新的前端框架或页面专用视觉依赖。
