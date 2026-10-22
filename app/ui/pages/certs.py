@@ -125,7 +125,9 @@ class CertsPage:
                 len(self.selected_certs),
                 actions=bulk_actions,
             )
-            self.data_container = ui.column().classes("w-full")
+            self.data_container = ui.column().classes(
+                "w-full flex-1 min-h-0 certs-data-region"
+            )
 
         self._refresh_cert_list()
 
