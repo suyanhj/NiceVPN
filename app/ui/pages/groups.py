@@ -55,11 +55,12 @@ class GroupsPage:
             load_error = exc
 
         def bulk_actions() -> None:
-            primary_action(
+            create_button = primary_action(
                 "新建用户组",
-                icon="group_add",
+                icon="add",
                 on_click=self._show_create_dialog,
             )
+            create_button.classes(add="groups-create-action")
             disabled = not self.selected_ids
             self.bulk_enable_button = secondary_action(
                 "批量启用",
