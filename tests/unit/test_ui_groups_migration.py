@@ -166,6 +166,12 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert "groups-page--v2" in source
     assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
-    assert "v2_effect=True" in source
+    assert "compact=True" in source
+    assert "v2_effect=True" not in source
+    assert "render_page_toolbar" not in source
+    assert source.index("self._render_summary_metrics(groups)") < source.index(
+        "self.bulk_bar = render_bulk_action_bar"
+    )
     assert ".vpn-v2-overview-grid" in shell_css
+    assert ".vpn-metric-card--compact" in shell_css
     assert "fetch(" not in source
