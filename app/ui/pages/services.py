@@ -25,7 +25,7 @@ from app.services.openvpn.instance import (
 from app.services.peer_instance.service import PeerService
 from app.ui.adapters.services import adapt_local_service_view, adapt_peer_service_view
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import MenuAction, more_actions, primary_action, secondary_action
+from app.ui.components.actions import primary_action, secondary_action
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
@@ -892,35 +892,35 @@ class ServicesPage:
                     busy=bool(view["busy"]),
                 ).props("dense")
 
-                more_menu = more_actions(
-                    (
-                        MenuAction(
-                            "守护进程日志",
-                            icon="article",
-                            on_click=lambda name=status.name: self._show_log_viewer(name),
-                        ),
-                        MenuAction(
-                            "设备绑定日志",
-                            icon="fingerprint",
-                            on_click=self._show_device_bind_log_viewer,
-                        ),
-                        MenuAction(
-                            "OpenVPN 状态文件",
-                            icon="poll",
-                            on_click=lambda name=status.name: self._show_status_log_viewer(name),
-                        ),
-                        MenuAction(
-                            "编辑配置",
-                            icon="edit_note",
-                            on_click=lambda name=status.name: self._open_config_editor(name),
-                            disabled=not bool(view["can_edit_config"]),
-                        ),
-                    ),
-                    label="…",
-                    icon="",
-                    tooltip="更多操作",
-                )
-                more_menu.button.classes(add="services-more-action")
+                ui.button(
+                    icon="article",
+                    on_click=lambda name=status.name: self._show_log_viewer(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("守护进程日志")
+
+                ui.button(
+                    icon="fingerprint",
+                    on_click=self._show_device_bind_log_viewer,
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("设备绑定日志")
+
+                ui.button(
+                    icon="poll",
+                    on_click=lambda name=status.name: self._show_status_log_viewer(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("OpenVPN 状态文件")
+
+                config_button = ui.button(
+                    icon="edit_note",
+                    on_click=lambda name=status.name: self._open_config_editor(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("编辑配置")
+                if not bool(view["can_edit_config"]):
+                    config_button.disable()
 
     @staticmethod
     def _format_traffic(n: int) -> str:
