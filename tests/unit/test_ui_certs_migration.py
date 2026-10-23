@@ -43,7 +43,7 @@ def test_cert_adapter_covers_valid_expiring_expired_revoked_and_invalid_fields()
     assert partial["expires_display"] == "—"
 
 
-def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_certs_page_uses_shared_grid_bulk_state_and_native_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     page = CertsPage()
     sample = [
         _cert("alice", "valid", days=90),
@@ -64,11 +64,6 @@ def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.M
             await user.should_see("失效 / 吊销")
             await user.should_see("共 3 个证书")
             await user.should_see("已选择 0 项")
-
-            page.search_input.set_value("no-such-cert")
-            page._handle_search()
-            await user.should_see("没有匹配结果")
-            await user.should_see("没有证书匹配“no-such-cert”")
 
     asyncio.run(verify_page())
 
@@ -167,7 +162,7 @@ def test_cert_adapter_handles_5000_rows_as_lightweight_grid_data() -> None:
     assert len(rows) == 5000
     assert rows[0]["common_name"] == "user-0000"
     assert rows[-1]["common_name"] == "user-4999"
-    assert CertsPage._row_matches_query(rows[-1], "user-4999")
+    assert rows[-1]["serial"]
 
 
 def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
@@ -204,10 +199,11 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".vpn-data-grid__grid .ag-row-odd" in grid_css
     assert ".vpn-data-grid__grid .ag-row-hover" in grid_css
     assert ".certs-page--v2 .vpn-data-grid__summary" in shell_css
-    assert "certs-toolbar" in source
-    assert "cert-search-input" in source
-    assert ".certs-toolbar .q-btn" in shell_css
-    assert "min-height: 42px;" in shell_css
+    assert "cert-search-input" not in source
+    assert "search_region" not in source
+    assert "_handle_search" not in source
+    assert "_clear_search" not in source
+    assert "vpn-toolbar--end" in source
     assert ".ag-body-horizontal-scroll" in shell_css
     assert ".vpn-grid-status-pill" in grid_css
     assert ".vpn-grid-stacked-value" in grid_css
