@@ -68,7 +68,7 @@ def test_theme_is_the_only_static_style_and_script_registration_entry() -> None:
     source = _page_source()
 
     assert '_CSS_FILES = (' in theme
-    for name in ("tokens.css", "shell.css", "effects.css", "legacy.css"):
+    for name in ("tokens.css", "shell.css", "ag-grid-theme.css", "effects.css", "legacy.css"):
         assert f'"{name}"' in theme
     assert "clipboard-adapter.js" in theme
 
