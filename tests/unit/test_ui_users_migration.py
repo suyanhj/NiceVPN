@@ -108,7 +108,8 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     assert ":onFirstDataRendered" in page.grid_view.grid.options
     assert len(page.grid_view.grid.options["rowData"]) == 2
     assert page.bulk_download_button._props.get("disable") is not True
-    assert page.bulk_more_menu.button._props.get("disable") is not True
+    assert len(page.bulk_icon_buttons) == 5
+    assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
 
 
 def test_users_grid_columns_follow_certs_v2_table_template() -> None:
@@ -140,8 +141,23 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     assert account[":filter"] == "window.NiceVpnSetFilter"
     assert session[":filter"] == "window.NiceVpnSetFilter"
 
-    assert columns["group"]["filter"] is False
-    assert columns["device_source"]["filter"] is False
+    group = columns["group"]
+    device = columns["device_source"]
+    assert group[":filter"] == "window.NiceVpnSetFilter"
+    assert group["filterParams"]["selectAllLabel"] == "(全选)"
+    assert group["filterParams"]["searchPlaceholder"] == "搜索用户组..."
+
+    assert device[":filter"] == "window.NiceVpnSetFilter"
+    assert device["filterParams"]["filterValueField"] == "device_filter"
+    assert device["filterParams"]["selectAllLabel"] == "(全选)"
+    assert device["filterParams"]["valueOrder"] == [
+        "安卓",
+        "iOS",
+        "Mac",
+        "Windows",
+        "Linux",
+        "未知",
+    ]
 
     actions = columns["actions"]
     assert actions["pinned"] == "right"
@@ -166,7 +182,7 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
             "bytes_sent": 2048,
             "connected_since": "2026-10-20 08:00:00",
         },
-        {"device_label": "MacBook"},
+        {"device_label": "Mac"},
         "10.8.0.10",
         {"group-main": "默认接入组"},
         live_available=True,
@@ -182,8 +198,10 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
 
     assert online["account_status_tone"] == "success"
     assert online["session_status_tone"] == "success"
-    assert online["device_source"] == "MacBook · 203.0.113.10:50000"
+    assert online["device_filter"] == "Mac"
+    assert online["device_source"] == "Mac · 203.0.113.10:50000"
 
+    assert disabled["device_filter"] == "未知"
     assert disabled["account_status_tone"] == "warning"
     assert disabled["session_status_tone"] == "unknown"
 
@@ -326,6 +344,17 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-toolbar" not in source
     assert "users-bulk-bar" in source
     assert "users-action-separator" in source
+    assert "users-bulk-icon-action" in source
+    assert "more_actions(" not in source
+    assert "MenuAction(" not in source
+    for label in (
+        "批量停用",
+        "批量踢下线",
+        "批量切换组",
+        "批量重置绑定",
+        "批量删除",
+    ):
+        assert f"aria-label='{label}'" in source
     assert "search_input" not in source
     assert "_handle_search" not in source
     assert "_clear_search" not in source
@@ -339,6 +368,7 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
 
     assert ".users-page--v2 .users-toolbar" not in shell_css
     assert ".users-page--v2 .users-action-separator" in shell_css
+    assert ".users-page--v2 .users-bulk-icon-action" in shell_css
     assert ".users-page--v2 .users-data-region" in shell_css
     assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
     assert ".q-dialog .q-card.users-action-dialog" in shell_css
@@ -346,3 +376,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert ".q-dialog .q-card.users-config-drawer" in shell_css
 
     assert "field + '_tone'" in renderer_source
+    set_filter_source = (
+        root / "app" / "ui" / "static" / "js" / "ag-grid-set-filter.js"
+    ).read_text(encoding="utf-8")
+    assert "filterValueField" in set_filter_source
+    assert "this.filterValue(params.node)" in set_filter_source
