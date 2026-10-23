@@ -29,9 +29,9 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -47,9 +47,7 @@ class UsersPage:
     def __init__(self):
         self.user_service = UserService()
         self.selected_users: set[str] = set()
-        self.search_input = None
         self.data_container = None
-        self.search_state_container = None
         self.grid_view = None
         self.all_grid_rows: list[dict] = []
         self.bulk_bar = None
@@ -79,31 +77,14 @@ class UsersPage:
         self.page_size = 50
 
     def render(self):
-        """渲染用户管理页面；数据密集集合统一使用 AG Grid。"""
+        """渲染用户管理页面；页级动作与批量动作统一收敛到单条操作栏。"""
 
-        def search_region() -> None:
-            self.search_input = (
-                ui.input(placeholder="搜索用户名、虚拟 IP、组、证书或设备")
-                .props("outlined dense clearable")
-                .classes("w-full")
-            )
-            self.search_input.on("keydown.enter", self._handle_search)
-            self.search_input.on("clear", lambda _: self._clear_search())
-            ui.button(
-                icon="search",
-                on_click=self._handle_search,
-            ).props("flat round dense").classes(
-                "users-search-action"
-            ).tooltip("搜索用户")
-
-        def primary_region() -> None:
+        def bulk_actions() -> None:
             create_action(
                 "新建用户",
                 icon="person_add",
                 on_click=self._show_create_dialog,
             )
-
-        def secondary_region() -> None:
             secondary_action(
                 "批量导入",
                 icon="upload_file",
@@ -114,8 +95,8 @@ class UsersPage:
                 on_click=self._refresh_user_list,
             ).props("flat round dense").classes("users-refresh-action")
             refresh_button.tooltip("刷新用户列表")
+            ui.element("span").classes("users-action-separator")
 
-        def bulk_actions() -> None:
             disabled = not self.selected_users
             self.bulk_download_button = secondary_action(
                 "批量下载",
@@ -144,12 +125,6 @@ class UsersPage:
             )
 
         with ui.column().classes("page-shell mgmt-page users-page--v2"):
-            toolbar = render_page_toolbar(
-                search=search_region,
-                primary=primary_region,
-                secondary=secondary_region,
-            )
-            toolbar.container.classes(add="users-toolbar")
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_users),
                 actions=bulk_actions,
@@ -355,6 +330,7 @@ class UsersPage:
                 "headerName": "用户组",
                 "flex": 0.78,
                 "minWidth": 110,
+                "filter": False,
             },
             {
                 "field": "traffic",
@@ -374,6 +350,7 @@ class UsersPage:
                 "headerName": "设备 / 来源",
                 "flex": 1.15,
                 "minWidth": 188,
+                "filter": False,
             },
             {
                 "field": "actions",
@@ -418,7 +395,6 @@ class UsersPage:
         with self.data_container:
             self._render_user_grid(rows, warnings)
         self._sync_bulk_state()
-        self._handle_search()
 
     def _render_user_grid(self, rows: list[dict], warnings: list[str]) -> None:
         """构建用户数据区及局部状态。"""
@@ -440,7 +416,6 @@ class UsersPage:
             )
             return
 
-        self.search_state_container = ui.column().classes("w-full")
         self.grid_view = render_data_grid(
             self._user_grid_columns(),
             rows,
@@ -452,58 +427,6 @@ class UsersPage:
         self.grid_view.summary.text = f"共 {len(rows)} 个用户"
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
 
-    def _handle_search(self):
-        """客户端快速筛选，同时在服务端镜像计算结果数与无匹配状态。"""
-
-        if self.grid_view is None:
-            return
-        query = str(self.search_input.value or "").strip() if self.search_input else ""
-        normalized = query.casefold()
-        matched = [
-            row
-            for row in self.all_grid_rows
-            if not normalized or self._row_matches_query(row, normalized)
-        ]
-
-        self.grid_view.grid.options["quickFilterText"] = query
-        self.grid_view.grid.update()
-        self.grid_view.summary.text = (
-            f"匹配 {len(matched)} / 共 {len(self.all_grid_rows)} 个用户"
-            if query
-            else f"共 {len(self.all_grid_rows)} 个用户"
-        )
-
-        if self.search_state_container is not None:
-            self.search_state_container.clear()
-            if query and not matched:
-                self.grid_view.container.set_visibility(False)
-                with self.search_state_container:
-                    no_match_state(
-                        description=f"没有用户匹配“{query}”。",
-                        on_clear=self._clear_search,
-                    )
-            else:
-                self.grid_view.container.set_visibility(True)
-
-    @staticmethod
-    def _row_matches_query(row: dict, query: str) -> bool:
-        fields = (
-            "username",
-            "virtual_ip",
-            "group",
-            "group_id",
-            "cert_serial",
-            "source",
-            "device",
-            "account_status",
-            "session_status",
-        )
-        return any(query in str(row.get(field) or "").casefold() for field in fields)
-
-    def _clear_search(self) -> None:
-        if self.search_input is not None:
-            self.search_input.set_value("")
-        self._handle_search()
 
     async def _on_grid_selection_changed(self, _event=None) -> None:
         """把 AG Grid 当前选择同步到批量操作状态。"""
