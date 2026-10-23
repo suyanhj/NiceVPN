@@ -129,7 +129,7 @@ class ServicesPage:
             with ui.tabs(
                 value=self._active_tab,
                 on_change=self._on_service_tab_change,
-            ).classes("firewall-compact-tabs w-full") as self._service_tabs:
+            ).classes("services-instance-tabs w-full") as self._service_tabs:
                 ui.tab("local", label="本机实例")
                 ui.tab("peers", label="对端实例")
 
@@ -137,22 +137,22 @@ class ServicesPage:
                 self._service_tabs,
                 value=self._active_tab,
                 keep_alive=False,
-            ).classes("w-full min-h-0 flex-1 firewall-tabpanels"):
+            ).classes("w-full min-h-0 flex-1 services-tabpanels"):
                 with ui.tab_panel("local"):
-                    with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                        with ui.element("div").classes("mgmt-list-head"):
+                    with ui.element("section").classes("mgmt-panel mgmt-panel-list services-list-panel"):
+                        with ui.element("div").classes("mgmt-list-head services-list-head"):
                             with ui.row().classes("items-center gap-2"):
-                                ui.label("本机实例").classes("mgmt-kicker")
-                                self._running_chip = ui.label("0 运行").classes("service-running-chip")
+                                ui.label("本机实例").classes("mgmt-kicker services-list-kicker")
+                                self._running_chip = ui.label("0 运行").classes("services-running-chip")
                         self._list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_list()
 
                 with ui.tab_panel("peers"):
-                    with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                        with ui.element("div").classes("mgmt-list-head"):
+                    with ui.element("section").classes("mgmt-panel mgmt-panel-list services-list-panel"):
+                        with ui.element("div").classes("mgmt-list-head services-list-head"):
                             with ui.row().classes("items-center gap-2"):
-                                ui.label("对端实例").classes("mgmt-kicker")
-                                self._peer_total_chip = ui.label("0 个").classes("service-running-chip")
+                                ui.label("对端实例").classes("mgmt-kicker services-list-kicker")
+                                self._peer_total_chip = ui.label("0 个").classes("services-running-chip")
                         self._peer_list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_peer_client_list()
 
@@ -311,10 +311,10 @@ class ServicesPage:
             else:
                 initial = load()
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl"):
-            ui.label(title).classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+            ui.label(title).classes("text-h6 services-view-dialog__title")
             header_ctrl = header_widget() if header_widget else None
-            path_caption = ui.label(initial[0] if initial else "").classes("section-caption")
+            path_caption = ui.label(initial[0] if initial else "").classes("section-caption services-view-dialog__caption")
             follow_tail = True
 
             def on_log_scroll(event) -> None:
@@ -329,7 +329,7 @@ class ServicesPage:
                 follow_tail = remaining <= _LOG_TAIL_STICK_PX
 
             with ui.scroll_area(on_scroll=on_log_scroll).classes(
-                "w-full log-frame vpn-log-tail-viewport"
+                "w-full log-frame vpn-log-tail-viewport services-log-frame"
             ).style(_LOG_TAIL_CODE_STYLE) as log_viewport:
                 log_label = ui.label(initial[1] if initial else "").classes(
                     "w-full whitespace-pre-wrap break-words font-mono text-left"
@@ -583,18 +583,18 @@ class ServicesPage:
         )
         refs: dict[str, Any] = {}
 
-        with ui.element("article").classes("mgmt-record-card"):
-            with ui.element("div").classes("mgmt-record-main"):
-                with ui.element("div").classes("service-status-shell"):
-                    ui.icon("cloud", size="22px").classes("text-primary")
+        with ui.element("article").classes("mgmt-record-card services-record-card"):
+            with ui.element("div").classes("mgmt-record-main services-record-main"):
+                with ui.element("div").classes("services-record-icon"):
+                    ui.icon("cloud", size="22px").classes("services-record-icon__glyph")
 
-                with ui.element("div").classes("mgmt-record-copy"):
+                with ui.element("div").classes("mgmt-record-copy services-record-copy"):
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.label(str(initial_view["name"])).classes("service-name")
-                        ui.label("PEER").classes("service-proto")
+                        ui.label(str(initial_view["name"])).classes("services-record-name")
+                        ui.label("PEER").classes("services-record-proto")
                         refs["status_box"] = ui.row().classes("items-center")
 
-                    with ui.element("div").classes("mgmt-record-meta"):
+                    with ui.element("div").classes("mgmt-record-meta services-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("dns", size="12px")
                             refs["endpoint"] = ui.label(
@@ -606,7 +606,7 @@ class ServicesPage:
                         refs["service"] = ui.label("服务: 待查询").classes("mgmt-meta-item")
                         refs["detail"] = ui.label("状态: 待查询").classes("mgmt-meta-item")
 
-            with ui.element("div").classes("mgmt-actions"):
+            with ui.element("div").classes("mgmt-actions services-record-actions"):
                 refs["power"] = secondary_action(
                     "启动",
                     icon="play_arrow",
@@ -775,11 +775,11 @@ class ServicesPage:
 
         state = {"open": True, "generation": 0}
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl"):
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
             dialog.on("hide", lambda _event: state.update(open=False, generation=state["generation"] + 1))
-            ui.label(f"对端日志 — {peer_name}").classes("text-h6")
-            path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption")
-            log_container = ui.column().classes("w-full log-frame")
+            ui.label(f"对端日志 — {peer_name}").classes("text-h6 services-view-dialog__title")
+            path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption services-view-dialog__caption")
+            log_container = ui.column().classes("w-full log-frame services-log-frame")
             log_ref: dict[str, Any] = {"label": None}
 
             def set_body(text: str) -> None:
@@ -841,24 +841,24 @@ class ServicesPage:
             busy=status.name in self._local_instance_busy,
         )
 
-        with ui.element("article").classes("mgmt-record-card"):
-            with ui.element("div").classes("mgmt-record-main"):
-                with ui.element("div").classes("service-status-shell"):
+        with ui.element("article").classes("mgmt-record-card services-record-card"):
+            with ui.element("div").classes("mgmt-record-main services-record-main"):
+                with ui.element("div").classes("services-record-icon"):
                     ui.icon(
                         "dns",
                         size="22px",
                     ).classes("text-primary")
 
-                with ui.element("div").classes("mgmt-record-copy"):
+                with ui.element("div").classes("mgmt-record-copy services-record-copy"):
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.label(str(view["name"])).classes("service-name")
-                        ui.label(str(view["proto"])).classes("service-proto")
+                        ui.label(str(view["name"])).classes("services-record-name")
+                        ui.label(str(view["proto"])).classes("services-record-proto")
                         status_badge(
                             str(view["status_tone"]),
                             label=str(view["status_label"]),
                         )
 
-                    with ui.element("div").classes("mgmt-record-meta"):
+                    with ui.element("div").classes("mgmt-record-meta services-record-meta"):
                         structured_value(view["port"], kind="port")
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("people", size="12px")
@@ -870,7 +870,7 @@ class ServicesPage:
                             )
                         structured_value(view["subnet"], kind="cidr")
 
-            with ui.element("div").classes("mgmt-actions"):
+            with ui.element("div").classes("mgmt-actions services-record-actions"):
                 if view["can_start"]:
                     primary_action(
                         "启动",
