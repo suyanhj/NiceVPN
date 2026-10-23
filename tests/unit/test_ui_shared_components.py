@@ -9,6 +9,7 @@ import pytest
 from nicegui import ui
 from nicegui.testing import user_simulation
 
+from app.ui.components.actions import create_action
 from app.ui.components.cards import info_card, metric_card, quick_link_card
 from app.ui.components.charts import chart_options, render_chart_card
 from app.ui.components.confirm_dialog import build as build_confirm_dialog
@@ -142,6 +143,34 @@ def test_confirm_dialog_supports_impact_count_and_required_text() -> None:
     assert handle.confirm_input is not None
     assert handle.confirm_button._props["disable"] is True
     assert handle.confirm_button._props["color"] == "negative"
+
+
+def test_shared_create_action_supports_semantic_icon_only_mode() -> None:
+    """纯图标创建按钮保留非空语义文案，同时不渲染可见文字。"""
+
+    state: dict[str, object] = {}
+
+    def page() -> None:
+        state["button"] = create_action(
+            "新建用户",
+            icon="person_add",
+            icon_only=True,
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+
+    button = state["button"]
+    assert button._props.get("aria-label") == "新建用户"
+    assert button._props.get("icon") == "person_add"
+    assert "vpn-action--icon-only" in button._classes
+
+    with pytest.raises(ValueError, match="纯图标操作按钮必须提供图标"):
+        create_action("新建用户", icon_only=True)
 
 
 def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
