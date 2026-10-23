@@ -21,6 +21,7 @@ class MetricCard:
     label: Any
     helper: Any | None
     icon: Any | None
+    help_icon: Any | None
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ def metric_card(
     value: object,
     *,
     helper: str | None = None,
+    helper_tooltip: str | None = None,
     icon: str | None = None,
     tone: CardTone = "default",
     on_click: Callable[..., Any] | None = None,
@@ -88,7 +90,14 @@ def metric_card(
             _make_card_keyboard_clickable(container, on_click)
         with ui.row().classes("items-start justify-between no-wrap w-full"):
             with ui.column().classes("gap-1 min-w-0"):
-                label_element = ui.label(normalized_label).classes("vpn-metric-card__label")
+                with ui.row().classes("items-center no-wrap gap-1"):
+                    label_element = ui.label(normalized_label).classes("vpn-metric-card__label")
+                    help_icon = None
+                    if helper_tooltip:
+                        help_icon = ui.icon("help_outline").classes(
+                            "vpn-metric-card__help-icon"
+                        )
+                        help_icon.tooltip(str(helper_tooltip))
                 value_element = ui.label(str(value)).classes("vpn-metric-card__value")
                 helper_element = (
                     ui.label(str(helper)).classes("vpn-metric-card__helper") if helper else None
@@ -102,6 +111,7 @@ def metric_card(
         label=label_element,
         helper=helper_element,
         icon=icon_element,
+        help_icon=help_icon,
     )
 
 
