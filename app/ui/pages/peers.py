@@ -21,13 +21,7 @@ from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
 from app.ui.adapters.peers import adapt_peer_view
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import (
-    MenuAction,
-    danger_action,
-    more_actions,
-    primary_action,
-    secondary_action,
-)
+from app.ui.components.actions import primary_action, secondary_action
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
@@ -123,22 +117,25 @@ class PeersPage:
                 on_click=self._show_peers_help_dialog,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
-            render_page_toolbar(
+        with ui.column().classes("page-shell mgmt-page peers-page--v2"):
+            toolbar = render_page_toolbar(
                 primary=primary_region,
                 secondary=secondary_region,
             )
+            toolbar.container.classes(add="peers-toolbar")
 
-            with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                with ui.element("div").classes("mgmt-list-head"):
+            with ui.element("section").classes(
+                "mgmt-panel mgmt-panel-list peers-list-panel"
+            ):
+                with ui.element("div").classes("mgmt-list-head peers-list-head"):
                     with ui.row().classes("items-center gap-1"):
-                        ui.label("对端列表").classes("mgmt-kicker")
+                        ui.label("对端列表").classes("mgmt-kicker peers-list-kicker")
                         help_hint(
                             "修改 LAN、Mesh 或用户归属后，需要让对端重新连接 OpenVPN 才会完全生效。",
                             aria_label="对端变更生效说明",
                         )
-                    self._peers_total_label = ui.label("共 0 个").classes("group-list-count")
-                self.list_container = ui.column().classes("w-full")
+                    self._peers_total_label = ui.label("共 0 个").classes("peers-list-count")
+                self.list_container = ui.column().classes("w-full peers-list")
 
         self._refresh_list()
 
@@ -390,8 +387,10 @@ class PeersPage:
             default_r = "/etc/openvpn/client/client.conf"
 
         custom_tmp: dict[str, str | None] = {"path": None}
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl"):
-            ui.label("对端配置推送").classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes(
+            "w-full max-w-xl peers-operation-dialog"
+        ):
+            ui.label("对端配置推送").classes("text-h6 peers-operation-dialog__title")
             ui.label("经 SSH 推送客户端配置、systemd、iptables；远端需 root 或免密 sudo。").classes(
                 "text-caption text-grey q-mb-sm"
             )
@@ -536,10 +535,14 @@ class PeersPage:
             ui.notify("请配置 SSH 密码或私钥，或使用系统设置中的全局私钥", type="warning")
             return
         eff_bin = str(row.get("ssh_openvpn_binary") or "").strip() or None
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "w-full max-w-lg peers-operation-dialog"
+        ):
             dialog_state = {"open": True}
             dialog.on("hide", lambda _: dialog_state.update(open=False))
-            ui.label("OpenVPN 客户端安装").classes("text-h6")
+            ui.label("OpenVPN 客户端安装").classes(
+                "text-h6 peers-operation-dialog__title"
+            )
             ui.label(
                 "已安装则跳过；否则首次安装。详单见 data/logs/peer-remote.log。"
             ).classes("text-caption text-grey q-mb-sm")
@@ -758,7 +761,7 @@ class PeersPage:
     def _show_peers_help_dialog(self) -> None:
         """右侧说明栏：精简要点 + 快捷跳转。"""
         with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,28rem)] h-full no-wrap overflow-y-auto q-pa-md peers-help-panel"
+            "w-[min(100vw,28rem)] h-full no-wrap overflow-y-auto q-pa-md peers-help-panel peers-help-panel--v2"
         ):
             with ui.row().classes("w-full items-center justify-between q-mb-sm"):
                 ui.label("绑定与运维说明").classes("text-h6")
@@ -851,7 +854,7 @@ class PeersPage:
             return
         group_names = self._group_id_to_name()
         has_global_key = self._has_global_ssh_key()
-        with ui.element("div").classes("mgmt-record-list"):
+        with ui.element("div").classes("mgmt-record-list peers-record-list"):
             for row in sorted(peers, key=lambda item: (item.get("name") or "", item.get("id") or "")):
                 self._render_peer_card(
                     row,
@@ -876,30 +879,30 @@ class PeersPage:
             busy=peer_id in self._busy_peer_ids,
         )
 
-        with ui.element("article").classes("mgmt-record-card mgmt-peer-row"):
-            with ui.element("div").classes("mgmt-record-main"):
-                with ui.element("div").classes("mgmt-peer-avatar"):
+        with ui.element("article").classes("mgmt-record-card peers-record-card"):
+            with ui.element("div").classes("mgmt-record-main peers-record-main"):
+                with ui.element("div").classes("peers-record-avatar"):
                     if view["busy"]:
                         ui.spinner(size="28px", color="primary", thickness=2)
                     else:
                         ui.icon("settings_input_component", size="22px")
 
-                with ui.element("div").classes("mgmt-record-copy"):
+                with ui.element("div").classes("mgmt-record-copy peers-record-copy"):
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.label(str(view["name"])).classes("mgmt-peer-name")
+                        ui.label(str(view["name"])).classes("peers-record-name")
                         status_badge(
                             str(view["connection_tone"]),
                             label=str(view["connection_label"]),
                             icon="cloud_done" if view["remote_capable"] else "cloud_off",
                         )
-                    with ui.element("div").classes("mgmt-peer-meta-row"):
-                        with ui.element("span").classes("mgmt-peer-meta-tag"):
+                    with ui.element("div").classes("peers-record-meta"):
+                        with ui.element("span").classes("peers-record-meta-tag"):
                             ui.icon("person", size="14px")
                             ui.label(str(view["bound_username"]))
-                        with ui.element("span").classes("mgmt-peer-meta-tag"):
+                        with ui.element("span").classes("peers-record-meta-tag"):
                             ui.icon("lan", size="14px")
                             ui.label(str(view["lan_label"]))
-                        with ui.element("span").classes("mgmt-peer-meta-tag"):
+                        with ui.element("span").classes("peers-record-meta-tag"):
                             ui.icon("route", size="14px")
                             ui.label(f"Mesh: {view['mesh_label']}")
                     with ui.row().classes("items-center gap-2 flex-wrap q-mt-xs"):
@@ -915,63 +918,79 @@ class PeersPage:
                                 f"SSH {view['ssh_username']}@{view['ssh_host']}:{view['ssh_port']}"
                             ).classes("section-caption")
 
-            with ui.element("div").classes("mgmt-actions"):
-                secondary_action(
-                    "探测/安装",
+            with ui.element("div").classes("mgmt-actions peers-record-actions"):
+                install_tip = (
+                    str(view["connection_reason"])
+                    if not view["can_install"] and not view["busy"]
+                    else ("远程操作进行中" if view["busy"] else "探测/安装")
+                )
+                install_button = ui.button(
                     icon="build",
                     on_click=lambda current=row: self._show_peer_openvpn_setup_dialog(current),
-                    disabled=not bool(view["can_install"]),
-                    tooltip=(
-                        str(view["connection_reason"])
-                        if not view["can_install"] and not view["busy"]
-                        else ("远程操作进行中" if view["busy"] else None)
-                    ),
-                ).props("dense")
-                secondary_action(
-                    "推送配置",
+                ).props("flat round dense aria-label='探测/安装'").classes(
+                    "peers-icon-action peers-icon-action--primary"
+                )
+                install_button.tooltip(install_tip)
+                if not bool(view["can_install"]):
+                    install_button.disable()
+
+                push_tip = (
+                    str(view["connection_reason"])
+                    if not view["can_push"] and not view["busy"]
+                    else ("远程操作进行中" if view["busy"] else "推送配置")
+                )
+                push_button = ui.button(
                     icon="cloud_upload",
                     on_click=lambda current=row: self._show_peer_config_push_dialog(current),
-                    disabled=not bool(view["can_push"]),
-                    tooltip=(
-                        str(view["connection_reason"])
-                        if not view["can_push"] and not view["busy"]
-                        else ("远程操作进行中" if view["busy"] else None)
-                    ),
-                ).props("dense")
-                more_actions(
-                    (
-                        MenuAction(
-                            "服务管理",
-                            icon="dns",
-                            on_click=lambda pid=peer_id: ui.navigate.to(f"/services?tab=peers&peer={pid}"),
-                        ),
-                        MenuAction(
-                            "远程日志",
-                            icon="article",
-                            on_click=lambda current=row: self._show_peer_remote_log_dialog(current),
-                        ),
-                        MenuAction(
-                            "部署说明",
-                            icon="description",
-                            on_click=lambda pid=peer_id: ui.navigate.to(f"/peers/manual?peer={pid}"),
-                        ),
-                        MenuAction(
-                            "编辑",
-                            icon="edit",
-                            on_click=lambda current=row: self._show_edit_dialog(current),
-                            disabled=not bool(view["can_edit"]),
-                        ),
-                        MenuAction(
-                            "删除",
-                            icon="delete",
-                            danger=True,
-                            on_click=lambda current=row: self._confirm_delete(current),
-                            disabled=not bool(view["can_delete"]),
-                        ),
-                    ),
-                    label="更多",
-                    disabled=False,
+                ).props("flat round dense aria-label='推送配置'").classes(
+                    "peers-icon-action"
                 )
+                push_button.tooltip(push_tip)
+                if not bool(view["can_push"]):
+                    push_button.disable()
+
+                ui.button(
+                    icon="dns",
+                    on_click=lambda pid=peer_id: ui.navigate.to(
+                        f"/services?tab=peers&peer={pid}"
+                    ),
+                ).props("flat round dense aria-label='服务管理'").classes(
+                    "peers-icon-action"
+                ).tooltip("服务管理")
+
+                ui.button(
+                    icon="article",
+                    on_click=lambda current=row: self._show_peer_remote_log_dialog(current),
+                ).props("flat round dense aria-label='远程日志'").classes(
+                    "peers-icon-action"
+                ).tooltip("远程日志")
+
+                ui.button(
+                    icon="description",
+                    on_click=lambda pid=peer_id: ui.navigate.to(
+                        f"/peers/manual?peer={pid}"
+                    ),
+                ).props("flat round dense aria-label='部署说明'").classes(
+                    "peers-icon-action"
+                ).tooltip("部署说明")
+
+                edit_button = ui.button(
+                    icon="edit",
+                    on_click=lambda current=row: self._show_edit_dialog(current),
+                ).props("flat round dense aria-label='编辑'").classes(
+                    "peers-icon-action"
+                ).tooltip("编辑")
+                if not bool(view["can_edit"]):
+                    edit_button.disable()
+
+                delete_button = ui.button(
+                    icon="delete",
+                    on_click=lambda current=row: self._confirm_delete(current),
+                ).props("flat round dense aria-label='删除'").classes(
+                    "peers-icon-action peers-icon-action--danger"
+                ).tooltip("删除")
+                if not bool(view["can_delete"]):
+                    delete_button.disable()
 
     def _show_create_dialog(self) -> None:
         """使用统一表单创建对端，并按认证模式联动 SSH 凭据字段。"""
