@@ -135,15 +135,18 @@ def test_theme_fingerprints_static_assets() -> None:
 
     css_url = _versioned_static_url("/static/css/shell.css")
     js_url = _versioned_static_url("/static/js/clipboard-adapter.js")
+    filter_url = _versioned_static_url("/static/js/ag-grid-set-filter.js")
 
     assert css_url.startswith("/static/css/shell.css?v=")
     assert js_url.startswith("/static/js/clipboard-adapter.js?v=")
+    assert filter_url.startswith("/static/js/ag-grid-set-filter.js?v=")
     assert len(css_url.rsplit("=", 1)[1]) == 12
     assert len(js_url.rsplit("=", 1)[1]) == 12
+    assert len(filter_url.rsplit("=", 1)[1]) == 12
 
 
-def test_ag_grid_theme_is_dedicated_and_uses_design_tokens() -> None:
-    """AG Grid 品牌主题独立维护，不重新散落为页面私有 CSS。"""
+def test_ag_grid_theme_is_dedicated_and_matches_theme_builder_preset() -> None:
+    """AG Grid 主题独立维护，并锁定 Theme Builder 导出的关键参数。"""
 
     source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
 
@@ -151,8 +154,6 @@ def test_ag_grid_theme_is_dedicated_and_uses_design_tokens() -> None:
     assert "--ag-background-color" in source
     assert "--ag-selected-row-background-color" in source
     assert "--ag-wrapper-border-radius" in source
-    assert "var(--vpn-color-brand)" in source
-    assert "var(--vpn-font-sans)" in source
     assert ".vpn-grid-status-pill" in source
     assert ".vpn-grid-stacked-value" in source
     assert ".vpn-grid-inline-action" in source
@@ -166,3 +167,22 @@ def test_ag_grid_theme_is_dedicated_and_uses_design_tokens() -> None:
     assert "--ag-row-vertical-padding-scale: 1.2" in source
     assert "--ag-wrapper-border: none" in source
     assert "--ag-wrapper-border-radius: 0" in source
+
+
+def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
+    """Community Set Filter 作为共享静态组件加载，不包含业务 I/O。"""
+
+    theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
+    source = (STATIC_DIR / "js" / "ag-grid-set-filter.js").read_text(encoding="utf-8")
+
+    assert '"ag-grid-set-filter.js"' in theme_source
+    assert "class NiceVpnSetFilter" in source
+    assert "window.NiceVpnSetFilter" in source
+    assert "forEachLeafNode" in source
+    assert "filterChangedCallback" in source
+    assert "vpn-grid-set-filter__search" in source
+    assert "vpn-grid-set-filter__checkbox" in source
+    assert "innerHTML" not in source
+    assert "fetch(" not in source
+    assert "axios" not in source
+    assert "/api/" not in source
