@@ -551,16 +551,20 @@ class UsersPage:
             self._show_user_actions(row)
 
     def _show_user_actions(self, row: dict) -> None:
-        """集中承载单用户高频与低频操作，避免表格被按钮挤占。"""
+        """集中承载单用户操作；主表只保留一个稳定操作入口。"""
 
         username = str(row.get("username") or "")
         is_active = str(row.get("_status") or "") == "active"
         is_online = bool(row.get("_online"))
 
-        with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog users-action-dialog"
+        ):
             with ui.row().classes("w-full items-start justify-between no-wrap"):
                 with ui.column().classes("gap-1 min-w-0"):
-                    ui.label(username).classes("vpn-form-dialog__title")
+                    ui.label(username).classes(
+                        "vpn-form-dialog__title users-action-dialog__title"
+                    )
                     with ui.row().classes("items-center gap-2 flex-wrap"):
                         status_badge(
                             "running" if is_active else "disabled",
@@ -571,9 +575,12 @@ class UsersPage:
                             label="在线" if is_online else "离线",
                             icon="wifi" if is_online else "wifi_off",
                         )
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+                ui.button(
+                    icon="close",
+                    on_click=dialog.close,
+                ).props("flat round dense").classes("users-action-dialog__close")
 
-            with ui.column().classes("w-full gap-2"):
+            with ui.column().classes("w-full gap-2 users-action-dialog__details"):
                 structured_value(
                     row.get("virtual_ip") or "—",
                     kind="ip",
@@ -592,65 +599,94 @@ class UsersPage:
                     copyable=bool(row.get("group_id")),
                     copy_message="组 ID 已复制",
                 )
+                ui.label(
+                    f"设备：{row.get('device') or '—'} · "
+                    f"来源：{row.get('source') or '—'} · "
+                    f"创建：{row.get('created_at') or '未知'}"
+                ).classes("section-caption users-action-dialog__meta")
 
             def invoke(callback):
                 dialog.close()
                 return callback()
 
-            with ui.row().classes("w-full gap-2 flex-wrap"):
+            def icon_action(
+                icon: str,
+                tooltip: str,
+                callback,
+                *,
+                disabled: bool = False,
+                danger: bool = False,
+            ):
+                classes = "users-dialog-icon-action"
+                if danger:
+                    classes += " users-dialog-icon-action--danger"
+                button = ui.button(
+                    icon=icon,
+                    on_click=lambda: invoke(callback),
+                ).props(
+                    f"flat round dense aria-label='{tooltip}'"
+                ).classes(classes)
+                button.tooltip(tooltip)
+                if disabled:
+                    button.disable()
+                return button
+
+            with ui.row().classes(
+                "w-full items-center gap-1 flex-wrap users-action-dialog__actions"
+            ):
                 if is_active:
-                    secondary_action(
+                    icon_action(
+                        "toggle_off",
                         "停用",
-                        icon="toggle_off",
-                        on_click=lambda: invoke(lambda: self._confirm_user_disable(username)),
+                        lambda: self._confirm_user_disable(username),
                     )
                 else:
-                    secondary_action(
+                    icon_action(
+                        "toggle_on",
                         "启用",
-                        icon="toggle_on",
-                        on_click=lambda: invoke(lambda: self._toggle_user_status(username)),
+                        lambda: self._toggle_user_status(username),
                     )
-                secondary_action(
+                icon_action(
+                    "power_settings_new",
                     "踢下线",
-                    icon="power_settings_new",
-                    on_click=lambda: invoke(lambda: self._kick_offline(username)),
+                    lambda: self._kick_offline(username),
                     disabled=not is_online,
-                    tooltip=None if is_online else "当前用户不在线",
                 )
-                secondary_action(
+                icon_action(
+                    "drive_file_move",
                     "切换组",
-                    icon="drive_file_move",
-                    on_click=lambda: invoke(lambda: self._show_change_group_dialog(username)),
+                    lambda: self._show_change_group_dialog(username),
                 )
-                secondary_action(
+                icon_action(
+                    "download",
                     "下载配置",
-                    icon="download",
-                    on_click=lambda: invoke(lambda: self._download_ovpn(username)),
+                    lambda: self._download_ovpn(username),
                 )
-                secondary_action(
+                icon_action(
+                    "edit_note",
                     "编辑配置",
-                    icon="edit_note",
-                    on_click=lambda: invoke(lambda: self._edit_ovpn(username)),
+                    lambda: self._edit_ovpn(username),
                 )
-                secondary_action(
+                icon_action(
+                    "link",
                     "复制下载链接",
-                    icon="link",
-                    on_click=lambda: invoke(lambda: self._copy_download_link(username)),
+                    lambda: self._copy_download_link(username),
                 )
-                secondary_action(
+                icon_action(
+                    "send",
                     "推送下载链接",
-                    icon="send",
-                    on_click=lambda: invoke(lambda: self._push_download_link_notify(username)),
+                    lambda: self._push_download_link_notify(username),
                 )
-                secondary_action(
+                icon_action(
+                    "phonelink_erase",
                     "重置绑定",
-                    icon="phonelink_erase",
-                    on_click=lambda: invoke(lambda: self._confirm_reset_binding(username)),
+                    lambda: self._confirm_reset_binding(username),
                 )
-                danger_action(
+                icon_action(
+                    "delete",
                     "删除",
-                    icon="delete",
-                    on_click=lambda: invoke(lambda: self._confirm_delete(username)),
+                    lambda: self._confirm_delete(username),
+                    danger=True,
                 )
         dialog.open()
 
@@ -922,8 +958,12 @@ class UsersPage:
             return
 
         group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label(f"切换用户组 — {username}").classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog w-96 users-change-group-dialog"
+        ):
+            ui.label(f"切换用户组 — {username}").classes(
+                "vpn-form-dialog__title"
+            )
             ui.label("切换后会重新分配虚拟 IP，并立即踢下线，用户重连后生效。").classes(
                 "text-caption text-grey"
             )
@@ -931,12 +971,14 @@ class UsersPage:
                 'behavior=menu popup-content-class="vpn-group-select-menu"'
             )
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
+            with ui.row().classes(
+                "w-full justify-end q-mt-md vpn-form-dialog__actions"
+            ):
+                ui.button("取消", on_click=dialog.close).props("flat no-caps")
                 ui.button(
                     "切换",
                     on_click=lambda: self._do_change_group(dialog, username, group_select.value),
-                ).props("color=primary")
+                ).props("unelevated no-caps color=primary")
         dialog.open()
 
     def _do_change_group(self, dialog, username: str, new_group_id: str):
@@ -984,9 +1026,11 @@ class UsersPage:
             return
 
         with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,48rem)] h-full no-wrap overflow-y-auto"
+            "w-[min(100vw,48rem)] h-full no-wrap overflow-y-auto users-config-drawer"
         ):
-            ui.label(f"编辑 .ovpn 配置 — {username}").classes("text-h6")
+            ui.label(f"编辑 .ovpn 配置 — {username}").classes(
+                "text-h6 users-config-drawer__title"
+            )
             ui.label(f"文件路径: {ovpn_path}").classes("text-caption text-grey q-mb-sm")
             ui.label(
                 "保存后对用户下次下载/使用该 .ovpn 生效；内嵌证书与密钥勿随意改动。"
@@ -1414,8 +1458,10 @@ class UsersPage:
         """显示批量导入弹窗：支持 CSV/TXT 文件及可选创建数量。"""
         from app.services.group.crud import GroupService
 
-        with ui.dialog() as dialog, ui.card().classes("min-w-[480px]"):
-            ui.label("批量导入用户").classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog min-w-[480px] users-import-dialog"
+        ):
+            ui.label("批量导入用户").classes("vpn-form-dialog__title")
             ui.label(
                 "每行：用户名 + 组名 + 可选数量，空格或逗号分隔。数量省略时为 1，组不存在则整批不导入。"
             ).classes("section-caption")
@@ -1445,13 +1491,15 @@ class UsersPage:
                 max_files=1,
             ).props('accept=".csv,.txt,.text"').classes("w-full q-mt-sm")
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
+            with ui.row().classes(
+                "w-full justify-end q-mt-md vpn-form-dialog__actions"
+            ):
+                ui.button("取消", on_click=dialog.close).props("flat no-caps")
                 ui.button(
                     "预检查并导入",
                     icon="playlist_add_check",
                     on_click=lambda: self._do_import(dialog, textarea.value, GroupService()),
-                ).props("color=primary")
+                ).props("unelevated no-caps color=primary")
         dialog.open()
 
     def _do_import(self, dialog, raw_text: str, group_service):
