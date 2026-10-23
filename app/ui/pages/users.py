@@ -17,6 +17,7 @@ from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.actions import create_action
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     STATUS_PILL_RENDERER,
@@ -81,13 +82,10 @@ class UsersPage:
                 callback,
                 *,
                 disabled_action: bool = False,
-                create: bool = False,
                 danger: bool = False,
                 track_bulk: bool = False,
             ):
                 classes = "users-bar-icon-action"
-                if create:
-                    classes += " users-bar-icon-action--create"
                 if danger:
                     classes += " users-bar-icon-action--danger"
                 button = ui.button(
@@ -107,11 +105,15 @@ class UsersPage:
                     self.bulk_icon_buttons.append(button)
                 return button
 
-            icon_action(
-                "person_add",
-                "新建用户",
-                self._show_create_dialog,
-                create=True,
+            create_button = create_action(
+                "",
+                icon="person_add",
+                on_click=self._show_create_dialog,
+                tooltip="新建用户",
+            )
+            create_button.props("round dense aria-label='新建用户'")
+            create_button.classes(
+                add="users-bar-icon-action users-bar-icon-action--create"
             )
             icon_action(
                 "upload_file",
