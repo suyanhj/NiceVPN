@@ -22,15 +22,14 @@ def _page_source() -> str:
     )
 
 
-def test_legacy_cleanup_has_backup_and_valid_css_structure() -> None:
-    backup = ROOT / "backups" / "admin-ui" / "legacy.css.pre-integration.bak"
+def test_legacy_cleanup_has_valid_css_structure() -> None:
+    """legacy.css 可继续存在，但不要求仓库保留一次性历史备份文件。"""
+
     legacy = CSS_DIR / "legacy.css"
 
-    assert backup.is_file()
-    backup_text = backup.read_text(encoding="utf-8")
+    assert legacy.is_file()
     current = legacy.read_text(encoding="utf-8")
 
-    assert len(backup_text) > len(current)
     assert current.count("{") == current.count("}")
     assert "\ufffd" not in current
     assert "\r\n" not in current
