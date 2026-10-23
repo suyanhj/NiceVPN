@@ -128,7 +128,7 @@ class GroupsPage:
             metric_card(
                 "用户组总数",
                 len(groups),
-                helper="含根组与业务子组",
+                helper_tooltip="包含根组和所有业务子组",
                 icon="folder_shared",
                 tone="info",
                 compact=True,
@@ -136,7 +136,7 @@ class GroupsPage:
             metric_card(
                 "启用分组",
                 active_count,
-                helper="当前可用",
+                helper_tooltip="当前处于启用状态、可继续参与管理操作的用户组",
                 icon="check_circle",
                 tone="success" if active_count else "default",
                 compact=True,
@@ -144,7 +144,7 @@ class GroupsPage:
             metric_card(
                 "停用分组",
                 disabled_count,
-                helper="暂停参与后续管理操作",
+                helper_tooltip="当前已停用、暂停参与后续管理操作的用户组",
                 icon="block",
                 tone="warning" if disabled_count else "default",
                 compact=True,
@@ -152,7 +152,7 @@ class GroupsPage:
             metric_card(
                 "组内用户",
                 user_count,
-                helper="按当前分组快照汇总",
+                helper_tooltip="按当前用户组列表快照汇总的组内用户数量",
                 icon="people",
                 tone="default",
                 compact=True,
@@ -205,7 +205,13 @@ class GroupsPage:
         is_active = status == "active"
         user_count = int(group.get("user_count") or 0)
 
-        with ui.element("div").classes("mgmt-record-card"):
+        card_classes = "mgmt-record-card groups-record-card"
+        if is_root:
+            card_classes += " groups-record-card--root"
+        if not is_active:
+            card_classes += " groups-record-card--disabled"
+
+        with ui.element("div").classes(card_classes):
             with ui.element("div").classes("mgmt-record-main"):
                 self.group_checkboxes[group_id] = ui.checkbox(
                     value=group_id in self.selected_ids,
@@ -216,7 +222,7 @@ class GroupsPage:
                     with ui.row().classes("items-center gap-2 flex-wrap"):
                         ui.label(str(group["name"])).classes("mgmt-record-title")
                         if is_root:
-                            ui.badge("根组", color="primary").props("outline")
+                            ui.badge("根组").props("outline").classes("groups-root-badge")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
