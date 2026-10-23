@@ -110,14 +110,20 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
     token_index = theme_source.index('"tokens.css"')
     shell_index = theme_source.index('"shell.css"')
+    grid_index = theme_source.index('"ag-grid-theme.css"')
     effects_index = theme_source.index('"effects.css"')
     legacy_index = theme_source.index('"legacy.css"')
-    assert token_index < shell_index < effects_index < legacy_index
+    assert token_index < shell_index < grid_index < effects_index < legacy_index
 
     shell_source = (STATIC_DIR / "css" / "shell.css").read_text(encoding="utf-8")
+    grid_source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
     effects_source = (STATIC_DIR / "css" / "effects.css").read_text(encoding="utf-8")
     assert ".vpn-shell" in shell_source
     assert "@media (max-width: 767px)" in shell_source
+    assert ".vpn-data-grid__grid" in grid_source
+    assert "--ag-background-color" in grid_source
+    assert ".vpn-grid-status-pill" in grid_source
+    assert ".vpn-grid-inline-action" in grid_source
     assert ".vpn-tech-grid" in effects_source
     assert "prefers-reduced-motion" in effects_source
 
@@ -134,3 +140,19 @@ def test_theme_fingerprints_static_assets() -> None:
     assert js_url.startswith("/static/js/clipboard-adapter.js?v=")
     assert len(css_url.rsplit("=", 1)[1]) == 12
     assert len(js_url.rsplit("=", 1)[1]) == 12
+
+
+def test_ag_grid_theme_is_dedicated_and_uses_design_tokens() -> None:
+    """AG Grid 品牌主题独立维护，不重新散落为页面私有 CSS。"""
+
+    source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
+
+    assert "AG Grid Theme" in source
+    assert "--ag-background-color" in source
+    assert "--ag-selected-row-background-color" in source
+    assert "--ag-wrapper-border-radius" in source
+    assert "var(--vpn-color-brand)" in source
+    assert "var(--vpn-font-sans)" in source
+    assert ".vpn-grid-status-pill" in source
+    assert ".vpn-grid-stacked-value" in source
+    assert ".vpn-grid-inline-action" in source
