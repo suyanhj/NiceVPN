@@ -1530,66 +1530,287 @@ body {
 }
 
 
-.groups-page--v2 .mgmt-panel-list,
-.services-page--v2 .mgmt-panel-list {
-  overflow: hidden;
-  border-color: rgba(255, 255, 255, 0.075);
-  border-radius: 16px;
-  background:
-    linear-gradient(155deg, rgba(16, 22, 32, 0.88), rgba(9, 13, 19, 0.92));
-  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
+/* Services is an object-management page, not a data-grid page. */
+.services-page--v2 {
+  flex: 1 1 0%;
+  min-height: 0;
+  gap: 14px;
 }
 
-.groups-page--v2 .mgmt-record-card,
-.services-page--v2 .mgmt-record-card {
-  border-color: rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.012);
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
-}
-
-.groups-page--v2 .mgmt-record-card:hover,
-.services-page--v2 .mgmt-record-card:hover {
-  border-color: rgba(110, 168, 255, 0.14);
-  background: rgba(110, 168, 255, 0.025);
-  transform: translateY(-1px);
-}
-
-
-.services-page--v2 .firewall-compact-tabs {
+.services-page--v2 .services-instance-tabs {
+  flex: 0 0 auto;
+  min-height: 42px;
   padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.018);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(21, 189, 232, 0.08);
+  border-radius: 12px;
+  background: #111214;
+  box-shadow: none;
 }
 
-.services-page--v2 .firewall-tabpanels {
+.services-page--v2 .services-instance-tabs .q-tabs__content {
+  min-height: 32px;
+  gap: 3px;
+}
+
+.services-page--v2 .services-instance-tabs .q-tab {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  color: #777c87;
+  font-size: 12px;
+  font-weight: 550;
+  text-transform: none;
+}
+
+.services-page--v2 .services-instance-tabs .q-tab:hover {
+  background: rgba(21, 189, 232, 0.055);
+  color: #aeb3bc;
+}
+
+.services-page--v2 .services-instance-tabs .q-tab--active {
+  background: rgba(21, 189, 232, 0.10);
+  color: #49ccec !important;
+}
+
+.services-page--v2 .services-instance-tabs .q-tab__indicator {
+  display: none;
+}
+
+.services-page--v2 .services-tabpanels {
+  flex: 1 1 0%;
+  min-height: 0;
   background: transparent !important;
 }
 
 .services-page--v2 .q-tab-panel {
-  padding-inline: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.services-page--v2 .services-list-panel {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(21, 189, 232, 0.08) !important;
+  border-radius: 14px !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+}
+
+.services-page--v2 .services-list-head {
+  min-height: 50px;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.08) !important;
+  background: #111214;
+}
+
+.services-page--v2 .services-list-kicker {
+  color: #aeb3bc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.services-page--v2 .services-running-chip {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(21, 189, 232, 0.10);
+  color: #49ccec;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.services-page--v2 .mgmt-record-list {
+  gap: 0 !important;
+}
+
+.services-page--v2 .services-record-card {
+  min-height: 76px;
+  padding: 12px 14px !important;
+  gap: 14px !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07) !important;
+  border-radius: 0 !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease !important;
+}
+
+.services-page--v2 .services-record-card:last-child {
+  border-bottom: 0 !important;
+}
+
+.services-page--v2 .services-record-card:hover {
+  border-color: rgba(187, 190, 201, 0.07) !important;
+  background: rgba(21, 189, 232, 0.055) !important;
+  box-shadow: inset 3px 0 0 rgba(21, 189, 232, 0.78) !important;
+  transform: none !important;
+}
+
+.services-page--v2 .services-record-main {
+  gap: 12px !important;
+}
+
+.services-page--v2 .services-record-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 1px solid rgba(21, 189, 232, 0.10);
+  border-radius: 10px;
+  background: rgba(21, 189, 232, 0.055);
+}
+
+.services-page--v2 .services-record-icon__glyph {
+  color: #15bde8 !important;
+}
+
+.services-page--v2 .services-record-copy {
+  gap: 5px !important;
+}
+
+.services-page--v2 .services-record-name {
+  color: #f2f4f7;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.services-page--v2 .services-record-proto {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(187, 190, 201, 0.08);
+  color: #8f929c;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.services-page--v2 .services-record-meta {
+  gap: 12px !important;
+  color: #727985 !important;
+  font-size: 11px;
+}
+
+.services-page--v2 .services-record-meta .mgmt-meta-item .q-icon {
+  color: #59626f;
+}
+
+.services-page--v2 .services-record-actions {
+  gap: 3px !important;
+}
+
+.services-page--v2 .services-record-actions .vpn-action {
+  min-height: 30px;
+  padding-inline: 9px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.services-page--v2 .services-record-actions .vpn-action--secondary {
+  border-color: rgba(187, 190, 201, 0.10) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: #9aa0aa !important;
+}
+
+.services-page--v2 .services-record-actions .vpn-action--secondary:hover {
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+
+.services-page--v2 .services-record-actions .vpn-action--primary {
+  border-color: rgba(21, 189, 232, 0.24) !important;
+  background: rgba(21, 189, 232, 0.12) !important;
+  color: #63d5f2 !important;
 }
 
 .services-page--v2 .services-more-action {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   padding: 0 !important;
-  border-radius: 9px;
-  color: var(--vpn-text-soft) !important;
-  font-size: 20px;
+  border-radius: 8px;
+  color: #777c87 !important;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1;
 }
 
 .services-page--v2 .services-more-action:hover {
-  background: rgba(110, 168, 255, 0.075) !important;
-  color: var(--vpn-color-brand-soft) !important;
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.q-dialog .q-card.services-view-dialog {
+  width: min(92vw, 980px);
+  max-width: 980px;
+  padding: 18px 20px 20px !important;
+  gap: 12px;
+  border: 1px solid rgba(21, 189, 232, 0.12) !important;
+  border-radius: 16px !important;
+  background: #111214 !important;
+  color: #bbbec9 !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46) !important;
+}
+
+.services-view-dialog__title {
+  color: #f5f7f9 !important;
+  font-size: 17px !important;
+  font-weight: 650;
+}
+
+.services-view-dialog__caption {
+  color: #777c87 !important;
+  font-size: 11px;
+}
+
+.services-view-dialog .services-log-frame,
+.services-view-dialog .log-frame {
+  border: 1px solid rgba(187, 190, 201, 0.08);
+  border-radius: 10px;
+  background: #0c0c0d !important;
+  color: #c6cad2;
+}
+
+.services-view-dialog .vpn-log-tail-viewport {
+  background: #0c0c0d !important;
+}
+
+.services-view-dialog .q-toggle__inner--truthy {
+  color: #15bde8 !important;
+}
+
+@media (max-width: 767px) {
+  .services-page--v2 {
+    overflow: visible;
+  }
+
+  .services-page--v2 .services-tabpanels,
+  .services-page--v2 .services-list-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .services-page--v2 .services-record-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .services-page--v2 .services-record-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
 }
 
 
