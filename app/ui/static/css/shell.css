@@ -880,19 +880,31 @@ body {
   align-self: flex-end;
 }
 
-/* 数据型页面让表格吃满 Header/摘要/工具栏之后的剩余高度。 */
-.certs-page--v2 .certs-data-region {
-  flex: 1 1 auto;
+/* Certs 桌面端使用完整 Flex 高度链：Grid 吃满摘要/操作栏后的所有剩余空间。 */
+.certs-page--v2 {
+  flex: 1 1 0%;
   min-height: 0;
+  height: 100%;
+}
+
+.certs-page--v2 .certs-data-region {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region > .vpn-data-grid {
+  display: flex;
+  flex: 1 1 0%;
   min-height: 0;
+  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
-  height: clamp(480px, calc(100dvh - 360px), 820px) !important;
-  min-height: 480px;
+  flex: 1 1 0%;
+  min-height: 0 !important;
+  height: 100% !important;
 }
 
 .certs-page--v2 .vpn-data-grid__summary {
@@ -906,9 +918,27 @@ body {
   max-height: 0 !important;
 }
 
-@supports not (height: 100dvh) {
+@media (min-width: 768px) {
+  .certs-page--v2 {
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 767px) {
+  .certs-page--v2 {
+    height: auto;
+    overflow: visible;
+  }
+
+  .certs-page--v2 .certs-data-region,
+  .certs-page--v2 .certs-data-region > .vpn-data-grid {
+    height: auto;
+  }
+
   .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
-    height: clamp(480px, calc(100vh - 360px), 820px) !important;
+    flex: none;
+    height: 480px !important;
+    min-height: 480px !important;
   }
 }
 
