@@ -269,7 +269,7 @@ class CertsPage:
             metric_card(
                 "证书总数",
                 len(rows),
-                helper="当前证书库",
+                helper_tooltip="当前证书库中的证书总数",
                 icon="verified_user",
                 tone="info",
                 compact=True,
@@ -277,7 +277,7 @@ class CertsPage:
             metric_card(
                 "有效证书",
                 valid_count,
-                helper="状态正常，可继续使用",
+                helper_tooltip="状态正常、可继续使用的证书数量",
                 icon="task_alt",
                 tone="success" if valid_count else "default",
                 compact=True,
@@ -285,7 +285,7 @@ class CertsPage:
             metric_card(
                 "临期证书",
                 expiring_count,
-                helper=f"{CERT_EXPIRY_WARN_DAYS} 天阈值内",
+                helper_tooltip=f"{CERT_EXPIRY_WARN_DAYS} 天内即将到期的证书数量",
                 icon="schedule",
                 tone="warning" if expiring_count else "default",
                 compact=True,
@@ -293,7 +293,7 @@ class CertsPage:
             metric_card(
                 "失效 / 吊销",
                 invalid_count,
-                helper=f"{expired_count} 过期 · {revoked_count} 吊销",
+                helper_tooltip=f"已过期 {expired_count} 个，已吊销 {revoked_count} 个",
                 icon="gpp_bad",
                 tone="danger" if invalid_count else "default",
                 compact=True,
