@@ -18,6 +18,7 @@ from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
+    create_action,
     danger_action,
     more_actions,
     primary_action,
@@ -92,7 +93,7 @@ class UsersPage:
             )
 
         def primary_region() -> None:
-            primary_action(
+            create_action(
                 "新建用户",
                 icon="person_add",
                 on_click=self._show_create_dialog,
