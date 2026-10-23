@@ -76,6 +76,41 @@ def test_all_primary_routes_have_no_outer_horizontal_overflow(
         _assert_no_outer_horizontal_overflow(screen)
 
 
+def test_certificate_status_set_filter_opens_and_searches_values(
+    screen: Screen,
+) -> None:
+    """Community 自定义 Set Filter 能从状态列表中搜索并多选。"""
+
+    screen.selenium.set_window_size(1280, 900)
+    screen.open("/certs")
+    screen.should_contain("证书管理")
+    screen.wait(0.4)
+
+    header = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.ag-header-cell[col-id="status_label"]',
+    )
+    filter_button = header.find_element(
+        By.CSS_SELECTOR,
+        ".ag-header-cell-filter-button",
+    )
+    screen.selenium.execute_script("arguments[0].click()", filter_button)
+    screen.wait(0.2)
+
+    popup = screen.selenium.find_element(By.CSS_SELECTOR, ".vpn-grid-set-filter")
+    assert popup.is_displayed()
+    assert "(全选)" in popup.text
+    assert "有效" in popup.text
+    assert "即将到期" in popup.text
+
+    search = popup.find_element(By.CSS_SELECTOR, 'input[type="search"]')
+    search.send_keys("即将")
+    screen.wait(0.1)
+
+    assert "即将到期" in popup.text
+    assert "有效" not in popup.text
+
+
 def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     screen.selenium.set_window_size(1440, 900)
     screen.open("/")
