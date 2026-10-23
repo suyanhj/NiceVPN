@@ -207,6 +207,18 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid.options["theme"] == "quartz"
     assert view.grid.options["pagination"] is True
     assert view.grid.options["paginationPageSize"] == 25
+    locale = view.grid.options["localeText"]
+    assert locale["contains"] == "包含"
+    assert locale["notContains"] == "不包含"
+    assert locale["equals"] == "等于"
+    assert locale["notEqual"] == "不等于"
+    assert locale["startsWith"] == "开头是"
+    assert locale["endsWith"] == "结尾是"
+    assert locale["blank"] == "为空"
+    assert locale["notBlank"] == "不为空"
+    assert locale["applyFilter"] == "应用"
+    assert locale["clearFilter"] == "清除"
+    assert locale["pageSizeSelectorLabel"] == "每页"
     assert view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert view.grid.options["selectionColumnDef"]["pinned"] == "left"
     assert view.grid.options["selectionColumnDef"]["lockPosition"] == "left"
