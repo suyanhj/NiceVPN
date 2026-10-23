@@ -98,7 +98,9 @@ def test_certificate_status_set_filter_opens_and_searches_values(
         """
     )
     assert grid_geometry is not None
-    assert float(grid_geometry["height"]) >= 420
+    # 高度下限只防止 Grid 被意外压扁；真正的回归目标是分页栏贴近视口底部，
+    # 不再用某个固定像素高度绑定页面上方组件数量。
+    assert float(grid_geometry["height"]) >= 360
     assert 0 <= float(grid_geometry["bottomGap"]) <= 48
 
     header = screen.selenium.find_element(
