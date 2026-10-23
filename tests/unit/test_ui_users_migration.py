@@ -92,12 +92,28 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("新建用户")
-            await user.should_see("批量导入")
             await user.should_see("已选择 1 项")
             await user.should_see("共 2 个用户")
 
     asyncio.run(verify_page())
+
+    bar_labels = {
+        element._props.get("aria-label")
+        for element in page.bulk_bar.actions.client.elements.values()
+        if getattr(element, "_props", {}).get("aria-label")
+    }
+    assert {
+        "新建用户",
+        "批量导入",
+        "刷新用户列表",
+        "批量下载",
+        "批量启用",
+        "批量停用",
+        "批量踢下线",
+        "批量切换组",
+        "批量重置绑定",
+        "批量删除",
+    } <= bar_labels
 
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
@@ -344,10 +360,16 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-toolbar" not in source
     assert "users-bulk-bar" in source
     assert "users-action-separator" in source
-    assert "users-bulk-icon-action" in source
+    assert "users-bar-icon-action" in source
+    assert "users-bar-icon-action--create" in source
     assert "more_actions(" not in source
     assert "MenuAction(" not in source
     for label in (
+        "新建用户",
+        "批量导入",
+        "刷新用户列表",
+        "批量下载",
+        "批量启用",
         "批量停用",
         "批量踢下线",
         "批量切换组",
@@ -368,7 +390,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
 
     assert ".users-page--v2 .users-toolbar" not in shell_css
     assert ".users-page--v2 .users-action-separator" in shell_css
-    assert ".users-page--v2 .users-bulk-icon-action" in shell_css
+    assert ".users-page--v2 .users-bar-icon-action" in shell_css
+    assert ".users-page--v2 .users-bar-icon-action--create" in shell_css
     assert ".users-page--v2 .users-data-region" in shell_css
     assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
     assert ".q-dialog .q-card.users-action-dialog" in shell_css
