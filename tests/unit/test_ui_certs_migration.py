@@ -206,23 +206,45 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".certs-toolbar .q-btn" in shell_css
     assert "min-height: 42px;" in shell_css
     assert ".ag-body-horizontal-scroll" in shell_css
+    assert ".vpn-grid-status-pill" in shell_css
+    assert ".vpn-grid-stacked-value" in shell_css
+    assert ".vpn-grid-inline-action" in shell_css
+    assert "--ag-row-height: 50px" in shell_css
     assert "fetch(" not in source
 
 
-def test_cert_grid_columns_pin_edges_and_flex_center() -> None:
-    """用户/CN 与操作固定两端，中间列弹性铺满，避免桌面横向滚动。"""
+def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
+    """保持标准表格，只增强状态、有效期和操作单元格。"""
 
     columns = {column["field"]: column for column in CertsPage._grid_columns()}
 
-    assert columns["common_name"]["pinned"] == "left"
-    assert columns["common_name"]["lockPinned"] is True
-    assert columns["common_name"]["width"] == 138
-    assert columns["common_name"]["maxWidth"] == 168
+    identity = columns["common_name"]
+    assert identity["pinned"] == "left"
+    assert identity["lockPinned"] is True
+    assert identity["width"] == 146
+    assert identity["maxWidth"] == 176
+    assert identity["cellClass"] == "vpn-grid-primary-cell"
+    assert ":cellRenderer" not in identity
 
-    assert columns["actions"]["pinned"] == "right"
-    assert columns["actions"]["lockPinned"] is True
-    assert columns["actions"]["width"] == 82
-    assert columns["actions"]["resizable"] is False
+    status = columns["status_label"]
+    assert status["flex"] > 0
+    assert "vpn-grid-status-pill" in status[":cellRenderer"]
 
-    for field in ("status_label", "serial_display", "expires_display", "days_left"):
-        assert columns[field]["flex"] > 0
+    serial = columns["serial_display"]
+    assert serial["flex"] > 0
+    assert serial["cellClass"] == "vpn-grid-mono"
+    assert ":cellRenderer" not in serial
+
+    expiry = columns["expires_display"]
+    assert expiry["flex"] > 0
+    assert "days_left" in expiry[":cellRenderer"]
+    assert "vpn-grid-stacked-value" in expiry[":cellRenderer"]
+
+    actions = columns["actions"]
+    assert actions["pinned"] == "right"
+    assert actions["lockPinned"] is True
+    assert actions["width"] == 92
+    assert actions["resizable"] is False
+    assert "vpn-grid-inline-action" in actions[":cellRenderer"]
+
+    assert "days_left" not in columns
