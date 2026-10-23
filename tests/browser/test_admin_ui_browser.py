@@ -86,6 +86,21 @@ def test_certificate_status_set_filter_opens_and_searches_values(
     screen.should_contain("证书管理")
     screen.wait(0.4)
 
+    grid_geometry = screen.selenium.execute_script(
+        """
+        const grid = document.querySelector('.certs-page--v2 .vpn-data-grid__grid');
+        if (!grid) return null;
+        const rect = grid.getBoundingClientRect();
+        return {
+          height: rect.height,
+          bottomGap: window.innerHeight - rect.bottom,
+        };
+        """
+    )
+    assert grid_geometry is not None
+    assert float(grid_geometry["height"]) >= 420
+    assert 0 <= float(grid_geometry["bottomGap"]) <= 48
+
     header = screen.selenium.find_element(
         By.CSS_SELECTOR,
         '.ag-header-cell[col-id="status_label"]',
