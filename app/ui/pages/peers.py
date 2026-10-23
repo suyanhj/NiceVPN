@@ -21,7 +21,7 @@ from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
 from app.ui.adapters.peers import adapt_peer_view
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components.actions import create_action, primary_action, secondary_action
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
@@ -103,7 +103,7 @@ class PeersPage:
             self._ng_client = None
 
         def primary_region() -> None:
-            primary_action("新建对端", icon="hub", on_click=self._show_create_dialog)
+            create_action("新建对端", icon="hub", on_click=self._show_create_dialog)
 
         def secondary_region() -> None:
             secondary_action(
