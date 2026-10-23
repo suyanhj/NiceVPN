@@ -160,7 +160,9 @@ def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
     assert '"create": "outline color=primary"' in actions_source
     assert 'def create_action(' in actions_source
     assert ".vpn-action--create" in shell_css
-    assert "background: rgba(21, 189, 232, 0.06) !important;" in shell_css
+    assert "border: 1px solid rgba(45, 212, 191, 0.62) !important;" in shell_css
+    assert "background: rgba(45, 212, 191, 0.035) !important;" in shell_css
+    assert "0 0 16px rgba(45, 212, 191, 0.16)" in shell_css
 
     page_expectations = {
         "groups.py": "新建用户组",
