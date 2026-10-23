@@ -175,7 +175,7 @@ def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
     theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
     source = (STATIC_DIR / "js" / "ag-grid-set-filter.js").read_text(encoding="utf-8")
 
-    assert '"ag-grid-set-filter.js"' in theme_source
+    assert '"/static/js/ag-grid-set-filter.js"' in theme_source
     assert "class NiceVpnSetFilter" in source
     assert "window.NiceVpnSetFilter" in source
     assert "forEachLeafNode" in source
