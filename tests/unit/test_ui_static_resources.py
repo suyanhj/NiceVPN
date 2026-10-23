@@ -156,3 +156,13 @@ def test_ag_grid_theme_is_dedicated_and_uses_design_tokens() -> None:
     assert ".vpn-grid-status-pill" in source
     assert ".vpn-grid-stacked-value" in source
     assert ".vpn-grid-inline-action" in source
+    assert "--ag-accent-color: #15bde8" in source
+    assert "--ag-background-color: #0c0c0d" in source
+    assert "--ag-spacing: 8px" in source
+    assert "--ag-border-radius: 20px" in source
+    assert "--ag-header-background-color: #182226" in source
+    assert "--ag-header-font-weight: 500" in source
+    assert "--ag-header-vertical-padding-scale: 0.9" in source
+    assert "--ag-row-vertical-padding-scale: 1.2" in source
+    assert "--ag-wrapper-border: none" in source
+    assert "--ag-wrapper-border-radius: 0" in source
