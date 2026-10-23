@@ -183,6 +183,9 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
     assert "compact=True" in source
+    assert "helper_tooltip=" in source
+    assert 'helper="当前证书库"' not in source
+    assert 'helper="状态正常，可继续使用"' not in source
     assert "v2_effect=True" not in source
     assert "render_page_toolbar" not in source
     assert source.index('self.summary_container = ui.element("div")') < source.index(
@@ -190,12 +193,17 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     )
     assert ".vpn-v2-page-intro" not in shell_css
     assert ".vpn-metric-card--compact" in shell_css
+    assert ".vpn-metric-card__help-icon" in shell_css
     assert ".vpn-v2-overview-grid" in shell_css
     assert "certs-data-region" in source
     assert ".certs-page--v2 .certs-data-region" in shell_css
     assert "--ag-header-background-color" in grid_css
     assert "--ag-selected-row-background-color" in grid_css
     assert ".vpn-data-grid__grid .ag-paging-panel" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-page-size" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-row-summary-panel" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-page-summary-panel" in grid_css
+    assert "align-items: center;" in grid_css
     assert "calc(100dvh - 360px)" not in shell_css
     assert ".certs-page--v2 {" in shell_css
     assert "flex: 1 1 0%;" in shell_css
