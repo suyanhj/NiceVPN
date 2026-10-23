@@ -50,9 +50,10 @@ body {
 .vpn-shell {
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
   height: 100%;
   padding: 18px 22px 28px;
 }
