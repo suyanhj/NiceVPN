@@ -74,6 +74,8 @@
   --ag-checkbox-indeterminate-color: #15bde8;
   --ag-checkbox-unchecked-color: #68717d;
   --ag-range-selection-border-color: #15bde8;
+  --ag-row-hover-color: rgba(21, 189, 232, 0.075);
+  --ag-selected-row-background-color: rgba(21, 189, 232, 0.13);
 }
 
 /* wrapperBorder=false / wrapperBorderRadius=0 */
