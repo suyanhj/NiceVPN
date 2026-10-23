@@ -21,7 +21,6 @@ from app.ui.components.actions import (
     create_action,
     danger_action,
     more_actions,
-    primary_action,
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
