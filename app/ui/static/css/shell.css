@@ -1829,6 +1829,316 @@ body {
 }
 
 
+/* Peers keeps the object-list model and shares the V2 black/cyan system. */
+.peers-page--v2 {
+  flex: 1 1 0%;
+  min-height: 0;
+  gap: 14px;
+}
+
+.peers-page--v2 .peers-toolbar {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid rgba(21, 189, 232, 0.08);
+  border-radius: 12px;
+  background: #111214;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-toolbar__primary,
+.peers-page--v2 .peers-toolbar .vpn-toolbar__secondary {
+  gap: 6px;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-action {
+  min-height: 32px;
+  padding-inline: 11px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-action--primary {
+  border-color: rgba(21, 189, 232, 0.24) !important;
+  background: rgba(21, 189, 232, 0.12) !important;
+  color: #63d5f2 !important;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-action--secondary {
+  border-color: rgba(187, 190, 201, 0.10) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: #9aa0aa !important;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-action--secondary:hover {
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+
+.peers-page--v2 .peers-list-panel {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(21, 189, 232, 0.08) !important;
+  border-radius: 14px !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+}
+
+.peers-page--v2 .peers-list-head {
+  min-height: 50px;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.08) !important;
+  background: #111214;
+}
+
+.peers-page--v2 .peers-list-kicker {
+  color: #aeb3bc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.peers-page--v2 .peers-list-count {
+  color: #6f747e;
+  font-size: 11px;
+}
+
+.peers-page--v2 .peers-list {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.peers-page--v2 .peers-record-list {
+  gap: 0 !important;
+}
+
+.peers-page--v2 .peers-record-card {
+  min-height: 82px;
+  padding: 12px 14px !important;
+  gap: 14px !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07) !important;
+  border-radius: 0 !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease !important;
+}
+
+.peers-page--v2 .peers-record-card:last-child {
+  border-bottom: 0 !important;
+}
+
+.peers-page--v2 .peers-record-card:hover {
+  border-color: rgba(187, 190, 201, 0.07) !important;
+  background: rgba(21, 189, 232, 0.055) !important;
+  box-shadow: inset 3px 0 0 rgba(21, 189, 232, 0.78) !important;
+  transform: none !important;
+}
+
+.peers-page--v2 .peers-record-main {
+  gap: 12px !important;
+}
+
+.peers-page--v2 .peers-record-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 1px solid rgba(21, 189, 232, 0.10);
+  border-radius: 10px;
+  background: rgba(21, 189, 232, 0.055);
+  color: #15bde8;
+}
+
+.peers-page--v2 .peers-record-avatar .q-spinner {
+  color: #15bde8 !important;
+}
+
+.peers-page--v2 .peers-record-copy {
+  gap: 5px !important;
+}
+
+.peers-page--v2 .peers-record-name {
+  max-width: min(34vw, 420px);
+  overflow: hidden;
+  color: #f2f4f7;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peers-page--v2 .peers-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+}
+
+.peers-page--v2 .peers-record-meta-tag {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid rgba(187, 190, 201, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #727985;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.peers-page--v2 .peers-record-meta-tag .q-icon {
+  color: #59626f;
+  font-size: 13px !important;
+}
+
+.peers-page--v2 .peers-record-actions {
+  flex: 0 0 auto;
+  gap: 3px !important;
+}
+
+.peers-page--v2 .peers-icon-action {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 !important;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent !important;
+  color: #777c87 !important;
+  box-shadow: none !important;
+}
+
+.peers-page--v2 .peers-icon-action .q-icon {
+  font-size: 17px;
+}
+
+.peers-page--v2 .peers-icon-action:hover {
+  border-color: rgba(21, 189, 232, 0.14);
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.peers-page--v2 .peers-icon-action--primary {
+  border-color: rgba(21, 189, 232, 0.16);
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.peers-page--v2 .peers-icon-action--danger {
+  color: #fb8fa2 !important;
+}
+
+.peers-page--v2 .peers-icon-action--danger:hover {
+  border-color: rgba(251, 113, 133, 0.20);
+  background: rgba(251, 113, 133, 0.08) !important;
+  color: #ffacba !important;
+}
+
+.peers-page--v2 .peers-icon-action.q-btn--disabled {
+  opacity: 0.30 !important;
+}
+
+.q-dialog .q-card.peers-operation-dialog {
+  width: min(92vw, 640px);
+  max-width: 640px;
+  padding: 18px 20px 20px !important;
+  gap: 12px;
+  border: 1px solid rgba(21, 189, 232, 0.12) !important;
+  border-radius: 16px !important;
+  background: #111214 !important;
+  color: #bbbec9 !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46) !important;
+}
+
+.peers-operation-dialog__title {
+  color: #f5f7f9 !important;
+  font-size: 17px !important;
+  font-weight: 650;
+}
+
+.q-dialog .peers-operation-dialog .q-field__control {
+  border-radius: 10px !important;
+  background: #0c0c0d !important;
+}
+
+.q-dialog .peers-operation-dialog .q-field--focused .q-field__control::before {
+  border-color: #15bde8 !important;
+}
+
+.q-dialog .q-card.peer-remote-log-drawer,
+.q-dialog .q-card.peers-help-panel--v2 {
+  border-left: 1px solid rgba(21, 189, 232, 0.12) !important;
+  background: #111214 !important;
+  color: #bbbec9 !important;
+  box-shadow: -18px 0 60px rgba(0, 0, 0, 0.36) !important;
+}
+
+.q-dialog .peer-remote-log-drawer .peer-manual-drawer-head {
+  border-bottom-color: rgba(187, 190, 201, 0.08);
+  background: #0c0c0d;
+}
+
+.q-dialog .peer-remote-log-drawer .peer-manual-title,
+.q-dialog .peers-help-panel--v2 .text-h6 {
+  color: #f5f7f9 !important;
+}
+
+.q-dialog .peer-remote-log-drawer .peer-manual-hint {
+  border-color: rgba(21, 189, 232, 0.12);
+  background: rgba(21, 189, 232, 0.055);
+  color: #8f929c;
+}
+
+.q-dialog .peer-remote-log-drawer .peer-remote-log-frame,
+.q-dialog .peer-remote-log-drawer .peer-remote-log-viewport {
+  background: #0c0c0d !important;
+  color: #c6cad2;
+}
+
+.q-dialog .peers-help-panel--v2 .peers-help-jump-btn {
+  border-color: rgba(187, 190, 201, 0.08) !important;
+  background: #0c0c0d !important;
+  color: #d8dbe2 !important;
+}
+
+.q-dialog .peers-help-panel--v2 .peers-help-jump-btn:hover {
+  border-color: rgba(21, 189, 232, 0.20) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #f5f7f9 !important;
+  transform: none;
+}
+
+@media (max-width: 900px) {
+  .peers-page--v2 .peers-record-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .peers-page--v2 .peers-record-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .peers-page--v2 .peers-record-name {
+    max-width: 70vw;
+  }
+}
+
 /* ---------- NiceVPN UI V2 homepage proof-of-concept ---------- */
 
 .vpn-nav-brand {
