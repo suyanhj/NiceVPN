@@ -17,10 +17,7 @@ from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
-    MenuAction,
     create_action,
-    danger_action,
-    more_actions,
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
@@ -53,7 +50,7 @@ class UsersPage:
         self.bulk_bar = None
         self.bulk_download_button = None
         self.bulk_enable_button = None
-        self.bulk_more_menu = None
+        self.bulk_icon_buttons: list[object] = []
 
         # 兼容旧列表选择辅助与既有测试；AG Grid 迁移后不再作为主视图。
         self.list_container = None
@@ -112,16 +109,54 @@ class UsersPage:
                 disabled=disabled,
                 tooltip="请先选择用户" if disabled else None,
             )
-            self.bulk_more_menu = more_actions(
-                (
-                    MenuAction("批量停用", icon="toggle_off", on_click=self._batch_disable_confirm),
-                    MenuAction("批量踢下线", icon="power_settings_new", on_click=self._batch_kick_offline),
-                    MenuAction("批量切换组", icon="drive_file_move", on_click=self._show_batch_change_group_dialog),
-                    MenuAction("批量重置绑定", icon="phonelink_erase", on_click=self._batch_reset_binding_confirm),
-                    MenuAction("批量删除", icon="delete", danger=True, on_click=self._batch_delete_confirm),
-                ),
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else "更多批量操作",
+            def bulk_icon_action(
+                icon: str,
+                tooltip: str,
+                callback,
+                *,
+                danger: bool = False,
+            ):
+                classes = "users-bulk-icon-action"
+                if danger:
+                    classes += " users-bulk-icon-action--danger"
+                button = ui.button(
+                    icon=icon,
+                    on_click=callback,
+                ).props(
+                    f"flat round dense aria-label='{tooltip}'"
+                ).classes(classes)
+                button.tooltip("请先选择用户" if disabled else tooltip)
+                if disabled:
+                    button.disable()
+                self.bulk_icon_buttons.append(button)
+                return button
+
+            self.bulk_icon_buttons = []
+            bulk_icon_action(
+                "toggle_off",
+                "批量停用",
+                self._batch_disable_confirm,
+            )
+            bulk_icon_action(
+                "power_settings_new",
+                "批量踢下线",
+                self._batch_kick_offline,
+            )
+            bulk_icon_action(
+                "drive_file_move",
+                "批量切换组",
+                self._show_batch_change_group_dialog,
+            )
+            bulk_icon_action(
+                "phonelink_erase",
+                "批量重置绑定",
+                self._batch_reset_binding_confirm,
+            )
+            bulk_icon_action(
+                "delete",
+                "批量删除",
+                self._batch_delete_confirm,
+                danger=True,
             )
 
         with ui.column().classes("page-shell mgmt-page users-page--v2"):
@@ -258,6 +293,7 @@ class UsersPage:
             "connection": connection,
             "source": real_address,
             "device": device,
+            "device_filter": device if device != "—" else "未知",
             "device_source": (
                 f"{device} · {real_address}"
                 if device != "—" and real_address != "—"
@@ -330,7 +366,12 @@ class UsersPage:
                 "headerName": "用户组",
                 "flex": 0.78,
                 "minWidth": 110,
-                "filter": False,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索用户组...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配用户组",
+                },
             },
             {
                 "field": "traffic",
@@ -350,7 +391,14 @@ class UsersPage:
                 "headerName": "设备 / 来源",
                 "flex": 1.15,
                 "minWidth": 188,
-                "filter": False,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "filterValueField": "device_filter",
+                    "searchPlaceholder": "搜索设备类型...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配设备",
+                    "valueOrder": ["安卓", "iOS", "Mac", "Windows", "Linux", "未知"],
+                },
             },
             {
                 "field": "actions",
@@ -451,11 +499,11 @@ class UsersPage:
                 button.enable()
             else:
                 button.disable()
-        if self.bulk_more_menu is not None:
+        for button in self.bulk_icon_buttons:
             if enabled:
-                self.bulk_more_menu.button.enable()
+                button.enable()
             else:
-                self.bulk_more_menu.button.disable()
+                button.disable()
 
     def _on_grid_cell_clicked(self, event) -> None:
         """点击固定操作列时打开当前用户操作面板。"""
