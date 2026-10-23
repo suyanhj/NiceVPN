@@ -406,7 +406,6 @@ class UsersPage:
 
         if not rows:
             self.grid_view = None
-            self.search_state_container = None
             empty_state(
                 "暂无用户",
                 description="创建用户或批量导入后会显示在这里。",
