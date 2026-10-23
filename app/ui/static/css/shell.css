@@ -363,33 +363,6 @@ body {
   gap: var(--vpn-space-2);
 }
 
-/* Certs 工具栏输入与按钮统一高度，避免搜索框与操作按钮上下错位。 */
-.certs-toolbar {
-  align-items: center;
-}
-
-.certs-toolbar .q-btn {
-  min-height: 42px;
-  height: 42px;
-  padding-block: 0;
-}
-
-.certs-toolbar .q-field--dense .q-field__control,
-.certs-toolbar .q-field--dense .q-field__marginal {
-  min-height: 42px;
-  height: 42px;
-}
-
-.certs-toolbar .q-field--dense .q-field__native,
-.certs-toolbar .q-field--dense .q-field__input {
-  min-height: 42px;
-  padding-block: 0;
-}
-
-.certs-toolbar .vpn-toolbar__secondary {
-  align-items: center;
-}
-
 .vpn-bulk-bar {
   flex-wrap: wrap;
   justify-content: space-between;
