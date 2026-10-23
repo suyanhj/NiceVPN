@@ -1757,6 +1757,12 @@ body {
   color: #49ccec !important;
 }
 
+.services-page--v2 .services-icon-action--primary {
+  border-color: rgba(21, 189, 232, 0.16);
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
 .services-page--v2 .services-icon-action.q-btn--disabled {
   opacity: 0.32 !important;
 }
