@@ -1734,22 +1734,31 @@ body {
   color: #63d5f2 !important;
 }
 
-.services-page--v2 .services-more-action {
+.services-page--v2 .services-icon-action {
   width: 30px;
   min-width: 30px;
   height: 30px;
   min-height: 30px;
   padding: 0 !important;
+  border: 1px solid transparent;
   border-radius: 8px;
+  background: transparent !important;
   color: #777c87 !important;
-  font-size: 19px;
-  font-weight: 700;
-  line-height: 1;
+  box-shadow: none !important;
 }
 
-.services-page--v2 .services-more-action:hover {
+.services-page--v2 .services-icon-action .q-icon {
+  font-size: 17px;
+}
+
+.services-page--v2 .services-icon-action:hover {
+  border-color: rgba(21, 189, 232, 0.14);
   background: rgba(21, 189, 232, 0.08) !important;
   color: #49ccec !important;
+}
+
+.services-page--v2 .services-icon-action.q-btn--disabled {
+  opacity: 0.32 !important;
 }
 
 .q-dialog .q-card.services-view-dialog {
