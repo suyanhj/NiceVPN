@@ -21,6 +21,11 @@ from app.ui.components.actions import (
 )
 from app.ui.components.cards import metric_card
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid_renderers import (
+    ACTION_BUTTON_RENDERER,
+    EXPIRY_WITH_DETAIL_RENDERER,
+    STATUS_PILL_RENDERER,
+)
 from app.ui.components.feedback import AsyncOperationGuard
 from app.ui.components.states import empty_state, error_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
@@ -147,6 +152,8 @@ class CertsPage:
 
     @staticmethod
     def _grid_columns() -> tuple[dict, ...]:
+        """保持标准表格结构，仅增强状态、到期信息和操作单元格。"""
+
         return (
             {
                 "field": "common_name",
@@ -154,37 +161,35 @@ class CertsPage:
                 "pinned": "left",
                 "lockPinned": True,
                 "suppressMovable": True,
-                "width": 138,
+                "width": 146,
                 "minWidth": 118,
-                "maxWidth": 168,
+                "maxWidth": 176,
+                "cellClass": "vpn-grid-primary-cell",
             },
             {
                 "field": "status_label",
                 "headerName": "状态",
-                "flex": 0.72,
-                "minWidth": 82,
-                "maxWidth": 110,
+                "flex": 0.68,
+                "minWidth": 104,
+                "maxWidth": 136,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "serial_display",
                 "headerName": "序列号",
                 "flex": 1.45,
-                "minWidth": 170,
+                "minWidth": 178,
                 "cellClass": "vpn-grid-mono",
             },
             {
                 "field": "expires_display",
                 "headerName": "到期日期",
-                "flex": 0.95,
-                "minWidth": 120,
-                "maxWidth": 150,
-            },
-            {
-                "field": "days_left",
-                "headerName": "剩余天数",
-                "flex": 0.72,
-                "minWidth": 88,
-                "maxWidth": 112,
+                "flex": 1.0,
+                "minWidth": 156,
+                "maxWidth": 190,
+                ":cellRenderer": EXPIRY_WITH_DETAIL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "actions",
@@ -192,13 +197,14 @@ class CertsPage:
                 "pinned": "right",
                 "lockPinned": True,
                 "suppressMovable": True,
-                "width": 82,
-                "minWidth": 82,
-                "maxWidth": 82,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
                 "resizable": False,
-                "cellClass": "vpn-grid-action-cell",
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         )
 
