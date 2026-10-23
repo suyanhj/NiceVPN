@@ -133,14 +133,12 @@ class UsersPage:
                 "批量下载",
                 self._batch_download,
                 disabled_action=True,
-                track_bulk=True,
             )
             self.bulk_enable_button = icon_action(
                 "toggle_on",
                 "批量启用",
                 lambda: self._batch_set_status(True),
                 disabled_action=True,
-                track_bulk=True,
             )
             icon_action(
                 "toggle_off",
