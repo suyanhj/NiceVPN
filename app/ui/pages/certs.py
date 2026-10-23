@@ -29,7 +29,7 @@ from app.ui.components.data_grid_renderers import (
 from app.ui.components.feedback import AsyncOperationGuard
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,14 @@ class CertsPage:
     def render(self):
         """使用共享页面结构和 AG Grid 渲染证书库。"""
 
-        def secondary_region() -> None:
-            secondary_action("刷新", icon="refresh", on_click=self._refresh_cert_list)
-            more_actions(
+        def bulk_actions() -> None:
+            refresh_button = ui.button(
+                icon="refresh",
+                on_click=self._refresh_cert_list,
+            ).props("flat round dense").classes("certs-refresh-action")
+            refresh_button.tooltip("刷新证书列表")
+
+            advanced_menu = more_actions(
                 (
                     MenuAction("更新 CRL", icon="sync", on_click=self._handle_regen_crl),
                     MenuAction(
@@ -86,8 +91,9 @@ class CertsPage:
                 label="高级操作",
                 icon="settings_suggest",
             )
+            advanced_menu.button.classes(add="certs-advanced-action")
+            ui.element("span").classes("certs-action-separator")
 
-        def bulk_actions() -> None:
             disabled = not self.selected_certs
             self.bulk_renew_button = secondary_action(
                 "批量续签",
@@ -106,8 +112,6 @@ class CertsPage:
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
             self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
-            toolbar = render_page_toolbar(secondary=secondary_region)
-            toolbar.container.classes(add="vpn-toolbar--end")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
