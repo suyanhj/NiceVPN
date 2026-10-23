@@ -1858,9 +1858,15 @@ body {
 }
 
 .peers-page--v2 .peers-toolbar .vpn-action--primary {
-  border-color: rgba(21, 189, 232, 0.24) !important;
-  background: rgba(21, 189, 232, 0.12) !important;
-  color: #63d5f2 !important;
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+
+.peers-page--v2 .peers-toolbar .vpn-action--primary:hover {
+  border-color: rgba(21, 189, 232, 0.42) !important;
+  background: rgba(21, 189, 232, 0.11) !important;
+  color: #7ddcf3 !important;
 }
 
 .peers-page--v2 .peers-toolbar .vpn-action--secondary {
