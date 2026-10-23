@@ -94,7 +94,6 @@ def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
             assert response.status_code == 200
             await user.should_see("新建用户")
             await user.should_see("批量导入")
-            await user.should_see("刷新")
             await user.should_see("已选择 1 项")
             await user.should_see("共 2 个用户")
 
@@ -103,12 +102,53 @@ def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
     assert page.grid_view.grid.options["paginationPageSize"] == 50
+    assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
     assert page.grid_view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in page.grid_view.grid.options
     assert ":onFirstDataRendered" in page.grid_view.grid.options
     assert len(page.grid_view.grid.options["rowData"]) == 2
     assert page.bulk_download_button._props.get("disable") is not True
     assert page.bulk_more_menu.button._props.get("disable") is not True
+
+
+def test_users_grid_columns_follow_certs_v2_table_template() -> None:
+    """Users 主表只保留高频字段，并复用共享状态/操作 renderer。"""
+
+    columns = {column["field"]: column for column in UsersPage._user_grid_columns()}
+
+    assert list(columns) == [
+        "username",
+        "account_status",
+        "session_status",
+        "virtual_ip",
+        "group",
+        "traffic",
+        "connection",
+        "device_source",
+        "actions",
+    ]
+
+    username = columns["username"]
+    assert username["pinned"] == "left"
+    assert username["lockPinned"] is True
+    assert username["cellClass"] == "vpn-grid-primary-cell"
+
+    account = columns["account_status"]
+    session = columns["session_status"]
+    assert "vpn-grid-status-pill" in account[":cellRenderer"]
+    assert "vpn-grid-status-pill" in session[":cellRenderer"]
+    assert account[":filter"] == "window.NiceVpnSetFilter"
+    assert session[":filter"] == "window.NiceVpnSetFilter"
+
+    actions = columns["actions"]
+    assert actions["pinned"] == "right"
+    assert actions["lockPinned"] is True
+    assert actions["width"] == 92
+    assert actions["resizable"] is False
+    assert "vpn-grid-inline-action" in actions[":cellRenderer"]
+
+    for removed in ("cert_serial_display", "source", "device", "created_at"):
+        assert removed not in columns
 
 
 def test_users_search_distinguishes_no_match_from_true_empty(
@@ -132,6 +172,40 @@ def test_users_search_distinguishes_no_match_from_true_empty(
 
     asyncio.run(verify_page())
     assert page.grid_view.summary.text == "匹配 0 / 共 1 个用户"
+
+
+def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -> None:
+    page = UsersPage()
+
+    online = page._build_user_grid_row(
+        _user("alice"),
+        {
+            "virtual_address": "10.8.0.10",
+            "real_address": "203.0.113.10:50000",
+            "bytes_received": 1024,
+            "bytes_sent": 2048,
+            "connected_since": "2026-10-20 08:00:00",
+        },
+        {"device_label": "MacBook"},
+        "10.8.0.10",
+        {"group-main": "默认接入组"},
+        live_available=True,
+    )
+    disabled = page._build_user_grid_row(
+        _user("bob", status="disabled"),
+        None,
+        {},
+        "10.8.0.11",
+        {"group-main": "默认接入组"},
+        live_available=True,
+    )
+
+    assert online["account_status_tone"] == "success"
+    assert online["session_status_tone"] == "success"
+    assert online["device_source"] == "MacBook · 203.0.113.10:50000"
+
+    assert disabled["account_status_tone"] == "warning"
+    assert disabled["session_status_tone"] == "unknown"
 
 
 def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion() -> None:
@@ -257,3 +331,35 @@ def test_user_download_link_push_uses_notification_registry(
 
     assert messages[-1][1] == "negative"
     assert "系统设置 → 通知" in messages[-1][0]
+
+
+def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "users.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+    renderer_source = (
+        root / "app" / "ui" / "components" / "data_grid_renderers.py"
+    ).read_text(encoding="utf-8")
+
+    assert "users-page--v2" in source
+    assert "users-toolbar" in source
+    assert "users-bulk-bar" in source
+    assert "users-data-region" in source
+    assert "users-action-dialog" in source
+    assert "users-dialog-icon-action" in source
+    assert "users-import-dialog" in source
+    assert "users-change-group-dialog" in source
+    assert "users-config-drawer" in source
+    assert "suppress_horizontal_scroll=True" in source
+
+    assert ".users-page--v2 .users-data-region" in shell_css
+    assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
+    assert ".q-dialog .q-card.users-action-dialog" in shell_css
+    assert ".users-dialog-icon-action" in shell_css
+    assert ".q-dialog .q-card.users-config-drawer" in shell_css
+
+    assert "field + '_tone'" in renderer_source
