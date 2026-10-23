@@ -17,6 +17,7 @@ _CSS_FILES = (
 _JS_FILES = (
     "/static/vendor/clipboard-2.0.11.min.js",
     "/static/js/clipboard-adapter.js",
+    "/static/js/ag-grid-set-filter.js",
 )
 _STATIC_ROOT = Path(__file__).resolve().parent / "static"
 
