@@ -872,25 +872,28 @@ class ServicesPage:
 
             with ui.element("div").classes("mgmt-actions services-record-actions"):
                 if view["can_start"]:
-                    primary_action(
-                        "启动",
+                    ui.button(
                         icon="play_arrow",
                         on_click=lambda name=status.name: self._confirm_start(name),
-                    ).props("dense")
+                    ).props("flat round dense").classes(
+                        "services-icon-action services-icon-action--primary"
+                    ).tooltip("启动")
                 elif view["can_stop"]:
-                    secondary_action(
-                        "停止",
+                    ui.button(
                         icon="stop",
                         on_click=lambda name=status.name: self._confirm_stop(name),
-                    ).props("dense")
+                    ).props("flat round dense").classes(
+                        "services-icon-action"
+                    ).tooltip("停止")
 
-                secondary_action(
-                    "重启",
+                restart_button = ui.button(
                     icon="restart_alt",
                     on_click=lambda name=status.name: self._confirm_restart(name),
-                    disabled=not bool(view["can_restart"]),
-                    busy=bool(view["busy"]),
-                ).props("dense")
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("重启")
+                if not bool(view["can_restart"]) or bool(view["busy"]):
+                    restart_button.disable()
 
                 ui.button(
                     icon="article",
