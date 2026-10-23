@@ -144,6 +144,24 @@ def test_confirm_dialog_supports_impact_count_and_required_text() -> None:
     assert handle.confirm_button._props["color"] == "negative"
 
 
+def test_shared_dialog_theme_overrides_legacy_quasar_skin() -> None:
+    """共享表单/确认弹窗必须使用 V2 黑灰青蓝主题，而不是 legacy 蓝灰卡片。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert ".q-dialog .q-card.vpn-form-dialog" in shell_css
+    assert ".q-dialog .q-card.vpn-confirm-dialog" in shell_css
+    assert "background: #111214 !important;" in shell_css
+    assert "background: #0c0c0d !important;" in shell_css
+    assert "border-color: #15bde8 !important;" in shell_css
+    assert ".q-dialog .vpn-form-dialog__actions .bg-primary" in shell_css
+
+
 def test_form_dialog_exposes_busy_control_and_preserves_structure() -> None:
     """统一表单对话框可控制提交忙碌状态。"""
 
