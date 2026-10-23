@@ -63,12 +63,10 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
             assert response.status_code == 200
             await user.should_see("在线设备")
             await user.should_see("3")
-            await user.should_see("共 12 个注册用户")
             await user.should_see("服务状态")
             await user.should_see("1/2")
             await user.should_see("累计流量")
             await user.should_see("↑ 5.0 KB")
-            await user.should_see("↓ 10.0 KB · 当前快照")
             await user.should_see("服务健康度与状态分布")
             await user.should_see("当前累计流量分布")
             await user.should_see("6/8 启用")
@@ -103,7 +101,6 @@ def test_dashboard_no_instances_renders_chart_empty_states(
         async with user_simulation(page.render) as user:
             await user.open("/")
             await user.should_see("0/0")
-            await user.should_see("尚未纳管实例")
             await user.should_see("暂无图表数据")
             await user.should_see("尚未配置 OpenVPN 实例")
 
@@ -124,8 +121,6 @@ def test_dashboard_partial_errors_do_not_hide_other_metrics(
         async with user_simulation(page.render) as user:
             await user.open("/")
             await user.should_see("在线设备")
-            await user.should_see("共 12 个注册用户")
-            await user.should_see("1 采集失败")
             await user.should_see("读取失败")
             await user.should_see("部分数据不可用")
             await user.should_see("实例 broken: status read failed")
@@ -165,7 +160,6 @@ def test_dashboard_manual_refresh_recollects_snapshot(
             assert page._snapshot is first
             page._refresh_dashboard()
             assert page._snapshot is second
-            await user.should_see("共 20 个注册用户")
             await user.should_see("9")
             await user.should_see("10/10 启用")
 
@@ -211,5 +205,12 @@ def test_dashboard_v2_visual_contract_files_exist() -> None:
     assert "最后更新 " not in dashboard_source
     assert "render_page_toolbar(" not in dashboard_source
     assert "vpn-metric-card--v2" in shell_css
+    assert "helper_tooltip=" in dashboard_source
+    assert 'helper=f"共 {snapshot.user_count} 个注册用户"' not in dashboard_source
+    assert 'helper=f"↓ {_format_bytes(snapshot.total_tx)} · 当前快照"' not in dashboard_source
+    assert ".dashboard-page--v2 .dashboard-v2-layout" in shell_css
+    assert ".dashboard-page--v2 .dashboard-chart-grid" in shell_css
+    assert "grid-auto-rows: minmax(340px, 1fr);" in shell_css
+    assert "margin-top: auto;" in shell_css
     assert "dashboard-v2-title" not in dashboard_source
     assert "vpn-v2-page-intro" not in dashboard_source
