@@ -1125,6 +1125,22 @@ body {
   line-height: 1.2;
 }
 
+.vpn-metric-card__help-icon {
+  flex: 0 0 auto;
+  color: var(--vpn-text-soft);
+  cursor: help;
+  font-size: 14px;
+  opacity: 0.72;
+  transition:
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.vpn-metric-card__help-icon:hover {
+  color: var(--vpn-color-brand-soft);
+  opacity: 1;
+}
+
 .vpn-metric-card--compact .vpn-metric-card__value {
   margin-top: 2px;
   font-size: 22px;
@@ -1162,6 +1178,19 @@ body {
 }
 
 .certs-page--v2 .vpn-metric-card--compact .vpn-metric-card__icon {
+  color: #15bde8;
+}
+
+.certs-page--v2 .vpn-metric-card--compact {
+  min-height: 68px;
+}
+
+.certs-page--v2 .vpn-metric-card__help-icon {
+  color: #69717b;
+  font-size: 13px;
+}
+
+.certs-page--v2 .vpn-metric-card__help-icon:hover {
   color: #15bde8;
 }
 
