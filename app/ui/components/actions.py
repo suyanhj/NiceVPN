@@ -52,6 +52,7 @@ def action_button(
     disabled: bool = False,
     busy: bool = False,
     tooltip: str | None = None,
+    icon_only: bool = False,
 ):
     """创建文案、图标和状态一致的操作按钮。"""
 
@@ -61,19 +62,33 @@ def action_button(
     if variant not in _VARIANT_PROPS:
         raise ValueError(f"不支持的操作按钮类型: {variant}")
 
-    button = ui.button(
-        normalized_label,
-        icon=icon,
-        on_click=on_click,
-    ).props(f"no-caps {_VARIANT_PROPS[variant]}").classes(
-        f"vpn-action vpn-action--{variant}"
-    )
+    if icon_only and not icon:
+        raise ValueError("纯图标操作按钮必须提供图标")
+
+    if icon_only:
+        button = ui.button(
+            icon=icon,
+            on_click=on_click,
+        ).props(
+            f"no-caps {_VARIANT_PROPS[variant]} aria-label='{normalized_label}'"
+        ).classes(
+            f"vpn-action vpn-action--{variant} vpn-action--icon-only"
+        )
+    else:
+        button = ui.button(
+            normalized_label,
+            icon=icon,
+            on_click=on_click,
+        ).props(f"no-caps {_VARIANT_PROPS[variant]}").classes(
+            f"vpn-action vpn-action--{variant}"
+        )
     if disabled or busy:
         button.disable()
     if busy:
         button.props("loading")
-    if tooltip:
-        button.tooltip(str(tooltip))
+    effective_tooltip = tooltip or (normalized_label if icon_only else None)
+    if effective_tooltip:
+        button.tooltip(str(effective_tooltip))
     return button
 
 
