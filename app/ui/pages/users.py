@@ -16,10 +16,6 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import (
-    create_action,
-    secondary_action,
-)
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
@@ -77,86 +73,108 @@ class UsersPage:
         """渲染用户管理页面；页级动作与批量动作统一收敛到单条操作栏。"""
 
         def bulk_actions() -> None:
-            create_action(
-                "新建用户",
-                icon="person_add",
-                on_click=self._show_create_dialog,
-            )
-            secondary_action(
-                "批量导入",
-                icon="upload_file",
-                on_click=self._show_import_dialog,
-            )
-            refresh_button = ui.button(
-                icon="refresh",
-                on_click=self._refresh_user_list,
-            ).props("flat round dense").classes("users-refresh-action")
-            refresh_button.tooltip("刷新用户列表")
-            ui.element("span").classes("users-action-separator")
-
             disabled = not self.selected_users
-            self.bulk_download_button = secondary_action(
-                "批量下载",
-                icon="download",
-                on_click=self._batch_download,
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else None,
-            )
-            self.bulk_enable_button = secondary_action(
-                "批量启用",
-                icon="toggle_on",
-                on_click=lambda: self._batch_set_status(True),
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else None,
-            )
-            def bulk_icon_action(
+
+            def icon_action(
                 icon: str,
                 tooltip: str,
                 callback,
                 *,
+                disabled_action: bool = False,
+                create: bool = False,
                 danger: bool = False,
+                track_bulk: bool = False,
             ):
-                classes = "users-bulk-icon-action"
+                classes = "users-bar-icon-action"
+                if create:
+                    classes += " users-bar-icon-action--create"
                 if danger:
-                    classes += " users-bulk-icon-action--danger"
+                    classes += " users-bar-icon-action--danger"
                 button = ui.button(
                     icon=icon,
                     on_click=callback,
                 ).props(
                     f"flat round dense aria-label='{tooltip}'"
                 ).classes(classes)
-                button.tooltip("请先选择用户" if disabled else tooltip)
-                if disabled:
+                button.tooltip(
+                    "请先选择用户"
+                    if disabled_action and disabled
+                    else tooltip
+                )
+                if disabled_action and disabled:
                     button.disable()
-                self.bulk_icon_buttons.append(button)
+                if track_bulk:
+                    self.bulk_icon_buttons.append(button)
                 return button
 
+            icon_action(
+                "person_add",
+                "新建用户",
+                self._show_create_dialog,
+                create=True,
+            )
+            icon_action(
+                "upload_file",
+                "批量导入",
+                self._show_import_dialog,
+            )
+            icon_action(
+                "refresh",
+                "刷新用户列表",
+                self._refresh_user_list,
+            )
+            ui.element("span").classes("users-action-separator")
+
             self.bulk_icon_buttons = []
-            bulk_icon_action(
+            self.bulk_download_button = icon_action(
+                "download",
+                "批量下载",
+                self._batch_download,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            self.bulk_enable_button = icon_action(
+                "toggle_on",
+                "批量启用",
+                lambda: self._batch_set_status(True),
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
                 "toggle_off",
                 "批量停用",
                 self._batch_disable_confirm,
+                disabled_action=True,
+                track_bulk=True,
             )
-            bulk_icon_action(
+            icon_action(
                 "power_settings_new",
                 "批量踢下线",
                 self._batch_kick_offline,
+                disabled_action=True,
+                track_bulk=True,
             )
-            bulk_icon_action(
+            icon_action(
                 "drive_file_move",
                 "批量切换组",
                 self._show_batch_change_group_dialog,
+                disabled_action=True,
+                track_bulk=True,
             )
-            bulk_icon_action(
+            icon_action(
                 "phonelink_erase",
                 "批量重置绑定",
                 self._batch_reset_binding_confirm,
+                disabled_action=True,
+                track_bulk=True,
             )
-            bulk_icon_action(
+            icon_action(
                 "delete",
                 "批量删除",
                 self._batch_delete_confirm,
+                disabled_action=True,
                 danger=True,
+                track_bulk=True,
             )
 
         with ui.column().classes("page-shell mgmt-page users-page--v2"):
