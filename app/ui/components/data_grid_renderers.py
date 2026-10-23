@@ -5,7 +5,9 @@
 """
 
 STATUS_PILL_RENDERER = r"""(params) => {
-  const rawTone = String(params.data?.status_tone ?? 'unknown');
+  const field = String(params.colDef?.field ?? '');
+  const fieldTone = field ? params.data?.[field + '_tone'] : null;
+  const rawTone = String(fieldTone ?? params.data?.status_tone ?? 'unknown');
   const tone = ['success', 'warning', 'failed'].includes(rawTone) ? rawTone : 'unknown';
 
   const pill = document.createElement('span');
