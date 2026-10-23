@@ -57,6 +57,7 @@ from app.ui.adapters.firewall import (
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
+    create_action,
     danger_action,
     more_actions,
     primary_action,
@@ -332,7 +333,7 @@ class FirewallPage:
                 )
 
         def primary_region() -> None:
-            primary_action(
+            create_action(
                 "新建规则",
                 icon="add",
                 on_click=self._on_new_rule_click,
