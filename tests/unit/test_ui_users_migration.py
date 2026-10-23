@@ -364,6 +364,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-bar-icon-action--create" in source
     assert "more_actions(" not in source
     assert "MenuAction(" not in source
+    assert "aria-label='{tooltip}'" in source
+    assert "aria-label='新建用户'" in source
     for label in (
         "新建用户",
         "批量导入",
@@ -376,7 +378,7 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
         "批量重置绑定",
         "批量删除",
     ):
-        assert f"aria-label='{label}'" in source
+        assert f'"{label}"' in source
     assert "search_input" not in source
     assert "_handle_search" not in source
     assert "_clear_search" not in source
