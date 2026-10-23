@@ -362,6 +362,9 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-action-separator" in source
     assert "users-bar-icon-action" in source
     assert "users-bar-icon-action--create" in source
+    assert 'create_action(\n                "新建用户"' in source
+    assert "icon_only=True" in source
+    assert 'create_action(\n                ""' not in source
     assert "more_actions(" not in source
     assert "MenuAction(" not in source
     assert "aria-label='{tooltip}'" in source
