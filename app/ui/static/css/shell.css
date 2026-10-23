@@ -422,6 +422,196 @@ body {
   font-size: 17px;
 }
 
+/* Groups keeps the object-list layout, but follows the V2 black/cyan design system. */
+.groups-page--v2 .vpn-metric-card--compact {
+  min-height: 68px;
+  border-color: rgba(21, 189, 232, 0.10) !important;
+  background: #111214 !important;
+}
+
+.groups-page--v2 .vpn-metric-card--compact .vpn-metric-card__label {
+  color: #777c87;
+}
+
+.groups-page--v2 .vpn-metric-card--compact .vpn-metric-card__value {
+  color: #f5f7f9;
+}
+
+.groups-page--v2 .vpn-metric-card--compact .vpn-metric-card__icon {
+  color: #15bde8;
+}
+
+.groups-page--v2 .vpn-metric-card__help-icon {
+  color: #69717b;
+  font-size: 13px;
+}
+
+.groups-page--v2 .vpn-metric-card__help-icon:hover {
+  color: #15bde8;
+}
+
+.groups-page--v2 .vpn-bulk-bar {
+  border-color: rgba(21, 189, 232, 0.08);
+  background: #111214;
+  box-shadow: none;
+}
+
+.groups-page--v2 .vpn-bulk-bar__count {
+  color: #aeb3bc;
+}
+
+.groups-page--v2 .groups-create-action {
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+
+.groups-page--v2 .groups-create-action:hover {
+  border-color: rgba(21, 189, 232, 0.42) !important;
+  background: rgba(21, 189, 232, 0.11) !important;
+  color: #7ddcf3 !important;
+}
+
+.groups-page--v2 .mgmt-panel-list {
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(21, 189, 232, 0.08) !important;
+  border-radius: 14px !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+}
+
+.groups-page--v2 .mgmt-list-head {
+  min-height: 50px;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.08) !important;
+  background: #111214;
+}
+
+.groups-page--v2 .mgmt-kicker {
+  color: #aeb3bc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.groups-page--v2 .group-list-count {
+  color: #6f747e;
+  font-size: 11px;
+}
+
+.groups-page--v2 .mgmt-record-list {
+  gap: 0 !important;
+}
+
+.groups-page--v2 .groups-record-card {
+  min-height: 68px;
+  padding: 12px 14px !important;
+  gap: 14px !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07) !important;
+  border-radius: 0 !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease !important;
+}
+
+.groups-page--v2 .groups-record-card:last-child {
+  border-bottom: 0 !important;
+}
+
+.groups-page--v2 .groups-record-card:hover {
+  border-color: rgba(187, 190, 201, 0.07) !important;
+  background: rgba(21, 189, 232, 0.065) !important;
+  box-shadow: inset 3px 0 0 rgba(21, 189, 232, 0.82) !important;
+  transform: none !important;
+}
+
+.groups-page--v2 .groups-record-card--root {
+  background: linear-gradient(
+    90deg,
+    rgba(21, 189, 232, 0.035),
+    #0c0c0d 34%
+  ) !important;
+}
+
+.groups-page--v2 .groups-record-card--disabled {
+  opacity: 0.68;
+}
+
+.groups-page--v2 .mgmt-record-main {
+  gap: 14px !important;
+}
+
+.groups-page--v2 .mgmt-record-copy {
+  gap: 5px !important;
+}
+
+.groups-page--v2 .mgmt-record-title {
+  color: #f2f4f7 !important;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.groups-page--v2 .mgmt-record-meta {
+  gap: 14px !important;
+  color: #727985 !important;
+  font-size: 11px;
+}
+
+.groups-page--v2 .mgmt-meta-item .q-icon {
+  color: #59626f;
+}
+
+.groups-page--v2 .groups-root-badge {
+  padding: 3px 7px;
+  border-color: rgba(21, 189, 232, 0.30) !important;
+  border-radius: 999px;
+  color: #49ccec !important;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.groups-page--v2 .group-record-side {
+  gap: 8px;
+}
+
+.groups-page--v2 .mgmt-actions {
+  gap: 3px;
+}
+
+.groups-page--v2 .mgmt-actions .vpn-action {
+  min-height: 30px;
+  padding-inline: 9px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.groups-page--v2 .mgmt-actions .vpn-action--secondary {
+  border-color: rgba(187, 190, 201, 0.10) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: #9aa0aa !important;
+}
+
+.groups-page--v2 .mgmt-actions .vpn-action--secondary:hover {
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+
+.groups-page--v2 .mgmt-checkbox .q-checkbox__inner {
+  color: #555c66 !important;
+}
+
+.groups-page--v2 .mgmt-checkbox .q-checkbox__inner--truthy {
+  color: #15bde8 !important;
+}
+
 
 /* 键盘焦点必须独立于颜色/hover 可见；统一共享组件焦点环。 */
 .vpn-action:focus-visible,
