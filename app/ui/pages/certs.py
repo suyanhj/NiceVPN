@@ -173,6 +173,13 @@ class CertsPage:
                 "minWidth": 104,
                 "maxWidth": 136,
                 ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["有效", "即将到期", "已吊销", "已过期", "未知"],
+                },
                 "cellClass": "vpn-grid-renderer-cell",
             },
             {
