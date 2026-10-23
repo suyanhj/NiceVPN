@@ -202,16 +202,68 @@
 
 /* Footer is part of the chrome and uses the background colour. */
 .vpn-data-grid__grid .ag-paging-panel {
+  display: flex;
   min-height: 48px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 12px;
   border: 0 !important;
   background: #0c0c0d !important;
   color: #8f929c;
   font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vpn-data-grid__grid .ag-paging-page-size,
+.vpn-data-grid__grid .ag-paging-row-summary-panel,
+.vpn-data-grid__grid .ag-paging-page-summary-panel {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+}
+
+.vpn-data-grid__grid .ag-paging-page-size .ag-picker-field-wrapper {
+  display: inline-flex;
+  min-width: 54px;
+  height: 30px;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 8px;
+  border: 0 !important;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.vpn-data-grid__grid .ag-paging-page-size .ag-picker-field-display {
+  display: inline-flex;
+  align-items: center;
+  line-height: 28px;
+}
+
+.vpn-data-grid__grid .ag-paging-description,
+.vpn-data-grid__grid .ag-paging-row-summary-panel > span,
+.vpn-data-grid__grid .ag-paging-page-summary-panel > span {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  line-height: 1;
+}
+
+.vpn-data-grid__grid .ag-paging-page-summary-panel {
+  gap: 2px;
 }
 
 .vpn-data-grid__grid .ag-paging-button {
+  display: inline-grid;
+  width: 30px;
   min-width: 30px;
+  height: 30px;
   min-height: 30px;
+  place-items: center;
   border-radius: 20px;
   color: #8f929c;
   transition:
