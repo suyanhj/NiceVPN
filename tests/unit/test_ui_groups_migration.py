@@ -171,9 +171,11 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert 'helper="含根组与业务子组"' not in source
     assert "v2_effect=True" not in source
     assert "render_page_toolbar" not in source
-    assert "groups-create-action" in source
+    assert "create_action(" in source
+    assert "groups-create-action" not in source
     assert "primary_action" not in source
-    assert ".groups-page--v2 .groups-create-action" in shell_css
+    assert ".vpn-action--create" in shell_css
+    assert ".groups-page--v2 .groups-create-action" not in shell_css
     assert ".groups-page--v2 .vpn-bulk-bar" in shell_css
     assert ".groups-page--v2 .mgmt-panel-list" in shell_css
     assert ".groups-page--v2 .groups-record-card" in shell_css
