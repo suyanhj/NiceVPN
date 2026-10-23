@@ -41,7 +41,7 @@ def test_status_values_cards_and_states_build_without_business_services() -> Non
         state["compact_metric"] = metric_card(
             "证书总数",
             8,
-            helper="当前证书库",
+            helper_tooltip="当前证书库中的证书总数",
             icon="verified_user",
             compact=True,
         )
@@ -90,6 +90,9 @@ def test_status_values_cards_and_states_build_without_business_services() -> Non
     assert state["metric"].value.text == "12"
     assert "vpn-metric-card--compact" in state["compact_metric"].container._classes
     assert "vpn-metric-card--v2" not in state["compact_metric"].container._classes
+    assert state["compact_metric"].helper is None
+    assert state["compact_metric"].help_icon is not None
+    assert "vpn-metric-card__help-icon" in state["compact_metric"].help_icon._classes
     assert "vpn-card--clickable" in state["quick"].container._classes
 
 
