@@ -574,40 +574,52 @@ body {
 }
 
 
-/* 页级“新建 / 创建”动作统一使用低强调青蓝描边，区别于保存/推送等强主操作。 */
+/* 页级“新建 / 创建”动作沿用系统设置页的青绿色语言，但使用完整荧光边框。 */
 .vpn-action--create {
   min-height: 32px;
   padding-inline: 12px;
-  border: 1px solid rgba(21, 189, 232, 0.22) !important;
+  border: 1px solid rgba(45, 212, 191, 0.62) !important;
   border-radius: 9px;
-  background: rgba(21, 189, 232, 0.06) !important;
-  color: #49ccec !important;
-  box-shadow: none !important;
-  font-weight: 600;
+  background: rgba(45, 212, 191, 0.035) !important;
+  color: #5eead4 !important;
+  box-shadow:
+    0 0 0 1px rgba(45, 212, 191, 0.08),
+    0 0 12px rgba(45, 212, 191, 0.08),
+    inset 0 0 10px rgba(45, 212, 191, 0.025) !important;
+  font-weight: 650;
   letter-spacing: 0;
+  text-shadow: 0 0 10px rgba(94, 234, 212, 0.10);
   transition:
     background 140ms ease,
     border-color 140ms ease,
+    box-shadow 140ms ease,
     color 140ms ease;
 }
 
 .vpn-action--create::before {
-  border-color: rgba(21, 189, 232, 0.22) !important;
+  border: 1px solid rgba(45, 212, 191, 0.62) !important;
+  border-radius: inherit !important;
 }
 
 .vpn-action--create:hover {
-  border-color: rgba(21, 189, 232, 0.42) !important;
-  background: rgba(21, 189, 232, 0.11) !important;
-  color: #7ddcf3 !important;
+  border-color: rgba(94, 234, 212, 0.92) !important;
+  background: rgba(45, 212, 191, 0.075) !important;
+  color: #99f6e4 !important;
+  box-shadow:
+    0 0 0 1px rgba(94, 234, 212, 0.16),
+    0 0 16px rgba(45, 212, 191, 0.16),
+    inset 0 0 12px rgba(45, 212, 191, 0.05) !important;
+  text-shadow: 0 0 12px rgba(153, 246, 228, 0.18);
   transform: none;
 }
 
 .vpn-action--create:hover::before {
-  border-color: rgba(21, 189, 232, 0.42) !important;
+  border-color: rgba(94, 234, 212, 0.92) !important;
 }
 
 .vpn-action--create .q-icon {
   font-size: 17px;
+  filter: drop-shadow(0 0 5px rgba(45, 212, 191, 0.18));
 }
 
 /* 键盘焦点必须独立于颜色/hover 可见；统一共享组件焦点环。 */
