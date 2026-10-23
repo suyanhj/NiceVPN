@@ -142,6 +142,8 @@ def test_service_health_chart_normal_empty_and_single() -> None:
         {"name": "运行中", "value": 1},
         {"name": "已停止", "value": 1},
     ]
+    assert option["graphic"][0]["style"]["fill"] == "#e6edf7"
+    assert option["graphic"][0]["style"]["fontWeight"] == 600
 
     empty = collect_dashboard_snapshot(
         [],
@@ -174,6 +176,8 @@ def test_traffic_chart_is_snapshot_not_fake_time_series() -> None:
     assert option["series"][0]["type"] == "bar"
     assert option["xAxis"]["data"] == ["累计上行", "累计下行"]
     assert option["series"][0]["data"] == [1024, 2048]
+    assert option["grid"]["top"] == 38
+    assert "name" not in option["yAxis"]
     assert "time" not in str(option).lower()
 
 
