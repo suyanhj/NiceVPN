@@ -182,8 +182,12 @@ def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
     firewall_source = (
         root / "app" / "ui" / "pages" / "firewall.py"
     ).read_text(encoding="utf-8")
-    assert "primary_action" in users_source
-    assert "primary_action" in firewall_source
+    peers_source = (
+        root / "app" / "ui" / "pages" / "peers.py"
+    ).read_text(encoding="utf-8")
+    assert "primary_action(" not in users_source
+    assert "primary_action(" in firewall_source
+    assert "primary_action(" in peers_source
 
 
 def test_shared_dialog_theme_overrides_legacy_quasar_skin() -> None:
