@@ -219,6 +219,14 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".vpn-grid-stacked-value" in grid_css
     assert ".vpn-grid-inline-action" in grid_css
     assert "--ag-background-color" in grid_css
+    assert "certs-action-dialog" in source
+    assert "certs-action-dialog__status" in source
+    assert "certs-action-dialog__serial" in source
+    assert "certs-action-dialog__renew" in source
+    assert "certs-action-dialog__revoke" in source
+    assert ".certs-action-dialog {" in shell_css
+    assert "background: #111214 !important;" in shell_css
+    assert "color: #15bde8 !important;" in shell_css
     assert "fetch(" not in source
 
 
