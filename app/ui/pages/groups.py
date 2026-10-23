@@ -13,7 +13,7 @@ from app.core.config import load_config
 from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import danger_action, secondary_action
+from app.ui.components.actions import create_action, danger_action, secondary_action
 from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.list_selection import (
@@ -55,12 +55,11 @@ class GroupsPage:
             load_error = exc
 
         def bulk_actions() -> None:
-            create_button = secondary_action(
+            create_action(
                 "新建用户组",
                 icon="add",
                 on_click=self._show_create_dialog,
             )
-            create_button.classes(add="groups-create-action")
             disabled = not self.selected_ids
             self.bulk_enable_button = secondary_action(
                 "批量启用",
