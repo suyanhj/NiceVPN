@@ -1345,12 +1345,37 @@ body {
 
 .dashboard-page--v2 {
   position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.dashboard-page--v2 .dashboard-v2-layout {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+}
+
+.dashboard-page--v2 .dashboard-overview-grid {
+  flex: 0 0 auto;
+}
+
+.dashboard-page--v2 .dashboard-chart-grid {
+  flex: 1 1 0%;
+  min-height: 0;
+  grid-auto-rows: minmax(340px, 1fr);
+}
+
+.dashboard-page--v2 .dashboard-status-strip {
+  flex: 0 0 auto;
+  margin-top: auto;
 }
 
 .vpn-metric-card--v2 {
   position: relative;
   isolation: isolate;
-  min-height: 142px;
+  min-height: 124px;
   overflow: hidden;
   padding: 22px !important;
   border-color: rgba(255, 255, 255, 0.075) !important;
@@ -1419,6 +1444,15 @@ body {
   font-size: 11px;
 }
 
+.vpn-metric-card--v2 .vpn-metric-card__help-icon {
+  color: #65758a;
+  font-size: 14px;
+}
+
+.vpn-metric-card--v2 .vpn-metric-card__help-icon:hover {
+  color: #8eb9fb;
+}
+
 .vpn-metric-card--v2 .vpn-metric-card__icon {
   display: grid;
   width: 36px;
@@ -1432,7 +1466,10 @@ body {
 }
 
 .dashboard-page--v2 .vpn-chart-card {
-  min-height: 390px;
+  display: flex;
+  min-height: 340px;
+  height: 100%;
+  flex-direction: column;
   border-color: rgba(255, 255, 255, 0.075);
   border-radius: 16px;
   background:
@@ -1441,7 +1478,9 @@ body {
 }
 
 .dashboard-page--v2 .vpn-chart-card__chart {
-  min-height: 330px;
+  flex: 1 1 0%;
+  min-height: 280px;
+  height: 100%;
 }
 
 .dashboard-page--v2 .vpn-chart-card__title {
@@ -1471,9 +1510,35 @@ body {
   color: #dfe7f2;
 }
 
+@media (max-width: 1023px) {
+  .dashboard-page--v2,
+  .dashboard-page--v2 .dashboard-v2-layout {
+    height: auto;
+  }
+
+  .dashboard-page--v2 .dashboard-chart-grid {
+    flex: none;
+    grid-auto-rows: auto;
+  }
+
+  .dashboard-page--v2 .vpn-chart-card {
+    min-height: 390px;
+    height: auto;
+  }
+
+  .dashboard-page--v2 .vpn-chart-card__chart {
+    min-height: 330px;
+    height: auto;
+  }
+
+  .dashboard-page--v2 .dashboard-status-strip {
+    margin-top: 0;
+  }
+}
+
 @media (max-width: 767px) {
   .vpn-metric-card--v2 {
-    min-height: 126px;
+    min-height: 112px;
     padding: 18px !important;
   }
 }
