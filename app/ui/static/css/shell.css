@@ -947,6 +947,93 @@ body {
   gap: var(--vpn-space-2);
 }
 
+/* Shared V2 dialogs must beat the remaining legacy Quasar card skin. */
+.q-dialog .q-card.vpn-form-dialog,
+.q-dialog .q-card.vpn-confirm-dialog {
+  border: 1px solid rgba(21, 189, 232, 0.12) !important;
+  border-radius: 16px !important;
+  background: #111214 !important;
+  color: #bbbec9 !important;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+}
+
+.q-dialog .vpn-form-dialog__title,
+.q-dialog .vpn-confirm-dialog__title {
+  color: #f5f7f9 !important;
+  font-weight: 650;
+}
+
+.q-dialog .vpn-form-dialog .q-field__control,
+.q-dialog .vpn-confirm-dialog .q-field__control {
+  border-radius: 10px !important;
+  background: #0c0c0d !important;
+  color: #d8dbe2 !important;
+}
+
+.q-dialog .vpn-form-dialog .q-field--outlined .q-field__control::before,
+.q-dialog .vpn-confirm-dialog .q-field--outlined .q-field__control::before {
+  border-color: rgba(187, 190, 201, 0.12) !important;
+}
+
+.q-dialog .vpn-form-dialog .q-field--focused .q-field__control::before,
+.q-dialog .vpn-confirm-dialog .q-field--focused .q-field__control::before {
+  border-color: #15bde8 !important;
+}
+
+.q-dialog .vpn-form-dialog .q-field__label,
+.q-dialog .vpn-confirm-dialog .q-field__label {
+  color: #777c87 !important;
+}
+
+.q-dialog .vpn-form-dialog .q-field--focused .q-field__label,
+.q-dialog .vpn-confirm-dialog .q-field--focused .q-field__label {
+  color: #49ccec !important;
+}
+
+.q-dialog .vpn-form-dialog .q-field__native,
+.q-dialog .vpn-form-dialog .q-field__input,
+.q-dialog .vpn-confirm-dialog .q-field__native,
+.q-dialog .vpn-confirm-dialog .q-field__input {
+  color: #e3e6eb !important;
+}
+
+.q-dialog .vpn-form-dialog__actions .q-btn,
+.q-dialog .vpn-confirm-dialog__actions .q-btn {
+  min-height: 34px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.q-dialog .vpn-form-dialog__actions .q-btn--flat,
+.q-dialog .vpn-confirm-dialog__actions .q-btn--flat {
+  color: #8f929c !important;
+}
+
+.q-dialog .vpn-form-dialog__actions .q-btn--flat:hover,
+.q-dialog .vpn-confirm-dialog__actions .q-btn--flat:hover {
+  background: rgba(21, 189, 232, 0.07) !important;
+  color: #49ccec !important;
+}
+
+.q-dialog .vpn-form-dialog__actions .bg-primary,
+.q-dialog .vpn-confirm-dialog__actions .bg-primary {
+  background: #15bde8 !important;
+  color: #071015 !important;
+}
+
+.q-dialog .vpn-form-dialog__actions .bg-primary:hover,
+.q-dialog .vpn-confirm-dialog__actions .bg-primary:hover {
+  background: #39c9ed !important;
+}
+
+.q-dialog .vpn-confirm-dialog__message,
+.q-dialog .vpn-confirm-dialog__impact-text,
+.q-dialog .vpn-confirm-dialog__count {
+  color: #8f929c !important;
+}
+
 /* Cert action dialog follows the AG Grid Theme Builder black/cyan palette. */
 .q-dialog .q-card.certs-action-dialog {
   width: min(92vw, 520px);
