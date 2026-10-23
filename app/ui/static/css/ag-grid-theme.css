@@ -44,24 +44,36 @@
   --ag-foreground-color: #bbbec9;
   --ag-data-color: #bbbec9;
   --ag-secondary-foreground-color: #8d929f;
-  --ag-header-background-color: #182226;
-  --ag-header-foreground-color: #ffffff;
+
+  /* Theme Builder parameters mapped directly to AG Grid CSS properties. */
+  --ag-spacing: 8px;
   --ag-border-color: transparent;
+  --ag-border-radius: 20px;
+  --ag-browser-color-scheme: dark;
+  --ag-cell-horizontal-padding-scale: 1;
+  --ag-chrome-background-color: #0c0c0d;
+  --ag-column-border: none;
+  --ag-font-family: "Roboto", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --ag-font-size: 16px;
+  --ag-header-background-color: #182226;
+  --ag-header-font-weight: 500;
+  --ag-header-text-color: #ffffff;
+  --ag-header-foreground-color: #ffffff;
+  --ag-header-vertical-padding-scale: 0.9;
+  --ag-icon-size: 20px;
+  --ag-row-border: none;
   --ag-row-border-color: transparent;
+  --ag-row-vertical-padding-scale: 1.2;
+  --ag-side-panel-border: none;
+  --ag-wrapper-border: none;
+  --ag-wrapper-border-radius: 0;
+
   --ag-header-column-separator-color: transparent;
   --ag-input-focus-border-color: #15bde8;
   --ag-checkbox-checked-color: #15bde8;
   --ag-checkbox-indeterminate-color: #15bde8;
   --ag-checkbox-unchecked-color: #68717d;
   --ag-range-selection-border-color: #15bde8;
-  --ag-font-family: "Roboto", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
-  --ag-font-size: 16px;
-  --ag-cell-horizontal-padding: 8px;
-  --ag-header-height: 48px;
-  --ag-row-height: 52px;
-  --ag-icon-size: 20px;
-  --ag-wrapper-border-radius: 0;
-  --ag-browser-color-scheme: dark;
 }
 
 /* wrapperBorder=false / wrapperBorderRadius=0 */
@@ -359,8 +371,8 @@
   .vpn-data-grid__grid {
     min-height: 320px;
     --ag-font-size: 14px;
-    --ag-cell-horizontal-padding: 8px;
-    --ag-row-height: 48px;
+    --ag-spacing: 6px;
+    --ag-cell-horizontal-padding-scale: 1;
   }
 
   .vpn-data-grid__grid .ag-cell,
