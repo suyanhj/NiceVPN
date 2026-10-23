@@ -1539,6 +1539,242 @@ body {
 }
 
 
+/* Users is a dense AG Grid page, using Certs as the V2 table template. */
+.users-page--v2 {
+  flex: 1 1 0%;
+  min-height: 0;
+  gap: 12px;
+}
+
+.users-page--v2 .users-toolbar {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 7px 10px;
+  border: 1px solid rgba(21, 189, 232, 0.08);
+  border-radius: 12px;
+  background: #111214;
+}
+
+.users-page--v2 .users-toolbar .vpn-toolbar__search {
+  gap: 6px;
+}
+
+.users-page--v2 .users-toolbar .q-field__control {
+  min-height: 34px !important;
+  height: 34px;
+  border-radius: 9px !important;
+  background: #0c0c0d !important;
+}
+
+.users-page--v2 .users-toolbar .q-field--outlined .q-field__control::before {
+  border-color: rgba(187, 190, 201, 0.10) !important;
+}
+
+.users-page--v2 .users-toolbar .q-field--focused .q-field__control::before {
+  border-color: rgba(45, 212, 191, 0.62) !important;
+}
+
+.users-page--v2 .users-search-action,
+.users-page--v2 .users-refresh-action {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 !important;
+  border-radius: 8px;
+  background: transparent !important;
+  color: #777c87 !important;
+}
+
+.users-page--v2 .users-search-action:hover,
+.users-page--v2 .users-refresh-action:hover {
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.users-page--v2 .users-toolbar .vpn-action {
+  min-height: 32px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.users-page--v2 .users-bulk-bar {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  border-color: rgba(21, 189, 232, 0.08);
+  border-radius: 12px;
+  background: #111214;
+  box-shadow: none;
+}
+
+.users-page--v2 .users-bulk-bar .vpn-bulk-bar__count {
+  color: #aeb3bc;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.users-page--v2 .users-data-region {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.users-page--v2 .users-data-region > .vpn-data-grid {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.users-page--v2 .users-data-region .vpn-data-grid__grid {
+  flex: 1 1 0%;
+  min-height: 0 !important;
+}
+
+.users-page--v2 .vpn-data-warning {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.16);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.055);
+}
+
+.q-dialog .q-card.users-action-dialog {
+  width: min(92vw, 560px);
+  max-width: 560px;
+  padding: 18px 20px 20px !important;
+  gap: 14px;
+}
+
+.users-action-dialog__close {
+  color: #737b86 !important;
+}
+
+.users-action-dialog__close:hover {
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.users-action-dialog__details {
+  gap: 7px !important;
+}
+
+.users-action-dialog__details .vpn-data-value {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgba(21, 189, 232, 0.07);
+  border-radius: 9px;
+  background: #0c0c0d;
+}
+
+.users-action-dialog__details .vpn-data-value__text {
+  color: #d8dbe2;
+  font-size: 11px;
+}
+
+.users-action-dialog__meta {
+  padding-inline: 2px;
+  color: #777c87 !important;
+  font-size: 11px;
+}
+
+.users-action-dialog__actions {
+  padding-top: 3px;
+  border-top: 1px solid rgba(187, 190, 201, 0.07);
+}
+
+.users-dialog-icon-action {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 !important;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent !important;
+  color: #777c87 !important;
+  box-shadow: none !important;
+}
+
+.users-dialog-icon-action .q-icon {
+  font-size: 18px;
+}
+
+.users-dialog-icon-action:hover {
+  border-color: rgba(21, 189, 232, 0.14);
+  background: rgba(21, 189, 232, 0.08) !important;
+  color: #49ccec !important;
+}
+
+.users-dialog-icon-action--danger {
+  color: #fb8fa2 !important;
+}
+
+.users-dialog-icon-action--danger:hover {
+  border-color: rgba(251, 113, 133, 0.22);
+  background: rgba(251, 113, 133, 0.08) !important;
+  color: #ffacba !important;
+}
+
+.users-dialog-icon-action.q-btn--disabled {
+  opacity: 0.30 !important;
+}
+
+.q-dialog .q-card.users-import-dialog,
+.q-dialog .q-card.users-change-group-dialog {
+  border-color: rgba(21, 189, 232, 0.12) !important;
+  background: #111214 !important;
+}
+
+.q-dialog .q-card.users-import-dialog {
+  width: min(92vw, 640px);
+  min-width: min(92vw, 480px) !important;
+}
+
+.q-dialog .q-card.users-config-drawer {
+  border-left: 1px solid rgba(21, 189, 232, 0.12) !important;
+  background: #111214 !important;
+  color: #bbbec9 !important;
+  box-shadow: -18px 0 60px rgba(0, 0, 0, 0.36) !important;
+}
+
+.users-config-drawer__title {
+  color: #f5f7f9 !important;
+  font-size: 17px !important;
+  font-weight: 650;
+}
+
+.users-config-drawer .q-field__control {
+  background: #0c0c0d !important;
+}
+
+@media (min-width: 768px) {
+  .users-page--v2 {
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 767px) {
+  .users-page--v2 {
+    overflow: visible;
+  }
+
+  .users-page--v2 .users-data-region,
+  .users-page--v2 .users-data-region > .vpn-data-grid {
+    flex: none;
+    min-height: auto;
+  }
+
+  .users-page--v2 .users-data-region .vpn-data-grid__grid {
+    min-height: 480px !important;
+  }
+
+  .users-page--v2 .users-toolbar .vpn-toolbar__search > .q-btn {
+    flex: 0 0 32px;
+  }
+}
+
 /* Services is an object-management page, not a data-grid page. */
 .services-page--v2 {
   flex: 1 1 0%;
