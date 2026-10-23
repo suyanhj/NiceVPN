@@ -10,7 +10,7 @@ from typing import Any, Literal
 from nicegui import ui
 
 
-ActionVariant = Literal["primary", "secondary", "danger", "more"]
+ActionVariant = Literal["primary", "create", "secondary", "danger", "more"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +36,7 @@ class MoreActionMenu:
 
 _VARIANT_PROPS: dict[ActionVariant, str] = {
     "primary": "unelevated color=primary",
+    "create": "outline color=primary",
     "secondary": "outline color=primary",
     "danger": "outline color=negative",
     "more": "flat color=primary",
@@ -51,6 +52,7 @@ def action_button(
     disabled: bool = False,
     busy: bool = False,
     tooltip: str | None = None,
+    icon_only: bool = False,
 ):
     """创建文案、图标和状态一致的操作按钮。"""
 
@@ -60,19 +62,33 @@ def action_button(
     if variant not in _VARIANT_PROPS:
         raise ValueError(f"不支持的操作按钮类型: {variant}")
 
-    button = ui.button(
-        normalized_label,
-        icon=icon,
-        on_click=on_click,
-    ).props(f"no-caps {_VARIANT_PROPS[variant]}").classes(
-        f"vpn-action vpn-action--{variant}"
-    )
+    if icon_only and not icon:
+        raise ValueError("纯图标操作按钮必须提供图标")
+
+    if icon_only:
+        button = ui.button(
+            icon=icon,
+            on_click=on_click,
+        ).props(
+            f"no-caps {_VARIANT_PROPS[variant]} aria-label='{normalized_label}'"
+        ).classes(
+            f"vpn-action vpn-action--{variant} vpn-action--icon-only"
+        )
+    else:
+        button = ui.button(
+            normalized_label,
+            icon=icon,
+            on_click=on_click,
+        ).props(f"no-caps {_VARIANT_PROPS[variant]}").classes(
+            f"vpn-action vpn-action--{variant}"
+        )
     if disabled or busy:
         button.disable()
     if busy:
         button.props("loading")
-    if tooltip:
-        button.tooltip(str(tooltip))
+    effective_tooltip = tooltip or (normalized_label if icon_only else None)
+    if effective_tooltip:
+        button.tooltip(str(effective_tooltip))
     return button
 
 
@@ -80,6 +96,12 @@ def primary_action(label: str, **kwargs):
     """创建主操作按钮。"""
 
     return action_button(label, variant="primary", **kwargs)
+
+
+def create_action(label: str, **kwargs):
+    """创建页级新增/创建操作按钮。"""
+
+    return action_button(label, variant="create", **kwargs)
 
 
 def secondary_action(label: str, **kwargs):

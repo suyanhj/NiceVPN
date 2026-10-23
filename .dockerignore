@@ -12,3 +12,5 @@ __pycache__/
 specs/
 .specify/
 tests/
+app/ui/vue/frontend/node_modules/
+app/ui/vue/dist/

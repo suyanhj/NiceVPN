@@ -64,6 +64,8 @@ def test_shell_renders_all_navigation_and_marks_current_page() -> None:
     assert shell.drawer.value is None
     assert shell.navigation_toggle_button._props["aria-label"] == "切换主导航"
     assert shell.navigation_toggle_button._event_listeners
+    assert shell.page_help is not None
+    assert "vpn-help-hint" in shell.page_help._classes
     assert "is-active" in shell.navigation_buttons["/peers"]._classes
     assert shell.navigation_buttons["/peers"]._props["aria-current"] == "page"
     inactive_buttons = [

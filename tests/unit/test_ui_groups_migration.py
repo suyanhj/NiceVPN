@@ -106,8 +106,11 @@ def test_groups_page_uses_shared_header_status_bulk_bar_and_root_protection() ->
         async with user_simulation(page_object.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("用户组管理")
             await user.should_see("新建用户组")
+            await user.should_see("用户组总数")
+            await user.should_see("启用分组")
+            await user.should_see("停用分组")
+            await user.should_see("组内用户")
             await user.should_see("已选择 0 项")
             await user.should_see("默认组")
             await user.should_see("根组")
@@ -149,3 +152,41 @@ def test_group_view_model_covers_root_disabled_and_missing_fields() -> None:
     assert partial["name"] == "未命名用户组"
     assert partial["subnet"] == "未配置子网"
     assert partial["user_count"] == 0
+
+
+def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
+    """Groups 与 Certs 共用 V2 页面原语，不新增页面专用 Vue 业务层。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "groups.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "groups-page--v2" in source
+    assert "vpn-v2-page-intro" not in source
+    assert "vpn-v2-overview-grid" in source
+    assert "compact=True" in source
+    assert "helper_tooltip=" in source
+    assert 'helper="含根组与业务子组"' not in source
+    assert "v2_effect=True" not in source
+    assert "render_page_toolbar" not in source
+    assert "create_action(" in source
+    assert "groups-create-action" not in source
+    assert "primary_action" not in source
+    assert ".vpn-action--create" in shell_css
+    assert ".groups-page--v2 .groups-create-action" not in shell_css
+    assert ".groups-page--v2 .vpn-bulk-bar" in shell_css
+    assert ".groups-page--v2 .mgmt-panel-list" in shell_css
+    assert ".groups-page--v2 .groups-record-card" in shell_css
+    assert ".groups-page--v2 .groups-record-card--root" in shell_css
+    assert ".groups-page--v2 .groups-record-card--disabled" in shell_css
+    assert ".groups-page--v2 .groups-root-badge" in shell_css
+    assert "background: #0c0c0d !important;" in shell_css
+    assert "color: #15bde8 !important;" in shell_css
+    assert source.index("self._render_summary_metrics(groups)") < source.index(
+        "self.bulk_bar = render_bulk_action_bar"
+    )
+    assert ".vpn-v2-overview-grid" in shell_css
+    assert ".vpn-metric-card--compact" in shell_css
+    assert "fetch(" not in source

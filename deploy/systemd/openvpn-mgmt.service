@@ -1,16 +1,23 @@
 [Unit]
-Description=OpenVPN 可视化管理系统
-After=network.target
+Description=NiceVPN OpenVPN 可视化管理系统
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/openvpn-mgmt
-ExecStart=/usr/bin/python3 main.py
+ExecStart=/opt/openvpn-mgmt/start.sh
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# 默认由 start.sh 使用 Docker 构建 V2 前端。
+# 若部署包已经包含 app/ui/vue/dist，可在覆盖配置中设置：
+# Environment=NICEVPN_BUILD_UI=0
+# 如 Python 不在 PATH，可显式指定：
+# Environment=PYTHON_BIN=/usr/bin/python3
 
 [Install]
 WantedBy=multi-user.target

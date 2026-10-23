@@ -19,15 +19,19 @@ from app.ui.components.actions import (
     more_actions,
     secondary_action,
 )
+from app.ui.components.cards import metric_card
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid_renderers import (
+    ACTION_BUTTON_RENDERER,
+    EXPIRY_WITH_DETAIL_RENDERER,
+    STATUS_PILL_RENDERER,
+)
 from app.ui.components.feedback import AsyncOperationGuard
-from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 
 logger = logging.getLogger(__name__)
-
 
 class CertsPage:
     """证书管理页面。"""
@@ -42,9 +46,8 @@ class CertsPage:
 
     def __init__(self):
         self.cert_service = CertService()
-        self.search_input = None
         self.data_container = None
-        self.search_state_container = None
+        self.summary_container = None
         self.grid_view = None
         self.all_rows: list[dict[str, Any]] = []
         self.selected_certs: set[str] = set()
@@ -68,21 +71,14 @@ class CertsPage:
     def render(self):
         """使用共享页面结构和 AG Grid 渲染证书库。"""
 
-        def search_region() -> None:
-            self.search_input = (
-                ui.input(placeholder="搜索用户名、序列号或状态")
-                .props("clearable")
-                .classes("w-full")
-            )
-            self.search_input.on("keydown.enter", self._handle_search)
-            secondary_action("搜索", icon="search", on_click=self._handle_search)
-            ui.button("清除", icon="filter_alt_off", on_click=self._clear_search).props(
-                "flat no-caps color=primary"
-            )
+        def bulk_actions() -> None:
+            refresh_button = ui.button(
+                icon="refresh",
+                on_click=self._refresh_cert_list,
+            ).props("flat round dense").classes("certs-refresh-action")
+            refresh_button.tooltip("刷新证书列表")
 
-        def secondary_region() -> None:
-            secondary_action("刷新", icon="refresh", on_click=self._refresh_cert_list)
-            more_actions(
+            advanced_menu = more_actions(
                 (
                     MenuAction("更新 CRL", icon="sync", on_click=self._handle_regen_crl),
                     MenuAction(
@@ -95,8 +91,9 @@ class CertsPage:
                 label="高级操作",
                 icon="settings_suggest",
             )
+            advanced_menu.button.classes(add="certs-advanced-action")
+            ui.element("span").classes("certs-action-separator")
 
-        def bulk_actions() -> None:
             disabled = not self.selected_certs
             self.bulk_renew_button = secondary_action(
                 "批量续签",
@@ -113,21 +110,16 @@ class CertsPage:
                 tooltip="请先选择证书" if disabled else None,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "证书管理",
-                description="查看证书有效性和到期状态，执行续签、吊销、CRL 更新及 CA 高风险维护。",
-            )
-            render_page_toolbar(
-                search=search_region,
-                secondary=secondary_region,
-            )
+        with ui.column().classes("page-shell mgmt-page certs-page--v2"):
+            self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
                 actions=bulk_actions,
             )
-            self.data_container = ui.column().classes("w-full")
+            self.data_container = ui.column().classes(
+                "w-full flex-1 min-h-0 certs-data-region"
+            )
 
         self._refresh_cert_list()
 
@@ -145,30 +137,66 @@ class CertsPage:
 
     @staticmethod
     def _grid_columns() -> tuple[dict, ...]:
+        """保持标准表格结构，仅增强状态、到期信息和操作单元格。"""
+
         return (
             {
                 "field": "common_name",
                 "headerName": "用户 / CN",
                 "pinned": "left",
-                "minWidth": 170,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 146,
+                "minWidth": 118,
+                "maxWidth": 176,
+                "cellClass": "vpn-grid-primary-cell",
             },
-            {"field": "status_label", "headerName": "状态", "width": 110},
+            {
+                "field": "status_label",
+                "headerName": "状态",
+                "flex": 0.68,
+                "minWidth": 104,
+                "maxWidth": 136,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["有效", "即将到期", "已吊销", "已过期", "未知"],
+                },
+                "cellClass": "vpn-grid-renderer-cell",
+            },
             {
                 "field": "serial_display",
                 "headerName": "序列号",
-                "minWidth": 170,
+                "flex": 1.45,
+                "minWidth": 178,
                 "cellClass": "vpn-grid-mono",
             },
-            {"field": "expires_display", "headerName": "到期日期", "width": 135},
-            {"field": "days_left", "headerName": "剩余天数", "width": 115},
+            {
+                "field": "expires_display",
+                "headerName": "到期日期",
+                "flex": 1.0,
+                "minWidth": 156,
+                "maxWidth": 190,
+                ":cellRenderer": EXPIRY_WITH_DETAIL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
+            },
             {
                 "field": "actions",
                 "headerName": "操作",
                 "pinned": "right",
-                "width": 100,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
-                "cellClass": "vpn-grid-action-cell",
+                "resizable": False,
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         )
 
@@ -184,6 +212,8 @@ class CertsPage:
             rows = self._load_rows()
         except Exception as exc:
             logger.exception("加载证书列表失败")
+            if self.summary_container is not None:
+                self.summary_container.clear()
             self.data_container.clear()
             with self.data_container:
                 error_state(
@@ -193,6 +223,8 @@ class CertsPage:
                 )
             return
 
+        self._render_summary_metrics(rows)
+
         existing = {str(row["id"]) for row in rows if row.get("id")}
         self.selected_certs.intersection_update(existing)
         self.all_rows = rows
@@ -201,26 +233,71 @@ class CertsPage:
         with self.data_container:
             if not rows:
                 self.grid_view = None
-                self.search_state_container = None
                 empty_state(
                     "暂无证书",
                     description="用户证书签发后会显示在这里。",
                     icon="verified_user",
                 )
             else:
-                self.search_state_container = ui.column().classes("w-full")
                 self.grid_view = render_data_grid(
                     self._grid_columns(),
                     rows,
                     page_size=self.page_size,
                     selected_ids=self.selected_certs,
                     on_cell_click=self._on_grid_cell_clicked,
+                    suppress_horizontal_scroll=True,
                 )
                 self.grid_view.summary.text = f"共 {len(rows)} 个证书"
                 self.grid_view.grid.on("selectionChanged", self._on_selection_changed)
 
         self._sync_bulk_state()
-        self._handle_search()
+
+    def _render_summary_metrics(self, rows: list[dict[str, Any]]) -> None:
+        """渲染证书库状态摘要；只消费已适配行，不增加业务请求。"""
+
+        if self.summary_container is None:
+            return
+
+        valid_count = sum(row.get("status") == "valid" for row in rows)
+        expiring_count = sum(row.get("status") == "expiring" for row in rows)
+        expired_count = sum(row.get("status") == "expired" for row in rows)
+        revoked_count = sum(row.get("status") == "revoked" for row in rows)
+        invalid_count = expired_count + revoked_count
+
+        self.summary_container.clear()
+        with self.summary_container:
+            metric_card(
+                "证书总数",
+                len(rows),
+                helper_tooltip="当前证书库中的证书总数",
+                icon="verified_user",
+                tone="info",
+                compact=True,
+            )
+            metric_card(
+                "有效证书",
+                valid_count,
+                helper_tooltip="状态正常、可继续使用的证书数量",
+                icon="task_alt",
+                tone="success" if valid_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "临期证书",
+                expiring_count,
+                helper_tooltip=f"{CERT_EXPIRY_WARN_DAYS} 天内即将到期的证书数量",
+                icon="schedule",
+                tone="warning" if expiring_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "失效 / 吊销",
+                invalid_count,
+                helper_tooltip=f"已过期 {expired_count} 个，已吊销 {revoked_count} 个",
+                icon="gpp_bad",
+                tone="danger" if invalid_count else "default",
+                compact=True,
+            )
 
     def _render_expiry_alerts(self):
         """渲染即将到期告警；告警源失败不影响主证书库。"""
@@ -242,47 +319,6 @@ class CertsPage:
                 title=f"{len(expiring)} 个证书将到期",
                 message=names + ("…" if len(expiring) > 5 else ""),
             )
-
-    def _handle_search(self):
-        if self.grid_view is None:
-            return
-        query = str(self.search_input.value or "").strip() if self.search_input else ""
-        normalized = query.casefold()
-        matched = [
-            row
-            for row in self.all_rows
-            if not normalized or self._row_matches_query(row, normalized)
-        ]
-        self.grid_view.grid.options["quickFilterText"] = query
-        self.grid_view.grid.update()
-        self.grid_view.summary.text = (
-            f"匹配 {len(matched)} / 共 {len(self.all_rows)} 个证书"
-            if query
-            else f"共 {len(self.all_rows)} 个证书"
-        )
-        if self.search_state_container is not None:
-            self.search_state_container.clear()
-            if query and not matched:
-                self.grid_view.container.set_visibility(False)
-                with self.search_state_container:
-                    no_match_state(
-                        description=f"没有证书匹配“{query}”。",
-                        on_clear=self._clear_search,
-                    )
-            else:
-                self.grid_view.container.set_visibility(True)
-
-    @staticmethod
-    def _row_matches_query(row: dict, query: str) -> bool:
-        return any(
-            query in str(row.get(field) or "").casefold()
-            for field in ("common_name", "serial", "status_label", "expires_display")
-        )
-
-    def _clear_search(self) -> None:
-        if self.search_input is not None:
-            self.search_input.set_value("")
-        self._handle_search()
 
     async def _on_selection_changed(self, _event=None) -> None:
         if self.grid_view is None:
@@ -325,45 +361,55 @@ class CertsPage:
         status = str(row.get("status") or "unknown")
         actionable = status not in {"revoked", "expired"}
 
-        with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
+        with ui.dialog().classes("certs-action-dialog-root") as dialog, ui.card().classes(
+            "vpn-form-dialog certs-action-dialog"
+        ):
             with ui.row().classes("w-full items-start justify-between no-wrap"):
                 with ui.column().classes("gap-1 min-w-0"):
-                    ui.label(common_name).classes("vpn-form-dialog__title")
-                    status_badge(
+                    ui.label(common_name).classes(
+                        "vpn-form-dialog__title certs-action-dialog__title"
+                    )
+                    badge = status_badge(
                         row.get("status_tone", "unknown"),
                         label=str(row.get("status_label") or "未知"),
                     )
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+                    badge.container.classes(add="certs-action-dialog__status")
+                ui.button(icon="close", on_click=dialog.close).props(
+                    "flat round dense"
+                ).classes("certs-action-dialog__close")
 
-            structured_value(
+            serial_value = structured_value(
                 row.get("serial") or "—",
                 kind="serial",
                 copyable=bool(row.get("serial")),
                 copy_message="证书序列号已复制",
             )
+            serial_value.container.classes(add="certs-action-dialog__serial")
             ui.label(f"到期日期：{row.get('expires_display') or '—'}").classes(
-                "section-caption"
+                "section-caption certs-action-dialog__expiry"
             )
 
             def invoke(callback):
                 dialog.close()
                 return callback()
 
-            with ui.row().classes("w-full gap-2 flex-wrap"):
-                secondary_action(
+            with ui.row().classes("w-full gap-2 flex-wrap certs-action-dialog__actions"):
+                renew_button = secondary_action(
                     "续签",
                     icon="autorenew",
                     on_click=lambda: invoke(lambda: self._handle_renew(common_name)),
                     disabled=not actionable,
                     tooltip=None if actionable else "已吊销或已过期证书不可从此入口续签",
                 )
-                danger_action(
+                renew_button.classes(add="certs-action-dialog__renew")
+                revoke_button = danger_action(
                     "吊销",
                     icon="block",
                     on_click=lambda: invoke(lambda: self._handle_revoke(common_name)),
                     disabled=not actionable,
                     tooltip=None if actionable else "该证书当前状态不可吊销",
                 )
+                revoke_button.classes(add="certs-action-dialog__revoke")
         dialog.open()
 
     def _begin_operation(self) -> bool:

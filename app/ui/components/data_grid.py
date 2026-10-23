@@ -10,6 +10,61 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from nicegui import ui
 
 
+AG_GRID_LOCALE_ZH_CN: dict[str, str] = {
+    # Text / simple filter
+    "filterOoo": "筛选...",
+    "equals": "等于",
+    "notEqual": "不等于",
+    "blank": "为空",
+    "notBlank": "不为空",
+    "empty": "请选择",
+    "contains": "包含",
+    "notContains": "不包含",
+    "startsWith": "开头是",
+    "endsWith": "结尾是",
+    "lessThan": "小于",
+    "greaterThan": "大于",
+    "lessThanOrEqual": "小于或等于",
+    "greaterThanOrEqual": "大于或等于",
+    "inRange": "范围内",
+    "inRangeStart": "从",
+    "inRangeEnd": "到",
+    "andCondition": "并且",
+    "orCondition": "或者",
+    "applyFilter": "应用",
+    "resetFilter": "重置",
+    "clearFilter": "清除",
+    "cancelFilter": "取消",
+
+    # Set filter / value picker
+    "selectAll": "(全选)",
+    "selectAllSearchResults": "(全选搜索结果)",
+    "searchOoo": "搜索...",
+    "blanks": "(空白)",
+    "noMatches": "没有匹配项",
+
+    # Pagination
+    "page": "第",
+    "more": "更多",
+    "to": "至",
+    "of": "共",
+    "next": "下一页",
+    "last": "末页",
+    "first": "首页",
+    "previous": "上一页",
+    "pageSizeSelectorLabel": "每页",
+
+    # General grid text
+    "loadingOoo": "加载中...",
+    "noRowsToShow": "暂无数据",
+    "ariaSearch": "搜索",
+    "ariaFilterInput": "筛选输入",
+    "ariaFilterColumnsInput": "筛选列",
+    "ariaFilterValue": "筛选值",
+}
+
+
+
 @dataclass(slots=True)
 class DataGrid:
     container: Any
@@ -41,6 +96,7 @@ def render_data_grid(
     selectable: bool = True,
     selected_ids: Iterable[object] | None = None,
     on_cell_click: Callable[..., Any] | None = None,
+    suppress_horizontal_scroll: bool = False,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
 
@@ -56,13 +112,27 @@ def render_data_grid(
             "resizable": True,
         },
         "rowData": normalized_rows,
+        "localeText": dict(AG_GRID_LOCALE_ZH_CN),
         "pagination": True,
         "paginationPageSize": page_size,
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if suppress_horizontal_scroll:
+        options["suppressHorizontalScroll"] = True
     if selectable:
         options["rowSelection"] = {"mode": "multiRow"}
+        options["selectionColumnDef"] = {
+            "pinned": "left",
+            "lockPosition": "left",
+            "width": 48,
+            "maxWidth": 48,
+            "minWidth": 48,
+            "sortable": False,
+            "filter": False,
+            "resizable": False,
+            "suppressMovable": True,
+        }
         selected = [str(value) for value in (selected_ids or []) if value is not None]
         if selected:
             selected_json = json.dumps(selected, ensure_ascii=False)

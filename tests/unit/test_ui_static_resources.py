@@ -110,13 +110,79 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
     token_index = theme_source.index('"tokens.css"')
     shell_index = theme_source.index('"shell.css"')
+    grid_index = theme_source.index('"ag-grid-theme.css"')
     effects_index = theme_source.index('"effects.css"')
     legacy_index = theme_source.index('"legacy.css"')
-    assert token_index < shell_index < effects_index < legacy_index
+    assert token_index < shell_index < grid_index < effects_index < legacy_index
 
     shell_source = (STATIC_DIR / "css" / "shell.css").read_text(encoding="utf-8")
+    grid_source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
     effects_source = (STATIC_DIR / "css" / "effects.css").read_text(encoding="utf-8")
     assert ".vpn-shell" in shell_source
     assert "@media (max-width: 767px)" in shell_source
+    assert ".vpn-data-grid__grid" in grid_source
+    assert "--ag-background-color" in grid_source
+    assert ".vpn-grid-status-pill" in grid_source
+    assert ".vpn-grid-inline-action" in grid_source
     assert ".vpn-tech-grid" in effects_source
     assert "prefers-reduced-motion" in effects_source
+
+
+def test_theme_fingerprints_static_assets() -> None:
+    """CSS/JS 使用内容哈希版本，避免 pull+重启后浏览器继续命中旧缓存。"""
+
+    from app.ui.theme import _versioned_static_url
+
+    css_url = _versioned_static_url("/static/css/shell.css")
+    js_url = _versioned_static_url("/static/js/clipboard-adapter.js")
+    filter_url = _versioned_static_url("/static/js/ag-grid-set-filter.js")
+
+    assert css_url.startswith("/static/css/shell.css?v=")
+    assert js_url.startswith("/static/js/clipboard-adapter.js?v=")
+    assert filter_url.startswith("/static/js/ag-grid-set-filter.js?v=")
+    assert len(css_url.rsplit("=", 1)[1]) == 12
+    assert len(js_url.rsplit("=", 1)[1]) == 12
+    assert len(filter_url.rsplit("=", 1)[1]) == 12
+
+
+def test_ag_grid_theme_is_dedicated_and_matches_theme_builder_preset() -> None:
+    """AG Grid 主题独立维护，并锁定 Theme Builder 导出的关键参数。"""
+
+    source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
+
+    assert "AG Grid Theme" in source
+    assert "--ag-background-color" in source
+    assert "--ag-selected-row-background-color" in source
+    assert "--ag-wrapper-border-radius" in source
+    assert ".vpn-grid-status-pill" in source
+    assert ".vpn-grid-stacked-value" in source
+    assert ".vpn-grid-inline-action" in source
+    assert "--ag-accent-color: #15bde8" in source
+    assert "--ag-background-color: #0c0c0d" in source
+    assert "--ag-spacing: 8px" in source
+    assert "--ag-border-radius: 20px" in source
+    assert "--ag-header-background-color: #182226" in source
+    assert "--ag-header-font-weight: 500" in source
+    assert "--ag-header-vertical-padding-scale: 0.9" in source
+    assert "--ag-row-vertical-padding-scale: 1.2" in source
+    assert "--ag-wrapper-border: none" in source
+    assert "--ag-wrapper-border-radius: 0" in source
+
+
+def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
+    """Community Set Filter 作为共享静态组件加载，不包含业务 I/O。"""
+
+    theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
+    source = (STATIC_DIR / "js" / "ag-grid-set-filter.js").read_text(encoding="utf-8")
+
+    assert '"/static/js/ag-grid-set-filter.js"' in theme_source
+    assert "class NiceVpnSetFilter" in source
+    assert "window.NiceVpnSetFilter" in source
+    assert "forEachLeafNode" in source
+    assert "filterChangedCallback" in source
+    assert "vpn-grid-set-filter__search" in source
+    assert "vpn-grid-set-filter__checkbox" in source
+    assert "innerHTML" not in source
+    assert "fetch(" not in source
+    assert "axios" not in source
+    assert "/api/" not in source
