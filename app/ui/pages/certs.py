@@ -27,7 +27,7 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.feedback import AsyncOperationGuard
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
 
@@ -46,10 +46,8 @@ class CertsPage:
 
     def __init__(self):
         self.cert_service = CertService()
-        self.search_input = None
         self.data_container = None
         self.summary_container = None
-        self.search_state_container = None
         self.grid_view = None
         self.all_rows: list[dict[str, Any]] = []
         self.selected_certs: set[str] = set()
@@ -72,20 +70,6 @@ class CertsPage:
 
     def render(self):
         """使用共享页面结构和 AG Grid 渲染证书库。"""
-
-        def search_region() -> None:
-            self.search_input = (
-                ui.input(placeholder="搜索用户名、序列号或状态")
-                .props("clearable")
-                .classes("cert-search-input")
-            )
-            self.search_input.on("keydown.enter", self._handle_search)
-            secondary_action("搜索", icon="search", on_click=self._handle_search)
-            secondary_action(
-                "清除",
-                icon="filter_alt_off",
-                on_click=self._clear_search,
-            )
 
         def secondary_region() -> None:
             secondary_action("刷新", icon="refresh", on_click=self._refresh_cert_list)
@@ -122,11 +106,8 @@ class CertsPage:
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
             self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
-            toolbar = render_page_toolbar(
-                search=search_region,
-                secondary=secondary_region,
-            )
-            toolbar.container.classes(add="certs-toolbar")
+            toolbar = render_page_toolbar(secondary=secondary_region)
+            toolbar.container.classes(add="vpn-toolbar--end")
             self._render_expiry_alerts()
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
@@ -248,14 +229,12 @@ class CertsPage:
         with self.data_container:
             if not rows:
                 self.grid_view = None
-                self.search_state_container = None
                 empty_state(
                     "暂无证书",
                     description="用户证书签发后会显示在这里。",
                     icon="verified_user",
                 )
             else:
-                self.search_state_container = ui.column().classes("w-full")
                 self.grid_view = render_data_grid(
                     self._grid_columns(),
                     rows,
@@ -268,7 +247,6 @@ class CertsPage:
                 self.grid_view.grid.on("selectionChanged", self._on_selection_changed)
 
         self._sync_bulk_state()
-        self._handle_search()
 
     def _render_summary_metrics(self, rows: list[dict[str, Any]]) -> None:
         """渲染证书库状态摘要；只消费已适配行，不增加业务请求。"""
@@ -337,47 +315,6 @@ class CertsPage:
                 title=f"{len(expiring)} 个证书将到期",
                 message=names + ("…" if len(expiring) > 5 else ""),
             )
-
-    def _handle_search(self):
-        if self.grid_view is None:
-            return
-        query = str(self.search_input.value or "").strip() if self.search_input else ""
-        normalized = query.casefold()
-        matched = [
-            row
-            for row in self.all_rows
-            if not normalized or self._row_matches_query(row, normalized)
-        ]
-        self.grid_view.grid.options["quickFilterText"] = query
-        self.grid_view.grid.update()
-        self.grid_view.summary.text = (
-            f"匹配 {len(matched)} / 共 {len(self.all_rows)} 个证书"
-            if query
-            else f"共 {len(self.all_rows)} 个证书"
-        )
-        if self.search_state_container is not None:
-            self.search_state_container.clear()
-            if query and not matched:
-                self.grid_view.container.set_visibility(False)
-                with self.search_state_container:
-                    no_match_state(
-                        description=f"没有证书匹配“{query}”。",
-                        on_clear=self._clear_search,
-                    )
-            else:
-                self.grid_view.container.set_visibility(True)
-
-    @staticmethod
-    def _row_matches_query(row: dict, query: str) -> bool:
-        return any(
-            query in str(row.get(field) or "").casefold()
-            for field in ("common_name", "serial", "status_label", "expires_display")
-        )
-
-    def _clear_search(self) -> None:
-        if self.search_input is not None:
-            self.search_input.set_value("")
-        self._handle_search()
 
     async def _on_selection_changed(self, _event=None) -> None:
         if self.grid_view is None:
