@@ -388,6 +388,9 @@ def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
     assert "services-more-action" not in source
     assert "services-icon-action" in source
     assert ".services-page--v2 .services-icon-action" in shell_css
+    assert '.tooltip("启动")' in source
+    assert '.tooltip("停止")' in source
+    assert '.tooltip("重启")' in source
     assert '.tooltip("守护进程日志")' in source
     assert '.tooltip("设备绑定日志")' in source
     assert '.tooltip("OpenVPN 状态文件")' in source
