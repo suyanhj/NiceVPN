@@ -361,45 +361,55 @@ class CertsPage:
         status = str(row.get("status") or "unknown")
         actionable = status not in {"revoked", "expired"}
 
-        with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
+        with ui.dialog().classes("certs-action-dialog-root") as dialog, ui.card().classes(
+            "vpn-form-dialog certs-action-dialog"
+        ):
             with ui.row().classes("w-full items-start justify-between no-wrap"):
                 with ui.column().classes("gap-1 min-w-0"):
-                    ui.label(common_name).classes("vpn-form-dialog__title")
-                    status_badge(
+                    ui.label(common_name).classes(
+                        "vpn-form-dialog__title certs-action-dialog__title"
+                    )
+                    badge = status_badge(
                         row.get("status_tone", "unknown"),
                         label=str(row.get("status_label") or "未知"),
                     )
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+                    badge.container.classes(add="certs-action-dialog__status")
+                ui.button(icon="close", on_click=dialog.close).props(
+                    "flat round dense"
+                ).classes("certs-action-dialog__close")
 
-            structured_value(
+            serial_value = structured_value(
                 row.get("serial") or "—",
                 kind="serial",
                 copyable=bool(row.get("serial")),
                 copy_message="证书序列号已复制",
             )
+            serial_value.container.classes(add="certs-action-dialog__serial")
             ui.label(f"到期日期：{row.get('expires_display') or '—'}").classes(
-                "section-caption"
+                "section-caption certs-action-dialog__expiry"
             )
 
             def invoke(callback):
                 dialog.close()
                 return callback()
 
-            with ui.row().classes("w-full gap-2 flex-wrap"):
-                secondary_action(
+            with ui.row().classes("w-full gap-2 flex-wrap certs-action-dialog__actions"):
+                renew_button = secondary_action(
                     "续签",
                     icon="autorenew",
                     on_click=lambda: invoke(lambda: self._handle_renew(common_name)),
                     disabled=not actionable,
                     tooltip=None if actionable else "已吊销或已过期证书不可从此入口续签",
                 )
-                danger_action(
+                renew_button.classes(add="certs-action-dialog__renew")
+                revoke_button = danger_action(
                     "吊销",
                     icon="block",
                     on_click=lambda: invoke(lambda: self._handle_revoke(common_name)),
                     disabled=not actionable,
                     tooltip=None if actionable else "该证书当前状态不可吊销",
                 )
+                revoke_button.classes(add="certs-action-dialog__revoke")
         dialog.open()
 
     def _begin_operation(self) -> bool:
