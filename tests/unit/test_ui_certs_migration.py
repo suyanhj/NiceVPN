@@ -199,7 +199,7 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "calc(100dvh - 360px)" not in shell_css
     assert ".certs-page--v2 {" in shell_css
     assert "flex: 1 1 0%;" in shell_css
-    assert "height: 100% !important;" in shell_css
+    assert "height: 100% !important;" not in shell_css
     assert ".vpn-data-grid__grid .ag-row-odd" in grid_css
     assert ".vpn-data-grid__grid .ag-row-hover" in grid_css
     assert ".certs-page--v2 .vpn-data-grid__summary" in shell_css
