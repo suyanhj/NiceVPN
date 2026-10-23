@@ -48,10 +48,10 @@ def _user(name: str, *, status: str = "active", group_id: str = "group-main") ->
     }
 
 
-def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
+def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """用户页统一到 AG Grid，并用稳定用户名恢复有效选择。"""
+    """用户页统一到 AG Grid；页级动作与批量动作共享单条操作栏。"""
 
     page = UsersPage()
     page.user_service = FakeUserService([
@@ -140,6 +140,9 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     assert account[":filter"] == "window.NiceVpnSetFilter"
     assert session[":filter"] == "window.NiceVpnSetFilter"
 
+    assert columns["group"]["filter"] is False
+    assert columns["device_source"]["filter"] is False
+
     actions = columns["actions"]
     assert actions["pinned"] == "right"
     assert actions["lockPinned"] is True
@@ -149,29 +152,6 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
 
     for removed in ("cert_serial_display", "source", "device", "created_at"):
         assert removed not in columns
-
-
-def test_users_search_distinguishes_no_match_from_true_empty(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """有数据但筛选无结果时显示无匹配状态，而不是“暂无用户”。"""
-
-    page = UsersPage()
-    page.user_service = FakeUserService([_user("alice")])
-    monkeypatch.setattr(page, "_load_live_sessions", lambda: {})
-    monkeypatch.setattr(DeviceBindingService, "build_user_binding_aux", lambda self: {})
-    monkeypatch.setattr(GroupService, "list_all", lambda self: [])
-
-    async def verify_page() -> None:
-        async with user_simulation(page.render) as user:
-            await user.open("/")
-            page.search_input.set_value("not-exists")
-            page._handle_search()
-            await user.should_see("没有匹配结果")
-            await user.should_see("没有用户匹配“not-exists”")
-
-    asyncio.run(verify_page())
-    assert page.grid_view.summary.text == "匹配 0 / 共 1 个用户"
 
 
 def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -> None:
@@ -227,9 +207,6 @@ def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion(
     assert len(rows) == 5000
     assert rows[0]["username"] == "user-0000"
     assert rows[-1]["username"] == "user-4999"
-    assert page._row_matches_query(rows[4999], "user-4999")
-    assert page._row_matches_query(rows[4999], str(rows[4999]["virtual_ip"]).casefold())
-    assert not page._row_matches_query(rows[4999], "definitely-not-found")
 
 
 def test_batch_enable_summarizes_success_skip_and_failure(
@@ -346,8 +323,12 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     ).read_text(encoding="utf-8")
 
     assert "users-page--v2" in source
-    assert "users-toolbar" in source
+    assert "users-toolbar" not in source
     assert "users-bulk-bar" in source
+    assert "users-action-separator" in source
+    assert "search_input" not in source
+    assert "_handle_search" not in source
+    assert "_clear_search" not in source
     assert "users-data-region" in source
     assert "users-action-dialog" in source
     assert "users-dialog-icon-action" in source
@@ -356,6 +337,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-config-drawer" in source
     assert "suppress_horizontal_scroll=True" in source
 
+    assert ".users-page--v2 .users-toolbar" not in shell_css
+    assert ".users-page--v2 .users-action-separator" in shell_css
     assert ".users-page--v2 .users-data-region" in shell_css
     assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
     assert ".q-dialog .q-card.users-action-dialog" in shell_css
