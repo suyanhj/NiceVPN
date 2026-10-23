@@ -10,7 +10,7 @@ from typing import Any, Literal
 from nicegui import ui
 
 
-ActionVariant = Literal["primary", "secondary", "danger", "more"]
+ActionVariant = Literal["primary", "create", "secondary", "danger", "more"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +36,7 @@ class MoreActionMenu:
 
 _VARIANT_PROPS: dict[ActionVariant, str] = {
     "primary": "unelevated color=primary",
+    "create": "outline color=primary",
     "secondary": "outline color=primary",
     "danger": "outline color=negative",
     "more": "flat color=primary",
@@ -80,6 +81,12 @@ def primary_action(label: str, **kwargs):
     """创建主操作按钮。"""
 
     return action_button(label, variant="primary", **kwargs)
+
+
+def create_action(label: str, **kwargs):
+    """创建页级新增/创建操作按钮。"""
+
+    return action_button(label, variant="create", **kwargs)
 
 
 def secondary_action(label: str, **kwargs):
