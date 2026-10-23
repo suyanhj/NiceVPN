@@ -24,6 +24,10 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid_renderers import (
+    ACTION_BUTTON_RENDERER,
+    STATUS_PILL_RENDERER,
+)
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.states import empty_state, error_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
@@ -84,12 +88,13 @@ class UsersPage:
                 .classes("w-full")
             )
             self.search_input.on("keydown.enter", self._handle_search)
-            ui.button("搜索", icon="search", on_click=self._handle_search).props(
-                "outline no-caps color=primary"
-            )
-            ui.button("清除", icon="filter_alt_off", on_click=self._clear_search).props(
-                "flat no-caps color=primary"
-            )
+            self.search_input.on("clear", lambda _: self._clear_search())
+            ui.button(
+                icon="search",
+                on_click=self._handle_search,
+            ).props("flat round dense").classes(
+                "users-search-action"
+            ).tooltip("搜索用户")
 
         def primary_region() -> None:
             create_action(
@@ -104,11 +109,11 @@ class UsersPage:
                 icon="upload_file",
                 on_click=self._show_import_dialog,
             )
-            secondary_action(
-                "刷新",
+            refresh_button = ui.button(
                 icon="refresh",
                 on_click=self._refresh_user_list,
-            )
+            ).props("flat round dense").classes("users-refresh-action")
+            refresh_button.tooltip("刷新用户列表")
 
         def bulk_actions() -> None:
             disabled = not self.selected_users
@@ -138,17 +143,21 @@ class UsersPage:
                 tooltip="请先选择用户" if disabled else "更多批量操作",
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
-            render_page_toolbar(
+        with ui.column().classes("page-shell mgmt-page users-page--v2"):
+            toolbar = render_page_toolbar(
                 search=search_region,
                 primary=primary_region,
                 secondary=secondary_region,
             )
+            toolbar.container.classes(add="users-toolbar")
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_users),
                 actions=bulk_actions,
             )
-            self.data_container = ui.column().classes("w-full")
+            self.bulk_bar.container.classes(add="users-bulk-bar")
+            self.data_container = ui.column().classes(
+                "w-full users-data-region"
+            )
 
         self._refresh_user_list()
 
@@ -258,8 +267,12 @@ class UsersPage:
             "id": username,
             "username": username,
             "account_status": "启用" if status == "active" else "停用",
+            "account_status_tone": "success" if status == "active" else "warning",
             "session_status": (
                 "在线" if is_online else ("离线" if live_available else "未知")
+            ),
+            "session_status_tone": (
+                "success" if is_online else ("unknown" if live_available else "warning")
             ),
             "virtual_ip": virtual_ip,
             "group": group_name,
@@ -270,6 +283,11 @@ class UsersPage:
             "connection": connection,
             "source": real_address,
             "device": device,
+            "device_source": (
+                f"{device} · {real_address}"
+                if device != "—" and real_address != "—"
+                else (device if device != "—" else real_address)
+            ),
             "created_at": created_at,
             "actions": "操作",
             "_status": status,
@@ -279,28 +297,98 @@ class UsersPage:
 
     @staticmethod
     def _user_grid_columns() -> tuple[dict, ...]:
-        """用户表格列定义；原始敏感/长值保留在行对象但不强制全部展示。"""
+        """用户主表保持紧凑；长值和低频字段放入操作弹窗。"""
 
         return (
-            {"field": "username", "headerName": "用户名", "pinned": "left", "minWidth": 150},
-            {"field": "account_status", "headerName": "账号", "width": 92},
-            {"field": "session_status", "headerName": "会话", "width": 92},
-            {"field": "virtual_ip", "headerName": "虚拟 IP", "minWidth": 140, "cellClass": "vpn-grid-mono"},
-            {"field": "group", "headerName": "用户组", "minWidth": 120},
-            {"field": "cert_serial_display", "headerName": "证书序列号", "minWidth": 160, "cellClass": "vpn-grid-mono"},
-            {"field": "traffic", "headerName": "流量", "minWidth": 160, "cellClass": "vpn-grid-mono"},
-            {"field": "connection", "headerName": "连接时间", "minWidth": 190},
-            {"field": "source", "headerName": "来源地址", "minWidth": 170, "cellClass": "vpn-grid-mono"},
-            {"field": "device", "headerName": "设备", "minWidth": 140},
-            {"field": "created_at", "headerName": "创建日期", "width": 120},
+            {
+                "field": "username",
+                "headerName": "用户名",
+                "pinned": "left",
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 142,
+                "minWidth": 120,
+                "maxWidth": 172,
+                "cellClass": "vpn-grid-primary-cell",
+            },
+            {
+                "field": "account_status",
+                "headerName": "账号",
+                "width": 94,
+                "minWidth": 90,
+                "maxWidth": 108,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索账号状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["启用", "停用"],
+                },
+                "cellClass": "vpn-grid-renderer-cell",
+            },
+            {
+                "field": "session_status",
+                "headerName": "会话",
+                "width": 94,
+                "minWidth": 90,
+                "maxWidth": 108,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索会话状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["在线", "离线", "未知"],
+                },
+                "cellClass": "vpn-grid-renderer-cell",
+            },
+            {
+                "field": "virtual_ip",
+                "headerName": "虚拟 IP",
+                "flex": 0.82,
+                "minWidth": 122,
+                "cellClass": "vpn-grid-mono",
+            },
+            {
+                "field": "group",
+                "headerName": "用户组",
+                "flex": 0.78,
+                "minWidth": 110,
+            },
+            {
+                "field": "traffic",
+                "headerName": "流量",
+                "flex": 0.88,
+                "minWidth": 132,
+                "cellClass": "vpn-grid-mono",
+            },
+            {
+                "field": "connection",
+                "headerName": "连接时间",
+                "flex": 1.04,
+                "minWidth": 168,
+            },
+            {
+                "field": "device_source",
+                "headerName": "设备 / 来源",
+                "flex": 1.15,
+                "minWidth": 188,
+            },
             {
                 "field": "actions",
                 "headerName": "操作",
                 "pinned": "right",
-                "width": 100,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
-                "cellClass": "vpn-grid-action-cell",
+                "resizable": False,
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         )
 
@@ -359,6 +447,7 @@ class UsersPage:
             page_size=self.page_size,
             selected_ids=self.selected_users,
             on_cell_click=self._on_grid_cell_clicked,
+            suppress_horizontal_scroll=True,
         )
         self.grid_view.summary.text = f"共 {len(rows)} 个用户"
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
