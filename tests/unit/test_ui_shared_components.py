@@ -144,6 +144,48 @@ def test_confirm_dialog_supports_impact_count_and_required_text() -> None:
     assert handle.confirm_button._props["color"] == "negative"
 
 
+def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
+    """页级新增入口统一使用 create_action，保存/推送等主操作不受影响。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    actions_source = (
+        root / "app" / "ui" / "components" / "actions.py"
+    ).read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert '"create": "outline color=primary"' in actions_source
+    assert 'def create_action(' in actions_source
+    assert ".vpn-action--create" in shell_css
+    assert "background: rgba(21, 189, 232, 0.06) !important;" in shell_css
+
+    page_expectations = {
+        "groups.py": "新建用户组",
+        "peers.py": "新建对端",
+        "users.py": "新建用户",
+        "firewall.py": "新建规则",
+    }
+    for filename, label in page_expectations.items():
+        source = (
+            root / "app" / "ui" / "pages" / filename
+        ).read_text(encoding="utf-8")
+        assert "create_action(" in source
+        create_index = source.index("create_action(")
+        assert label in source[create_index:create_index + 260]
+
+    users_source = (
+        root / "app" / "ui" / "pages" / "users.py"
+    ).read_text(encoding="utf-8")
+    firewall_source = (
+        root / "app" / "ui" / "pages" / "firewall.py"
+    ).read_text(encoding="utf-8")
+    assert "primary_action" in users_source
+    assert "primary_action" in firewall_source
+
+
 def test_shared_dialog_theme_overrides_legacy_quasar_skin() -> None:
     """共享表单/确认弹窗必须使用 V2 黑灰青蓝主题，而不是 legacy 蓝灰卡片。"""
 
