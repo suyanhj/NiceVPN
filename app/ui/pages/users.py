@@ -84,7 +84,7 @@ class UsersPage:
         def search_region() -> None:
             self.search_input = (
                 ui.input(placeholder="搜索用户名、虚拟 IP、组、证书或设备")
-                .props("clearable")
+                .props("outlined dense clearable")
                 .classes("w-full")
             )
             self.search_input.on("keydown.enter", self._handle_search)
