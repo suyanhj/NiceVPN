@@ -184,8 +184,9 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "vpn-v2-overview-grid" in source
     assert "compact=True" in source
     assert "v2_effect=True" not in source
+    assert "render_page_toolbar" not in source
     assert source.index('self.summary_container = ui.element("div")') < source.index(
-        "render_page_toolbar("
+        "self.bulk_bar = render_bulk_action_bar("
     )
     assert ".vpn-v2-page-intro" not in shell_css
     assert ".vpn-metric-card--compact" in shell_css
@@ -203,7 +204,13 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "search_region" not in source
     assert "_handle_search" not in source
     assert "_clear_search" not in source
-    assert "vpn-toolbar--end" in source
+    assert "vpn-toolbar--end" not in source
+    assert "certs-refresh-action" in source
+    assert "certs-advanced-action" in source
+    assert "certs-action-separator" in source
+    assert ".certs-page--v2 .vpn-bulk-bar" in shell_css
+    assert ".certs-page--v2 .vpn-metric-card--compact" in shell_css
+    assert "background: #111214" in shell_css
     assert ".ag-body-horizontal-scroll" in shell_css
     assert ".vpn-grid-status-pill" in grid_css
     assert ".vpn-grid-stacked-value" in grid_css
