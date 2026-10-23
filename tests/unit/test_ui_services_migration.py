@@ -279,6 +279,8 @@ def test_service_log_dialog_lifecycle_and_log_paths_are_guarded() -> None:
     assert ".scroll_to(percent=1.0)" in source
 
     peer_source = inspect.getsource(ServicesPage._show_peer_client_file_log_viewer)
+    assert "services-view-dialog" in source
+    assert "services-view-dialog" in peer_source
     assert 'dialog.on("hide"' in peer_source
     assert 'state["open"]' in peer_source
     assert 'state["generation"]' in peer_source
@@ -383,9 +385,25 @@ def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
     assert 'label="…"' in source
     assert "services-more-action" in source
     assert ".services-page--v2 .services-more-action" in shell_css
+    assert "services-instance-tabs" in source
+    assert "services-tabpanels" in source
+    assert "services-list-panel" in source
+    assert "services-record-card" in source
+    assert "services-record-icon" in source
+    assert "services-record-name" in source
+    assert "services-record-proto" in source
+    assert "services-view-dialog" in source
+    assert "firewall-compact-tabs" not in source
+    assert "firewall-tabpanels" not in source
+    assert 'classes("service-name")' not in source
+    assert 'classes("service-proto")' not in source
+    assert 'classes("service-running-chip")' not in source
+    assert 'classes("service-status-shell")' not in source
+    assert ".services-page--v2 .services-instance-tabs" in shell_css
+    assert ".services-page--v2 .services-record-card" in shell_css
+    assert ".q-dialog .q-card.services-view-dialog" in shell_css
     assert source.index("with ui.tabs(") < source.index("with ui.tab_panels(")
     assert "start_instance" in source
     assert "stop_instance" in source
     assert "restart_instance" in source
-    assert ".services-page--v2 .firewall-compact-tabs" in shell_css
     assert "fetch(" not in source
