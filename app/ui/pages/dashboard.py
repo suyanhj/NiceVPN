@@ -93,7 +93,7 @@ class DashboardPage:
             metric_card(
                 "在线设备",
                 snapshot.total_clients,
-                helper=f"共 {snapshot.user_count} 个注册用户",
+                helper_tooltip=f"当前在线设备数量；共 {snapshot.user_count} 个注册用户",
                 icon="devices",
                 tone="success" if snapshot.total_clients else "default",
                 on_click=lambda: ui.navigate.to("/users"),
@@ -104,23 +104,23 @@ class DashboardPage:
             if snapshot.instance_errors:
                 service_tone = "warning"
                 service_helper = (
-                    f"{snapshot.active_count} 运行 · "
-                    f"{len(snapshot.instance_errors)} 采集失败"
+                    f"{snapshot.active_count} 个实例运行，"
+                    f"{len(snapshot.instance_errors)} 个实例采集失败"
                 )
             elif configured and snapshot.active_count == configured:
                 service_tone = "success"
-                service_helper = "全部实例运行中"
+                service_helper = "全部已纳管实例均正常运行"
             elif configured:
                 service_tone = "warning"
                 service_helper = f"{snapshot.stopped_count} 个实例已停止"
             else:
                 service_tone = "default"
-                service_helper = "尚未纳管实例"
+                service_helper = "当前尚未纳管 OpenVPN 实例"
 
             metric_card(
                 "服务状态",
                 f"{snapshot.active_count}/{configured}",
-                helper=service_helper,
+                helper_tooltip=service_helper,
                 icon="dns",
                 tone=service_tone,
                 on_click=lambda: ui.navigate.to("/services"),
@@ -130,7 +130,10 @@ class DashboardPage:
             metric_card(
                 "累计流量",
                 f"↑ {_format_bytes(snapshot.total_rx)}",
-                helper=f"↓ {_format_bytes(snapshot.total_tx)} · 当前快照",
+                helper_tooltip=(
+                    f"累计上行 {_format_bytes(snapshot.total_rx)}；"
+                    f"累计下行 {_format_bytes(snapshot.total_tx)}；当前快照"
+                ),
                 icon="swap_vert",
                 tone="info",
                 v2_effect=True,
