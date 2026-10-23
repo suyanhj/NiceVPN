@@ -382,9 +382,16 @@ def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
     assert "render_page_toolbar" not in source
     assert "_refresh_button" not in source
     assert 'label="更多"' not in source
-    assert 'label="…"' in source
-    assert "services-more-action" in source
-    assert ".services-page--v2 .services-more-action" in shell_css
+    assert 'label="…"' not in source
+    assert "MenuAction" not in source
+    assert "more_actions(" not in source
+    assert "services-more-action" not in source
+    assert "services-icon-action" in source
+    assert ".services-page--v2 .services-icon-action" in shell_css
+    assert '.tooltip("守护进程日志")' in source
+    assert '.tooltip("设备绑定日志")' in source
+    assert '.tooltip("OpenVPN 状态文件")' in source
+    assert '.tooltip("编辑配置")' in source
     assert "services-instance-tabs" in source
     assert "services-tabpanels" in source
     assert "services-list-panel" in source
