@@ -224,7 +224,7 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert "certs-action-dialog__serial" in source
     assert "certs-action-dialog__renew" in source
     assert "certs-action-dialog__revoke" in source
-    assert ".certs-action-dialog {" in shell_css
+    assert ".q-dialog .q-card.certs-action-dialog {" in shell_css
     assert "background: #111214 !important;" in shell_css
     assert "color: #15bde8 !important;" in shell_css
     assert "fetch(" not in source
