@@ -25,7 +25,7 @@ from app.services.openvpn.instance import (
 from app.services.peer_instance.service import PeerService
 from app.ui.adapters.services import adapt_local_service_view, adapt_peer_service_view
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components.actions import secondary_action
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
