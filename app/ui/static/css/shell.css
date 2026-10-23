@@ -884,27 +884,23 @@ body {
 .certs-page--v2 {
   flex: 1 1 0%;
   min-height: 0;
-  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region {
   display: flex;
   flex: 1 1 0%;
   min-height: 0;
-  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region > .vpn-data-grid {
   display: flex;
   flex: 1 1 0%;
   min-height: 0;
-  height: 100%;
 }
 
 .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
   flex: 1 1 0%;
   min-height: 0 !important;
-  height: 100% !important;
 }
 
 .certs-page--v2 .vpn-data-grid__summary {
@@ -926,13 +922,7 @@ body {
 
 @media (max-width: 767px) {
   .certs-page--v2 {
-    height: auto;
     overflow: visible;
-  }
-
-  .certs-page--v2 .certs-data-region,
-  .certs-page--v2 .certs-data-region > .vpn-data-grid {
-    height: auto;
   }
 
   .certs-page--v2 .certs-data-region .vpn-data-grid__grid {
