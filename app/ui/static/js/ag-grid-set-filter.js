@@ -56,11 +56,19 @@
       return this.selectedValues.size !== this.allValues.length;
     }
 
+    filterValue(node) {
+      const field = String(this.params.filterValueField || '').trim();
+      if (field) {
+        return this.normalize(node?.data?.[field]);
+      }
+      return this.normalize(this.params.getValue(node));
+    }
+
     doesFilterPass(params) {
       if (!this.isFilterActive()) {
         return true;
       }
-      const value = this.normalize(this.params.getValue(params.node));
+      const value = this.filterValue(params.node);
       return this.selectedValues.has(value);
     }
 
@@ -114,7 +122,7 @@
         ) {
           return;
         }
-        values.add(this.normalize(this.params.getValue(node)));
+        values.add(this.filterValue(node));
       });
 
       const preferred = Array.isArray(this.params.valueOrder)
