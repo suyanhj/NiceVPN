@@ -197,12 +197,12 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".vpn-v2-overview-grid" in shell_css
     assert "certs-data-region" in source
     assert ".certs-page--v2 .certs-data-region" in shell_css
-    assert "--ag-header-background-color" in shell_css
-    assert "--ag-selected-row-background-color" in shell_css
-    assert ".vpn-data-grid__grid .ag-paging-panel" in shell_css
+    assert "--ag-header-background-color" in grid_css
+    assert "--ag-selected-row-background-color" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-panel" in grid_css
     assert "calc(100dvh - 360px)" in shell_css
-    assert ".vpn-data-grid__grid .ag-row-odd" in shell_css
-    assert ".vpn-data-grid__grid .ag-row-hover" in shell_css
+    assert ".vpn-data-grid__grid .ag-row-odd" in grid_css
+    assert ".vpn-data-grid__grid .ag-row-hover" in grid_css
     assert ".certs-page--v2 .vpn-data-grid__summary" in shell_css
     assert "certs-toolbar" in source
     assert "cert-search-input" in source
@@ -232,6 +232,16 @@ def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
     status = columns["status_label"]
     assert status["flex"] > 0
     assert "vpn-grid-status-pill" in status[":cellRenderer"]
+    assert status[":filter"] == "window.NiceVpnSetFilter"
+    assert status["filterParams"]["selectAllLabel"] == "(全选)"
+    assert status["filterParams"]["searchPlaceholder"] == "搜索状态..."
+    assert status["filterParams"]["valueOrder"] == [
+        "有效",
+        "即将到期",
+        "已吊销",
+        "已过期",
+        "未知",
+    ]
 
     serial = columns["serial_display"]
     assert serial["flex"] > 0
