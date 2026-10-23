@@ -88,20 +88,41 @@ def test_certificate_status_set_filter_opens_and_searches_values(
 
     grid_geometry = screen.selenium.execute_script(
         """
-        const grid = document.querySelector('.certs-page--v2 .vpn-data-grid__grid');
+        const describe = (selector) => {
+          const el = document.querySelector(selector);
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return {
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            paddingTop: style.paddingTop,
+            paddingBottom: style.paddingBottom,
+            boxSizing: style.boxSizing,
+            overflow: style.overflow,
+          };
+        };
+        const grid = describe('.certs-page--v2 .vpn-data-grid__grid');
         if (!grid) return null;
-        const rect = grid.getBoundingClientRect();
         return {
-          height: rect.height,
-          bottomGap: window.innerHeight - rect.bottom,
+          height: grid.height,
+          bottomGap: window.innerHeight - grid.bottom,
+          innerHeight: window.innerHeight,
+          qPage: describe('.q-page'),
+          niceguiContent: describe('.nicegui-content'),
+          vpnShell: describe('.vpn-shell'),
+          certsPage: describe('.certs-page--v2'),
+          dataRegion: describe('.certs-data-region'),
+          grid,
         };
         """
     )
     assert grid_geometry is not None
     # 高度下限只防止 Grid 被意外压扁；真正的回归目标是分页栏贴近视口底部，
     # 不再用某个固定像素高度绑定页面上方组件数量。
-    assert float(grid_geometry["height"]) >= 360
-    assert 0 <= float(grid_geometry["bottomGap"]) <= 48
+    assert float(grid_geometry["height"]) >= 360, grid_geometry
+    assert 0 <= float(grid_geometry["bottomGap"]) <= 48, grid_geometry
 
     header = screen.selenium.find_element(
         By.CSS_SELECTOR,
