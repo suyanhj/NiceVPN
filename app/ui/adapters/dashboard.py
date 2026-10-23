@@ -199,7 +199,10 @@ def service_health_chart_options(snapshot: DashboardSnapshot) -> dict[str, Any]:
                 "style": {
                     "text": f"{snapshot.health_score}%\n健康度",
                     "textAlign": "center",
+                    "fill": "#e6edf7",
                     "fontSize": 16,
+                    "fontWeight": 600,
+                    "lineHeight": 20,
                 },
             }
         ] if total > 0 else [],
@@ -215,14 +218,19 @@ def traffic_snapshot_chart_options(snapshot: DashboardSnapshot) -> dict[str, Any
         data = [snapshot.total_rx, snapshot.total_tx]
     return {
         "tooltip": {"trigger": "axis"},
-        "grid": {"left": 20, "right": 20, "top": 20, "bottom": 30, "containLabel": True},
+        "grid": {
+            "left": 20,
+            "right": 20,
+            "top": 38,
+            "bottom": 30,
+            "containLabel": True,
+        },
         "xAxis": {
             "type": "category",
             "data": ["累计上行", "累计下行"] if data else [],
         },
         "yAxis": {
             "type": "value",
-            "name": "Bytes",
         },
         "series": [
             {
