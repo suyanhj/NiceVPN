@@ -106,12 +106,13 @@ class UsersPage:
                 return button
 
             create_button = create_action(
-                "",
+                "新建用户",
                 icon="person_add",
                 on_click=self._show_create_dialog,
                 tooltip="新建用户",
+                icon_only=True,
             )
-            create_button.props("round dense aria-label='新建用户'")
+            create_button.props("round dense")
             create_button.classes(
                 add="users-bar-icon-action users-bar-icon-action--create"
             )
