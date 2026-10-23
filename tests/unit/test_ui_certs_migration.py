@@ -180,6 +180,9 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     shell_css = (
         root / "app" / "ui" / "static" / "css" / "shell.css"
     ).read_text(encoding="utf-8")
+    grid_css = (
+        root / "app" / "ui" / "static" / "css" / "ag-grid-theme.css"
+    ).read_text(encoding="utf-8")
 
     assert "certs-page--v2" in source
     assert "vpn-v2-page-intro" not in source
@@ -206,10 +209,10 @@ def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
     assert ".certs-toolbar .q-btn" in shell_css
     assert "min-height: 42px;" in shell_css
     assert ".ag-body-horizontal-scroll" in shell_css
-    assert ".vpn-grid-status-pill" in shell_css
-    assert ".vpn-grid-stacked-value" in shell_css
-    assert ".vpn-grid-inline-action" in shell_css
-    assert "--ag-row-height: 50px" in shell_css
+    assert ".vpn-grid-status-pill" in grid_css
+    assert ".vpn-grid-stacked-value" in grid_css
+    assert ".vpn-grid-inline-action" in grid_css
+    assert "--ag-background-color" in grid_css
     assert "fetch(" not in source
 
 
