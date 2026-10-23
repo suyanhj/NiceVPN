@@ -167,12 +167,21 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert "vpn-v2-page-intro" not in source
     assert "vpn-v2-overview-grid" in source
     assert "compact=True" in source
+    assert "helper_tooltip=" in source
+    assert 'helper="含根组与业务子组"' not in source
     assert "v2_effect=True" not in source
     assert "render_page_toolbar" not in source
     assert "groups-create-action" in source
     assert "primary_action" not in source
     assert ".groups-page--v2 .groups-create-action" in shell_css
     assert ".groups-page--v2 .vpn-bulk-bar" in shell_css
+    assert ".groups-page--v2 .mgmt-panel-list" in shell_css
+    assert ".groups-page--v2 .groups-record-card" in shell_css
+    assert ".groups-page--v2 .groups-record-card--root" in shell_css
+    assert ".groups-page--v2 .groups-record-card--disabled" in shell_css
+    assert ".groups-page--v2 .groups-root-badge" in shell_css
+    assert "background: #0c0c0d !important;" in shell_css
+    assert "color: #15bde8 !important;" in shell_css
     assert source.index("self._render_summary_metrics(groups)") < source.index(
         "self.bulk_bar = render_bulk_action_bar"
     )
