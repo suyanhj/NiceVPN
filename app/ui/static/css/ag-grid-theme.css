@@ -1,0 +1,363 @@
+/*
+ * NiceVPN AG Grid Theme
+ *
+ * 设计来源：
+ * - AG Grid Theme Builder / Quartz 参数体系
+ * - Synergy Codes 的品牌化 AG Grid 视觉思路
+ *
+ * 原则：Quartz 负责行为与基础组件，这里只维护品牌视觉层。
+ */
+
+.vpn-data-grid {
+  min-width: 0;
+  gap: var(--vpn-space-2);
+}
+
+/* Theme Builder foundations */
+.vpn-data-grid__grid {
+  min-height: 360px;
+
+  --ag-background-color: #0b1119;
+  --ag-foreground-color: var(--vpn-text);
+  --ag-data-color: var(--vpn-text);
+  --ag-secondary-foreground-color: var(--vpn-text-muted);
+  --ag-header-background-color: #101824;
+  --ag-header-foreground-color: #dce6f4;
+  --ag-odd-row-background-color: #0c131c;
+  --ag-row-hover-color: rgba(110, 168, 255, 0.055);
+  --ag-selected-row-background-color: rgba(110, 168, 255, 0.105);
+  --ag-border-color: rgba(130, 157, 193, 0.13);
+  --ag-row-border-color: rgba(130, 157, 193, 0.085);
+  --ag-header-column-separator-color: rgba(130, 157, 193, 0.11);
+  --ag-header-column-resize-handle-color: rgba(139, 185, 255, 0.32);
+  --ag-input-focus-border-color: var(--vpn-color-brand);
+  --ag-checkbox-checked-color: var(--vpn-color-brand);
+  --ag-checkbox-unchecked-color: rgba(203, 213, 225, 0.38);
+  --ag-checkbox-indeterminate-color: var(--vpn-color-brand-soft);
+  --ag-range-selection-border-color: var(--vpn-color-brand);
+  --ag-font-family: var(--vpn-font-sans);
+  --ag-font-size: 13px;
+  --ag-cell-horizontal-padding: 14px;
+  --ag-header-height: 44px;
+  --ag-row-height: 46px;
+  --ag-wrapper-border-radius: 14px;
+  --ag-browser-color-scheme: dark;
+}
+
+/* Outer shell */
+.vpn-data-grid__grid .ag-root-wrapper {
+  overflow: hidden;
+  border: 1px solid rgba(139, 185, 255, 0.12) !important;
+  border-radius: 14px;
+  background: #0b1119 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 18px 46px rgba(0, 0, 0, 0.18);
+}
+
+/* Header: flatter and calmer than the default Quartz header */
+.vpn-data-grid__grid .ag-header,
+.vpn-data-grid__grid .ag-header-viewport,
+.vpn-data-grid__grid .ag-header-container {
+  background:
+    linear-gradient(180deg, rgba(17, 27, 41, 0.98), rgba(14, 22, 34, 0.98)) !important;
+}
+
+.vpn-data-grid__grid .ag-header {
+  border-bottom: 1px solid rgba(139, 185, 255, 0.11) !important;
+}
+
+.vpn-data-grid__grid .ag-header-cell {
+  border-right-color: rgba(139, 185, 255, 0.055) !important;
+}
+
+.vpn-data-grid__grid .ag-header-cell-text {
+  color: #d6e0ee;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+.vpn-data-grid__grid .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-icon,
+.vpn-data-grid__grid .ag-sort-indicator-icon {
+  color: #71839a;
+  opacity: 0.76;
+  transition:
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-icon,
+.vpn-data-grid__grid .ag-header-cell:hover .ag-sort-indicator-icon {
+  color: var(--vpn-color-brand-soft);
+  opacity: 1;
+}
+
+/* Rows: table-first, with very low visual noise */
+.vpn-data-grid__grid .ag-center-cols-viewport,
+.vpn-data-grid__grid .ag-center-cols-container,
+.vpn-data-grid__grid .ag-body-viewport,
+.vpn-data-grid__grid .ag-body {
+  background: #0b1119 !important;
+}
+
+.vpn-data-grid__grid .ag-row {
+  background: #0b1119 !important;
+  border-bottom: 1px solid rgba(130, 157, 193, 0.075) !important;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-row-odd {
+  background: #0c131c !important;
+}
+
+.vpn-data-grid__grid .ag-row-hover {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(110, 168, 255, 0.075),
+      rgba(110, 168, 255, 0.025) 58%,
+      rgba(110, 168, 255, 0.012)
+    ) !important;
+}
+
+.vpn-data-grid__grid .ag-row-selected {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(110, 168, 255, 0.135),
+      rgba(110, 168, 255, 0.045) 64%,
+      rgba(110, 168, 255, 0.018)
+    ) !important;
+  box-shadow: inset 2px 0 0 rgba(110, 168, 255, 0.82);
+}
+
+.vpn-data-grid__grid .ag-cell {
+  display: flex;
+  align-items: center;
+  border-right-color: rgba(130, 157, 193, 0.045) !important;
+  color: var(--vpn-text);
+}
+
+.vpn-data-grid__grid .ag-cell-focus,
+.vpn-data-grid__grid .ag-cell-range-selected:not(.ag-cell-focus) {
+  border-color: rgba(110, 168, 255, 0.36) !important;
+}
+
+/* Pinned zones should read as one layer, not separate grey blocks */
+.vpn-data-grid__grid .ag-pinned-left-header,
+.vpn-data-grid__grid .ag-pinned-right-header {
+  background: #101824 !important;
+}
+
+.vpn-data-grid__grid .ag-pinned-left-cols-container .ag-row,
+.vpn-data-grid__grid .ag-pinned-right-cols-container .ag-row {
+  background: #0c131d !important;
+}
+
+.vpn-data-grid__grid .ag-pinned-left-header,
+.vpn-data-grid__grid .ag-pinned-left-cols-container {
+  border-right: 1px solid rgba(139, 185, 255, 0.10) !important;
+}
+
+.vpn-data-grid__grid .ag-pinned-right-header,
+.vpn-data-grid__grid .ag-pinned-right-cols-container {
+  border-left: 1px solid rgba(139, 185, 255, 0.10) !important;
+}
+
+/* Checkbox */
+.vpn-data-grid__grid .ag-checkbox-input-wrapper {
+  border-radius: 5px;
+}
+
+.vpn-data-grid__grid .ag-checkbox-input-wrapper::after {
+  color: var(--vpn-color-brand);
+}
+
+/* Pagination / footer */
+.vpn-data-grid__grid .ag-paging-panel {
+  min-height: 44px;
+  border-top: 1px solid rgba(139, 185, 255, 0.09) !important;
+  background: #0e1621 !important;
+  color: var(--vpn-text-soft);
+  font-size: 11px;
+}
+
+.vpn-data-grid__grid .ag-paging-button {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+  color: #8191a6;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-paging-button:not(.ag-disabled):hover {
+  background: rgba(110, 168, 255, 0.075);
+  color: var(--vpn-color-brand-soft);
+}
+
+.vpn-data-grid__grid .ag-paging-button.ag-disabled {
+  opacity: 0.32;
+}
+
+/* Menus, filters and popovers */
+.vpn-data-grid__grid .ag-menu,
+.vpn-data-grid__grid .ag-popup-child {
+  border: 1px solid rgba(139, 185, 255, 0.12);
+  border-radius: 12px;
+  background: #101824;
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.36);
+}
+
+.vpn-data-grid__grid .ag-input-field-input,
+.vpn-data-grid__grid .ag-picker-field-wrapper {
+  border-color: rgba(139, 185, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--vpn-text);
+}
+
+/* Shared renderer vocabulary */
+.vpn-grid-primary-cell {
+  color: var(--vpn-text-heading);
+  font-weight: 650;
+}
+
+.vpn-grid-mono {
+  color: #c6d3e5;
+  font-family: var(--vpn-font-mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.vpn-grid-renderer-cell {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.vpn-grid-status-pill {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 25px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.17);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--vpn-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vpn-grid-status-pill__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.vpn-grid-status-pill--success {
+  border-color: rgba(45, 212, 191, 0.20);
+  background: rgba(45, 212, 191, 0.07);
+  color: #5fd8c3;
+}
+
+.vpn-grid-status-pill--warning {
+  border-color: rgba(245, 158, 11, 0.23);
+  background: rgba(245, 158, 11, 0.07);
+  color: #f2b64c;
+}
+
+.vpn-grid-status-pill--failed {
+  border-color: rgba(251, 113, 133, 0.22);
+  background: rgba(251, 113, 133, 0.065);
+  color: #f58ca0;
+}
+
+.vpn-grid-stacked-value {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.vpn-grid-stacked-value__primary {
+  color: #dce6f2;
+  font-family: var(--vpn-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.vpn-grid-stacked-value__secondary {
+  color: #71839a;
+  font-size: 9px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.vpn-grid-stacked-value__secondary--warning {
+  color: rgba(245, 182, 71, 0.90);
+}
+
+.vpn-grid-stacked-value__secondary--danger {
+  color: rgba(251, 139, 158, 0.92);
+}
+
+.vpn-grid-inline-action {
+  min-height: 29px;
+  padding: 0 10px;
+  border: 1px solid rgba(139, 185, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(110, 168, 255, 0.035);
+  color: #9fc4ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 27px;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.vpn-grid-inline-action:hover {
+  border-color: rgba(139, 185, 255, 0.30);
+  background: rgba(110, 168, 255, 0.085);
+  color: #c3dafe;
+  transform: translateY(-1px);
+}
+
+.vpn-grid-action-cell {
+  justify-content: center;
+  cursor: default;
+}
+
+/* Result summary is optional; pages can hide it when AG Grid pagination already carries count. */
+.vpn-data-grid__summary {
+  align-self: flex-end;
+  color: var(--vpn-text-soft);
+  font-size: 11px;
+}
+
+@media (max-width: 767px) {
+  .vpn-data-grid__grid {
+    min-height: 320px;
+    --ag-cell-horizontal-padding: 10px;
+  }
+}
