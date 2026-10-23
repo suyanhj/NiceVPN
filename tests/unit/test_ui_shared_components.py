@@ -167,7 +167,14 @@ def test_shared_create_action_supports_semantic_icon_only_mode() -> None:
     button = state["button"]
     assert button._props.get("aria-label") == "新建用户"
     assert button._props.get("icon") == "person_add"
-    assert "vpn-action--icon-only" in button._classes
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    actions_source = (
+        root / "app" / "ui" / "components" / "actions.py"
+    ).read_text(encoding="utf-8")
+    assert "vpn-action--icon-only" in actions_source
 
     with pytest.raises(ValueError, match="纯图标操作按钮必须提供图标"):
         create_action("新建用户", icon_only=True)
