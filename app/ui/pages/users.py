@@ -490,7 +490,7 @@ class UsersPage:
             on_cell_click=self._on_grid_cell_clicked,
             suppress_horizontal_scroll=True,
         )
-        self.grid_view.summary.text = f"共 {len(rows)} 个用户"
+        self.grid_view.summary.set_visibility(False)
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
 
 
