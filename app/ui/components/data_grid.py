@@ -97,6 +97,7 @@ def render_data_grid(
     selected_ids: Iterable[object] | None = None,
     on_cell_click: Callable[..., Any] | None = None,
     suppress_horizontal_scroll: bool = False,
+    external_filter_text: str | None = None,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
 
@@ -120,6 +121,13 @@ def render_data_grid(
     }
     if suppress_horizontal_scroll:
         options["suppressHorizontalScroll"] = True
+    if external_filter_text is not None:
+        query = str(external_filter_text or "").strip().casefold()
+        options[":isExternalFilterPresent"] = f"() => {str(bool(query)).lower()}"
+        options[":doesExternalFilterPass"] = (
+            "(node) => String(node.data?.search_text ?? '')"
+            f".toLocaleLowerCase().includes({json.dumps(query, ensure_ascii=False)})"
+        )
     if selectable:
         options["rowSelection"] = {"mode": "multiRow"}
         options["selectionColumnDef"] = {

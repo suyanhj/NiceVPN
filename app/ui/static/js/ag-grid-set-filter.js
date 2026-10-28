@@ -53,7 +53,11 @@
     }
 
     isFilterActive() {
-      return this.selectedValues.size !== this.allValues.length;
+      return (
+        this.selectedValues.size !== this.allValues.length ||
+        this.allValues.some(value => !this.selectedValues.has(value)) ||
+        Array.from(this.selectedValues).some(value => !this.allValues.includes(value))
+      );
     }
 
     filterValue(node) {
@@ -78,7 +82,7 @@
       }
       return {
         filterType: 'niceVpnSet',
-        values: this.allValues.filter(value => this.selectedValues.has(value)),
+        values: Array.from(this.selectedValues),
       };
     }
 
@@ -117,6 +121,7 @@
       const values = new Set();
       this.params.api.forEachLeafNode(node => {
         if (
+          this.params.showValuesFromOtherFilters !== false &&
           typeof this.params.doesRowPassOtherFilter === 'function' &&
           !this.params.doesRowPassOtherFilter(node)
         ) {
@@ -143,16 +148,17 @@
     refreshValues(preserveSelection) {
       const previousValues = new Set(this.allValues);
       const previousSelection = new Set(this.selectedValues);
-      const wasInactive = previousValues.size === previousSelection.size;
+      const wasInactive =
+        previousValues.size === previousSelection.size &&
+        Array.from(previousValues).every(value => previousSelection.has(value));
 
       this.allValues = this.collectValues();
 
       if (!preserveSelection || wasInactive) {
         this.selectedValues = new Set(this.allValues);
       } else {
-        this.selectedValues = new Set(
-          this.allValues.filter(value => previousSelection.has(value)),
-        );
+        // 保留当前数据集暂时不可见的选项，避免组合筛选或关键词变化时丢失选择。
+        this.selectedValues = new Set(previousSelection);
       }
 
       this.renderList();
@@ -202,7 +208,11 @@
       selectAllRow.append(selectAll, selectAllText);
       selectAll.addEventListener('change', () => {
         if (selectAll.checked) {
-          visible.forEach(value => this.selectedValues.add(value));
+          if (!this.searchText) {
+            this.selectedValues = new Set(this.allValues);
+          } else {
+            visible.forEach(value => this.selectedValues.add(value));
+          }
         } else {
           visible.forEach(value => this.selectedValues.delete(value));
         }

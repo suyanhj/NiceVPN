@@ -138,7 +138,8 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
 
     assert page._remote_pull_button._props.get("disable") is not True
     assert page._remote_push_button._props.get("disable") is not True
-    assert options["columnDefs"][0]["rowDrag"] is True
+    assert ":rowDrag" in options["columnDefs"][0]
+    assert "isAnyFilterPresent" in options["columnDefs"][0][":rowDrag"]
     assert options["rowDragManaged"] is True
 
 
@@ -347,8 +348,12 @@ def test_remote_grid_columns_preserve_raw_rest_and_operations() -> None:
         "raw_rest",
         "actions",
     ]
-    assert FirewallPage._remote_grid_columns()[0]["checkboxSelection"] is True
-    assert FirewallPage._remote_grid_columns()[0]["headerCheckboxSelection"] is True
+    assert "checkboxSelection" not in FirewallPage._remote_grid_columns()[0]
+    assert "headerCheckboxSelection" not in FirewallPage._remote_grid_columns()[0]
+    columns = {column["field"]: column for column in FirewallPage._remote_grid_columns()}
+    for field in ("status_label", "protocol", "action_label"):
+        assert columns[field][":filter"] == "window.NiceVpnSetFilter"
+        assert columns[field]["filterParams"]["selectAllLabel"] == "(全选)"
 
 
 def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(

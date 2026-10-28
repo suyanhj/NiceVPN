@@ -2940,11 +2940,6 @@ body {
   font-size: 11px;
 }
 
-.firewall-page--v2 .firewall-owner-filter {
-  width: min(32vw, 230px);
-  min-width: 180px;
-}
-
 .firewall-page--v2 .firewall-tabpanels,
 .firewall-page--v2 .firewall-tabpanels .q-panel,
 .firewall-page--v2 .firewall-tabpanels .q-tab-panel {
@@ -3064,11 +3059,6 @@ body {
   .firewall-page--v2 .firewall-filter-row {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .firewall-page--v2 .firewall-owner-filter {
-    width: 100%;
-    min-width: 0;
   }
 
   .firewall-page--v2 .firewall-center-data-region,

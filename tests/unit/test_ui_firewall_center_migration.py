@@ -234,18 +234,20 @@ def test_center_firewall_keyword_search_and_no_match_state(
     async def verify() -> None:
         async with user_simulation(page.render) as user:
             await user.open("/")
-            page._center_search_input.set_value("开发组")
+            page._center_search_input.set_value("172.16.0.10")
             page._refresh_rules()
 
             assert page._center_grid_view is not None
-            assert len(page._center_grid_view.grid.options["rowData"]) == 1
-            assert page._center_grid_view.grid.options["rowData"][0]["id"] == "rule-accept"
+            assert len(page._center_display_rows) == 1
+            assert page._center_display_rows[0]["id"] == "rule-accept"
+            assert len(page._center_grid_view.grid.options["rowData"]) == 3
+            assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
             assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
 
             page._center_search_input.set_value("definitely-not-found")
             page._refresh_rules()
             await user.should_see("没有匹配结果")
-            await user.should_see("当前关键词或归属筛选没有匹配规则")
+            await user.should_see("当前关键词没有匹配规则")
 
             page._clear_center_filters()
             assert page._center_grid_view is not None
@@ -254,23 +256,32 @@ def test_center_firewall_keyword_search_and_no_match_state(
     asyncio.run(verify())
 
 
-def test_center_firewall_owner_filter_includes_peer_virtual_rows(
+def test_center_firewall_classification_filters_are_searchable_multiselects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = _prepare_page(monkeypatch)
+    columns = {
+        column["field"]: column
+        for column in FirewallPage._center_grid_columns()
+    }
 
-    async def verify() -> None:
-        async with user_simulation(page.render) as user:
-            await user.open("/")
-            page._center_owner_filter.set_value("peer-001")
-            page._refresh_rules()
+    for field in (
+        "status_label",
+        "owner_label",
+        "kind_label",
+        "protocol",
+        "action_label",
+    ):
+        column = columns[field]
+        assert column[":filter"] == "window.NiceVpnSetFilter"
+        assert column["filterParams"]["selectAllLabel"] == "(全选)"
+        assert column["filterParams"]["showValuesFromOtherFilters"] is False
+        assert column["filterParams"]["searchPlaceholder"]
 
-            rows = page._center_grid_view.grid.options["rowData"]
-            assert [row["id"] for row in rows] == ["ce-peer-peer-001"]
-            assert page.current_owner_id == "peer-001"
-            assert page._is_unified_list is False
-
-    asyncio.run(verify())
+    assert page._center_owner_filter is None
+    assert "checkboxSelection" not in columns["priority"]
+    assert "headerCheckboxSelection" not in columns["priority"]
+    assert page._center_filter_model == {}
 
 
 def test_center_firewall_true_empty_state(
@@ -307,8 +318,11 @@ def test_center_grid_columns_keep_priority_owner_flow_and_id() -> None:
     ]
     first = FirewallPage._center_grid_columns()[0]
     assert first["pinned"] == "left"
-    assert first["checkboxSelection"] is True
-    assert first["headerCheckboxSelection"] is True
+    assert first["filter"] is False
+    assert "checkboxSelection" not in first
+    assert "headerCheckboxSelection" not in first
+    assert ":rowDrag" in FirewallPage._center_grid_columns(can_reorder=True)[0]
+    assert FirewallPage._center_grid_columns(can_reorder=False)[0]["rowDrag"] is False
 
 
 def test_center_grid_selection_syncs_existing_batch_state() -> None:
@@ -328,7 +342,9 @@ def test_center_grid_row_drag_enabled_only_without_filters() -> None:
     plain = FirewallPage._center_grid_columns(can_reorder=True)
     filtered = FirewallPage._center_grid_columns(can_reorder=False)
 
-    assert plain[0]["rowDrag"] is True
+    assert ":rowDrag" in plain[0]
+    assert "isAnyFilterPresent" in plain[0][":rowDrag"]
+    assert "getColumnState" in plain[0][":rowDrag"]
     assert filtered[0]["rowDrag"] is False
 
 
@@ -383,7 +399,7 @@ def test_center_grid_drag_is_blocked_while_filtered(
 
     page._on_center_grid_row_drag_end(Event())
 
-    assert messages == ["搜索或归属筛选状态下不能调整优先级"]
+    assert messages == ["搜索、筛选或排序状态下不能调整优先级"]
     assert refreshed == [True]
 
 
@@ -949,6 +965,9 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "firewall-tab-shell" in source
     assert "firewall-bulk-bar" in source
     assert "firewall-filter-bar" in source
+    assert "window.NiceVpnSetFilter" in source
+    assert "搜索 IP / 规则 ID / 说明" in source
+    assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source
     assert "more_actions(" not in source

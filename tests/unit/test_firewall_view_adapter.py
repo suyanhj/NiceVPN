@@ -41,7 +41,9 @@ def test_center_json_rule_adapter_preserves_owner_flow_action_and_priority() -> 
     assert row["priority"] == 20
     assert row["status_label"] == "启用"
     assert row["raw"]["description"] == "开发访问 API"
-    assert "开发组" in row["search_text"]
+    assert "开发组" not in row["search_text"]
+    assert "172.16.0.10" in row["search_text"]
+    assert "开发访问 API" in row["search_text"]
 
 
 def test_user_rule_adapter_uses_source_ips_and_normalizes_any_protocol() -> None:

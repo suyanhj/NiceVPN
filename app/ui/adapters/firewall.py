@@ -106,18 +106,10 @@ def adapt_center_rule_row(
     search_text = " ".join(
         [
             rule_id,
-            owner_type,
-            owner_id,
-            owner_label,
-            kind_label,
-            protocol,
-            action_label,
             source,
             dest,
             port,
             detail,
-            str(priority),
-            "启用" if enabled else "停用",
         ]
     ).casefold()
 

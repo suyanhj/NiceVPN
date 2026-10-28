@@ -238,7 +238,11 @@ class FirewallPage:
         self._center_grid_view = None
         self._center_search_controls = None
         self._center_search_input = None
+        # 归属筛选移入 AG Grid 列头，避免工具栏与表格重复。
         self._center_owner_filter = None
+        self._pending_center_owner_id = ""
+        self._center_filter_model: dict[str, Any] = {}
+        self._center_grid_sort_active = False
         self._center_all_rows: list[dict[str, Any]] = []
         self._center_display_rows: list[dict[str, Any]] = []
         self._center_raw_by_id: dict[str, dict[str, Any]] = {}
@@ -254,6 +258,8 @@ class FirewallPage:
         self._remote_push_button = None
         self._remote_grid_view = None
         self._remote_grid_rows: list[dict[str, Any]] = []
+        self._remote_filter_model: dict[str, Any] = {}
+        self._remote_grid_sort_active = False
         self._remote_reorder_allowed = False
         self._action_bar = None
 
@@ -401,25 +407,13 @@ class FirewallPage:
                 ):
                     self._center_search_input = (
                         ui.input(
-                            placeholder="搜索归属 / IP / 协议 / 动作 / 规则 ID",
+                            placeholder="搜索 IP / 规则 ID / 说明",
                             on_change=lambda _event: self._refresh_rules(),
                         )
                         .props("outlined dense clearable debounce=250")
                         .classes("firewall-search-input flex-1 min-w-0")
                     )
-                    self._center_owner_filter = (
-                        ui.select(
-                            {"": "全部归属"},
-                            value="",
-                            label="归属",
-                            on_change=lambda _event: self._refresh_rules(),
-                        )
-                        .props(
-                            'outlined dense clearable behavior=menu '
-                            'popup-content-class="vpn-owner-select-menu"'
-                        )
-                        .classes("firewall-owner-filter")
-                    )
+                    self._center_owner_filter = None
 
             with ui.tab_panels(
                 self._strat_tabs,
@@ -546,9 +540,11 @@ class FirewallPage:
             self._remote_peer_select.update()
 
     def _on_remote_peer_select_change(self) -> None:
-        """对端节点变化：以新机为准，必须重新 SSH 拉取该对端链并落库，再展示。"""
+        """对端节点变化：以新机为准，清除上一个对端的列筛选后重新拉取。"""
         self._remote_fetch_generation += 1
         self._remote_fetch_running_peer = None
+        self._remote_filter_model = {}
+        self._remote_grid_sort_active = False
         self._refresh_remote_view()
         self._schedule_remote_fetch_via_ssh()
 
@@ -1070,23 +1066,38 @@ class FirewallPage:
 
     @staticmethod
     def _remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
-        """对端链规则核心列定义，原始 rest 始终保留。"""
+        """对端链规则列定义；状态、协议、动作支持可搜索多选筛选。"""
+
+        number_column: dict[str, Any] = {
+            "field": "row_number",
+            "headerName": "#",
+            "width": 85,
+            "pinned": "left",
+            "filter": False,
+        }
+        if can_reorder:
+            number_column[":rowDrag"] = (
+                "(params) => !params.api.isAnyFilterPresent() && "
+                "!params.api.getColumnState().some((state) => Boolean(state.sort))"
+            )
+        else:
+            number_column["rowDrag"] = False
 
         return [
-            {
-                "field": "row_number",
-                "headerName": "#",
-                "width": 85,
-                "pinned": "left",
-                "checkboxSelection": True,
-                "headerCheckboxSelection": True,
-                "rowDrag": bool(can_reorder),
-            },
+            number_column,
             {
                 "field": "status_label",
                 "headerName": "状态",
                 "width": 95,
                 ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索状态...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["启用", "停用"],
+                },
                 "cellClass": "vpn-grid-renderer-cell",
             },
             {
@@ -1098,12 +1109,28 @@ class FirewallPage:
                 "field": "protocol",
                 "headerName": "协议",
                 "width": 90,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索协议...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配协议",
+                    "valueOrder": ["ALL", "TCP", "UDP", "ICMP"],
+                },
             },
             {
                 "field": "action_label",
                 "headerName": "动作",
                 "width": 105,
                 ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索动作...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配动作",
+                    "valueOrder": ["ACCEPT", "DROP", "REJECT"],
+                },
                 "cellClass": "vpn-grid-renderer-cell",
             },
             {
@@ -1273,6 +1300,20 @@ class FirewallPage:
                 "selectionChanged",
                 self._on_remote_grid_selection_changed,
             )
+            self._remote_grid_view.grid.on(
+                "filterChanged",
+                self._on_remote_grid_filter_changed,
+            )
+            self._remote_grid_view.grid.on(
+                "sortChanged",
+                self._on_remote_grid_filter_changed,
+            )
+            if self._remote_filter_model:
+                self._schedule_grid_filter_model(
+                    self._remote_grid_view.grid,
+                    self._remote_filter_model,
+                    "firewall-remote-filter-restore",
+                )
             if self._remote_reorder_allowed:
                 self._remote_grid_view.grid.options["rowDragManaged"] = True
                 self._remote_grid_view.grid.options[
@@ -1298,6 +1339,35 @@ class FirewallPage:
             if isinstance(row.get("index"), int)
         }
         self._sync_action_bar_count()
+
+    async def _on_remote_grid_filter_changed(self, *_args) -> None:
+        """保存对端列筛选/排序状态，并同步可见规则数量。"""
+
+        view = self._remote_grid_view
+        if view is None:
+            return
+        try:
+            model = await view.grid.run_grid_method("getFilterModel")
+            self._remote_filter_model = model if isinstance(model, dict) else {}
+            column_state = await view.grid.run_grid_method("getColumnState")
+            self._remote_grid_sort_active = any(
+                isinstance(column, dict) and column.get("sort")
+                for column in (column_state or [])
+            )
+            displayed = int(await view.grid.run_grid_method("getDisplayedRowCount"))
+        except Exception as exc:
+            logger.debug("同步对端规则筛选状态失败: %s", exc)
+            return
+
+        if self._remote_rules_total_footer is not None:
+            total = len(self._remote_grid_rows)
+            if displayed == total:
+                self._remote_rules_total_footer.set_text(f"{total} RULES TOTAL")
+            else:
+                self._remote_rules_total_footer.set_text(
+                    f"{displayed} MATCHED / {total} TOTAL"
+                )
+        view.summary.text = f"共 {displayed} 条"
 
     async def _on_remote_grid_cell_click(self, event) -> None:
         """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
@@ -1468,9 +1538,13 @@ class FirewallPage:
     def _on_remote_grid_row_drag_end(self, event) -> None:
         """AG Grid 拖动结束后按缓存索引生成新顺序并立即写回。"""
 
-        if not self._remote_reorder_allowed:
+        if (
+            not self._remote_reorder_allowed
+            or self._remote_filter_model
+            or self._remote_grid_sort_active
+        ):
             self._notify_for_page(
-                "当前正在拉取/推送、SSH 不可用或远端真值未知，不能调整顺序",
+                "当前正在拉取/推送、筛选/排序中或 SSH 不可用，不能调整顺序",
                 type="warning",
             )
             self._refresh_remote_view()
@@ -2190,33 +2264,49 @@ class FirewallPage:
         form.open()
 
     def _switch_owner(self, owner_id: str) -> None:
-        """兼容旧跳转入口：同步归属筛选并刷新 Grid。"""
+        """兼容旧跳转入口：把归属条件写入 Grid 的多选筛选模型。"""
 
         normalized = str(owner_id or "").strip()
         self.current_owner_id = normalized
-        if self._center_owner_filter is not None:
-            self._center_owner_filter.set_value(normalized or "")
+        self._pending_center_owner_id = normalized
+        if not normalized:
+            self._center_filter_model.pop("owner_label", None)
         self._refresh_rules()
 
     @staticmethod
     def _center_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
-        """中心策略核心列定义。"""
+        """中心策略列定义；五个分类列使用可搜索、可全选的多选筛选。"""
+
+        priority_column: dict[str, Any] = {
+            "field": "priority",
+            "headerName": "优先级",
+            "width": 105,
+            "pinned": "left",
+            "filter": False,
+        }
+        if can_reorder:
+            priority_column[":rowDrag"] = (
+                "(params) => !params.api.isAnyFilterPresent() && "
+                "!params.api.getColumnState().some((state) => Boolean(state.sort))"
+            )
+        else:
+            priority_column["rowDrag"] = False
 
         return [
-            {
-                "field": "priority",
-                "headerName": "优先级",
-                "width": 105,
-                "pinned": "left",
-                "checkboxSelection": True,
-                "headerCheckboxSelection": True,
-                "rowDrag": bool(can_reorder),
-            },
+            priority_column,
             {
                 "field": "status_label",
                 "headerName": "状态",
                 "width": 100,
                 ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索状态...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["启用", "停用"],
+                },
                 "cellClass": "vpn-grid-renderer-cell",
             },
             {
@@ -2224,22 +2314,53 @@ class FirewallPage:
                 "headerName": "归属",
                 "minWidth": 160,
                 "flex": 1,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索归属...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配归属",
+                },
             },
             {
                 "field": "kind_label",
                 "headerName": "部署",
                 "minWidth": 135,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索部署类型...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配部署类型",
+                    "valueOrder": ["中心节点", "对端仅标识", "对端·中心放行"],
+                },
             },
             {
                 "field": "protocol",
                 "headerName": "协议",
                 "width": 95,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索协议...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配协议",
+                    "valueOrder": ["ALL", "TCP", "UDP", "ICMP", "SCTP", "UDPLITE", "ESP", "AH"],
+                },
             },
             {
                 "field": "action_label",
                 "headerName": "动作",
                 "width": 105,
                 ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索动作...",
+                    "selectAllLabel": "(全选)",
+                    "showValuesFromOtherFilters": False,
+                    "noMatchesLabel": "没有匹配动作",
+                    "valueOrder": ["ACCEPT", "DROP", "REJECT", "UNKNOWN"],
+                },
                 "cellClass": "vpn-grid-renderer-cell",
             },
             {
@@ -2247,28 +2368,33 @@ class FirewallPage:
                 "headerName": "来源",
                 "minWidth": 180,
                 "flex": 1,
+                "filter": False,
             },
             {
                 "field": "dest",
                 "headerName": "目标",
                 "minWidth": 160,
                 "flex": 1,
+                "filter": False,
             },
             {
                 "field": "dest_port",
                 "headerName": "端口",
                 "minWidth": 110,
+                "filter": False,
             },
             {
                 "field": "description",
                 "headerName": "说明",
                 "minWidth": 220,
                 "flex": 1,
+                "filter": False,
             },
             {
                 "field": "id",
                 "headerName": "规则 ID",
                 "minWidth": 210,
+                "filter": False,
             },
             {
                 "field": "actions",
@@ -2311,67 +2437,46 @@ class FirewallPage:
         }
         return rows
 
-    def _sync_center_owner_options(self, rows: list[dict[str, Any]]) -> None:
-        """根据当前数据维护归属筛选选项。"""
-
-        if self._center_owner_filter is None:
-            return
-        options: dict[str, str] = {"": "全部归属"}
-        for row in rows:
-            owner_id = str(row.get("owner_id") or "").strip()
-            if not owner_id:
-                continue
-            owner_type = str(row.get("owner_type") or "").strip()
-            label = str(row.get("owner_label") or owner_id)
-            prefix = {
-                "group": "组",
-                "user": "用户",
-                "peer": "对端",
-            }.get(owner_type, "归属")
-            options.setdefault(owner_id, f"{prefix} · {label}")
-
-        current = str(self._center_owner_filter.value or "").strip()
-        if current and current not in options:
-            current = ""
-            self.current_owner_id = ""
-        self._center_owner_filter.set_options(options, value=current)
-
     def _filter_center_rows(
         self,
         rows: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """应用关键词和归属筛选。"""
+        """计算全局关键词匹配结果；分类筛选由 AG Grid 多选过滤器处理。"""
 
         query = (
             str(self._center_search_input.value or "").strip().casefold()
             if self._center_search_input is not None
             else ""
         )
-        owner_id = (
-            str(self._center_owner_filter.value or "").strip()
-            if self._center_owner_filter is not None
-            else ""
-        )
-        self.current_owner_id = owner_id
-        self._is_unified_list = not bool(owner_id)
+        owner_filter = self._center_filter_model.get("owner_label")
+        self._is_unified_list = not bool(owner_filter)
+        if not owner_filter:
+            self.current_owner_id = ""
+        elif isinstance(owner_filter, dict):
+            selected_labels = owner_filter.get("values") or []
+            if len(selected_labels) == 1:
+                label = str(selected_labels[0])
+                owner_ids = {
+                    str(row.get("owner_id") or "")
+                    for row in self._center_all_rows
+                    if str(row.get("owner_label") or "") == label
+                    and str(row.get("owner_id") or "")
+                }
+                self.current_owner_id = next(iter(owner_ids)) if len(owner_ids) == 1 else ""
+            else:
+                self.current_owner_id = ""
+            self._is_unified_list = False
 
-        filtered = rows
-        if owner_id:
-            filtered = [
-                row
-                for row in filtered
-                if str(row.get("owner_id") or "") == owner_id
-            ]
-        if query:
-            filtered = [
-                row
-                for row in filtered
-                if query in str(row.get("search_text") or "")
-            ]
-        return filtered
+        if not query:
+            return list(rows)
+        return [
+            row
+            for row in rows
+            if query in str(row.get("search_text") or "")
+        ]
 
     def _refresh_rules(self) -> None:
-        """刷新中心策略 AG Grid，区分空数据、无匹配和读取失败。"""
+        """刷新中心策略 AG Grid，保留列筛选，并区分空数据、无匹配和读取失败。"""
 
         if self._center_grid_container is None:
             return
@@ -2397,34 +2502,49 @@ class FirewallPage:
             return
 
         self._center_all_rows = all_rows
-        self._sync_center_owner_options(all_rows)
-        rows = self._filter_center_rows(all_rows)
-        self._center_display_rows = rows
+        pending_owner_id = self._pending_center_owner_id
+        if pending_owner_id:
+            owner_labels = sorted({
+                str(row.get("owner_label") or "")
+                for row in all_rows
+                if str(row.get("owner_id") or "") == pending_owner_id
+                and str(row.get("owner_label") or "")
+            })
+            if owner_labels:
+                self._center_filter_model["owner_label"] = {
+                    "filterType": "niceVpnSet",
+                    "values": owner_labels,
+                }
+            else:
+                self._center_filter_model.pop("owner_label", None)
+            self._pending_center_owner_id = ""
+
+        matched_rows = self._filter_center_rows(all_rows)
+        self._center_display_rows = matched_rows
         query = (
             str(self._center_search_input.value or "").strip()
             if self._center_search_input is not None
             else ""
         )
-        owner_filter = (
-            str(self._center_owner_filter.value or "").strip()
-            if self._center_owner_filter is not None
-            else ""
-        )
-        self._center_reorder_allowed = not bool(query or owner_filter)
-        for row in rows:
+        self._center_reorder_allowed = not bool(query)
+        for row in all_rows:
             row["actions"] = "操作"
 
-        visible_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
+        visible_ids = [
+            str(row.get("id") or "")
+            for row in all_rows
+            if str(row.get("id") or "")
+        ]
         self._visible_center_rule_ids = visible_ids
         self.selected_rule_ids.intersection_update(set(visible_ids))
         self._sync_action_bar_count()
 
         if self._rules_total_footer is not None:
-            if len(rows) == len(all_rows):
+            if len(matched_rows) == len(all_rows):
                 self._rules_total_footer.set_text(f"{len(all_rows)} RULES TOTAL")
             else:
                 self._rules_total_footer.set_text(
-                    f"{len(rows)} MATCHED / {len(all_rows)} TOTAL"
+                    f"{len(matched_rows)} MATCHED / {len(all_rows)} TOTAL"
                 )
 
         self._center_grid_container.clear()
@@ -2439,26 +2559,41 @@ class FirewallPage:
                     icon="shield",
                 )
                 return
-            if not rows:
+            if query and not matched_rows:
                 no_match_state(
-                    description="当前关键词或归属筛选没有匹配规则。",
+                    description="当前关键词没有匹配规则。",
                     on_clear=self._clear_center_filters,
                 )
                 return
 
             self._center_grid_view = render_data_grid(
                 self._center_grid_columns(can_reorder=self._center_reorder_allowed),
-                rows,
+                all_rows,
                 row_id="id",
                 page_size=50,
                 selectable=True,
                 selected_ids=self.selected_rule_ids,
                 on_cell_click=self._on_center_grid_cell_click,
+                external_filter_text=query,
             )
             self._center_grid_view.grid.on(
                 "selectionChanged",
                 self._on_center_grid_selection_changed,
             )
+            self._center_grid_view.grid.on(
+                "filterChanged",
+                self._on_center_grid_filter_changed,
+            )
+            self._center_grid_view.grid.on(
+                "sortChanged",
+                self._on_center_grid_filter_changed,
+            )
+            if self._center_filter_model:
+                self._schedule_grid_filter_model(
+                    self._center_grid_view.grid,
+                    self._center_filter_model,
+                    "firewall-center-filter-restore",
+                )
             if self._center_reorder_allowed:
                 self._center_grid_view.grid.options["rowDragManaged"] = True
                 self._center_grid_view.grid.options["suppressMoveWhenRowDragging"] = False
@@ -2471,10 +2606,88 @@ class FirewallPage:
     def _clear_center_filters(self) -> None:
         if self._center_search_input is not None:
             self._center_search_input.set_value("")
-        if self._center_owner_filter is not None:
-            self._center_owner_filter.set_value("")
+        self._center_filter_model = {}
+        self._pending_center_owner_id = ""
         self.current_owner_id = ""
+        self._is_unified_list = True
+        self._center_grid_sort_active = False
         self._refresh_rules()
+
+    def _schedule_grid_filter_model(
+        self,
+        grid: Any,
+        model: dict[str, Any],
+        task_name: str,
+    ) -> None:
+        """在 Grid 创建后恢复列筛选模型，搜索框变化时不会丢失多选条件。"""
+
+        if not model:
+            return
+
+        async def apply_model() -> None:
+            try:
+                await grid.run_grid_method("setFilterModel", model)
+            except Exception as exc:
+                logger.debug("恢复防火墙筛选模型失败: %s", exc)
+
+        try:
+            background_tasks.create(apply_model(), name=task_name)
+        except RuntimeError:
+            logger.debug("当前无后台任务上下文，跳过筛选模型恢复")
+
+    def _sync_center_owner_scope_from_filter_model(self) -> None:
+        """仅在归属筛选恰好选中一个唯一归属时保留旧导入/新建默认归属语义。"""
+
+        owner_filter = self._center_filter_model.get("owner_label")
+        if not isinstance(owner_filter, dict):
+            self.current_owner_id = ""
+            self._is_unified_list = True
+            return
+
+        values = owner_filter.get("values") or []
+        self._is_unified_list = False
+        if len(values) != 1:
+            self.current_owner_id = ""
+            return
+
+        label = str(values[0])
+        owner_ids = {
+            str(row.get("owner_id") or "")
+            for row in self._center_all_rows
+            if str(row.get("owner_label") or "") == label
+            and str(row.get("owner_id") or "")
+        }
+        self.current_owner_id = next(iter(owner_ids)) if len(owner_ids) == 1 else ""
+
+    async def _on_center_grid_filter_changed(self, *_args) -> None:
+        """保存列筛选/排序状态，并同步匹配条数与排序保护。"""
+
+        view = self._center_grid_view
+        if view is None:
+            return
+        try:
+            model = await view.grid.run_grid_method("getFilterModel")
+            self._center_filter_model = model if isinstance(model, dict) else {}
+            column_state = await view.grid.run_grid_method("getColumnState")
+            self._center_grid_sort_active = any(
+                isinstance(column, dict) and column.get("sort")
+                for column in (column_state or [])
+            )
+            self._sync_center_owner_scope_from_filter_model()
+            displayed = int(await view.grid.run_grid_method("getDisplayedRowCount"))
+        except Exception as exc:
+            logger.debug("同步中心规则筛选状态失败: %s", exc)
+            return
+
+        if self._rules_total_footer is not None:
+            total = len(self._center_all_rows)
+            if displayed == total:
+                self._rules_total_footer.set_text(f"{total} RULES TOTAL")
+            else:
+                self._rules_total_footer.set_text(
+                    f"{displayed} MATCHED / {total} TOTAL"
+                )
+        view.summary.text = f"共 {displayed} 条"
 
     async def _on_center_grid_selection_changed(self, *_args) -> None:
         """同步 AG Grid 选中行到现有批量操作集合。"""
@@ -2613,8 +2826,15 @@ class FirewallPage:
     def _on_center_grid_row_drag_end(self, event) -> None:
         """AG Grid 拖动结束后持久化全局优先级顺序。"""
 
-        if not self._center_reorder_allowed:
-            self._notify_for_page("搜索或归属筛选状态下不能调整优先级", type="warning")
+        if (
+            not self._center_reorder_allowed
+            or self._center_filter_model
+            or self._center_grid_sort_active
+        ):
+            self._notify_for_page(
+                "搜索、筛选或排序状态下不能调整优先级",
+                type="warning",
+            )
             self._refresh_rules()
             return
 
