@@ -200,6 +200,17 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen.should_contain("SSH 认证")
 
     screen.open("/firewall")
+    screen.wait(0.3)
+    selection_counts = screen.selenium.execute_script(
+        """
+        return Array.from(
+          document.querySelectorAll(
+            ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
+          )
+        ).map((row) => row.querySelectorAll(".ag-selection-checkbox").length);
+        """
+    )
+    assert all(count == 1 for count in selection_counts), selection_counts
     for label in (
         "新建规则",
         "导入",

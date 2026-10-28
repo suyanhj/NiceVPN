@@ -81,7 +81,7 @@ jobs:
           browser=false
           for file in "${changed_files[@]}"; do
             case "${file}" in
-              .github/workflows/tests.yml|.dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*)
+              .dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*)
                 docker=true
                 ;;
             esac
@@ -173,14 +173,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Build V2 frontend assets with Docker
-        run: ./build-ui.sh
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/ui/vue/frontend/package.json
+
+      - name: Build V2 frontend assets
+        working-directory: app/ui/vue/frontend
+        run: |
+          npm config set registry "https://registry.npmmirror.com"
+          npm install --no-audit --no-fund --package-lock=false
+          npm run check
+          test -s ../dist/VpnSpotlightSurface.js
+          test -s ../dist/VpnInteractiveGrid.js
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
           cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |

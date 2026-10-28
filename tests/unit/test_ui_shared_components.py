@@ -334,6 +334,28 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid._event_listeners
 
 
+def test_data_grid_external_filter_targets_search_text_only() -> None:
+    state: dict[str, object] = {}
+
+    def page() -> None:
+        state["view"] = render_data_grid(
+            ({"field": "name", "headerName": "名称"},),
+            ({"id": "a", "name": "Alice", "search_text": "172.16.0.10 allow api"},),
+            external_filter_text="172.16.0.10",
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+    options = state["view"].grid.options
+    assert options[":isExternalFilterPresent"] == "() => true"
+    assert "search_text" in options[":doesExternalFilterPass"]
+    assert "172.16.0.10" in options[":doesExternalFilterPass"]
+
+
 def test_chart_card_supports_data_empty_and_error_states() -> None:
     """图表卡可在数据、空数据和局部错误之间稳定构建。"""
 
