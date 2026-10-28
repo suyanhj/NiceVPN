@@ -202,11 +202,12 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
             return Array.from(document.querySelectorAll(
               ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
             ))
-              .map((row) => row.querySelector('.ag-cell[col-id="id"]')?.textContent.trim() || "")
-              .filter(Boolean);
+              .map((row) => row.getAttribute("row-id") || "")
+              .filter((row_id) => row_id.startsWith("rule-"));
             """
         )
 
+    WebDriverWait(screen.selenium, 5).until(lambda _driver: len(center_rule_ids()) >= 2)
     before = center_rule_ids()
     assert before[:2] == ["rule-001", "rule-002"], before
 
