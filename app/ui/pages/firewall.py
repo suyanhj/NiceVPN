@@ -2576,6 +2576,8 @@ class FirewallPage:
                 on_cell_click=self._on_center_grid_cell_click,
                 external_filter_text=query,
             )
+            # Grid summary must reflect the global search before column filters change.
+            self._center_grid_view.summary.text = f"共 {len(matched_rows)} 条"
             self._center_grid_view.grid.on(
                 "selectionChanged",
                 self._on_center_grid_selection_changed,

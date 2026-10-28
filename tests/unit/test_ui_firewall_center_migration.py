@@ -243,6 +243,7 @@ def test_center_firewall_keyword_search_and_no_match_state(
             assert len(page._center_grid_view.grid.options["rowData"]) == 3
             assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
             assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
+            assert page._center_grid_view.summary.text == "共 1 条"
 
             page._center_search_input.set_value("definitely-not-found")
             page._refresh_rules()
