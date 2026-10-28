@@ -319,12 +319,9 @@ class FirewallPage:
             icon: str,
             callback,
             *,
-            create: bool = False,
             danger: bool = False,
         ):
-            factory = create_action if create else (
-                danger_action if danger else secondary_action
-            )
+            factory = danger_action if danger else secondary_action
             button = factory(
                 label,
                 icon=icon,
@@ -334,19 +331,22 @@ class FirewallPage:
             )
             button.props("round dense")
             classes = "firewall-bar-icon-action"
-            if create:
-                classes += " firewall-bar-icon-action--create"
             if danger:
                 classes += " firewall-bar-icon-action--danger"
             button.classes(add=classes)
             return button
 
         def bulk_actions() -> None:
-            action_icon(
+            create_button = create_action(
                 "新建规则",
-                "add",
-                self._on_new_rule_click,
-                create=True,
+                icon="add",
+                on_click=self._on_new_rule_click,
+                icon_only=True,
+                tooltip="新建规则",
+            )
+            create_button.props("round dense")
+            create_button.classes(
+                add="firewall-bar-icon-action firewall-bar-icon-action--create"
             )
             action_icon(
                 "导入",
