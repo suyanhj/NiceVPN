@@ -223,8 +223,9 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
     )
     assert handle.is_displayed()
 
-    ActionChains(screen.selenium).move_to_element(handle).click_and_hold(handle) \\
-        .pause(0.2).move_to_element(target).pause(0.2).release().perform()
+    actions = ActionChains(screen.selenium)
+    actions.move_to_element(handle).click_and_hold(handle)
+    actions.pause(0.2).move_to_element(target).pause(0.2).release().perform()
     screen.wait(0.3)
     _click_aria_button(screen, "保存排序")
 
