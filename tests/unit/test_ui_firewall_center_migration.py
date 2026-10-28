@@ -190,13 +190,24 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
             assert response.status_code == 200
             await user.should_see("中心策略")
             await user.should_see("对端远端")
-            await user.should_see("新建规则")
-            await user.should_see("批量启用")
-            await user.should_see("批量停用")
-            await user.should_see("批量删除")
             await user.should_see("3 RULES TOTAL")
 
     asyncio.run(verify())
+
+    assert page._action_bar is not None
+    action_labels = {
+        element._props.get("aria-label")
+        for element in page._action_bar.actions.client.elements.values()
+        if getattr(element, "_props", {}).get("aria-label")
+    }
+    assert {
+        "新建规则",
+        "导入",
+        "导出",
+        "批量启用",
+        "批量停用",
+        "批量删除",
+    } <= action_labels
 
     assert page._center_grid_view is not None
     options = page._center_grid_view.grid.options
@@ -919,3 +930,35 @@ def test_center_import_dialog_uses_shared_form_and_precheck_copy(
             await user.should_see("尚未执行预检查")
 
     asyncio.run(verify())
+
+
+def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "firewall.py").read_text(
+        encoding="utf-8"
+    )
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "firewall-page--v2" in source
+    assert "firewall-tab-shell" in source
+    assert "firewall-bulk-bar" in source
+    assert "firewall-filter-bar" in source
+    assert "firewall-bar-icon-action" in source
+    assert "render_page_toolbar(" not in source
+    assert "more_actions(" not in source
+    assert "ACTION_BUTTON_RENDERER" in source
+    assert "STATUS_PILL_RENDERER" in source
+    assert "firewall-action-dialog" in source
+    assert "firewall-rule-drawer" in source
+
+    assert ".firewall-page--v2 .firewall-tab-shell" in shell_css
+    assert ".firewall-page--v2 .firewall-bulk-bar" in shell_css
+    assert ".firewall-page--v2 .firewall-filter-bar" in shell_css
+    assert ".firewall-page--v2 .firewall-center-shell" in shell_css
+    assert ".firewall-page--v2 .firewall-remote-control" in shell_css
+    assert ".q-dialog .q-card.firewall-action-dialog" in shell_css
+    assert ".q-dialog .q-card.firewall-rule-drawer" in shell_css

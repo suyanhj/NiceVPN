@@ -200,9 +200,19 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen.should_contain("SSH 认证")
 
     screen.open("/firewall")
-    screen.click("更多")
-    screen.should_contain("导入")
-    screen.should_contain("导出")
+    for label in (
+        "新建规则",
+        "导入",
+        "导出",
+        "批量启用",
+        "批量停用",
+        "批量删除",
+    ):
+        button = screen.selenium.find_element(
+            By.CSS_SELECTOR,
+            f'button[aria-label="{label}"]',
+        )
+        assert button.is_displayed(), label
     screen.click("对端远端")
     screen.should_contain("从对端拉取")
 

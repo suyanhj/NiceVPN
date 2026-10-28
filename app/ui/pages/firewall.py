@@ -56,19 +56,21 @@ from app.ui.adapters.firewall import (
 )
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
-    MenuAction,
     create_action,
     danger_action,
-    more_actions,
     primary_action,
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid_renderers import (
+    ACTION_BUTTON_RENDERER,
+    STATUS_PILL_RENDERER,
+)
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge
-from app.ui.components.toolbars import render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -253,6 +255,7 @@ class FirewallPage:
         self._remote_grid_view = None
         self._remote_grid_rows: list[dict[str, Any]] = []
         self._remote_reorder_allowed = False
+        self._action_bar = None
 
     def _page_client(self) -> Any:
         """当前页面浏览器会话。优先 render 时缓存的 client，否则从列表区容器解析。"""
@@ -304,105 +307,182 @@ class FirewallPage:
         return True
 
     def render(self) -> None:
-        """使用共享后台外壳渲染中心与对端策略入口。"""
+        """使用 V2 管理页结构渲染中心与对端策略入口。"""
 
         try:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
 
-        def search_region() -> None:
-            with ui.row().classes("items-center gap-2 flex-wrap") as self._center_search_controls:
-                self._center_search_input = (
-                    ui.input(
-                        placeholder="搜索归属 / IP / 协议 / 动作 / 规则 ID",
-                        on_change=lambda _event: self._refresh_rules(),
-                    )
-                    .props("outlined dense clearable debounce=250")
-                    .classes("min-w-[18rem] flex-1")
-                )
-                self._center_owner_filter = (
-                    ui.select(
-                        {"": "全部归属"},
-                        value="",
-                        label="归属",
-                        on_change=lambda _event: self._refresh_rules(),
-                    )
-                    .props('outlined dense clearable behavior=menu popup-content-class="vpn-owner-select-menu"')
-                    .classes("min-w-[12rem]")
-                )
+        def action_icon(
+            label: str,
+            icon: str,
+            callback,
+            *,
+            create: bool = False,
+            danger: bool = False,
+        ):
+            factory = create_action if create else (
+                danger_action if danger else secondary_action
+            )
+            button = factory(
+                label,
+                icon=icon,
+                on_click=callback,
+                icon_only=True,
+                tooltip=label,
+            )
+            button.props("round dense")
+            classes = "firewall-bar-icon-action"
+            if create:
+                classes += " firewall-bar-icon-action--create"
+            if danger:
+                classes += " firewall-bar-icon-action--danger"
+            button.classes(add=classes)
+            return button
 
-        def primary_region() -> None:
-            create_action(
+        def bulk_actions() -> None:
+            action_icon(
                 "新建规则",
-                icon="add",
-                on_click=self._on_new_rule_click,
+                "add",
+                self._on_new_rule_click,
+                create=True,
+            )
+            action_icon(
+                "导入",
+                "upload_file",
+                self._show_import_dialog,
+            )
+            action_icon(
+                "导出",
+                "download",
+                self._export_backup,
+            )
+            ui.element("span").classes("firewall-action-separator")
+            action_icon(
+                "批量启用",
+                "toggle_on",
+                self._batch_enable,
+            )
+            action_icon(
+                "批量停用",
+                "toggle_off",
+                self._batch_disable,
+            )
+            action_icon(
+                "批量删除",
+                "delete",
+                self._batch_delete,
+                danger=True,
             )
 
-        def secondary_region() -> None:
-            secondary_action("批量启用", on_click=self._batch_enable)
-            secondary_action("批量停用", on_click=self._batch_disable)
-            danger_action("批量删除", on_click=self._batch_delete)
-            more_actions(
-                (
-                    MenuAction("导入", icon="upload_file", on_click=self._show_import_dialog),
-                    MenuAction("导出", icon="download", on_click=self._export_backup),
-                ),
-                label="更多",
-            )
+        with ui.column().classes(
+            "page-shell mgmt-page firewall-page--v2 page-shell--firewall"
+        ):
+            with ui.element("div").classes("firewall-tab-shell"):
+                with ui.tabs(
+                    value="center",
+                    on_change=self._on_strat_change,
+                ).classes("firewall-compact-tabs w-full") as self._strat_tabs:
+                    ui.tab("center", label="中心策略")
+                    ui.tab("remote", label="对端远端")
 
-        with ui.column().classes("page-shell mgmt-page w-full h-full min-h-0 page-shell--firewall"):
-            with ui.tabs(
-                value="center",
-                on_change=self._on_strat_change,
-            ).classes("firewall-compact-tabs w-full") as self._strat_tabs:
-                ui.tab("center", label="中心策略")
-                ui.tab("remote", label="对端远端")
-
-            render_page_toolbar(
-                search=search_region,
-                primary=primary_region,
-                secondary=secondary_region,
+            self._action_bar = render_bulk_action_bar(
+                0,
+                actions=bulk_actions,
             )
+            self._action_bar.container.classes(add="firewall-bulk-bar")
+
+            with ui.element("section").classes(
+                "firewall-filter-bar"
+            ) as self._center_search_controls:
+                with ui.row().classes(
+                    "firewall-filter-row w-full items-center gap-2 no-wrap"
+                ):
+                    self._center_search_input = (
+                        ui.input(
+                            placeholder="搜索归属 / IP / 协议 / 动作 / 规则 ID",
+                            on_change=lambda _event: self._refresh_rules(),
+                        )
+                        .props("outlined dense clearable debounce=250")
+                        .classes("firewall-search-input flex-1 min-w-0")
+                    )
+                    self._center_owner_filter = (
+                        ui.select(
+                            {"": "全部归属"},
+                            value="",
+                            label="归属",
+                            on_change=lambda _event: self._refresh_rules(),
+                        )
+                        .props(
+                            'outlined dense clearable behavior=menu '
+                            'popup-content-class="vpn-owner-select-menu"'
+                        )
+                        .classes("firewall-owner-filter")
+                    )
 
             with ui.tab_panels(
                 self._strat_tabs,
                 value="center",
                 keep_alive=False,
-            ).classes("w-full h-full min-h-0 flex-1 firewall-tabpanels"):
-                with ui.tab_panel("center").classes("h-full min-h-0 flex-1"):
+            ).classes(
+                "w-full h-full min-h-0 flex-1 "
+                "firewall-tabpanels firewall-tabpanels--v2"
+            ):
+                with ui.tab_panel("center").classes(
+                    "h-full min-h-0 flex-1 firewall-center-panel"
+                ):
                     with ui.column().classes(
                         "firewall-center-canvas w-full min-h-0 flex-1 gap-0"
                     ):
                         with ui.element("section").classes(
-                            "mgmt-panel mgmt-panel-list firewall-center-shell w-full min-h-0 flex-1"
+                            "mgmt-panel mgmt-panel-list firewall-center-shell "
+                            "w-full min-h-0 flex-1"
                         ):
                             self._center_grid_container = ui.column().classes(
+                                "firewall-center-data-region "
                                 "w-full min-h-0 flex-1"
                             )
                             self.rules_container = self._center_grid_container
 
                         with ui.element("div").classes(
-                            "mgmt-page-foot w-full mt-auto flex-shrink-0"
+                            "mgmt-page-foot firewall-page-foot "
+                            "w-full mt-auto flex-shrink-0"
                         ):
                             with ui.row().classes(
-                                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+                                "mgmt-page-footer-row w-full items-center "
+                                "justify-between text-grey-6"
                             ):
                                 ui.label(
-                                    "排序请在无搜索/无归属筛选时操作"
-                                ).classes("uppercase tracking-widest")
-                                self._rules_total_footer = ui.label("0 RULES TOTAL").classes(
-                                    "uppercase tracking-widest"
-                                )
+                                    "无筛选时可拖动优先级排序"
+                                ).classes("firewall-footer-hint")
+                                self._rules_total_footer = ui.label(
+                                    "0 RULES TOTAL"
+                                ).classes("firewall-footer-count")
 
-                with ui.tab_panel("remote").classes("h-full min-h-0 flex-1"):
+                with ui.tab_panel("remote").classes(
+                    "h-full min-h-0 flex-1 firewall-remote-panel"
+                ):
                     self._remote_tab_shell = ui.column().classes(
-                        "firewall-peer-remote firewall-remote-canvas w-full min-h-0 flex-1 gap-0"
+                        "firewall-peer-remote firewall-remote-canvas "
+                        "w-full min-h-0 flex-1 gap-0"
                     )
                     with self._remote_tab_shell:
                         self._build_remote_tab_static()
 
         self._refresh_rules()
+
+    def _sync_action_bar_count(self) -> None:
+        """让中心/远端共用操作栏始终反映当前页签选择数量。"""
+
+        if self._action_bar is None:
+            return
+        count = (
+            len(self.selected_rule_ids)
+            if self._center_tab_active
+            else len(self._selected_remote_indices)
+        )
+        self._action_bar.set_selected_count(count)
 
     def _on_strat_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "center")
@@ -414,9 +494,11 @@ class FirewallPage:
             self._remote_fetch_generation += 1
             self._remote_fetch_running_peer = None
             self._selected_remote_indices.clear()
+            self._sync_action_bar_count()
             self._refresh_rules()
         else:
             self.selected_rule_ids.clear()
+            self._sync_action_bar_count()
             self._on_enter_remote_tab()
 
     def _on_new_rule_click(self) -> None:
@@ -531,8 +613,13 @@ class FirewallPage:
 
         opts = self._peer_options_for_select()
 
-        with ui.element("section").classes("mgmt-panel w-full"):
-            with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+        with ui.element("section").classes(
+            "mgmt-panel firewall-remote-control w-full"
+        ):
+            with ui.row().classes(
+                "firewall-remote-control-row "
+                "w-full items-center gap-3 flex-wrap"
+            ):
                 if opts:
                     first_id = next(iter(opts))
                     self._remote_peer_select = (
@@ -542,7 +629,10 @@ class FirewallPage:
                             value=first_id,
                             with_input=True,
                         )
-                        .classes("min-w-[18rem] flex-1")
+                        .classes(
+                            "firewall-remote-peer-select "
+                            "min-w-[18rem] flex-1"
+                        )
                         .props("outlined dense")
                     )
                     self._remote_peer_select.on_value_change(
@@ -574,10 +664,13 @@ class FirewallPage:
 
             self._remote_cache_meta_label = ui.label(
                 "拉取：— · 推送：—"
-            ).classes("section-caption q-mt-sm")
+            ).classes(
+                "section-caption firewall-remote-cache-meta q-mt-sm"
+            )
 
         self._remote_list_container = ui.column().classes(
-            "firewall-remote-list-stretch w-full min-h-0 gap-0 h-full"
+            "firewall-remote-list-stretch firewall-remote-data-region "
+            "w-full min-h-0 gap-0 h-full"
         )
 
         with ui.element("div").classes(
@@ -588,10 +681,10 @@ class FirewallPage:
             ):
                 ui.label(
                     "远端链以 SSH 真值为准；修改后立即写回"
-                ).classes("uppercase tracking-widest")
+                ).classes("firewall-footer-hint")
                 self._remote_rules_total_footer = ui.label(
                     "0 RULES TOTAL"
-                ).classes("uppercase tracking-widest")
+                ).classes("firewall-footer-count")
 
         self._refresh_remote_toolbar_state()
 
@@ -993,6 +1086,8 @@ class FirewallPage:
                 "field": "status_label",
                 "headerName": "状态",
                 "width": 95,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "priority",
@@ -1008,6 +1103,8 @@ class FirewallPage:
                 "field": "action_label",
                 "headerName": "动作",
                 "width": 105,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "source",
@@ -1041,10 +1138,16 @@ class FirewallPage:
             {
                 "field": "actions",
                 "headerName": "操作",
-                "width": 100,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
+                "resizable": False,
                 "pinned": "right",
+                "lockPinned": True,
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         ]
 
@@ -1112,6 +1215,7 @@ class FirewallPage:
 
         valid_indices = set(self._visible_remote_indices)
         self._selected_remote_indices.intersection_update(valid_indices)
+        self._sync_action_bar_count()
 
         if self._remote_rules_total_footer is not None:
             self._remote_rules_total_footer.set_text(
@@ -1185,6 +1289,7 @@ class FirewallPage:
 
         if self._remote_grid_view is None:
             self._selected_remote_indices.clear()
+            self._sync_action_bar_count()
             return
         selected = await self._remote_grid_view.get_selected_rows()
         self._selected_remote_indices = {
@@ -1192,6 +1297,7 @@ class FirewallPage:
             for row in selected
             if isinstance(row.get("index"), int)
         }
+        self._sync_action_bar_count()
 
     async def _on_remote_grid_cell_click(self, event) -> None:
         """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
@@ -1236,7 +1342,9 @@ class FirewallPage:
         row = dict(rows[index])
         enabled = bool(row.get("enabled", True))
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog firewall-action-dialog w-full max-w-md"
+        ):
             ui.label(f"对端规则 #{index + 1}").classes("text-h6")
             ui.label(str(row.get("rest") or "")).classes(
                 "font-mono text-caption break-all"
@@ -1668,7 +1776,7 @@ class FirewallPage:
         )
         form.dialog.props("position=right maximized")
         form.card.classes(
-            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+            "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
         )
         form.open()
 
@@ -2077,7 +2185,7 @@ class FirewallPage:
         )
         form.dialog.props("position=right maximized")
         form.card.classes(
-            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+            "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
         )
         form.open()
 
@@ -2108,6 +2216,8 @@ class FirewallPage:
                 "field": "status_label",
                 "headerName": "状态",
                 "width": 100,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "owner_label",
@@ -2129,6 +2239,8 @@ class FirewallPage:
                 "field": "action_label",
                 "headerName": "动作",
                 "width": 105,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
             },
             {
                 "field": "source",
@@ -2161,10 +2273,16 @@ class FirewallPage:
             {
                 "field": "actions",
                 "headerName": "操作",
-                "width": 100,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
+                "resizable": False,
                 "pinned": "right",
+                "lockPinned": True,
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         ]
 
@@ -2299,6 +2417,7 @@ class FirewallPage:
         visible_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
         self._visible_center_rule_ids = visible_ids
         self.selected_rule_ids.intersection_update(set(visible_ids))
+        self._sync_action_bar_count()
 
         if self._rules_total_footer is not None:
             if len(rows) == len(all_rows):
@@ -2362,6 +2481,7 @@ class FirewallPage:
 
         if self._center_grid_view is None:
             self.selected_rule_ids.clear()
+            self._sync_action_bar_count()
             return
         selected = await self._center_grid_view.get_selected_rows()
         self.selected_rule_ids = {
@@ -2369,6 +2489,7 @@ class FirewallPage:
             for row in selected
             if str(row.get("id") or "").strip()
         }
+        self._sync_action_bar_count()
 
     async def _on_center_grid_cell_click(self, event) -> None:
         """复制结构化字段；点击“操作”列打开单项操作。"""
@@ -2409,7 +2530,9 @@ class FirewallPage:
             or raw.get("_row_kind") == "center_peer"
         )
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog firewall-action-dialog w-full max-w-md"
+        ):
             ui.label("规则操作").classes("text-h6")
             ui.label(str(rule_id)).classes("font-mono text-caption break-all")
             if is_center_peer:
@@ -2802,7 +2925,7 @@ class FirewallPage:
         )
         form.dialog.props("position=right maximized")
         form.card.classes(
-            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+            "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
         )
         form.open()
 
@@ -3030,7 +3153,7 @@ class FirewallPage:
         )
         form.dialog.props("position=right maximized")
         form.card.classes(
-            "w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+            "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
         )
         form.open()
 
