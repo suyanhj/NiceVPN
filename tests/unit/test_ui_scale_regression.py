@@ -229,8 +229,8 @@ def test_large_center_and_remote_firewall_grids_keep_virtualized_table_shape() -
     center_grid = captured["center"]
     assert len(center_grid.grid.options["rowData"]) == 2000
     assert center_grid.grid.options["pagination"] is True
-    assert ":rowDrag" in center_grid.grid.options["columnDefs"][0]
-    assert "isAnyFilterPresent" in center_grid.grid.options["columnDefs"][0][":rowDrag"]
+    assert center_grid.grid.options["columnDefs"][0]["rowDrag"] is True
+    assert ":rowDrag" not in center_grid.grid.options["columnDefs"][0]
 
     captured.clear()
 
@@ -254,8 +254,8 @@ def test_large_center_and_remote_firewall_grids_keep_virtualized_table_shape() -
     remote_grid = captured["remote"]
     assert len(remote_grid.grid.options["rowData"]) == 2000
     assert remote_grid.grid.options["paginationPageSize"] == 50
-    assert ":rowDrag" in remote_grid.grid.options["columnDefs"][0]
-    assert "isAnyFilterPresent" in remote_grid.grid.options["columnDefs"][0][":rowDrag"]
+    assert remote_grid.grid.options["columnDefs"][0]["rowDrag"] is True
+    assert ":rowDrag" not in remote_grid.grid.options["columnDefs"][0]
     assert "peer-scale:1999" in remote_grid.grid.options[
         ":onFirstDataRendered"
     ]
