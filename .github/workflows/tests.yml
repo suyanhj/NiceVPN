@@ -55,9 +55,16 @@ jobs:
           base_sha="${BEFORE_SHA:-}"
           head_sha="${GITHUB_SHA}"
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            base_sha="${PR_BASE_SHA:-}"
+            # pull_request synchronize 事件的 before 是“上一次 PR head”，
+            # 用它只判断本次新增提交；否则从 PR base 比较，确保首次 PR 完整验证。
             head_sha="${PR_HEAD_SHA:-${GITHUB_SHA}}"
+            if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]]; then
+              base_sha="${PR_BASE_SHA:-}"
+            fi
           fi
+
+          echo "Diff base: ${base_sha}"
+          echo "Diff head: ${head_sha}"
 
           # 新分支首次 push 或事件缺少可比较基线时，宁可完整验证一次。
           if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]] || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
@@ -91,6 +98,8 @@ jobs:
             echo "### Expensive test scope"
             echo "- Docker build: ${docker}"
             echo "- Browser smoke: ${browser}"
+            echo "- Diff base: \`${base_sha}\`"
+            echo "- Diff head: \`${head_sha}\`"
             echo "- Changed files: ${#changed_files[@]}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
