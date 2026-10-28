@@ -222,6 +222,8 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
     assert rows[1]["owner_label"] == "alice"
     assert rows[2]["owner_label"] == "广州站点 (peer-001)"
     assert rows[2]["kind_label"] == "对端·中心放行"
+    assert rows[0]["action_label_tone"] == "success"
+    assert rows[1]["action_label_tone"] == "failed"
 
 
 def test_center_firewall_keyword_search_and_no_match_state(
