@@ -103,13 +103,14 @@ def adapt_center_rule_row(
         detail = description or center_tag
 
     rule_expression = f"{source} → {dest}:{port}"
+    # Global search stays focused on concise operational fields. Descriptions and
+    # iptables comments can be very long, so they are deliberately not indexed.
     search_text = " ".join(
         [
             rule_id,
             source,
             dest,
             port,
-            detail,
         ]
     ).casefold()
 

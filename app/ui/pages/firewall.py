@@ -247,6 +247,13 @@ class FirewallPage:
         self._center_display_rows: list[dict[str, Any]] = []
         self._center_raw_by_id: dict[str, dict[str, Any]] = {}
         self._center_reorder_allowed = False
+        self._center_reorder_mode = False
+        self._pending_center_order: list[str] = []
+        self._center_reorder_original_order: list[str] = []
+        self._center_reorder_button = None
+        self._center_save_reorder_button = None
+        self._center_cancel_reorder_button = None
+        self._rules_footer_hint = None
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
         self._remote_fetch_error_by_peer: dict[str, str] = {}
@@ -365,6 +372,24 @@ class FirewallPage:
                 self._export_backup,
             )
             ui.element("span").classes("firewall-action-separator")
+            self._center_reorder_button = action_icon(
+                "调整优先级",
+                "swap_vert",
+                self._enter_center_reorder_mode,
+            )
+            self._center_save_reorder_button = action_icon(
+                "保存排序",
+                "save",
+                self._save_center_reorder,
+            )
+            self._center_cancel_reorder_button = action_icon(
+                "取消排序",
+                "close",
+                self._cancel_center_reorder_mode,
+            )
+            self._center_save_reorder_button.set_visibility(False)
+            self._center_cancel_reorder_button.set_visibility(False)
+            ui.element("span").classes("firewall-action-separator")
             action_icon(
                 "批量启用",
                 "toggle_on",
@@ -407,7 +432,7 @@ class FirewallPage:
                 ):
                     self._center_search_input = (
                         ui.input(
-                            placeholder="搜索 IP / 规则 ID / 说明",
+                            placeholder="搜索 IP / 端口 / 规则 ID",
                             on_change=lambda _event: self._refresh_rules(),
                         )
                         .props("outlined dense clearable debounce=250")
@@ -447,8 +472,8 @@ class FirewallPage:
                                 "mgmt-page-footer-row w-full items-center "
                                 "justify-between text-grey-6"
                             ):
-                                ui.label(
-                                    "无筛选时可拖动优先级排序"
+                                self._rules_footer_hint = ui.label(
+                                    "点击“调整优先级”进入拖动排序模式"
                                 ).classes("firewall-footer-hint")
                                 self._rules_total_footer = ui.label(
                                     "0 RULES TOTAL"
@@ -480,10 +505,19 @@ class FirewallPage:
 
     def _on_strat_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "center")
+        if v != "center" and self._center_reorder_mode:
+            # Leaving the center tab discards an unsaved preview, never silently saves it.
+            self._center_reorder_mode = False
+            self._pending_center_order = []
+            self._center_reorder_original_order = []
+            self._center_reorder_allowed = False
+            if self._center_search_input is not None:
+                self._center_search_input.enable()
         self._center_tab_active = v == "center"
         logger.debug("firewall 策略页签切换为 %s", v)
         if self._center_search_controls is not None:
             self._center_search_controls.set_visibility(self._center_tab_active)
+        self._sync_center_reorder_controls()
         if self._center_tab_active:
             self._remote_fetch_generation += 1
             self._remote_fetch_running_peer = None
@@ -2274,7 +2308,9 @@ class FirewallPage:
         self._refresh_rules()
 
     @staticmethod
-    def _center_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
+    def _center_grid_columns(
+        *, can_reorder: bool = False, reorder_mode: bool = False
+    ) -> list[dict[str, Any]]:
         """中心策略列定义；五个分类列使用可搜索、可全选的多选筛选。"""
 
         priority_column: dict[str, Any] = {
@@ -2292,7 +2328,7 @@ class FirewallPage:
         else:
             priority_column["rowDrag"] = False
 
-        return [
+        columns = [
             priority_column,
             {
                 "field": "status_label",
@@ -2411,6 +2447,15 @@ class FirewallPage:
                 "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         ]
+        if reorder_mode:
+            for column in columns:
+                column["sortable"] = False
+                column["filter"] = False
+                column.pop(":filter", None)
+                column.pop("filterParams", None)
+                if column.get("field") == "actions":
+                    column["hide"] = True
+        return columns
 
     def _load_center_grid_rows(self) -> list[dict[str, Any]]:
         """从 service 获取统一中心规则并转换为稳定 Grid 行。"""
@@ -2520,13 +2565,38 @@ class FirewallPage:
             self._pending_center_owner_id = ""
 
         matched_rows = self._filter_center_rows(all_rows)
-        self._center_display_rows = matched_rows
         query = (
             str(self._center_search_input.value or "").strip()
             if self._center_search_input is not None
             else ""
         )
-        self._center_reorder_allowed = not bool(query)
+        if self._center_reorder_mode:
+            rows_by_id = {
+                str(row.get("id") or ""): row
+                for row in matched_rows
+                if str(row.get("id") or "")
+            }
+            pending_ids = [
+                rule_id
+                for rule_id in self._pending_center_order
+                if rule_id in rows_by_id
+            ]
+            seen_ids = set(pending_ids)
+            pending_ids.extend(
+                str(row.get("id") or "")
+                for row in matched_rows
+                if str(row.get("id") or "") and str(row.get("id") or "") not in seen_ids
+            )
+            self._pending_center_order = pending_ids
+            matched_rows = [rows_by_id[rule_id] for rule_id in pending_ids]
+        self._center_display_rows = matched_rows
+        self._center_reorder_allowed = bool(
+            self._center_reorder_mode
+            and not query
+            and not self._center_filter_model
+            and not self._center_grid_sort_active
+        )
+        self._sync_center_reorder_controls()
         for row in all_rows:
             row["actions"] = "操作"
 
@@ -2566,22 +2636,28 @@ class FirewallPage:
                 )
                 return
 
+            grid_rows = matched_rows if self._center_reorder_mode else all_rows
             self._center_grid_view = render_data_grid(
-                self._center_grid_columns(can_reorder=self._center_reorder_allowed),
-                all_rows,
+                self._center_grid_columns(
+                    can_reorder=self._center_reorder_allowed,
+                    reorder_mode=self._center_reorder_mode,
+                ),
+                grid_rows,
                 row_id="id",
                 page_size=50,
-                selectable=True,
+                pagination=not self._center_reorder_mode,
+                selectable=not self._center_reorder_mode,
                 selected_ids=self.selected_rule_ids,
                 on_cell_click=self._on_center_grid_cell_click,
                 external_filter_text=query,
             )
             # Grid summary must reflect the global search before column filters change.
             self._center_grid_view.summary.text = f"共 {len(matched_rows)} 条"
-            self._center_grid_view.grid.on(
-                "selectionChanged",
-                self._on_center_grid_selection_changed,
-            )
+            if not self._center_reorder_mode:
+                self._center_grid_view.grid.on(
+                    "selectionChanged",
+                    self._on_center_grid_selection_changed,
+                )
             self._center_grid_view.grid.on(
                 "filterChanged",
                 self._on_center_grid_filter_changed,
@@ -2605,7 +2681,143 @@ class FirewallPage:
                 )
                 self._center_grid_view.grid.update()
 
-    def _clear_center_filters(self) -> None:
+    def _sync_center_reorder_controls(self) -> None:
+        """同步排序模式按钮、搜索框和页脚提示。"""
+
+        center_visible = bool(self._center_tab_active)
+        reorder_mode = bool(center_visible and self._center_reorder_mode)
+        if self._center_reorder_button is not None:
+            self._center_reorder_button.set_visibility(
+                center_visible and not reorder_mode
+            )
+        if self._center_save_reorder_button is not None:
+            self._center_save_reorder_button.set_visibility(reorder_mode)
+        if self._center_cancel_reorder_button is not None:
+            self._center_cancel_reorder_button.set_visibility(reorder_mode)
+        if self._center_search_input is not None:
+            if reorder_mode:
+                self._center_search_input.disable()
+            else:
+                self._center_search_input.enable()
+        if self._rules_footer_hint is not None:
+            self._rules_footer_hint.text = (
+                "拖动调整顺序；点击“保存排序”后才会更新真实优先级"
+                if reorder_mode
+                else "点击“调整优先级”进入拖动排序模式"
+            )
+
+    async def _enter_center_reorder_mode(self) -> None:
+        """只有全局、无搜索/筛选/表格排序时才允许进入优先级预览。"""
+
+        if not self._require_center_strategy_tab():
+            return
+        query = (
+            str(self._center_search_input.value or "").strip()
+            if self._center_search_input is not None
+            else ""
+        )
+        if query:
+            self._notify_for_page(
+                "请先清空关键词搜索，再调整优先级",
+                type="warning",
+            )
+            return
+
+        filter_model = dict(self._center_filter_model)
+        sort_active = self._center_grid_sort_active
+        if self._center_grid_view is not None:
+            try:
+                model = await self._center_grid_view.grid.run_grid_method(
+                    "getFilterModel"
+                )
+                column_state = await self._center_grid_view.grid.run_grid_method(
+                    "getColumnState"
+                )
+                filter_model = model if isinstance(model, dict) else {}
+                sort_active = any(
+                    isinstance(column, dict) and column.get("sort")
+                    for column in (column_state or [])
+                )
+                self._center_filter_model = filter_model
+                self._center_grid_sort_active = sort_active
+            except Exception as exc:
+                logger.debug("读取排序前的 Grid 状态失败: %s", exc)
+
+        if filter_model or sort_active:
+            self._notify_for_page(
+                "请先清除列筛选和表格排序，再进入优先级调整模式",
+                type="warning",
+            )
+            return
+
+        order = [
+            str(row.get("id") or "")
+            for row in self._center_all_rows
+            if str(row.get("id") or "")
+        ]
+        if not order:
+            self._notify_for_page("暂无规则可排序", type="warning")
+            return
+
+        self._center_reorder_original_order = list(order)
+        self._pending_center_order = list(order)
+        self._center_reorder_mode = True
+        self._center_reorder_allowed = True
+        self.selected_rule_ids.clear()
+        self._sync_action_bar_count()
+        self._sync_center_reorder_controls()
+        self._refresh_rules()
+
+    def _cancel_center_reorder_mode(self) -> None:
+        """取消排序预览，恢复数据库中的真实优先级顺序。"""
+
+        if not self._center_reorder_mode:
+            return
+        self._center_reorder_mode = False
+        self._center_reorder_allowed = False
+        self._pending_center_order = []
+        self._center_reorder_original_order = []
+        self._sync_center_reorder_controls()
+        self._refresh_rules()
+        self._notify_for_page("已取消优先级调整，未修改真实规则顺序", type="info")
+
+    def _save_center_reorder(self) -> None:
+        """一次性持久化拖动后的全局顺序；写入失败时保留预览供重试。"""
+
+        if not self._center_reorder_mode:
+            return
+        order = list(self._pending_center_order)
+        actual_ids = {
+            str(row.get("id") or "")
+            for row in self._center_all_rows
+            if str(row.get("id") or "")
+        }
+        if not order or len(order) != len(actual_ids) or set(order) != actual_ids:
+            self._notify_for_page(
+                "规则列表已变化，无法安全保存排序；请取消后重新进入排序模式",
+                type="negative",
+            )
+            return
+
+        if order == self._center_reorder_original_order:
+            self._cancel_center_reorder_mode()
+            return
+        try:
+            self.rule_service.reorder("", order)
+        except Exception as exc:
+            logger.exception("保存中心规则优先级失败")
+            self._notify_for_page(f"保存排序失败: {exc}", type="negative")
+            return
+
+        self._center_reorder_mode = False
+        self._center_reorder_allowed = False
+        self._pending_center_order = []
+        self._center_reorder_original_order = []
+        self._sync_center_reorder_controls()
+        self._notify_for_page("规则优先级已更新", type="positive")
+        self._refresh_rules()
+
+    def _clear_center_filters(self) -> None::
         if self._center_search_input is not None:
             self._center_search_input.set_value("")
         self._center_filter_model = {}
@@ -2826,15 +3038,16 @@ class FirewallPage:
         return True
 
     def _on_center_grid_row_drag_end(self, event) -> None:
-        """AG Grid 拖动结束后持久化全局优先级顺序。"""
+        """拖动只更新本地预览；点击“保存排序”后才写入真实优先级。"""
 
         if (
-            not self._center_reorder_allowed
+            not self._center_reorder_mode
+            or not self._center_reorder_allowed
             or self._center_filter_model
             or self._center_grid_sort_active
         ):
             self._notify_for_page(
-                "搜索、筛选或排序状态下不能调整优先级",
+                "请进入“调整优先级”模式，并确保没有搜索、筛选或表格排序",
                 type="warning",
             )
             self._refresh_rules()
@@ -2849,29 +3062,38 @@ class FirewallPage:
             node = args.get("node")
             data = node.get("data") if isinstance(node, dict) else None
         rule_id = str((data or {}).get("id") or "").strip()
-        if not rule_id or rule_id not in self._visible_center_rule_ids:
+        current_order = list(
+            self._pending_center_order or self._visible_center_rule_ids
+        )
+        if not rule_id or rule_id not in current_order:
             self._refresh_rules()
             return
 
-        old_index = self._visible_center_rule_ids.index(rule_id)
+        old_index = current_order.index(rule_id)
         try:
             new_index = int(args.get("overIndex", args.get("rowIndex", old_index)))
         except (TypeError, ValueError):
             new_index = old_index
-        if new_index < 0:
-            new_index = 0
-        if new_index >= len(self._visible_center_rule_ids):
-            new_index = len(self._visible_center_rule_ids) - 1
+        new_index = max(0, min(new_index, len(current_order) - 1))
 
-        new_order = self._move_order(
-            self._visible_center_rule_ids,
-            old_index,
-            new_index,
-        )
-        if new_order and new_order != self._visible_center_rule_ids:
-            self._handle_reorder(new_order)
-        else:
-            self._refresh_rules()
+        new_order = self._move_order(current_order, old_index, new_index)
+        if not new_order or new_order == current_order:
+            return
+
+        self._pending_center_order = new_order
+        self._visible_center_rule_ids = list(new_order)
+        rows_by_id = {
+            str(row.get("id") or ""): row
+            for row in self._center_all_rows
+            if str(row.get("id") or "")
+        }
+        self._center_display_rows = [
+            rows_by_id[rule_id]
+            for rule_id in new_order
+            if rule_id in rows_by_id
+        ]
+        if self._center_grid_view is not None:
+            self._center_grid_view.set_rows(self._center_display_rows)
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
@@ -3349,9 +3571,14 @@ class FirewallPage:
                     f"归属：{rule.get('owner_type', 'group')} / "
                     f"{rule.get('_owner_id') or rule.get('owner_id') or '—'}"
                 ).classes("section-caption")
+                fields["priority"] = ui.number(
+                    "优先级（全局唯一）",
+                    value=int(rule.get("priority") or 10),
+                    min=1,
+                    step=1,
+                ).props("outlined dense").classes("w-full")
                 ui.label(
-                    f"优先级：{int(rule.get('priority') or 0)}；"
-                    "优先级请在列表拖动调整。"
+                    "修改单条规则可直接输入优先级；整体调整建议使用列表的拖动排序模式。"
                 ).classes("section-caption")
 
         def submit() -> bool:
@@ -3364,6 +3591,11 @@ class FirewallPage:
                 dest_port=str(fields["dest_port"].value or "").strip() or None,
                 description=str(fields["description"].value or "").strip() or None,
                 enabled=bool(fields["enabled"].value),
+                priority=(
+                    int(fields["priority"].value or 0)
+                    if "priority" in fields
+                    else None
+                ),
             )
 
         form = create_form_dialog(
@@ -3390,6 +3622,7 @@ class FirewallPage:
         dest_port,
         description,
         enabled: bool,
+        priority: int | None = None,
     ) -> bool:
         """保存中心规则；失败返回 False，让统一表单保留输入。"""
 
@@ -3505,6 +3738,9 @@ class FirewallPage:
             "dest_port": dest_port,
             "description": description,
             "enabled": bool(enabled),
+            "priority": int(
+                priority if priority is not None else original.get("priority") or 0
+            ),
             "updated_at": datetime.now().isoformat(),
         }
         for key in ("_owner_id", "_row_kind", "_peer_id", "_center_tag_line"):

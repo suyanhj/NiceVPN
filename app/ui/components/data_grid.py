@@ -98,6 +98,7 @@ def render_data_grid(
     on_cell_click: Callable[..., Any] | None = None,
     suppress_horizontal_scroll: bool = False,
     external_filter_text: str | None = None,
+    pagination: bool = True,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
 
@@ -114,11 +115,12 @@ def render_data_grid(
         },
         "rowData": normalized_rows,
         "localeText": dict(AG_GRID_LOCALE_ZH_CN),
-        "pagination": True,
-        "paginationPageSize": page_size,
+        "pagination": bool(pagination),
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if pagination:
+        options["paginationPageSize"] = page_size
     if suppress_horizontal_scroll:
         options["suppressHorizontalScroll"] = True
     if external_filter_text is not None:

@@ -245,6 +245,16 @@ def test_center_firewall_keyword_search_and_no_match_state(
             assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
             assert page._center_grid_view.summary.text == "共 1 条"
 
+            page._center_search_input.set_value("443")
+            page._refresh_rules()
+            assert len(page._center_display_rows) == 1
+            assert page._center_display_rows[0]["id"] == "rule-accept"
+
+            page._center_search_input.set_value("开发访问")
+            page._refresh_rules()
+            assert len(page._center_display_rows) == 0
+            assert page._rules_total_footer.text == "0 MATCHED / 3 TOTAL"
+
             page._center_search_input.set_value("definitely-not-found")
             page._refresh_rules()
             await user.should_see("没有匹配结果")
@@ -339,29 +349,38 @@ def test_center_grid_selection_syncs_existing_batch_state() -> None:
     assert page.selected_rule_ids == {"rule-accept", "rule-drop"}
 
 
-def test_center_grid_row_drag_enabled_only_without_filters() -> None:
-    plain = FirewallPage._center_grid_columns(can_reorder=True)
-    filtered = FirewallPage._center_grid_columns(can_reorder=False)
+def test_center_grid_row_drag_is_only_available_in_explicit_reorder_mode() -> None:
+    normal = FirewallPage._center_grid_columns()
+    reorder = FirewallPage._center_grid_columns(
+        can_reorder=True,
+        reorder_mode=True,
+    )
 
-    assert ":rowDrag" in plain[0]
-    assert "isAnyFilterPresent" in plain[0][":rowDrag"]
-    assert "getColumnState" in plain[0][":rowDrag"]
-    assert filtered[0]["rowDrag"] is False
+    assert normal[0]["rowDrag"] is False
+    assert ":rowDrag" in reorder[0]
+    assert "isAnyFilterPresent" in reorder[0][":rowDrag"]
+    assert "getColumnState" in reorder[0][":rowDrag"]
+    assert all(column["sortable"] is False for column in reorder)
+    assert all(column["filter"] is False for column in reorder)
+    assert reorder[-1]["hide"] is True
 
 
-def test_center_grid_drag_persists_global_order(
+def test_center_grid_drag_previews_order_until_explicit_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = FirewallPage()
     service = FakeRuleService()
     page.rule_service = service
+    page._center_reorder_mode = True
     page._center_reorder_allowed = True
-    page._is_unified_list = True
-    page._visible_center_rule_ids = [
+    page._center_reorder_original_order = [
         "rule-accept",
         "rule-drop",
         "ce-peer-peer-001",
     ]
+    page._pending_center_order = list(page._center_reorder_original_order)
+    page._visible_center_rule_ids = list(page._pending_center_order)
+    page._center_all_rows = [dict(row) for row in CENTER_RULES]
     monkeypatch.setattr(page, "_refresh_rules", lambda: None)
     monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
 
@@ -373,19 +392,22 @@ def test_center_grid_drag_persists_global_order(
 
     page._on_center_grid_row_drag_end(Event())
 
-    assert service.reorder_calls == [
-        (
-            "",
-            ["rule-drop", "ce-peer-peer-001", "rule-accept"],
-        )
-    ]
+    expected = ["rule-drop", "ce-peer-peer-001", "rule-accept"]
+    assert service.reorder_calls == []
+    assert page._pending_center_order == expected
+
+    page._save_center_reorder()
+    assert service.reorder_calls == [("", expected)]
+    assert page._center_reorder_mode is False
 
 
 def test_center_grid_drag_is_blocked_while_filtered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = FirewallPage()
-    page._center_reorder_allowed = False
+    page._center_reorder_mode = True
+    page._center_reorder_allowed = True
+    page._center_filter_model = {"owner_label": {"values": ["开发组"]}}
     messages: list[str] = []
     refreshed: list[bool] = []
     monkeypatch.setattr(
@@ -400,7 +422,7 @@ def test_center_grid_drag_is_blocked_while_filtered(
 
     page._on_center_grid_row_drag_end(Event())
 
-    assert messages == ["搜索、筛选或排序状态下不能调整优先级"]
+    assert messages == ["请进入“调整优先级”模式，并确保没有搜索、筛选或表格排序"]
     assert refreshed == [True]
 
 
@@ -608,6 +630,30 @@ def test_center_json_edit_success_and_failure_refresh_semantics(
     ) is False
     assert refreshed == []
     assert messages[-1] == ("更新失败: rebuild failed", "negative")
+
+
+def test_center_edit_can_set_a_manual_global_priority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(page, "_refresh_rules", lambda: None)
+
+    assert page._save_center_rule_edit(
+        dict(CENTER_RULES[0]),
+        action="accept",
+        protocol="tcp",
+        source_input="10.8.0.0/24",
+        dest_ip="172.16.0.10",
+        dest_port="443",
+        description="开发访问 API",
+        enabled=True,
+        priority=25,
+    ) is True
+
+    assert service.update_calls[-1][1]["priority"] == 25
 
 
 def test_center_peer_edit_updates_peer_fields_and_validates_accept_only(
