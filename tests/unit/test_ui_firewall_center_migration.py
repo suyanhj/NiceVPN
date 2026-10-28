@@ -336,6 +336,34 @@ def test_center_grid_columns_keep_priority_owner_flow_and_id() -> None:
     assert FirewallPage._center_grid_columns(can_reorder=False)[0]["rowDrag"] is False
 
 
+def test_center_priority_reorder_mode_shows_full_order_without_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _prepare_page(monkeypatch)
+    expected = ["rule-drop", "ce-peer-peer-001", "rule-accept"]
+    page._center_reorder_mode = True
+    page._center_reorder_original_order = [
+        "rule-accept",
+        "rule-drop",
+        "ce-peer-peer-001",
+    ]
+    page._pending_center_order = list(expected)
+
+    async def verify() -> None:
+        async with user_simulation(page.render) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            assert page._center_grid_view is not None
+            options = page._center_grid_view.grid.options
+            assert options["pagination"] is False
+            assert "paginationPageSize" not in options
+            assert "rowSelection" not in options
+            assert options["rowDragManaged"] is True
+            assert [row["id"] for row in options["rowData"]] == expected
+
+    asyncio.run(verify())
+
+
 def test_center_grid_selection_syncs_existing_batch_state() -> None:
     page = FirewallPage()
 
