@@ -392,6 +392,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-change-group-dialog" in source
     assert "users-config-drawer" in source
     assert "suppress_horizontal_scroll=True" in source
+    assert "self.grid_view.summary.set_visibility(False)" in source
+    assert 'self.grid_view.summary.text = f"共 {len(rows)} 个用户"' not in source
 
     assert ".users-page--v2 .users-toolbar" not in shell_css
     assert ".users-page--v2 .users-action-separator" in shell_css
