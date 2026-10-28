@@ -23,24 +23,20 @@ FROM scratch AS frontend-assets
 COPY --from=frontend-builder /build/app/ui/vue/dist/ /
 
 
-FROM ${PYTHON_IMAGE} AS runtime
+# 系统依赖与 Python 依赖分层：
+# - Python 基础镜像或 apt 包不变时，requirements.txt 变化不会重新执行 apt。
+# - CI 使用 Buildx 外部缓存后，这两个阶段可跨 GitHub Hosted Runner 复用。
+FROM ${PYTHON_IMAGE} AS python-system
 
 ARG DEBIAN_MIRROR=mirrors.ustc.edu.cn
-
-WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 先复制 Python 依赖描述以保留缓存命中率。
-COPY requirements.txt /tmp/requirements.txt
-
 # Debian 12/13 容器可能使用 debian.sources，也兼容传统 sources.list。
-# apt / pip 下载缓存使用 BuildKit cache，不写入最终镜像层。
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=nicevpn-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=nicevpn-apt-lists,target=/var/lib/apt/lists,sharing=locked \
     set -eux; \
     for file in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
         if [ -f "${file}" ]; then \
@@ -51,10 +47,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         fi; \
     done; \
     apt-get update; \
-    apt-get install -y --no-install-recommends iptables ipset; \
-    pip install -r /tmp/requirements.txt; \
-    rm -f /tmp/requirements.txt; \
-    mkdir -p \
+    apt-get install -y --no-install-recommends iptables ipset
+
+
+FROM python-system AS python-deps
+
+COPY requirements.txt /tmp/requirements.txt
+
+RUN --mount=type=cache,id=nicevpn-pip-cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt
+
+
+FROM python-deps AS runtime
+
+WORKDIR /app
+
+RUN mkdir -p \
         data/groups data/users data/firewall data/download_links data/audit data/logs backups \
         /etc/openvpn/ccd /etc/openvpn/mgmt/device_bindings /etc/openvpn/mgmt/ovpn \
         /etc/openvpn/log /etc/openvpn/scripts

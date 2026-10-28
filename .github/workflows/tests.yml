@@ -105,16 +105,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Build V2 frontend asset stage
-        run: ./build-ui.sh /tmp/nicevpn-ui-dist
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build production runtime image
-        run: >
-          DOCKER_BUILDKIT=1 docker build
-          --file deploy/docker/Dockerfile
-          --target runtime
-          --tag nicevpn:ci
-          .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: runtime
+          push: false
+          tags: nicevpn:ci
+          cache-from: type=gha,scope=nicevpn-runtime
+          cache-to: type=gha,mode=max,scope=nicevpn-runtime
+          provenance: false
 
   unit:
     name: Unit tests (Python 3.14)
