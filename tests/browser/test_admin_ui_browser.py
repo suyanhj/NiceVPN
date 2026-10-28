@@ -41,6 +41,18 @@ def _click_q_tab(screen: Screen, label: str) -> None:
     screen.wait(0.2)
 
 
+def _click_aria_button(screen: Screen, label: str) -> None:
+    """点击仅图标按钮，使用 aria-label 保持无障碍语义与测试稳定性。"""
+
+    button = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        f'button[aria-label="{label}"]',
+    )
+    assert button.is_displayed(), f"hidden aria button: {label}"
+    screen.selenium.execute_script("arguments[0].click()", button)
+    screen.wait(0.2)
+
+
 def _assert_no_outer_horizontal_overflow(screen: Screen) -> None:
     result = screen.selenium.execute_script(
         """
@@ -178,7 +190,7 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen.selenium.set_window_size(1280, 900)
 
     screen.open("/users")
-    screen.click("新建用户")
+    _click_aria_button(screen, "新建用户")
     screen.should_contain("创建数量")
     screen.should_contain("所属组")
 

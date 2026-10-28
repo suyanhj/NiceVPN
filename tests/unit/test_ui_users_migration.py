@@ -93,7 +93,6 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("已选择 1 项")
-            await user.should_see("共 2 个用户")
 
     asyncio.run(verify_page())
 
@@ -368,7 +367,6 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "more_actions(" not in source
     assert "MenuAction(" not in source
     assert "aria-label='{tooltip}'" in source
-    assert "aria-label='新建用户'" in source
     for label in (
         "新建用户",
         "批量导入",

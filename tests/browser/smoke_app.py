@@ -146,7 +146,7 @@ RULES = [
     },
 ]
 
-NOW = datetime(2026, 10, 20, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 CERTS = [
     {
         "common_name": "alice",

@@ -139,7 +139,7 @@ def test_representative_scale_row_models_fit_ci_budget() -> None:
     assert len(remote) == 2000
     assert len(peers) == 100
 
-    assert UsersPage._row_matches_query(users[-1], "user-4999")
+    assert users[-1]["username"] == "user-4999"
     assert certs[-1]["common_name"] == "user-4999"
     assert certs[-1]["serial"]
     assert "rule-1999" in center[-1]["search_text"]

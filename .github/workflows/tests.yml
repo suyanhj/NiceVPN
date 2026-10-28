@@ -20,8 +20,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect expensive test scope
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.scope.outputs.docker }}
+      browser: ${{ steps.scope.outputs.browser }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # 手动执行用于完整验证，不做路径裁剪。
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "docker=true" >> "${GITHUB_OUTPUT}"
+            echo "browser=true" >> "${GITHUB_OUTPUT}"
+            printf '### Expensive test scope\n- Docker build: true (manual run)\n- Browser smoke: true (manual run)\n' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          base_sha="${BEFORE_SHA:-}"
+          head_sha="${GITHUB_SHA}"
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${PR_BASE_SHA:-}"
+            head_sha="${PR_HEAD_SHA:-${GITHUB_SHA}}"
+          fi
+
+          # 新分支首次 push 或事件缺少可比较基线时，宁可完整验证一次。
+          if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]] || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            echo "docker=true" >> "${GITHUB_OUTPUT}"
+            echo "browser=true" >> "${GITHUB_OUTPUT}"
+            printf '### Expensive test scope\n- Docker build: true (no safe diff base)\n- Browser smoke: true (no safe diff base)\n' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only "${base_sha}" "${head_sha}")
+          printf '%s\n' "${changed_files[@]}"
+
+          docker=false
+          browser=false
+          for file in "${changed_files[@]}"; do
+            case "${file}" in
+              .github/workflows/tests.yml|.dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*)
+                docker=true
+                ;;
+            esac
+            case "${file}" in
+              .github/workflows/tests.yml|app/ui/*|tests/browser/*|build-ui.sh|deploy/docker/Dockerfile|requirements.txt)
+                browser=true
+                ;;
+            esac
+          done
+
+          echo "docker=${docker}" >> "${GITHUB_OUTPUT}"
+          echo "browser=${browser}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Expensive test scope"
+            echo "- Docker build: ${docker}"
+            echo "- Browser smoke: ${browser}"
+            echo "- Changed files: ${#changed_files[@]}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   frontend-build:
     name: Docker build
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -73,6 +149,8 @@ jobs:
 
   browser-smoke:
     name: Browser smoke (Chrome)
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
