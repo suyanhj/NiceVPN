@@ -431,6 +431,30 @@ def test_center_grid_drag_previews_order_until_explicit_save(
     assert page._center_reorder_mode is False
 
 
+
+def test_center_grid_drag_to_bottom_moves_rule_to_last_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_reorder_mode = True
+    page._center_reorder_allowed = True
+    page._center_reorder_original_order = ["rule-accept", "rule-drop"]
+    page._pending_center_order = ["rule-accept", "rule-drop"]
+    page._visible_center_rule_ids = list(page._pending_center_order)
+    page._center_all_rows = [
+        dict(row) for row in CENTER_RULES
+        if row["id"] in {"rule-accept", "rule-drop"}
+    ]
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    class Event:
+        args = {"rowId": "rule-accept", "rowIndex": 0, "toIndex": -1}
+
+    page._on_center_grid_row_drag_end(Event())
+
+    assert page._pending_center_order == ["rule-drop", "rule-accept"]
+
+
 def test_center_grid_drag_is_blocked_while_filtered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

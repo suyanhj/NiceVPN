@@ -237,8 +237,19 @@ class FakePeerService:
 
 
 class FakeRuleService:
+    def __init__(self):
+        self.rows = [dict(item) for item in RULES]
+
     def list_unified_flat(self):
-        return [dict(item) for item in RULES]
+        return [dict(item) for item in self.rows]
+
+    def reorder(self, _owner_id, order):
+        by_id = {str(row["id"]): row for row in self.rows}
+        if len(order) != len(by_id) or set(order) != set(by_id):
+            raise ValueError("测试规则顺序与规则集合不一致")
+        self.rows = [by_id[str(rule_id)] for rule_id in order]
+        for priority, row in enumerate(self.rows, start=1):
+            row["priority"] = priority * 10
 
     def backup(self):
         return '{"version": 2, "rules_by_owner": {}}'

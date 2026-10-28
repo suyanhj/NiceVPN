@@ -302,6 +302,10 @@ def test_data_grid_supports_managed_row_drag_without_summary() -> None:
     view = state["view"]
     assert view.grid.options["rowDragManaged"] is True
     assert view.grid.options["suppressMoveWhenRowDragging"] is False
+    assert view.grid.options[":onRowDragEnd"] == (
+        "(event) => { if (Number.isInteger(event.overIndex)) "
+        "event.toIndex = event.overIndex; }"
+    )
     assert view.summary is None
 
 

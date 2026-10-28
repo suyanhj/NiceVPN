@@ -125,6 +125,13 @@ def render_data_grid(
     if row_drag_managed:
         options["rowDragManaged"] = True
         options["suppressMoveWhenRowDragging"] = False
+        # AG Grid emits overIndex for rowDragEnd, but NiceGUI's event bridge
+        # only forwards toIndex. Copy the target before the bridge serializes it.
+        options[":onRowDragEnd"] = (
+            "(event) => { "
+            "if (Number.isInteger(event.overIndex)) event.toIndex = event.overIndex; "
+            "}"
+        )
     if pagination:
         options["paginationPageSize"] = page_size
     if suppress_horizontal_scroll:

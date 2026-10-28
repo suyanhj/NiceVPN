@@ -382,6 +382,30 @@ def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(
     assert captured == [[1, 2, 0]]
 
 
+
+def test_remote_grid_drag_to_bottom_moves_row_to_last_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._remote_reorder_allowed = True
+    page._visible_remote_indices = [0, 1, 2]
+    captured: list[list[int]] = []
+    monkeypatch.setattr(
+        page,
+        "_do_remote_reorder_async",
+        lambda order: captured.append(list(order)),
+    )
+    monkeypatch.setattr(page, "_schedule_remote_coro", lambda _value: None)
+    monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
+
+    class Event:
+        args = {"rowId": "peer-001:0", "rowIndex": 0, "toIndex": -1}
+
+    page._on_remote_grid_row_drag_end(Event())
+
+    assert captured == [[1, 2, 0]]
+
+
 def test_remote_grid_drag_blocked_when_remote_truth_is_not_safe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

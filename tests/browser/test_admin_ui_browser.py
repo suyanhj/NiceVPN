@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import pytest
 from nicegui.testing import Screen
+from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 pytestmark = pytest.mark.nondestructive
@@ -182,6 +184,54 @@ def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     )
     assert int(v2_cards) == 3
     assert int(spotlight_hosts) == 3
+
+
+
+def test_firewall_priority_drag_reorders_and_saves_in_chrome(
+    screen: Screen,
+) -> None:
+    """真实 Chrome 拖动后必须将目标索引传回服务端并保存。"""
+
+    screen.selenium.set_window_size(1440, 900)
+    screen.open("/firewall")
+    screen.wait(0.5)
+
+    def center_rule_ids():
+        return screen.selenium.execute_script(
+            """
+            return Array.from(document.querySelectorAll(
+              ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
+            ))
+              .map((row) => row.querySelector('.ag-cell[col-id="id"]')?.textContent.trim() || "")
+              .filter(Boolean);
+            """
+        )
+
+    before = center_rule_ids()
+    assert before[:2] == ["rule-001", "rule-002"], before
+
+    _click_aria_button(screen, "调整优先级")
+    screen.wait(0.5)
+
+    handle = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.firewall-center-panel .ag-row[row-index="0"] .ag-row-drag',
+    )
+    target = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.firewall-center-panel .ag-row[row-index="1"] .ag-cell[col-id="priority"]',
+    )
+    assert handle.is_displayed()
+
+    ActionChains(screen.selenium).move_to_element(handle).click_and_hold(handle) \\
+        .pause(0.2).move_to_element(target).pause(0.2).release().perform()
+    screen.wait(0.3)
+    _click_aria_button(screen, "保存排序")
+
+    WebDriverWait(screen.selenium, 5).until(
+        lambda _driver: center_rule_ids()[:2] == ["rule-002", "rule-001"]
+    )
+    assert center_rule_ids()[:2] == ["rule-002", "rule-001"]
 
 
 def test_high_value_dialogs_tabs_and_more_menus_are_reachable(

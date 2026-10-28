@@ -1572,10 +1572,11 @@ class FirewallPage:
             new_position = int(target_index)
         except (TypeError, ValueError):
             new_position = old_position
-        new_position = max(
-            0,
-            min(new_position, len(self._visible_remote_indices) - 1),
-        )
+        # AG Grid reports -1 when the pointer is below the final row.
+        if new_position < 0:
+            new_position = len(self._visible_remote_indices) - 1
+        else:
+            new_position = min(new_position, len(self._visible_remote_indices) - 1)
         new_order = self._move_order(
             self._visible_remote_indices,
             old_position,
@@ -2540,13 +2541,10 @@ class FirewallPage:
                     "firewall-center-filter-restore",
                 )
             if self._center_reorder_allowed:
-                self._center_grid_view.grid.options["rowDragManaged"] = True
-                self._center_grid_view.grid.options["suppressMoveWhenRowDragging"] = False
                 self._center_grid_view.grid.on(
                     "rowDragEnd",
                     self._on_center_grid_row_drag_end,
                 )
-                self._center_grid_view.grid.update()
 
     def _sync_center_reorder_controls(self) -> None:
         """同步排序模式按钮、搜索框和页脚提示。"""
@@ -2943,7 +2941,11 @@ class FirewallPage:
             new_index = int(target_index)
         except (TypeError, ValueError):
             new_index = old_index
-        new_index = max(0, min(new_index, len(current_order) - 1))
+        # AG Grid reports -1 when the pointer is below the final row.
+        if new_index < 0:
+            new_index = len(current_order) - 1
+        else:
+            new_index = min(new_index, len(current_order) - 1)
 
         new_order = self._move_order(current_order, old_index, new_index)
         if not new_order or new_order == current_order:
