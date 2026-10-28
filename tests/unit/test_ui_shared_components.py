@@ -278,6 +278,32 @@ def test_form_dialog_exposes_busy_control_and_preserves_structure() -> None:
     handle.set_busy(False)
     assert handle.submit_button._props.get("loading") is not True
 
+def test_data_grid_supports_managed_row_drag_without_summary() -> None:
+    """排序模式在建表时启用 managed drag，并可不创建重复计数摘要。"""
+
+    state: dict[str, object] = {}
+
+    def page() -> None:
+        state["view"] = render_data_grid(
+            ({"field": "name", "headerName": "名称", "rowDrag": True},),
+            ({"id": "a", "name": "Alice"}, {"id": "b", "name": "Bob"}),
+            pagination=False,
+            row_drag_managed=True,
+            show_summary=False,
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+
+    view = state["view"]
+    assert view.grid.options["rowDragManaged"] is True
+    assert view.grid.options["suppressMoveWhenRowDragging"] is False
+    assert view.summary is None
+
 
 def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None:
     """共享 AG Grid 固定 Community 模块并提供选择、分页和结果摘要。"""

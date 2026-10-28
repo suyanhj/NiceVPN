@@ -243,7 +243,7 @@ def test_center_firewall_keyword_search_and_no_match_state(
             assert len(page._center_grid_view.grid.options["rowData"]) == 3
             assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
             assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
-            assert page._center_grid_view.summary.text == "共 1 条"
+            assert page._center_grid_view.summary is None
 
             page._center_search_input.set_value("443")
             page._refresh_rules()
@@ -289,7 +289,6 @@ def test_center_firewall_classification_filters_are_searchable_multiselects(
         assert column["filterParams"]["showValuesFromOtherFilters"] is False
         assert column["filterParams"]["searchPlaceholder"]
 
-    assert page._center_owner_filter is None
     assert "checkboxSelection" not in columns["priority"]
     assert "headerCheckboxSelection" not in columns["priority"]
     assert page._center_filter_model == {}
@@ -359,6 +358,8 @@ def test_center_priority_reorder_mode_shows_full_order_without_pagination(
             assert "paginationPageSize" not in options
             assert "rowSelection" not in options
             assert options["rowDragManaged"] is True
+            assert options["suppressMoveWhenRowDragging"] is False
+            assert page._center_grid_view.summary is None
             assert [row["id"] for row in options["rowData"]] == expected
 
     asyncio.run(verify())
@@ -414,8 +415,9 @@ def test_center_grid_drag_previews_order_until_explicit_save(
 
     class Event:
         args = {
-            "data": {"id": "rule-accept"},
-            "overIndex": 2,
+            "rowId": "rule-accept",
+            "rowIndex": 0,
+            "toIndex": 2,
         }
 
     page._on_center_grid_row_drag_end(Event())
@@ -446,7 +448,7 @@ def test_center_grid_drag_is_blocked_while_filtered(
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
 
     class Event:
-        args = {"data": {"id": "rule-accept"}, "overIndex": 1}
+        args = {"rowId": "rule-accept", "rowIndex": 0, "toIndex": 1}
 
     page._on_center_grid_row_drag_end(Event())
 
@@ -1035,6 +1037,9 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     shell_css = (
         root / "app" / "ui" / "static" / "css" / "shell.css"
     ).read_text(encoding="utf-8")
+    legacy_css = (
+        root / "app" / "ui" / "static" / "css" / "legacy.css"
+    ).read_text(encoding="utf-8")
 
     assert "firewall-page--v2" in source
     assert "firewall-tab-shell" in source
@@ -1050,11 +1055,14 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "STATUS_PILL_RENDERER" in source
     assert "firewall-action-dialog" in source
     assert "firewall-rule-drawer" in source
+    assert "firewall-rule-card" not in source
 
     assert ".firewall-page--v2 .firewall-tab-shell" in shell_css
     assert ".firewall-page--v2 .firewall-bulk-bar" in shell_css
     assert ".firewall-page--v2 .firewall-filter-bar" in shell_css
     assert ".firewall-page--v2 .firewall-center-shell" in shell_css
     assert ".firewall-page--v2 .firewall-remote-control" in shell_css
+    assert ".firewall-rule-card" not in legacy_css
+    assert ".firewall-search-shell" not in legacy_css
     assert ".q-dialog .q-card.firewall-action-dialog" in shell_css
     assert ".q-dialog .q-card.firewall-rule-drawer" in shell_css

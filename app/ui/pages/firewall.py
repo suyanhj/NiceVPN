@@ -71,11 +71,6 @@ from app.ui.components.firewall_rule_form import render_firewall_rule_create_fie
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_bulk_action_bar
-from app.ui.components.list_selection import (
-    apply_row_checkboxes,
-    sync_select_all_checkbox,
-    update_visible_selection,
-)
 from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.utils.cidr import validate_cidr
 
@@ -210,12 +205,8 @@ class FirewallPage:
         self.selected_rule_ids: set = set()
         # 对端链 ``rows`` 下标，与中心 ``selected_rule_ids`` 互斥使用（按页签清理）
         self._selected_remote_indices: set[int] = set()
-        self._center_select_all_checkbox = None
-        self._remote_select_all_checkbox = None
         self._visible_center_rule_ids: list[str] = []
         self._visible_remote_indices: list[int] = []
-        self._center_rule_checkboxes: dict[str, Any] = {}
-        self._remote_row_checkboxes: dict[int, Any] = {}
         # 与 ``list_unified_flat`` 的全局排序一致：留空 = 全量
         self._is_unified_list: bool = True
         self._center_tab_active: bool = True
@@ -239,7 +230,6 @@ class FirewallPage:
         self._center_search_controls = None
         self._center_search_input = None
         # 归属筛选移入 AG Grid 列头，避免工具栏与表格重复。
-        self._center_owner_filter = None
         self._pending_center_owner_id = ""
         self._center_filter_model: dict[str, Any] = {}
         self._center_grid_sort_active = False
@@ -438,7 +428,6 @@ class FirewallPage:
                         .props("outlined dense clearable debounce=250")
                         .classes("firewall-search-input flex-1 min-w-0")
                     )
-                    self._center_owner_filter = None
 
             with ui.tab_panels(
                 self._strat_tabs,
@@ -1066,32 +1055,6 @@ class FirewallPage:
         rows = FirewallPage._rows_from_iptables_paste(t, cname)
         return rows, cname, True
 
-    def _toggle_remote_row_selection(self, idx: int, checked: bool) -> None:
-        if checked:
-            self._selected_remote_indices.add(int(idx))
-        else:
-            self._selected_remote_indices.discard(int(idx))
-        self._sync_remote_select_all()
-
-    def _toggle_remote_select_all(self, checked: bool) -> None:
-        """选择或取消选择当前对端的全部可见规则。"""
-        update_visible_selection(
-            self._selected_remote_indices,
-            self._visible_remote_indices,
-            checked,
-        )
-        apply_row_checkboxes(self._remote_row_checkboxes, self._selected_remote_indices)
-        self._sync_remote_select_all()
-
-    def _sync_remote_select_all(self) -> None:
-        """同步对端规则列表全选复选框。"""
-        if self._remote_select_all_checkbox is not None:
-            sync_select_all_checkbox(
-                self._remote_select_all_checkbox,
-                self._visible_remote_indices,
-                self._selected_remote_indices,
-            )
-
     def _schedule_remote_coro(self, coro) -> None:
         try:
             asyncio.get_running_loop().create_task(coro)
@@ -1326,9 +1289,12 @@ class FirewallPage:
                 rows,
                 row_id="id",
                 page_size=50,
+                pagination=not self._remote_reorder_allowed,
                 selectable=True,
                 selected_ids=selected_ids,
                 on_cell_click=self._on_remote_grid_cell_click,
+                row_drag_managed=self._remote_reorder_allowed,
+                show_summary=False,
             )
             self._remote_grid_view.grid.on(
                 "selectionChanged",
@@ -1349,15 +1315,10 @@ class FirewallPage:
                     "firewall-remote-filter-restore",
                 )
             if self._remote_reorder_allowed:
-                self._remote_grid_view.grid.options["rowDragManaged"] = True
-                self._remote_grid_view.grid.options[
-                    "suppressMoveWhenRowDragging"
-                ] = False
                 self._remote_grid_view.grid.on(
                     "rowDragEnd",
                     self._on_remote_grid_row_drag_end,
                 )
-                self._remote_grid_view.grid.update()
 
     async def _on_remote_grid_selection_changed(self, *_args) -> None:
         """同步 AG Grid 选择到现有远端批量操作索引集合。"""
@@ -1401,7 +1362,6 @@ class FirewallPage:
                 self._remote_rules_total_footer.set_text(
                     f"{displayed} MATCHED / {total} TOTAL"
                 )
-        view.summary.text = f"共 {displayed} 条"
 
     async def _on_remote_grid_cell_click(self, event) -> None:
         """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
@@ -1595,17 +1555,21 @@ class FirewallPage:
             data = node.get("data") if isinstance(node, dict) else None
         row_index = (data or {}).get("index")
         if not isinstance(row_index, int):
-            self._refresh_remote_view()
-            return
+            try:
+                row_index = int(str(args.get("rowId") or "").rsplit(":", 1)[-1])
+            except (TypeError, ValueError):
+                self._refresh_remote_view()
+                return
         if row_index not in self._visible_remote_indices:
             self._refresh_remote_view()
             return
 
         old_position = self._visible_remote_indices.index(row_index)
         try:
-            new_position = int(
-                args.get("overIndex", args.get("rowIndex", old_position))
-            )
+            target_index = args.get("toIndex")
+            if target_index is None:
+                target_index = args.get("overIndex", args.get("rowIndex", old_position))
+            new_position = int(target_index)
         except (TypeError, ValueError):
             new_position = old_position
         new_position = max(
@@ -1623,24 +1587,6 @@ class FirewallPage:
             )
         else:
             self._refresh_remote_view()
-
-    def _on_remote_sort_end(self, event) -> None:
-        """兼容旧测试入口；页面已改用 AG Grid rowDragEnd。"""
-
-        old_index = getattr(event, "old_index", None)
-        new_index = getattr(event, "new_index", None)
-        if not isinstance(old_index, int) or not isinstance(new_index, int):
-            self._refresh_remote_view()
-            return
-        new_order = self._move_order(
-            self._visible_remote_indices,
-            old_index,
-            new_index,
-        )
-        if new_order:
-            self._schedule_remote_coro(
-                self._do_remote_reorder_async(new_order)
-            )
 
     async def _do_remote_reorder_async(self, new_order: list[int]) -> None:
         if not self._require_remote_strategy_tab():
@@ -1667,85 +1613,6 @@ class FirewallPage:
             self._selected_remote_indices.clear()
             self._notify_for_page("规则顺序已更新", type="positive")
         self._refresh_remote_view()
-
-    def _render_remote_rule_card(
-        self, idx: int, row: dict, *, row_index_1based: int, n_rows: int
-    ) -> None:
-        rest = str(row.get("rest", "") or "")
-        en = bool(row.get("enabled", True))
-        hints = _hints_from_iptables_rest_line(rest)
-        protocol = (hints.get("proto") or "all").upper()
-        if protocol == "ANY":
-            protocol = "ALL"
-        action = (hints.get("action") or "—").upper()
-        source = hints.get("source") or ""
-        if not source:
-            source = "*"
-        dest = str(hints.get("dest") or "*")
-        dest_port = str(hints.get("dport") or "*")
-        flow_text = f"{source} → {dest}:{dest_port}"
-        pri = int(row.get("priority", 0) or 0) or (row_index_1based * 10)
-        peer_id = (self._active_remote_peer_id() or "").strip()
-        # 与中心卡「规则 id 短码」对位：本页用链内行号
-        title_text = f"#{row_index_1based}"
-        second_line = FirewallPage._second_line_comment_text(
-            row,
-            title_text=title_text,
-            is_center_peer=False,
-            is_remote_row=True,
-            iptables_comment=str(hints.get("comment") or ""),
-        )
-        # 对端行无归属字段时用当前对端 id，与中心「对端·中心放行」卡一致
-        owner_tag = peer_id
-        with ui.element("div").classes(
-            "firewall-rule-card" + ("" if en else " opacity-60")
-        ).props(f'data-remote-row-index="{idx}"'):
-            with ui.element("div").classes("firewall-rule-card-head"):
-                with ui.row().classes("items-center gap-2 flex-1 min-w-0"):
-                    self._remote_row_checkboxes[idx] = ui.checkbox(
-                        value=idx in self._selected_remote_indices,
-                        on_change=lambda e, j=idx: self._toggle_remote_row_selection(j, e.value),
-                    ).classes("mgmt-checkbox")
-                    ui.icon("drag_indicator").classes("firewall-rule-drag cursor-move text-grey-6")
-                    with ui.element("div").classes("mgmt-record-copy"):
-                        with ui.row().classes("items-center gap-2 flex-wrap min-w-0"):
-                            ui.label(title_text).classes("mgmt-record-title")
-                            ui.label("对端站点").classes("user-session-badge")
-                        if second_line:
-                            with ui.row().classes("w-full min-w-0"):
-                                ui.label(second_line).classes("text-caption text-grey-6 line-clamp-1")
-                        with ui.element("div").classes("mgmt-record-meta"):
-                            if (owner_tag or "").strip():
-                                ot = (owner_tag or "").strip()
-                                with ui.row().classes("items-center gap-1 flex-wrap min-w-0"):
-                                    ui.label("归属").classes("text-grey-6 text-caption shrink-0")
-                                    o = (
-                                        ui.label(ot)
-                                        .classes("meta-badge cursor-pointer min-w-0 break-all")
-                                        .tooltip("点击复制")
-                                    )
-                                    o.on("click", lambda t=ot: self._copy_text_to_clipboard(t))
-                            for lab, val in [
-                                ("协议", protocol),
-                                ("动作", action),
-                                ("优先级", str(pri)),
-                            ]:
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"{lab} {val}")
-                            with ui.element("span").classes("mgmt-meta-item mgmt-meta-flow"):
-                                ui.label(flow_text)
-                with ui.element("div").classes("mgmt-actions").classes("row items-center gap-0"):
-                    ui.switch(value=en, on_change=lambda e, j=idx: self._schedule_remote_coro(
-                        self._on_remote_row_enabled_change(j, e)
-                    )).props("dense")
-                    ui.button(
-                        icon="edit",
-                        on_click=lambda j=idx, r=dict(row): self._show_edit_remote_line_dialog(j, r),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("编辑")
-                    ui.button(
-                        icon="delete",
-                        on_click=lambda j=idx: self._confirm_delete_remote_line(j),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
 
     def _show_edit_remote_line_dialog(self, idx: int, row: dict) -> None:
         """统一表单编辑对端规则；可结构化编辑，也可直接修改原始 rest。"""
@@ -2650,9 +2517,9 @@ class FirewallPage:
                 selected_ids=self.selected_rule_ids,
                 on_cell_click=self._on_center_grid_cell_click,
                 external_filter_text=query,
+                row_drag_managed=self._center_reorder_allowed,
+                show_summary=False,
             )
-            # Grid summary must reflect the global search before column filters change.
-            self._center_grid_view.summary.text = f"共 {len(matched_rows)} 条"
             if not self._center_reorder_mode:
                 self._center_grid_view.grid.on(
                     "selectionChanged",
@@ -2901,7 +2768,6 @@ class FirewallPage:
                 self._rules_total_footer.set_text(
                     f"{displayed} MATCHED / {total} TOTAL"
                 )
-        view.summary.text = f"共 {displayed} 条"
 
     async def _on_center_grid_selection_changed(self, *_args) -> None:
         """同步 AG Grid 选中行到现有批量操作集合。"""
@@ -3061,7 +2927,7 @@ class FirewallPage:
         if not isinstance(data, dict):
             node = args.get("node")
             data = node.get("data") if isinstance(node, dict) else None
-        rule_id = str((data or {}).get("id") or "").strip()
+        rule_id = str((data or {}).get("id") or args.get("rowId") or "").strip()
         current_order = list(
             self._pending_center_order or self._visible_center_rule_ids
         )
@@ -3071,7 +2937,10 @@ class FirewallPage:
 
         old_index = current_order.index(rule_id)
         try:
-            new_index = int(args.get("overIndex", args.get("rowIndex", old_index)))
+            target_index = args.get("toIndex")
+            if target_index is None:
+                target_index = args.get("overIndex", args.get("rowIndex", old_index))
+            new_index = int(target_index)
         except (TypeError, ValueError):
             new_index = old_index
         new_index = max(0, min(new_index, len(current_order) - 1))
@@ -3131,143 +3000,6 @@ class FirewallPage:
         if d and d != t:
             return d
         return ""
-
-    @staticmethod
-    def _render_empty(icon: str, title: str, copy: str) -> None:
-        with ui.element("div").classes("mgmt-dashed-empty"):
-            with ui.element("div").classes("mgmt-dashed-empty-badge"):
-                ui.icon(icon).classes("text-4xl")
-            ui.label(title).classes("mgmt-dashed-empty-title")
-            ui.label(copy).classes("mgmt-dashed-empty-copy")
-
-    def _render_rule_card(self, rule: dict, show_owner: bool = False) -> None:
-        rid = rule["id"]
-        is_center_peer = str(rid).startswith(CE_PEER_RULE_PREFIX) or rule.get("_row_kind") == "center_peer"
-        peer_name = ""
-        if is_center_peer:
-            peer_id = str(rule.get("_peer_id") or "").strip()
-            if not peer_id and str(rid).startswith(CE_PEER_RULE_PREFIX):
-                peer_id = str(rid)[len(CE_PEER_RULE_PREFIX) :]
-            title_text = f"{peer_id[:8]}…" if len(peer_id) > 8 else (peer_id or str(rid))
-            prow = self._peer_service.get(peer_id) if peer_id else None
-            peer_name = str((prow or {}).get("name") or "").strip()
-        else:
-            srid = str(rid)
-            # 本地中心 JSON：主标题用规则 id；说明走第二行
-            title_text = srid[:8] if len(srid) >= 8 else srid
-        second_line = FirewallPage._second_line_comment_text(
-            rule, title_text=title_text, is_center_peer=is_center_peer, is_remote_row=False
-        )
-        enabled = rule.get("enabled", True)
-        protocol = (rule.get("protocol") or "all").upper()
-        if protocol == "ANY":
-            protocol = "ALL"
-        action = (rule.get("action") or "accept").upper()
-        owner_tag = str(rule.get("_owner_id", "") or rule.get("owner_id", ""))
-        source = str(rule.get("source_subnet") or "")
-        if not source and rule.get("source_ips"):
-            source = ",".join(rule["source_ips"])
-        source = source or "*"
-        dest = str(rule.get("dest_ip") or "*")
-        dest_port = str(rule.get("dest_port") or "*")
-        flow_text = f"{source} → {dest}:{dest_port}"
-        with ui.element("div").classes("firewall-rule-card" + ("" if enabled else " opacity-60")).props(
-            f'data-rule-id="{rid}"'
-        ):
-            with ui.element("div").classes("firewall-rule-card-head"):
-                with ui.row().classes("items-center gap-2 flex-1 min-w-0"):
-                    self._center_rule_checkboxes[str(rid)] = ui.checkbox(
-                        value=rid in self.selected_rule_ids,
-                        on_change=lambda e, r=rid: self._toggle_selection(r, e.value),
-                    ).classes("mgmt-checkbox")
-                    if not is_center_peer:
-                        ui.icon("drag_indicator").classes("firewall-rule-drag cursor-move text-grey-6")
-                    else:
-                        ui.icon("drag_indicator").classes("firewall-rule-drag cursor-move text-grey-5")
-                    with ui.element("div").classes("mgmt-record-copy"):
-                        with ui.row().classes("items-center gap-2 flex-wrap min-w-0"):
-                            ui.label(title_text).classes("mgmt-record-title")
-                            # 与 t 样例一致：区分为本机中心 JSON / 对端仅标识 / 对端在中心侧放行
-                            if is_center_peer:
-                                ui.label("对端·中心放行").classes("user-session-badge")
-                            elif (rule.get("deployment_target") or "center") == "peer":
-                                ui.label("对端仅标识").classes("user-session-badge")
-                            else:
-                                ui.label("中心节点").classes("user-session-badge")
-                            if is_center_peer and peer_name:
-                                ui.label(peer_name).classes("user-session-badge shrink-0")
-                        if second_line:
-                            with ui.row().classes("w-full min-w-0"):
-                                ui.label(second_line).classes("text-caption text-grey-6 line-clamp-1")
-                        with ui.element("div").classes("mgmt-record-meta"):
-                            if show_owner and (owner_tag or "").strip():
-                                ot = (owner_tag or "").strip()
-                                with ui.row().classes("items-center gap-1 flex-wrap min-w-0"):
-                                    ui.label("归属").classes("text-grey-6 text-caption shrink-0")
-                                    o = (
-                                        ui.label(ot)
-                                        .classes("meta-badge cursor-pointer min-w-0 break-all")
-                                        .tooltip("点击复制")
-                                    )
-                                    o.on("click", lambda t=ot: self._copy_text_to_clipboard(t))
-                            for lab, val in [
-                                ("协议", protocol),
-                                ("动作", action),
-                                ("优先级", str(rule.get("priority", 0))),
-                            ]:
-                                with ui.element("span").classes("mgmt-meta-item"):
-                                    ui.label(f"{lab} {val}")
-                            with ui.element("span").classes("mgmt-meta-item mgmt-meta-flow"):
-                                ui.label(flow_text)
-                with ui.element("div").classes("mgmt-actions").classes("row items-center gap-0"):
-
-                    def _sync_enabled(v: bool) -> None:
-                        try:
-                            self.rule_service.set_enabled(rid, v)
-                            logger.info("firewall 规则启用状态已更新 rule_id=%s enabled=%s", rid, v)
-                        except Exception as exc:
-                            self._notify_for_page(str(exc), type="negative")
-                        self._refresh_rules()
-
-                    ui.switch(value=enabled, on_change=lambda e: _sync_enabled(e.value)).props("dense")
-                    if is_center_peer:
-                        ui.button(
-                            icon="edit",
-                            on_click=lambda r=rule: self._show_edit_dialog(r),
-                        ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("编辑")
-                    else:
-                        ui.button(
-                            icon="edit",
-                            on_click=lambda r=rule: self._show_edit_dialog(r),
-                        ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn").tooltip("编辑")
-                    ui.button(
-                        icon="delete",
-                        on_click=lambda i=rid: self._confirm_delete(i),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
-
-    def _handle_reorder(self, new_id_order: list[str]) -> None:
-        try:
-            oid = "" if self._is_unified_list else (self.current_owner_id or "").strip()
-            if not new_id_order:
-                return
-            self.rule_service.reorder(oid, new_id_order)
-            self._notify_for_page("规则顺序已更新", type="positive")
-            self._refresh_rules()
-        except Exception as exc:
-            logger.error("reorder: %s", exc)
-            self._notify_for_page(f"排序失败: {exc}", type="negative")
-            self._refresh_rules()
-
-    def _on_center_sort_end(self, event) -> None:
-        """处理 NiceGUI SortableJS 中心规则拖拽结果。"""
-
-        new_order = self._move_order(
-            self._visible_center_rule_ids,
-            event.old_index,
-            event.new_index,
-        )
-        if new_order:
-            self._handle_reorder(new_order)
 
     def _show_create_dialog(self) -> None:
         self._show_create_center_dialog()
@@ -4640,32 +4372,6 @@ class FirewallPage:
             dialog.close()
             self._notify_for_page("已导入并写回", type="positive")
         self._refresh_remote_view()
-
-    def _toggle_selection(self, rule_id: str, checked: bool) -> None:
-        if checked:
-            self.selected_rule_ids.add(rule_id)
-        else:
-            self.selected_rule_ids.discard(rule_id)
-        self._sync_center_select_all()
-
-    def _toggle_center_select_all(self, checked: bool) -> None:
-        """选择或取消选择当前中心规则列表。"""
-        update_visible_selection(
-            self.selected_rule_ids,
-            self._visible_center_rule_ids,
-            checked,
-        )
-        apply_row_checkboxes(self._center_rule_checkboxes, self.selected_rule_ids)
-        self._sync_center_select_all()
-
-    def _sync_center_select_all(self) -> None:
-        """同步中心规则列表全选复选框。"""
-        if self._center_select_all_checkbox is not None:
-            sync_select_all_checkbox(
-                self._center_select_all_checkbox,
-                self._visible_center_rule_ids,
-                self.selected_rule_ids,
-            )
 
     def _batch_delete(self) -> None:
         if self._center_tab_active:

@@ -120,8 +120,8 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
 
     assert page._remote_grid_view is not None
     options = page._remote_grid_view.grid.options
-    assert options["pagination"] is True
-    assert options["paginationPageSize"] == 50
+    assert options["pagination"] is False
+    assert "paginationPageSize" not in options
     assert options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in options
     assert len(options["rowData"]) == 2
@@ -141,6 +141,7 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
     assert ":rowDrag" in options["columnDefs"][0]
     assert "isAnyFilterPresent" in options["columnDefs"][0][":rowDrag"]
     assert options["rowDragManaged"] is True
+    assert options["suppressMoveWhenRowDragging"] is False
 
 
 def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
@@ -168,6 +169,7 @@ def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
     assert page._remote_push_button._props.get("disable") is True
     assert page._remote_grid_view.grid.options["columnDefs"][0]["rowDrag"] is False
     assert "rowDragManaged" not in page._remote_grid_view.grid.options
+    assert page._remote_grid_view.grid.options["pagination"] is True
 
 
 def test_remote_no_cache_fetching_error_and_empty_states(
@@ -373,10 +375,7 @@ def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(
     monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
 
     class Event:
-        args = {
-            "data": {"index": 0},
-            "overIndex": 2,
-        }
+        args = {"rowId": "peer-001:0", "rowIndex": 0, "toIndex": 2}
 
     page._on_remote_grid_row_drag_end(Event())
 
@@ -398,7 +397,7 @@ def test_remote_grid_drag_blocked_when_remote_truth_is_not_safe(
     monkeypatch.setattr(page, "_refresh_remote_view", lambda: refreshed.append(True))
 
     class Event:
-        args = {"data": {"index": 0}, "overIndex": 1}
+        args = {"rowId": "peer-001:0", "rowIndex": 0, "toIndex": 1}
 
     page._on_remote_grid_row_drag_end(Event())
 

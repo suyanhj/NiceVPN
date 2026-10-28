@@ -69,14 +69,15 @@ AG_GRID_LOCALE_ZH_CN: dict[str, str] = {
 class DataGrid:
     container: Any
     grid: Any
-    summary: Any
+    summary: Any | None
 
     def set_rows(self, rows: Iterable[Mapping[str, Any]]) -> None:
         """替换行数据并刷新结果摘要。"""
 
         normalized = [dict(row) for row in rows]
         self.grid.options["rowData"] = normalized
-        self.summary.text = f"共 {len(normalized)} 条"
+        if self.summary is not None:
+            self.summary.text = f"共 {len(normalized)} 条"
         self.grid.update()
 
     def refresh(self) -> None:
@@ -99,6 +100,8 @@ def render_data_grid(
     suppress_horizontal_scroll: bool = False,
     external_filter_text: str | None = None,
     pagination: bool = True,
+    row_drag_managed: bool = False,
+    show_summary: bool = True,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
 
@@ -119,6 +122,9 @@ def render_data_grid(
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if row_drag_managed:
+        options["rowDragManaged"] = True
+        options["suppressMoveWhenRowDragging"] = False
     if pagination:
         options["paginationPageSize"] = page_size
     if suppress_horizontal_scroll:
@@ -163,5 +169,9 @@ def render_data_grid(
         )
         if on_cell_click is not None:
             grid.on("cellClicked", on_cell_click)
-        summary = ui.label(f"共 {len(normalized_rows)} 条").classes("vpn-data-grid__summary")
+        summary = (
+            ui.label(f"共 {len(normalized_rows)} 条").classes("vpn-data-grid__summary")
+            if show_summary
+            else None
+        )
     return DataGrid(container=container, grid=grid, summary=summary)
