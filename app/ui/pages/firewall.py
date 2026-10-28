@@ -2532,7 +2532,7 @@ class FirewallPage:
 
         visible_ids = [
             str(row.get("id") or "")
-            for row in all_rows
+            for row in matched_rows
             if str(row.get("id") or "")
         ]
         self._visible_center_rule_ids = visible_ids

@@ -33,7 +33,8 @@ def test_firewall_uses_aggrid_row_drag_without_duplicate_sortable_bundle() -> No
     """中心与对端规则排序统一使用 AG Grid row drag，不再保留 SortableJS 路径。"""
 
     source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
-    assert '"rowDrag": bool(can_reorder)' in source
+    assert '[":rowDrag"]' in source
+    assert "isAnyFilterPresent" in source
     assert '"rowDragManaged"' in source
     assert ".make_sortable(" not in source
     assert "new Sortable(" not in source
