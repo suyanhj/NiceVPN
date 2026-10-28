@@ -207,7 +207,7 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
           document.querySelectorAll(
             ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
           )
-        ).map((row) => row.querySelectorAll(".ag-selection-checkbox").length);
+        ).map((row) => row.querySelectorAll('input.ag-checkbox-input[type="checkbox"]').length);
         """
     )
     assert all(count == 1 for count in selection_counts), selection_counts
