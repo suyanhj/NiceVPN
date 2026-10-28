@@ -750,7 +750,7 @@ def test_center_create_and_edit_dialogs_use_shared_form(
         ) as user:
             await user.open("/")
             await user.should_see("编辑中心规则")
-            await user.should_see("优先级：10")
+            await user.should_see("优先级（全局唯一）")
             await user.should_see("保存")
 
     asyncio.run(verify_edit())
@@ -1013,7 +1013,7 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "firewall-bulk-bar" in source
     assert "firewall-filter-bar" in source
     assert "window.NiceVpnSetFilter" in source
-    assert "搜索 IP / 规则 ID / 说明" in source
+    assert "搜索 IP / 端口 / 规则 ID" in source
     assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source
