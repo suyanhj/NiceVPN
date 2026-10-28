@@ -2817,7 +2817,7 @@ class FirewallPage:
         self._notify_for_page("规则优先级已更新", type="positive")
         self._refresh_rules()
 
-    def _clear_center_filters(self) -> None::
+    def _clear_center_filters(self) -> None:
         if self._center_search_input is not None:
             self._center_search_input.set_value("")
         self._center_filter_model = {}
