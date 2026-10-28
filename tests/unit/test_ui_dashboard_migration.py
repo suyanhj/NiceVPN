@@ -205,6 +205,11 @@ def test_dashboard_v2_visual_contract_files_exist() -> None:
     assert "最后更新 " not in dashboard_source
     assert "render_page_toolbar(" not in dashboard_source
     assert "vpn-metric-card--v2" in shell_css
+    assert "border-color: rgba(21, 189, 232, 0.09) !important;" in shell_css
+    assert "background: #111214 !important;" in shell_css
+    assert "inset 3px 0 0 rgba(45, 212, 191, 0.72)" in shell_css
+    assert ".dashboard-page--v2 .vpn-chart-card" in shell_css
+    assert ".dashboard-page--v2 .dashboard-status-strip" in shell_css
     assert "helper_tooltip=" in dashboard_source
     assert 'helper=f"共 {snapshot.user_count} 个注册用户"' not in dashboard_source
     assert 'helper=f"↓ {_format_bytes(snapshot.total_tx)} · 当前快照"' not in dashboard_source
