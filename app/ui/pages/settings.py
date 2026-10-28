@@ -62,7 +62,7 @@ class SettingsPage:
             self.config = None
             self._config_load_error = exc
             with ui.column().classes(
-                "page-shell mgmt-page w-full min-h-0 page-shell--settings"
+                "page-shell mgmt-page w-full min-h-0 page-shell--settings settings-page--v2"
             ):
                 error_state(
                     str(exc),
@@ -85,15 +85,15 @@ class SettingsPage:
             else "openvpn"
         )
         with ui.column().classes(
-            "page-shell mgmt-page w-full min-h-0 page-shell--settings"
+            "page-shell mgmt-page w-full min-h-0 page-shell--settings settings-page--v2"
         ):
             with ui.element("div").classes(
-                "firewall-control-header firewall-tab-bar w-full"
+                "settings-tab-shell w-full"
             ):
                 with ui.tabs(
                     value=active_tab,
                     on_change=self._on_settings_tab_change,
-                ).classes("firewall-compact-tabs w-full") as st:
+                ).classes("settings-tabs w-full") as st:
                     self._settings_tabs = st
                     ui.tab("openvpn", label="OpenVPN")
                     ui.tab("server", label="服务端")
@@ -103,7 +103,7 @@ class SettingsPage:
                     ui.tab("notify", label="通知")
             with ui.tab_panels(
                 st, value=active_tab, keep_alive=False
-            ).classes("w-full min-h-0 flex-1 firewall-tabpanels"):
+            ).classes("w-full min-h-0 flex-1 settings-tabpanels"):
                 with ui.tab_panel("openvpn"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_openvpn_panel()
