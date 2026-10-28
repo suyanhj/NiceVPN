@@ -250,6 +250,32 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
     assert center_rule_ids()[:2] == ["rule-002", "rule-001"]
 
 
+
+def test_init_wizard_uses_v2_palette_and_keeps_setup_steps(
+    screen: Screen,
+) -> None:
+    """初始化向导沿用新版黑灰青蓝主题，步骤流程仍可正常渲染。"""
+
+    screen.selenium.set_window_size(1440, 900)
+    screen.open("/init")
+    screen.should_contain("安全接入平台初始化")
+
+    appearance = screen.selenium.execute_script(
+        """
+        const brand = document.querySelector('.page-shell--setup .setup-brand');
+        const panel = document.querySelector('.page-shell--setup .setup-panel');
+        return {
+          brandBackground: brand ? getComputedStyle(brand).backgroundImage : "",
+          panelBackground: panel ? getComputedStyle(panel).backgroundColor : "",
+          stepCount: document.querySelectorAll('.page-shell--setup .step-chip').length,
+        };
+        """
+    )
+    assert "21, 189, 232" in appearance["brandBackground"], appearance
+    assert appearance["panelBackground"] == "rgb(12, 12, 13)", appearance
+    assert int(appearance["stepCount"]) >= 1, appearance
+
+
 def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen: Screen,
 ) -> None:
