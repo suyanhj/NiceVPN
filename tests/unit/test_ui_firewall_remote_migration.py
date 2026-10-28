@@ -114,7 +114,7 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
             await user.should_see("已与远端同步")
             await user.should_see("从对端拉取")
             await user.should_see("推送到对端")
-            await user.should_see("2 RULES TOTAL")
+            await user.should_see("远端链以 SSH 真值为准；修改后立即写回")
 
     asyncio.run(verify())
 
@@ -138,8 +138,8 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
 
     assert page._remote_pull_button._props.get("disable") is not True
     assert page._remote_push_button._props.get("disable") is not True
-    assert ":rowDrag" in options["columnDefs"][0]
-    assert "isAnyFilterPresent" in options["columnDefs"][0][":rowDrag"]
+    assert options["columnDefs"][0]["rowDrag"] is True
+    assert ":rowDrag" not in options["columnDefs"][0]
     assert options["rowDragManaged"] is True
     assert options["suppressMoveWhenRowDragging"] is False
 

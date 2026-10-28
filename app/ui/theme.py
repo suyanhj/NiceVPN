@@ -13,6 +13,7 @@ _CSS_FILES = (
     "ag-grid-theme.css",
     "effects.css",
     "legacy.css",
+    "setup-v2.css",
 )
 _JS_FILES = (
     "/static/vendor/clipboard-2.0.11.min.js",

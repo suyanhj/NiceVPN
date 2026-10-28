@@ -34,11 +34,12 @@ def test_firewall_uses_aggrid_row_drag_without_duplicate_sortable_bundle() -> No
 
     source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
     grid_source = (UI_DIR / "components" / "data_grid.py").read_text(encoding="utf-8")
-    assert '[":rowDrag"]' in source
-    assert "isAnyFilterPresent" in source
+    assert '"rowDrag": bool(can_reorder)' in source
+    assert '":rowDrag"' not in source
     assert '"rowDragManaged"' in grid_source
     assert 'options[":onRowDragEnd"]' in grid_source
     assert "event.overIndex" in grid_source
+    assert "firewall-footer-count" not in source
     assert ".make_sortable(" not in source
     assert "new Sortable(" not in source
     assert not (STATIC_DIR / "Sortable.min.js").exists()
@@ -117,7 +118,8 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     grid_index = theme_source.index('"ag-grid-theme.css"')
     effects_index = theme_source.index('"effects.css"')
     legacy_index = theme_source.index('"legacy.css"')
-    assert token_index < shell_index < grid_index < effects_index < legacy_index
+    setup_index = theme_source.index('"setup-v2.css"')
+    assert token_index < shell_index < grid_index < effects_index < legacy_index < setup_index
 
     shell_source = (STATIC_DIR / "css" / "shell.css").read_text(encoding="utf-8")
     grid_source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
@@ -131,6 +133,11 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     assert ".vpn-tech-grid" in effects_source
     assert "prefers-reduced-motion" in effects_source
 
+    setup_source = (STATIC_DIR / "css" / "setup-v2.css").read_text(encoding="utf-8")
+    assert ".page-shell--setup .setup-brand" in setup_source
+    assert "background: #0c0c0d !important;" in setup_source
+    assert "#15bde8" in setup_source
+
 
 def test_theme_fingerprints_static_assets() -> None:
     """CSS/JS 使用内容哈希版本，避免 pull+重启后浏览器继续命中旧缓存。"""
@@ -140,10 +147,12 @@ def test_theme_fingerprints_static_assets() -> None:
     css_url = _versioned_static_url("/static/css/shell.css")
     js_url = _versioned_static_url("/static/js/clipboard-adapter.js")
     filter_url = _versioned_static_url("/static/js/ag-grid-set-filter.js")
+    setup_css_url = _versioned_static_url("/static/css/setup-v2.css")
 
     assert css_url.startswith("/static/css/shell.css?v=")
     assert js_url.startswith("/static/js/clipboard-adapter.js?v=")
     assert filter_url.startswith("/static/js/ag-grid-set-filter.js?v=")
+    assert setup_css_url.startswith("/static/css/setup-v2.css?v=")
     assert len(css_url.rsplit("=", 1)[1]) == 12
     assert len(js_url.rsplit("=", 1)[1]) == 12
     assert len(filter_url.rsplit("=", 1)[1]) == 12

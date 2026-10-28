@@ -200,7 +200,7 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
         return screen.selenium.execute_script(
             """
             return Array.from(document.querySelectorAll(
-              ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
+              ".firewall-center-panel .ag-center-cols-container .ag-row:not(.ag-row-pinned)"
             ))
               .map((row) => row.getAttribute("row-id") || "")
               .filter((row_id) => row_id.startsWith("rule-"));
@@ -210,6 +210,15 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
     WebDriverWait(screen.selenium, 5).until(lambda _driver: len(center_rule_ids()) >= 2)
     before = center_rule_ids()
     assert before[:2] == ["rule-001", "rule-002"], before
+    duplicate_counts = screen.selenium.execute_script(
+        """
+        return {
+          gridSummaries: document.querySelectorAll('.firewall-center-panel .vpn-data-grid__summary').length,
+          footerCounts: document.querySelectorAll('.firewall-center-panel .firewall-footer-count').length,
+        };
+        """
+    )
+    assert duplicate_counts == {"gridSummaries": 0, "footerCounts": 0}, duplicate_counts
 
     _click_aria_button(screen, "调整优先级")
     screen.wait(0.5)
@@ -228,6 +237,11 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
     actions.move_to_element(handle).click_and_hold(handle)
     actions.pause(0.2).move_to_element(target).pause(0.2).release().perform()
     screen.wait(0.3)
+    WebDriverWait(screen.selenium, 5).until(
+        lambda _driver: center_rule_ids()[:2] == ["rule-002", "rule-001"]
+    )
+    assert center_rule_ids()[:2] == ["rule-002", "rule-001"], "drag did not change visible row order"
+
     _click_aria_button(screen, "保存排序")
 
     WebDriverWait(screen.selenium, 5).until(

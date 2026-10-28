@@ -211,11 +211,9 @@ class FirewallPage:
         self._is_unified_list: bool = True
         self._center_tab_active: bool = True
         self._strat_tabs: ui.tabs | None = None
-        self._rules_total_footer: ui.label | None = None
         self._remote_peer_select: ui.select | None = None
         # 对端机链可滚动列表区，与中心 ``rules_container`` 同构
         self._remote_list_container: ui.column | None = None
-        self._remote_rules_total_footer: ui.label | None = None
         self._remote_tab_shell: ui.column | None = None
         # 供后台 asyncio Task 发 JS/通知：无当前 slot 栈时不能依赖 context.client
         self._ng_client: Any = None
@@ -459,14 +457,11 @@ class FirewallPage:
                         ):
                             with ui.row().classes(
                                 "mgmt-page-footer-row w-full items-center "
-                                "justify-between text-grey-6"
+                                "justify-start text-grey-6"
                             ):
                                 self._rules_footer_hint = ui.label(
                                     "点击“调整优先级”进入拖动排序模式"
                                 ).classes("firewall-footer-hint")
-                                self._rules_total_footer = ui.label(
-                                    "0 RULES TOTAL"
-                                ).classes("firewall-footer-count")
 
                 with ui.tab_panel("remote").classes(
                     "h-full min-h-0 flex-1 firewall-remote-panel"
@@ -696,14 +691,11 @@ class FirewallPage:
             "mgmt-page-foot w-full mt-auto flex-shrink-0"
         ):
             with ui.row().classes(
-                "mgmt-page-footer-row w-full items-center justify-between text-grey-6"
+                "mgmt-page-footer-row w-full items-center justify-start text-grey-6"
             ):
                 ui.label(
                     "远端链以 SSH 真值为准；修改后立即写回"
                 ).classes("firewall-footer-hint")
-                self._remote_rules_total_footer = ui.label(
-                    "0 RULES TOTAL"
-                ).classes("firewall-footer-count")
 
         self._refresh_remote_toolbar_state()
 
@@ -1071,14 +1063,8 @@ class FirewallPage:
             "width": 85,
             "pinned": "left",
             "filter": False,
+            "rowDrag": bool(can_reorder),
         }
-        if can_reorder:
-            number_column[":rowDrag"] = (
-                "(params) => !params.api.isAnyFilterPresent() && "
-                "!params.api.getColumnState().some((state) => Boolean(state.sort))"
-            )
-        else:
-            number_column["rowDrag"] = False
 
         return [
             number_column,
@@ -1190,8 +1176,6 @@ class FirewallPage:
         if not peer_id:
             self._remote_grid_rows = []
             self._selected_remote_indices.clear()
-            if self._remote_rules_total_footer is not None:
-                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
             with self._remote_list_container:
                 empty_state(
                     "请先选择对端",
@@ -1209,8 +1193,6 @@ class FirewallPage:
         if cache is None:
             self._remote_grid_rows = []
             self._selected_remote_indices.clear()
-            if self._remote_rules_total_footer is not None:
-                self._remote_rules_total_footer.set_text("0 RULES TOTAL")
             with self._remote_list_container:
                 if fetch_running:
                     loading_state("正在从对端拉取规则…")
@@ -1240,11 +1222,6 @@ class FirewallPage:
         valid_indices = set(self._visible_remote_indices)
         self._selected_remote_indices.intersection_update(valid_indices)
         self._sync_action_bar_count()
-
-        if self._remote_rules_total_footer is not None:
-            self._remote_rules_total_footer.set_text(
-                f"{len(rows)} RULES TOTAL"
-            )
 
         with self._remote_list_container:
             if fetch_error:
@@ -1336,7 +1313,7 @@ class FirewallPage:
         self._sync_action_bar_count()
 
     async def _on_remote_grid_filter_changed(self, *_args) -> None:
-        """保存对端列筛选/排序状态，并同步可见规则数量。"""
+        """保存对端列筛选/排序状态。"""
 
         view = self._remote_grid_view
         if view is None:
@@ -1353,15 +1330,6 @@ class FirewallPage:
         except Exception as exc:
             logger.debug("同步对端规则筛选状态失败: %s", exc)
             return
-
-        if self._remote_rules_total_footer is not None:
-            total = len(self._remote_grid_rows)
-            if displayed == total:
-                self._remote_rules_total_footer.set_text(f"{total} RULES TOTAL")
-            else:
-                self._remote_rules_total_footer.set_text(
-                    f"{displayed} MATCHED / {total} TOTAL"
-                )
 
     async def _on_remote_grid_cell_click(self, event) -> None:
         """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
@@ -2187,14 +2155,8 @@ class FirewallPage:
             "width": 105,
             "pinned": "left",
             "filter": False,
+            "rowDrag": bool(can_reorder),
         }
-        if can_reorder:
-            priority_column[":rowDrag"] = (
-                "(params) => !params.api.isAnyFilterPresent() && "
-                "!params.api.getColumnState().some((state) => Boolean(state.sort))"
-            )
-        else:
-            priority_column["rowDrag"] = False
 
         columns = [
             priority_column,
@@ -2404,8 +2366,6 @@ class FirewallPage:
             self._center_display_rows = []
             self._center_grid_view = None
             self._center_grid_container.clear()
-            if self._rules_total_footer is not None:
-                self._rules_total_footer.set_text("LOAD FAILED")
             with self._center_grid_container:
                 error_state(
                     str(exc),
@@ -2476,14 +2436,6 @@ class FirewallPage:
         self._visible_center_rule_ids = visible_ids
         self.selected_rule_ids.intersection_update(set(visible_ids))
         self._sync_action_bar_count()
-
-        if self._rules_total_footer is not None:
-            if len(matched_rows) == len(all_rows):
-                self._rules_total_footer.set_text(f"{len(all_rows)} RULES TOTAL")
-            else:
-                self._rules_total_footer.set_text(
-                    f"{len(matched_rows)} MATCHED / {len(all_rows)} TOTAL"
-                )
 
         self._center_grid_container.clear()
         self._center_grid_view = None
@@ -2739,7 +2691,7 @@ class FirewallPage:
         self.current_owner_id = next(iter(owner_ids)) if len(owner_ids) == 1 else ""
 
     async def _on_center_grid_filter_changed(self, *_args) -> None:
-        """保存列筛选/排序状态，并同步匹配条数与排序保护。"""
+        """保存列筛选/排序状态并更新排序保护。"""
 
         view = self._center_grid_view
         if view is None:
@@ -2757,15 +2709,6 @@ class FirewallPage:
         except Exception as exc:
             logger.debug("同步中心规则筛选状态失败: %s", exc)
             return
-
-        if self._rules_total_footer is not None:
-            total = len(self._center_all_rows)
-            if displayed == total:
-                self._rules_total_footer.set_text(f"{total} RULES TOTAL")
-            else:
-                self._rules_total_footer.set_text(
-                    f"{displayed} MATCHED / {total} TOTAL"
-                )
 
     async def _on_center_grid_selection_changed(self, *_args) -> None:
         """同步 AG Grid 选中行到现有批量操作集合。"""

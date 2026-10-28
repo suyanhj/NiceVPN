@@ -190,7 +190,7 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
             assert response.status_code == 200
             await user.should_see("中心策略")
             await user.should_see("对端远端")
-            await user.should_see("3 RULES TOTAL")
+            await user.should_see("点击“调整优先级”进入拖动排序模式")
 
     asyncio.run(verify())
 
@@ -242,7 +242,6 @@ def test_center_firewall_keyword_search_and_no_match_state(
             assert page._center_display_rows[0]["id"] == "rule-accept"
             assert len(page._center_grid_view.grid.options["rowData"]) == 3
             assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
-            assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
             assert page._center_grid_view.summary is None
 
             page._center_search_input.set_value("443")
@@ -253,7 +252,6 @@ def test_center_firewall_keyword_search_and_no_match_state(
             page._center_search_input.set_value("开发访问")
             page._refresh_rules()
             assert len(page._center_display_rows) == 0
-            assert page._rules_total_footer.text == "0 MATCHED / 3 TOTAL"
 
             page._center_search_input.set_value("definitely-not-found")
             page._refresh_rules()
@@ -304,7 +302,6 @@ def test_center_firewall_true_empty_state(
             await user.open("/")
             await user.should_see("暂无中心规则")
             await user.should_see("新建规则")
-            assert page._rules_total_footer.text == "0 RULES TOTAL"
 
     asyncio.run(verify())
 
@@ -331,7 +328,7 @@ def test_center_grid_columns_keep_priority_owner_flow_and_id() -> None:
     assert first["filter"] is False
     assert "checkboxSelection" not in first
     assert "headerCheckboxSelection" not in first
-    assert ":rowDrag" in FirewallPage._center_grid_columns(can_reorder=True)[0]
+    assert FirewallPage._center_grid_columns(can_reorder=True)[0]["rowDrag"] is True
     assert FirewallPage._center_grid_columns(can_reorder=False)[0]["rowDrag"] is False
 
 
@@ -359,6 +356,8 @@ def test_center_priority_reorder_mode_shows_full_order_without_pagination(
             assert "rowSelection" not in options
             assert options["rowDragManaged"] is True
             assert options["suppressMoveWhenRowDragging"] is False
+            assert options["columnDefs"][0]["rowDrag"] is True
+            assert ":rowDrag" not in options["columnDefs"][0]
             assert page._center_grid_view.summary is None
             assert [row["id"] for row in options["rowData"]] == expected
 
@@ -386,9 +385,8 @@ def test_center_grid_row_drag_is_only_available_in_explicit_reorder_mode() -> No
     )
 
     assert normal[0]["rowDrag"] is False
-    assert ":rowDrag" in reorder[0]
-    assert "isAnyFilterPresent" in reorder[0][":rowDrag"]
-    assert "getColumnState" in reorder[0][":rowDrag"]
+    assert reorder[0]["rowDrag"] is True
+    assert ":rowDrag" not in reorder[0]
     assert all(column["sortable"] is False for column in reorder)
     assert all(column["filter"] is False for column in reorder)
     assert reorder[-1]["hide"] is True
