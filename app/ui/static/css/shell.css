@@ -1782,9 +1782,6 @@ body {
     min-height: 480px !important;
   }
 
-  .users-page--v2 .users-toolbar .vpn-toolbar__search > .q-btn {
-    flex: 0 0 32px;
-  }
 }
 
 /* Services is an object-management page, not a data-grid page. */
