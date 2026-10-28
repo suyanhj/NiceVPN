@@ -2519,6 +2519,19 @@ body {
   font-size: 12px;
 }
 
+.settings-page--v2 .vpn-form-section__actions .vpn-action--primary {
+  border: 1px solid rgba(21, 189, 232, 0.24) !important;
+  background: rgba(21, 189, 232, 0.12) !important;
+  color: #63d5f2 !important;
+  box-shadow: none !important;
+}
+
+.settings-page--v2 .vpn-form-section__actions .vpn-action--primary:hover {
+  border-color: rgba(45, 212, 191, 0.30) !important;
+  background: rgba(21, 189, 232, 0.17) !important;
+  color: #8de5f7 !important;
+}
+
 .settings-page--v2 .vpn-form-section__actions .vpn-action--secondary {
   border-color: rgba(187, 190, 201, 0.10) !important;
   background: rgba(255, 255, 255, 0.02) !important;
