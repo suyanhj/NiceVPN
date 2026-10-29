@@ -19,6 +19,7 @@ from app.services.group.crud import GroupService
 from app.ui.adapters.firewall import adapt_center_rule_rows
 from app.ui.components.actions import danger_action, secondary_action
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.server_pager import page_after_size_change
 from app.ui.components.states import (
     empty_state,
     error_state,
@@ -487,6 +488,11 @@ class FirewallCenterGridMixin:
                     if self._center_reorder_mode
                     else self._on_center_page_change
                 ),
+                on_server_page_size_change=(
+                    None
+                    if self._center_reorder_mode
+                    else self._on_center_page_size_change
+                ),
             )
             if not self._center_reorder_mode:
                 self._center_grid_view.grid.on(
@@ -524,6 +530,18 @@ class FirewallCenterGridMixin:
         if target == self._center_page:
             return
         self._center_page = target
+        self._refresh_rules()
+
+    def _on_center_page_size_change(self, page_size: int) -> None:
+        new_size = max(1, int(page_size))
+        if new_size == self._center_page_size:
+            return
+        self._center_page = page_after_size_change(
+            page=self._center_page,
+            old_size=self._center_page_size,
+            new_size=new_size,
+        )
+        self._center_page_size = new_size
         self._refresh_rules()
 
     def _on_center_search_changed(self, _event=None) -> None:
