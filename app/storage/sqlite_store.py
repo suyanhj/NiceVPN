@@ -414,23 +414,19 @@ class SqliteStore:
         text = str(search or "").strip()
         if text:
             mode = str(search_mode or "contains")
-            if mode in {"notContains", "notEqual"}:
-                operator = "NOT LIKE" if mode == "notContains" else "<>"
+            if mode in {"equals", "notEqual"}:
+                operator = "=" if mode == "equals" else "<>"
+                clauses.append(f"u.username {operator} ? COLLATE NOCASE")
+                params.append(text)
             else:
-                operator = "LIKE" if mode != "equals" else "="
-            clauses.append(f"u.username {operator} ? ESCAPE '\\'")
-            params.append(
-                _like_pattern(
-                    text,
-                    mode=(
-                        "contains"
-                        if mode == "notContains"
-                        else "equals"
-                        if mode == "notEqual"
-                        else mode
-                    ),
+                operator = "NOT LIKE" if mode == "notContains" else "LIKE"
+                clauses.append(f"u.username {operator} ? ESCAPE '\\'")
+                params.append(
+                    _like_pattern(
+                        text,
+                        mode="contains" if mode == "notContains" else mode,
+                    )
                 )
-            )
         gids = [str(v) for v in (group_ids or []) if str(v)]
         if gids:
             clauses.append("u.group_id IN (" + ",".join("?" for _ in gids) + ")")
