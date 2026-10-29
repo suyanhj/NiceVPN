@@ -4,7 +4,6 @@
 import logging
 import queue
 import threading
-import json
 
 from nicegui import context, ui
 
@@ -160,19 +159,12 @@ class InitPage:
     @staticmethod
     def _has_default_group() -> bool:
         """检查初始化默认策略域是否已经存在。"""
-        from app.core.constants import GROUPS_DIR
+        from app.services.group.crud import GroupService
 
-        if not GROUPS_DIR.is_dir():
-            return False
-        for path in GROUPS_DIR.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.error("读取初始化默认组失败 path=%s: %s", path, exc)
-                raise
-            if data.get("name") == "默认用户组":
-                return True
-        return False
+        return any(
+            group.get("name") == "默认用户组"
+            for group in GroupService().list_all()
+        )
 
     def _update_step_indicator(self):
         """更新顶部步骤指示器。"""
