@@ -545,16 +545,24 @@ class SqliteStore:
                 """
                 INSERT INTO peers(
                     id, bound_username, center_forward_priority,
-                    center_forward_enabled, created_at, updated_at, payload
+                    center_forward_enabled, created_at, updated_at, payload,
+                    name, has_lan_cidrs, lan_cidrs_text, center_forward_protocol,
+                    center_forward_dest_ip, center_forward_dest_port
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     bound_username = excluded.bound_username,
                     center_forward_priority = excluded.center_forward_priority,
                     center_forward_enabled = excluded.center_forward_enabled,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at,
-                    payload = excluded.payload
+                    payload = excluded.payload,
+                    name = excluded.name,
+                    has_lan_cidrs = excluded.has_lan_cidrs,
+                    lan_cidrs_text = excluded.lan_cidrs_text,
+                    center_forward_protocol = excluded.center_forward_protocol,
+                    center_forward_dest_ip = excluded.center_forward_dest_ip,
+                    center_forward_dest_port = excluded.center_forward_dest_port
                 """,
                 (
                     peer_id,
@@ -564,6 +572,7 @@ class SqliteStore:
                     str(payload.get("created_at") or ""),
                     str(payload.get("updated_at") or ""),
                     _dump_payload(payload),
+                    *_peer_index_values(payload),
                 ),
             )
 
