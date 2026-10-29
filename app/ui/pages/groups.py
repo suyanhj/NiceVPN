@@ -22,7 +22,7 @@ from app.ui.components.list_selection import (
     update_visible_selection,
 )
 from app.ui.components.states import empty_state, error_state
-from app.ui.components.server_pager import render_server_pager
+from app.ui.components.server_pager import page_after_size_change, render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
@@ -176,12 +176,13 @@ class GroupsPage:
         self.list_container.clear()
         with self.list_container:
             self._render_group_list(groups, root_id=root_id)
-            if total > self.page_size:
+            if total > 0:
                 render_server_pager(
                     total=total,
                     page=self.page,
                     page_size=self.page_size,
                     on_change=self._on_group_page_change,
+                    on_page_size_change=self._on_group_page_size_change,
                 )
 
     def _on_group_page_change(self, page: int) -> None:
@@ -191,6 +192,18 @@ class GroupsPage:
         if target == self.page:
             return
         self.page = target
+        self._refresh_group_page()
+
+    def _on_group_page_size_change(self, page_size: int) -> None:
+        new_size = max(1, int(page_size))
+        if new_size == self.page_size:
+            return
+        self.page = page_after_size_change(
+            page=self.page,
+            old_size=self.page_size,
+            new_size=new_size,
+        )
+        self.page_size = new_size
         self._refresh_group_page()
 
     @staticmethod
