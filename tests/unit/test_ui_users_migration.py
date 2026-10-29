@@ -93,6 +93,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("已选择 1 项")
+            await user.should_not_see("正在加载用户…")
 
     asyncio.run(verify_page())
 
