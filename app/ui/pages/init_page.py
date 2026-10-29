@@ -545,7 +545,8 @@ class InitPage:
 
         def body() -> None:
             ui.label(
-                "平台会自动初始化 PKI，并生成运行所需证书与密钥。"
+                "平台会先检测 /etc/openvpn 下已有 EasyRSA PKI；完整则直接复用，"
+                "缺少运行材料时仅补齐缺项，否则才创建新 PKI。"
                 " 此页面不会回显任何私钥材料。"
             ).classes("section-caption")
 
@@ -561,7 +562,7 @@ class InitPage:
             self.status_label.text = "OpenVPN 已就绪，可建立证书体系。"
             render_form_section(
                 "建立平台证书体系",
-                description="签发服务端与客户端凭据，并准备 CRL / tls-crypt-v2。",
+                description="自动识别并复用现有 PKI，或安全创建新 CA，并准备 CRL / tls-crypt-v2。",
                 kicker="PKI",
                 body=body,
                 actions=actions,

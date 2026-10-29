@@ -15,6 +15,77 @@ from app.core.constants import (
 
 logger = logging.getLogger(__name__)
 
+def inspect_easyrsa_pki(pki_dir: str) -> dict[str, object]:
+    """检查 EasyRSA PKI 状态，不读取或输出任何私钥内容。"""
+    raw = str(pki_dir or "").strip()
+    if not raw:
+        return {
+            "path": "",
+            "state": "missing",
+            "ready": False,
+            "missing": ["ca.crt", "private/ca.key", "index.txt", "serial"],
+        }
+
+    pki = Path(raw)
+    required = {
+        "ca.crt": pki / "ca.crt",
+        "private/ca.key": pki / "private" / "ca.key",
+        "index.txt": pki / "index.txt",
+        "serial": pki / "serial",
+    }
+    present = {name: path.is_file() for name, path in required.items()}
+    ready = all(present.values())
+
+    try:
+        has_content = pki.is_dir() and any(pki.iterdir())
+    except OSError:
+        has_content = True
+
+    if ready:
+        state = "ready"
+    elif present["ca.crt"] or present["private/ca.key"]:
+        # CA 证书或私钥只存在一侧，或 CA 已存在但 EasyRSA 索引缺失。
+        # 这种状态禁止自动覆盖，避免破坏原有证书体系。
+        state = "partial"
+    elif has_content:
+        # 常见于 init-pki 已执行、但 build-ca 尚未完成的中断现场。
+        state = "initialized"
+    else:
+        state = "missing"
+
+    return {
+        "path": str(pki),
+        "state": state,
+        "ready": ready,
+        "missing": [name for name, exists in present.items() if not exists],
+    }
+
+
+def find_existing_easyrsa_pki(openvpn_conf_dir: str = "/etc/openvpn") -> str | None:
+    """在 OpenVPN 常见目录布局中寻找可安全复用的完整 EasyRSA PKI。"""
+    base = Path(str(openvpn_conf_dir or "/etc/openvpn").strip())
+    candidates = [
+        base / "pki",
+        base / "easy-rsa" / "pki",
+        base / "easyrsa" / "pki",
+        base / "server" / "pki",
+        base / "server" / "easy-rsa" / "pki",
+        base / "server" / "easyrsa" / "pki",
+    ]
+    if base.is_dir():
+        for pattern in ("easy-rsa*/pki", "server/easy-rsa*/pki"):
+            candidates.extend(sorted(base.glob(pattern)))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if inspect_easyrsa_pki(key)["state"] == "ready":
+            return key
+    return None
+
 
 class EasyRSAWrapper:
     """
@@ -68,16 +139,44 @@ class EasyRSAWrapper:
             )
         return result
 
+    def inspect_pki(self) -> dict[str, object]:
+        """返回当前 PKI 的可复用状态。"""
+        return inspect_easyrsa_pki(self.pki_dir)
+
     def init_pki(self) -> bool:
-        """初始化 PKI 目录结构"""
+        """初始化 PKI 目录结构；已有结构时保持幂等，不覆盖原数据。"""
+        state = self.inspect_pki()
+        if state["state"] in {"ready", "initialized"}:
+            logger.info(
+                "跳过 init-pki，检测到已有 PKI 结构: state=%s, pki_dir=%s",
+                state["state"],
+                self.pki_dir,
+            )
+            return True
+        if state["state"] == "partial":
+            missing = ", ".join(state["missing"])
+            raise EasyRSAError(
+                f"检测到不完整的 EasyRSA PKI，拒绝覆盖: {self.pki_dir}; "
+                f"缺失: {missing}"
+            )
         self._run(["init-pki"])
         return True
 
     def build_ca(self) -> bool:
         """
-        构建 CA 证书。
+        构建 CA 证书；已有完整 CA 时直接复用。
         密码短语通过环境变量 EASYRSA_PASSIN 传递。
         """
+        state = self.inspect_pki()
+        if state["state"] == "ready":
+            logger.info("检测到现有 CA，跳过 build-ca: pki_dir=%s", self.pki_dir)
+            return True
+        if state["state"] == "partial":
+            missing = ", ".join(state["missing"])
+            raise EasyRSAError(
+                f"检测到不完整的 EasyRSA CA，拒绝覆盖: {self.pki_dir}; "
+                f"缺失: {missing}"
+            )
         logger.info("开始生成无密码 CA: pki_dir=%s", self.pki_dir)
         self._run(["build-ca", "nopass"])
         return True
