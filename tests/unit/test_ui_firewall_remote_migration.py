@@ -638,11 +638,11 @@ def test_remote_batch_enable_skips_existing_and_applies_once(
     messages: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.read_remote_chain_cache",
         lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.mark_pending_apply",
         lambda _peer_id, _chain, _exists, rows: marked.append(
             [dict(row) for row in rows]
         ),
@@ -682,11 +682,11 @@ def test_remote_batch_enable_failure_keeps_selection(
     messages: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.read_remote_chain_cache",
         lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.mark_pending_apply",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
@@ -719,11 +719,11 @@ def test_remote_batch_delete_failure_keeps_selection(
     page._selected_remote_indices = {0, 1}
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.read_remote_chain_cache",
         lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.mark_pending_apply",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
@@ -816,7 +816,7 @@ def test_execute_remote_import_failure_keeps_form_and_selection(
     page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
     page._selected_remote_indices = {0}
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.mark_pending_apply",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
@@ -868,7 +868,7 @@ def test_execute_remote_import_success_closes_and_clears_selection(
     page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
     page._selected_remote_indices = {0}
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_imports.remote_chain_cache.mark_pending_apply",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(page, "_refresh_remote_toolbar_state", lambda: None)
