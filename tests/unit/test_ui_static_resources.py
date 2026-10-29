@@ -138,6 +138,28 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     assert "background: #0c0c0d !important;" in setup_source
     assert "#15bde8" in setup_source
 
+    legacy_source = (STATIC_DIR / "css" / "legacy.css").read_text(encoding="utf-8")
+    for retired_selector in (
+        ".group-page",
+        ".group-header-panel",
+        ".group-toolbar-btn",
+        ".service-page",
+        ".service-header-panel",
+        ".service-icon-btn",
+        ".settings-page",
+        ".settings-header-panel",
+        ".settings-toolbar",
+    ):
+        assert retired_selector not in legacy_source
+    assert ".group-list-count" in legacy_source
+    assert ".group-record-side" in legacy_source
+    assert ".settings-panel-title" in legacy_source
+    assert ".settings-status-text" in legacy_source
+    assert not (STATIC_DIR / "css" / "firewall-v2-fixes.css").exists()
+    assert not (UI_DIR / "components" / "page_header.py").exists()
+    assert "firewall-v2-fixes.css" not in theme_source
+    assert ".vpn-data-grid__grid .ag-row:has(.ag-row-drag)" in grid_source
+
 
 def test_theme_fingerprints_static_assets() -> None:
     """CSS/JS 使用内容哈希版本，避免 pull+重启后浏览器继续命中旧缓存。"""
