@@ -452,6 +452,24 @@ class PeerService:
     def list_all(self) -> list[dict]:
         return self.store.list_peers()
 
+    def list_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        sort_by: str = "created_at",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict], int]:
+        """数据库级对端分页查询。"""
+        return self.store.list_peers_page(
+            offset=offset,
+            limit=limit,
+            search=search,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
     def get(self, peer_id: str) -> dict | None:
         return self.store.get_peer(peer_id)
 
