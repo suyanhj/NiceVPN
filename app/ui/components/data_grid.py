@@ -64,7 +64,6 @@ AG_GRID_LOCALE_ZH_CN: dict[str, str] = {
 }
 
 
-
 @dataclass(slots=True)
 class DataGrid:
     container: Any
@@ -124,9 +123,10 @@ def render_data_grid(
     }
     if row_drag_managed:
         options["rowDragManaged"] = True
+        options["rowDragEntireRow"] = True
         options["suppressMoveWhenRowDragging"] = False
-        # AG Grid emits overIndex for rowDragEnd, but NiceGUI's event bridge
-        # only forwards toIndex. Copy the target before the bridge serializes it.
+        # Keep the compatibility bridge for NiceGUI's Python-side rowDragEnd
+        # handler; the whole-row interaction itself is handled by AG Grid.
         options[":onRowDragEnd"] = (
             "(event) => { "
             "if (Number.isInteger(event.overIndex)) event.toIndex = event.overIndex; "
