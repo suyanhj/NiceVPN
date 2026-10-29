@@ -1086,6 +1086,10 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "firewall-filter-bar" in source
     assert "window.NiceVpnSetFilter" in helper_source
     assert "搜索 IP / 端口 / 规则 ID" in source
+    assert "on_change=lambda _event: self._render_center_rules()" in source
+    assert "on_change=lambda _event: self._refresh_rules()" not in source
+    assert "async def _load_center_grid_rows_async" in center_source
+    assert "run.io_bound(self.rule_service.list_unified_flat)" in center_source
     assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source
