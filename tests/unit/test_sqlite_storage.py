@@ -212,3 +212,186 @@ def test_device_bindings_are_not_part_of_structured_sqlite_migration(
     migration.ensure_storage_ready(paths["db"])
 
     assert binding.is_file()
+
+
+def test_schema_v2_adds_query_index_columns(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.initialize()
+
+    assert store.schema_version() == 2
+    with store.connection() as conn:
+        peer_columns = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(peers)").fetchall()
+        }
+        firewall_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(firewall_rules)").fetchall()
+        }
+
+    assert {
+        "name",
+        "has_lan_cidrs",
+        "lan_cidrs_text",
+        "center_forward_protocol",
+        "center_forward_dest_ip",
+        "center_forward_dest_port",
+    } <= peer_columns
+    assert {
+        "protocol",
+        "action",
+        "deployment_target",
+        "source_text",
+        "dest_ip",
+        "dest_port",
+    } <= firewall_columns
+
+
+def test_users_groups_and_peers_support_database_pages(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.upsert_group({
+        "id": "g-a",
+        "name": "Alpha",
+        "status": "active",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    })
+    store.upsert_group({
+        "id": "g-b",
+        "name": "Beta",
+        "status": "disabled",
+        "created_at": "2026-01-02T00:00:00+00:00",
+    })
+
+    for index in range(75):
+        store.upsert_user({
+            "username": f"user-{index:03d}",
+            "group_id": "g-a" if index % 2 == 0 else "g-b",
+            "status": "active" if index % 3 else "disabled",
+            "created_at": f"2026-01-{(index % 28) + 1:02d}T00:00:00+00:00",
+        })
+
+    rows, total = store.list_users_page(
+        offset=50,
+        limit=25,
+        group_ids=["g-a"],
+        sort_by="username",
+    )
+    assert total == 38
+    assert len(rows) == 0  # 过滤后不足 51 条，offset 确实由 SQLite 生效
+
+    rows, total = store.list_users_page(
+        offset=10,
+        limit=10,
+        search="user-0",
+        group_ids=["g-a"],
+        sort_by="username",
+    )
+    assert total == 38
+    assert len(rows) == 10
+    assert all(row["group_id"] == "g-a" for row in rows)
+
+    group_rows, group_total = store.list_groups_page(
+        limit=1,
+        search="a",
+        sort_by="name",
+    )
+    assert group_total == 2
+    assert [row["name"] for row in group_rows] == ["Alpha"]
+
+    for index in range(6):
+        store.upsert_peer({
+            "id": f"p-{index}",
+            "name": f"Site {index}",
+            "bound_username": f"peer-user-{index}",
+            "lan_cidrs": [f"192.168.{index}.0/24"],
+            "center_forward_priority": 100 + index,
+        })
+    peer_rows, peer_total = store.list_peers_page(
+        offset=2,
+        limit=2,
+        search="Site",
+        sort_by="name",
+    )
+    assert peer_total == 6
+    assert [row["id"] for row in peer_rows] == ["p-2", "p-3"]
+
+
+def test_firewall_unified_query_pages_filter_without_loading_all_payloads(
+    tmp_path: Path,
+) -> None:
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.upsert_group({"id": "g1", "name": "开发组", "status": "active"})
+    store.upsert_peer({
+        "id": "peer-1",
+        "name": "广州站点",
+        "bound_username": "peer-user",
+        "lan_cidrs": ["192.168.10.0/24"],
+        "center_forward_priority": 30,
+        "center_forward_enabled": True,
+        "center_forward_protocol": "udp",
+        "center_forward_dest_ip": "10.0.0.0/8",
+        "center_forward_dest_port": "53",
+    })
+    store.replace_firewall_owner(
+        "g1",
+        [
+            {
+                "id": "rule-1",
+                "owner_type": "group",
+                "owner_id": "g1",
+                "priority": 10,
+                "enabled": True,
+                "protocol": "tcp",
+                "action": "accept",
+                "deployment_target": "center",
+                "source_subnet": "10.8.0.0/24",
+                "dest_ip": "172.16.0.10",
+                "dest_port": "443",
+            },
+            {
+                "id": "rule-2",
+                "owner_type": "group",
+                "owner_id": "g1",
+                "priority": 20,
+                "enabled": False,
+                "protocol": "all",
+                "action": "drop",
+                "deployment_target": "center",
+                "source_ips": ["10.8.0.20"],
+                "dest_ip": "",
+                "dest_port": "",
+            },
+        ],
+    )
+
+    rows, total = store.list_firewall_unified_page(limit=2)
+    assert total == 3
+    assert [row["row_id"] for row in rows] == ["rule-1", "rule-2"]
+
+    searched, searched_total = store.list_firewall_unified_page(
+        search="443",
+        limit=50,
+    )
+    assert searched_total == 1
+    assert searched[0]["row_id"] == "rule-1"
+
+    peer_rows, peer_total = store.list_firewall_unified_page(
+        protocols=["udp"],
+        kind_keys=["center_peer"],
+        limit=50,
+    )
+    assert peer_total == 1
+    assert peer_rows[0]["row_kind"] == "center_peer"
+    assert peer_rows[0]["source_id"] == "peer-1"
+
+    disabled, disabled_total = store.list_firewall_unified_page(
+        enabled_values=[False],
+        actions=["drop"],
+        limit=50,
+    )
+    assert disabled_total == 1
+    assert disabled[0]["row_id"] == "rule-2"
+
+    facets = store.list_firewall_unified_facets()
+    assert {"tcp", "udp", "all"} <= set(facets["protocols"])
+    assert {"accept", "drop"} <= set(facets["actions"])
+    assert {"center", "center_peer"} <= set(facets["kind_keys"])
