@@ -80,7 +80,7 @@ jobs:
           browser=false
           for file in "${changed_files[@]}"; do
             case "${file}" in
-              .dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*)
+              .dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*|app/storage/*|app/core/constants.py|main.py)
                 docker=true
                 ;;
             esac
