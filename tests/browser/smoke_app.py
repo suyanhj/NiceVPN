@@ -167,6 +167,40 @@ class FakeUserService:
     def list_all(self):
         return [dict(item) for item in USERS]
 
+    def list_page(
+        self,
+        *,
+        offset=0,
+        limit=50,
+        search="",
+        group_ids=None,
+        statuses=None,
+        sort_by="username",
+        sort_desc=False,
+        **_kwargs,
+    ):
+        rows = [dict(item) for item in USERS]
+        text = str(search or "").casefold()
+        if text:
+            rows = [
+                row for row in rows
+                if text in str(row.get("username") or "").casefold()
+            ]
+        if group_ids:
+            allowed = {str(value) for value in group_ids}
+            rows = [row for row in rows if str(row.get("group_id") or "") in allowed]
+        if statuses:
+            allowed = {str(value) for value in statuses}
+            rows = [row for row in rows if str(row.get("status") or "") in allowed]
+        key = {"account_status": "status", "group": "group_id"}.get(sort_by, sort_by)
+        rows.sort(
+            key=lambda row: str(row.get(key) or "").casefold(),
+            reverse=bool(sort_desc),
+        )
+        total = len(rows)
+        start = max(0, int(offset))
+        return rows[start:start + max(1, int(limit))], total
+
     def list_ccd_virtual_ipv4_by_username(self):
         return {"alice": "10.224.10.10", "bob": "10.224.0.20"}
 
@@ -242,6 +276,75 @@ class FakeRuleService:
 
     def list_unified_flat(self):
         return [dict(item) for item in self.rows]
+
+    def list_unified_facets(self):
+        owners = []
+        seen = set()
+        protocols = set()
+        actions = set()
+        kind_keys = set()
+        for row in self.rows:
+            owner = (str(row.get("owner_type") or ""), str(row.get("owner_id") or ""))
+            if owner[1] and owner not in seen:
+                seen.add(owner)
+                owners.append({"owner_type": owner[0], "owner_id": owner[1]})
+            protocols.add(str(row.get("protocol") or "all").lower())
+            actions.add(str(row.get("action") or "accept").lower())
+            kind_keys.add(
+                "center_peer"
+                if row.get("_row_kind") == "center_peer"
+                else "peer_marker"
+                if str(row.get("deployment_target") or "center") == "peer"
+                else "center"
+            )
+        return {
+            "owners": owners,
+            "protocols": sorted(protocols),
+            "actions": sorted(actions),
+            "kind_keys": sorted(kind_keys),
+        }
+
+    def list_unified_page(
+        self,
+        *,
+        offset=0,
+        limit=50,
+        search="",
+        owner_ids=None,
+        enabled_values=None,
+        protocols=None,
+        actions=None,
+        kind_keys=None,
+        **_kwargs,
+    ):
+        rows = [dict(item) for item in self.rows]
+        query = str(search or "").casefold()
+        if query:
+            rows = [
+                row for row in rows
+                if query in " ".join([
+                    str(row.get("id") or ""),
+                    str(row.get("source_subnet") or ""),
+                    ",".join(str(v) for v in (row.get("source_ips") or [])),
+                    str(row.get("dest_ip") or ""),
+                    str(row.get("dest_port") or ""),
+                ]).casefold()
+            ]
+        if owner_ids:
+            allowed = {str(v) for v in owner_ids}
+            rows = [row for row in rows if str(row.get("owner_id") or "") in allowed]
+        if enabled_values is not None:
+            allowed = {bool(v) for v in enabled_values}
+            rows = [row for row in rows if bool(row.get("enabled", True)) in allowed]
+        if protocols:
+            allowed = {str(v).lower() for v in protocols}
+            rows = [row for row in rows if str(row.get("protocol") or "all").lower() in allowed]
+        if actions:
+            allowed = {str(v).lower() for v in actions}
+            rows = [row for row in rows if str(row.get("action") or "accept").lower() in allowed]
+        total = len(rows)
+        start = max(0, int(offset))
+        return rows[start:start + max(1, int(limit))], total
 
     def reorder(self, _owner_id, order):
         by_id = {str(row["id"]): row for row in self.rows}
