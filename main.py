@@ -177,6 +177,9 @@ def run_web() -> None:
             reload=False,
             storage_secret=storage_secret,
             session_middleware_kwargs=session_middleware_kwargs,
+            reconnect_timeout=float(
+                config.get("admin_reconnect_timeout_seconds", 300) or 300
+            ),
         )
     except KeyboardInterrupt:
         # Ctrl+C 时 asyncio/uvicorn 会先 CancelledError 再 KeyboardInterrupt，属正常停机路径
