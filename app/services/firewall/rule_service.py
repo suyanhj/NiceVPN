@@ -65,6 +65,21 @@ class FirewallRuleService:
         for oid in owner_ids:
             self._rollback_center_json_after_rebuild_fail(oid, had_main.get(oid, False))
 
+    @staticmethod
+    def _validate_json_rule_addr_fields(rule: FirewallRule) -> None:
+        """落库前校验目标/源 IP 字串，与对端链地址语义保持一致。"""
+        dest = (rule.dest_ip or "").strip()
+        if dest:
+            for part in dest.split(","):
+                value = part.strip()
+                if value:
+                    validate_iptables_addr_or_cidr(value)
+        if rule.source_ips:
+            for raw in rule.source_ips:
+                value = str(raw).strip()
+                if value:
+                    validate_iptables_addr_or_cidr(value)
+
     def create(self, rule_data: dict, *, refresh_kernel: bool = True) -> dict:
         """创建防火墙规则，执行三重校验后持久化并可选刷新 ``VPN_FORWARD``。
 
@@ -75,7 +90,7 @@ class FirewallRuleService:
 
         参数:
             rule_data: 规则数据字典，字段参见 FirewallRule 模型
-            refresh_kernel: 为 False 时只落库 JSON，不写内核（初始化向导在随后 ``rebuild_iptables`` 时使用）
+            refresh_kernel: 为 False 时只落库 SQLite，不写内核（初始化向导在随后 ``rebuild_iptables`` 时使用）
 
         返回:
             创建成功的规则字典
@@ -151,7 +166,7 @@ class FirewallRuleService:
 
         异常:
             ValueError: 空列表、跨 owner、字段校验失败或优先级冲突。
-            RuntimeError: VPN_FORWARD 刷新失败，已按现有回滚策略恢复 JSON。
+            RuntimeError: VPN_FORWARD 刷新失败，已按现有回滚策略恢复 SQLite。
         """
         if not rule_payloads:
             raise ValueError("批量创建规则不能为空")
