@@ -36,6 +36,7 @@ from app.ui.firewall_helpers import (
 from app.ui.pages.firewall_center import FirewallCenterGridMixin
 from app.ui.pages.firewall_center_actions import FirewallCenterActionsMixin
 from app.ui.pages.firewall_center_imports import FirewallCenterImportMixin
+from app.ui.pages.firewall_remote_actions import FirewallRemoteActionsMixin
 from app.ui.pages.firewall_remote_imports import FirewallRemoteImportBatchMixin
 from app.ui.pages.firewall_remote import FirewallRemoteMixin
 from app.ui.components import confirm_dialog
@@ -60,6 +61,7 @@ class FirewallPage(
     FirewallCenterGridMixin,
     FirewallCenterActionsMixin,
     FirewallCenterImportMixin,
+    FirewallRemoteActionsMixin,
     FirewallRemoteImportBatchMixin,
     FirewallRemoteMixin,
 ):

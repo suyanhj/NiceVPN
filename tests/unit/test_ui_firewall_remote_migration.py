@@ -439,11 +439,11 @@ def test_remote_create_shared_form_keeps_source_priority_and_enabled_fields(
     page._remote_peer_select = type("Select", (), {"value": "peer-001"})()
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.peer_row_has_usable_ssh_auth",
+        "app.ui.pages.firewall_remote_actions.peer_row_has_usable_ssh_auth",
         lambda _row: True,
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.GroupService.list_all",
+        "app.ui.pages.firewall_remote_actions.GroupService.list_all",
         lambda self: [
             {
                 "id": "group-dev",
@@ -454,7 +454,7 @@ def test_remote_create_shared_form_keeps_source_priority_and_enabled_fields(
         ],
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.UserService.list_all",
+        "app.ui.pages.firewall_remote_actions.UserService.list_all",
         lambda self: [{"username": "alice"}],
     )
 
@@ -502,11 +502,11 @@ def test_insert_remote_rows_respects_priority_and_applies_once(
     }
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        "app.ui.pages.firewall_remote_actions.remote_chain_cache.read_remote_chain_cache",
         lambda _peer_id: dict(cache),
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_actions.remote_chain_cache.mark_pending_apply",
         lambda peer_id, chain, chain_exists, rows: marked.append(
             (peer_id, chain, chain_exists, [dict(row) for row in rows])
         ),
@@ -584,11 +584,11 @@ def test_remote_delete_failure_preserves_selection_and_success_reindexes(
     page._selected_remote_indices = {0, 1}
 
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        "app.ui.pages.firewall_remote_actions.remote_chain_cache.read_remote_chain_cache",
         lambda _peer_id: copy.deepcopy(CACHE),
     )
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.remote_chain_cache.mark_pending_apply",
+        "app.ui.pages.firewall_remote_actions.remote_chain_cache.mark_pending_apply",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(page, "_refresh_remote_view", lambda: None)
@@ -615,7 +615,7 @@ def test_remote_delete_confirmation_explains_immediate_apply_and_rollback(
     page = FirewallPage()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        "app.ui.pages.firewall_remote.confirm_dialog.show",
+        "app.ui.pages.firewall_remote_actions.confirm_dialog.show",
         lambda *args, **kwargs: captured.update(kwargs),
     )
 
