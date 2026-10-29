@@ -157,8 +157,13 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
         assert retired_selector not in legacy_source
     assert ".group-list-count" in legacy_source
     assert ".group-record-side" in legacy_source
-    assert ".settings-panel-title" in legacy_source
-    assert ".settings-status-text" in legacy_source
+    assert ".settings-panel-title" not in legacy_source
+    assert ".settings-status-text" not in legacy_source
+    assert ".settings-inline-grid" not in legacy_source
+    assert ".settings-panel-title" in shell_source
+    assert ".settings-status-text" in shell_source
+    assert ".settings-inline-grid" in shell_source
+    assert ".user-session-badge" in shell_source
     assert not (STATIC_DIR / "css" / "firewall-v2-fixes.css").exists()
     assert not (UI_DIR / "components" / "page_header.py").exists()
     assert "firewall-v2-fixes.css" not in theme_source
