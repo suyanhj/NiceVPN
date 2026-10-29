@@ -115,12 +115,30 @@ class SqliteStore:
         self._initialized = False
         self._init_lock = threading.RLock()
 
+    def _fix_permissions(self) -> None:
+        """数据库包含用户与 SSH 凭据；POSIX 下 DB/WAL/SHM 仅允许 owner 读写。"""
+        if os.name == "nt":
+            return
+        for path in (
+            self.path,
+            Path(str(self.path) + "-wal"),
+            Path(str(self.path) + "-shm"),
+        ):
+            if not path.exists():
+                continue
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                # 权限修正失败不能静默暴露敏感数据。
+                raise RuntimeError(f"无法设置 SQLite 文件权限为 0600: {path}")
+
     def _open(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.path), timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
+        self._fix_permissions()
         return conn
 
     def initialize(self) -> None:
@@ -133,6 +151,7 @@ class SqliteStore:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executescript(_SCHEMA_SQL)
+                self._fix_permissions()
                 row = conn.execute(
                     "SELECT MAX(version) AS version FROM schema_migrations"
                 ).fetchone()
