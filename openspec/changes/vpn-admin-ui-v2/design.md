@@ -20,9 +20,9 @@ PoC 使用 NiceGUI 官方支持的原生 Vue SFC，保证拉取分支后无需 n
 
 ### 4. Firewall 结构重构与视觉迁移解耦
 
-Firewall 已完成 V2 视觉、AG Grid Community 拖动排序与旧交互清理，但单文件仍超过 4,500 行。为降低一次性回归风险，本次 PR 不继续做大规模模块拆分；V2 合并后使用独立重构 PR 拆分中心规则、远端规则、对话框与排序逻辑，并要求业务行为保持不变。
+Firewall V2 视觉合并后再通过独立重构 PR 分阶段拆分：先提取纯 helper 与共享 action，再拆出 remote mixin，最后拆出 import/batch mixin。主 `firewall.py` 从约 4,500 行降到约 1,800 行，同时保留单一 `FirewallPage` 入口和既有方法调用方式。拆分过程不改变 SSH、iptables、RuleService、PeerService、缓存或拖动优先级语义，并由 Unit + Chrome smoke 回归验证。
 
-### 4. 保持业务和测试边界
+### 5. 保持业务和测试边界
 
 Dashboard 数据采集、ECharts options、刷新动作和错误反馈保持原实现。V2 新增浏览器断言验证 Vue 组件真实挂载及桌面/窄屏无横向溢出。
 
