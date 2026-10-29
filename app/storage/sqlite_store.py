@@ -401,36 +401,76 @@ class SqliteStore:
         offset: int = 0,
         limit: int = 50,
         search: str = "",
+        search_mode: str = "contains",
         group_ids: Sequence[str] | None = None,
         statuses: Sequence[str] | None = None,
+        sort_by: str = "username",
+        sort_desc: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
-        clauses = ["status <> 'deleted'"]
+        """按数据库条件分页读取用户；返回当前页和过滤后的总数。"""
+
+        clauses = ["u.status <> 'deleted'"]
         params: list[Any] = []
         text = str(search or "").strip()
         if text:
-            clauses.append("username LIKE ? ESCAPE '\\'")
-            escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            params.append(f"%{escaped}%")
+            mode = str(search_mode or "contains")
+            if mode in {"notContains", "notEqual"}:
+                operator = "NOT LIKE" if mode == "notContains" else "<>"
+            else:
+                operator = "LIKE" if mode != "equals" else "="
+            clauses.append(f"u.username {operator} ? ESCAPE '\\'")
+            params.append(
+                _like_pattern(
+                    text,
+                    mode=(
+                        "contains"
+                        if mode == "notContains"
+                        else "equals"
+                        if mode == "notEqual"
+                        else mode
+                    ),
+                )
+            )
         gids = [str(v) for v in (group_ids or []) if str(v)]
         if gids:
-            clauses.append("group_id IN (" + ",".join("?" for _ in gids) + ")")
+            clauses.append("u.group_id IN (" + ",".join("?" for _ in gids) + ")")
             params.extend(gids)
         sts = [str(v) for v in (statuses or []) if str(v)]
         if sts:
-            clauses.append("status IN (" + ",".join("?" for _ in sts) + ")")
+            clauses.append("u.status IN (" + ",".join("?" for _ in sts) + ")")
             params.extend(sts)
+
+        sort_key = str(sort_by or "username")
+        sort_sql = {
+            "username": "u.username COLLATE NOCASE",
+            "account_status": "u.status",
+            "status": "u.status",
+            "group": "g.name COLLATE NOCASE",
+            "group_id": "u.group_id",
+            "created_at": "u.created_at",
+        }.get(sort_key, "u.username COLLATE NOCASE")
+        direction = "DESC" if sort_desc else "ASC"
         where = " AND ".join(clauses)
+
         with self.connection() as conn:
             total = int(
                 conn.execute(
-                    f"SELECT COUNT(*) AS n FROM users WHERE {where}", params
+                    f"""
+                    SELECT COUNT(*) AS n
+                    FROM users AS u
+                    LEFT JOIN groups AS g ON g.id = u.group_id
+                    WHERE {where}
+                    """,
+                    params,
                 ).fetchone()["n"]
             )
             rows = conn.execute(
                 f"""
-                SELECT payload FROM users
+                SELECT u.payload
+                FROM users AS u
+                LEFT JOIN groups AS g ON g.id = u.group_id
                 WHERE {where}
-                ORDER BY username COLLATE NOCASE
+                ORDER BY {sort_sql} {direction}, u.username COLLATE NOCASE ASC
                 LIMIT ? OFFSET ?
                 """,
                 [*params, max(1, int(limit)), max(0, int(offset))],
