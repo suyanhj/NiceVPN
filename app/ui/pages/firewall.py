@@ -35,7 +35,6 @@ from app.services.firewall.simple_rule_import import (
     center_rule_payload_from_simplified,
     is_center_backup_json_text,
     parse_center_simplified_lines,
-    peer_rests_from_simplified_line,
     remote_rests_from_create_fields,
     resolve_center_owner_type,
     source_fields_for_center,
@@ -72,10 +71,6 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
-from app.ui.components.data_grid_renderers import (
-    ACTION_BUTTON_RENDERER,
-    STATUS_PILL_RENDERER,
-)
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
