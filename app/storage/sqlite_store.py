@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -109,7 +110,8 @@ class SqliteStore:
     """单机 SQLite repository；每次操作使用短连接，写操作使用 BEGIN IMMEDIATE。"""
 
     def __init__(self, path: str | Path | None = None):
-        self.path = Path(path) if path is not None else Path(SQLITE_DB_FILE)
+        configured = path or os.environ.get("NICEVPN_DB_PATH") or SQLITE_DB_FILE
+        self.path = Path(configured)
         self._initialized = False
         self._init_lock = threading.RLock()
 
