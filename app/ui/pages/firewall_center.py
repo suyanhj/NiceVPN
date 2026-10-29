@@ -26,6 +26,7 @@ from app.ui.components.states import (
     no_match_state,
 )
 from app.ui.firewall_helpers import center_grid_columns, move_order
+from app.ui.grid_query import first_sort_spec, set_filter_values
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +67,17 @@ class FirewallCenterGridMixin:
         }
         return rows
 
-    async def _load_center_grid_rows_async(self) -> list[dict[str, Any]]:
-        """并行读取中心规则、组与对端，避免阻塞 NiceGUI 事件循环。"""
+    async def _load_center_grid_rows_async(
+        self,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """从 SQLite 分页读取中心规则，并构建完整的列筛选 facets。"""
 
-        rules_result, groups_result, peers_result = await asyncio.gather(
-            run.io_bound(self.rule_service.list_unified_flat),
+        groups_result, peers_result, facets_result = await asyncio.gather(
             run.io_bound(GroupService().list_all),
             run.io_bound(self._peer_service.list_all),
+            run.io_bound(self.rule_service.list_unified_facets),
             return_exceptions=True,
         )
-        if isinstance(rules_result, BaseException):
-            raise rules_result
 
         group_names: dict[str, str] = {}
         if isinstance(groups_result, BaseException):
@@ -98,11 +99,162 @@ class FirewallCenterGridMixin:
                 if str(peer.get("id") or "").strip()
             }
 
-        return adapt_center_rule_rows(
-            rules_result,
+        if isinstance(facets_result, BaseException):
+            raise facets_result
+        facets = facets_result
+
+        owner_ids_by_label: dict[str, list[str]] = {}
+        owner_label_by_id: dict[str, str] = {}
+        for owner in facets.get("owners", []):
+            if not isinstance(owner, dict):
+                continue
+            owner_type = str(owner.get("owner_type") or "")
+            owner_id = str(owner.get("owner_id") or "")
+            if not owner_id:
+                continue
+            if owner_type == "group":
+                label = group_names.get(owner_id) or owner_id
+            elif owner_type == "peer":
+                peer_name = peer_names.get(owner_id) or ""
+                label = (
+                    f"{peer_name} ({owner_id[:8]})"
+                    if peer_name
+                    else owner_id
+                )
+            else:
+                label = owner_id
+            owner_ids_by_label.setdefault(label, []).append(owner_id)
+            owner_label_by_id[owner_id] = label
+
+        self._center_owner_ids_by_label = owner_ids_by_label
+        self._center_owner_label_by_id = owner_label_by_id
+
+        kind_label_to_key = {
+            "中心节点": "center",
+            "对端仅标识": "peer_marker",
+            "对端·中心放行": "center_peer",
+        }
+        kind_key_to_label = {value: key for key, value in kind_label_to_key.items()}
+        self._center_filter_values = {
+            "status_label": ["启用", "停用"],
+            "owner_label": sorted(owner_ids_by_label, key=str.casefold),
+            "kind_label": [
+                kind_key_to_label[key]
+                for key in ("center", "peer_marker", "center_peer")
+                if key in set(facets.get("kind_keys") or [])
+            ],
+            "protocol": [
+                str(value).upper()
+                for value in (facets.get("protocols") or [])
+            ],
+            "action_label": [
+                str(value).upper()
+                for value in (facets.get("actions") or [])
+            ],
+        }
+
+        pending_owner_id = str(self._pending_center_owner_id or "").strip()
+        if pending_owner_id:
+            label = owner_label_by_id.get(pending_owner_id)
+            self._center_filter_model["owner_label"] = {
+                "filterType": "niceVpnSet",
+                "values": [label or "__no_owner_match__"],
+            }
+            self._pending_center_owner_id = ""
+
+        filter_model = dict(self._center_filter_model)
+
+        owner_ids: list[str] | None = None
+        if "owner_label" in filter_model:
+            owner_ids = []
+            for label in set_filter_values(filter_model, "owner_label"):
+                owner_ids.extend(owner_ids_by_label.get(label, []))
+            if not owner_ids:
+                owner_ids = ["__no_owner_match__"]
+
+        enabled_values: list[bool] | None = None
+        if "status_label" in filter_model:
+            enabled_values = [
+                value == "启用"
+                for value in set_filter_values(filter_model, "status_label")
+                if value in {"启用", "停用"}
+            ]
+            if not enabled_values:
+                owner_ids = ["__no_owner_match__"]
+
+        kind_keys: list[str] | None = None
+        if "kind_label" in filter_model:
+            kind_keys = [
+                kind_label_to_key[value]
+                for value in set_filter_values(filter_model, "kind_label")
+                if value in kind_label_to_key
+            ]
+            if not kind_keys:
+                owner_ids = ["__no_owner_match__"]
+
+        protocols: list[str] | None = None
+        if "protocol" in filter_model:
+            protocols = [
+                value.lower()
+                for value in set_filter_values(filter_model, "protocol")
+            ]
+            if not protocols:
+                owner_ids = ["__no_owner_match__"]
+
+        actions: list[str] | None = None
+        if "action_label" in filter_model:
+            actions = [
+                value.lower()
+                for value in set_filter_values(filter_model, "action_label")
+            ]
+            if not actions:
+                owner_ids = ["__no_owner_match__"]
+
+        query = (
+            str(self._center_search_input.value or "").strip()
+            if self._center_search_input is not None
+            else ""
+        )
+        offset = max(0, (self._center_page - 1) * self._center_page_size)
+
+        rules, total = await run.io_bound(
+            lambda: self.rule_service.list_unified_page(
+                offset=offset,
+                limit=self._center_page_size,
+                search=query,
+                owner_ids=owner_ids,
+                enabled_values=enabled_values,
+                protocols=protocols,
+                actions=actions,
+                kind_keys=kind_keys,
+                sort_by=self._center_sort_field,
+                sort_desc=self._center_sort_desc,
+            )
+        )
+        pages = max(1, (total + self._center_page_size - 1) // self._center_page_size)
+        if self._center_page > pages:
+            self._center_page = pages
+            rules, total = await run.io_bound(
+                lambda: self.rule_service.list_unified_page(
+                    offset=(self._center_page - 1) * self._center_page_size,
+                    limit=self._center_page_size,
+                    search=query,
+                    owner_ids=owner_ids,
+                    enabled_values=enabled_values,
+                    protocols=protocols,
+                    actions=actions,
+                    kind_keys=kind_keys,
+                    sort_by=self._center_sort_field,
+                    sort_desc=self._center_sort_desc,
+                )
+            )
+
+        rows = adapt_center_rule_rows(
+            rules,
             group_names=group_names,
             peer_names=peer_names,
         )
+        return rows, int(total)
 
     def _filter_center_rows(
         self,
@@ -143,7 +295,7 @@ class FirewallCenterGridMixin:
         ]
 
     def _refresh_rules(self) -> None:
-        """异步刷新中心策略数据；搜索/筛选只重画缓存，不重新读取业务层。"""
+        """异步刷新当前中心规则 SQL 页。"""
 
         if self._center_grid_container is None or not self._center_tab_active:
             return
@@ -158,17 +310,17 @@ class FirewallCenterGridMixin:
                 "正在刷新中心规则…" if self._center_all_rows else "正在加载中心规则…",
                 refreshing=bool(self._center_all_rows),
             )
-        ui.timer(
-            0.01,
-            lambda: self._refresh_rules_async(generation),
-            once=True,
-        )
+            ui.timer(
+                0.01,
+                lambda: self._refresh_rules_async(generation),
+                once=True,
+            )
 
     async def _refresh_rules_async(self, generation: int) -> None:
-        """后台并行加载中心规则及辅助数据，丢弃已过期的加载结果。"""
+        """后台加载当前 SQL 页；丢弃已过期的加载结果。"""
 
         try:
-            all_rows = await self._load_center_grid_rows_async()
+            rows, total = await self._load_center_grid_rows_async()
         except Exception as exc:
             if generation != self._center_refresh_generation:
                 return
@@ -176,6 +328,7 @@ class FirewallCenterGridMixin:
             logger.exception("加载中心防火墙规则失败")
             self._center_all_rows = []
             self._center_display_rows = []
+            self._center_total_rows = 0
             self._center_grid_view = None
             if self._center_grid_container is not None:
                 self._center_grid_container.clear()
@@ -194,49 +347,64 @@ class FirewallCenterGridMixin:
             return
 
         self._center_refresh_running = False
-        self._center_all_rows = all_rows
+        self._center_all_rows = rows
+        self._center_total_rows = int(total)
         self._center_raw_by_id = {
             str(row["id"]): dict(row.get("raw") or {})
-            for row in all_rows
+            for row in rows
         }
         self._render_center_rules()
 
+    def _center_columns_for_query(self) -> list[dict[str, Any]]:
+        columns = self._center_grid_columns(
+            can_reorder=self._center_reorder_allowed,
+            reorder_mode=self._center_reorder_mode,
+        )
+        for column in columns:
+            field = str(column.get("field") or "")
+            if isinstance(column.get("filterParams"), dict):
+                column["filterParams"] = dict(column["filterParams"])
+                values = self._center_filter_values.get(field)
+                if values is not None:
+                    column["filterParams"]["values"] = list(values)
+            if field == "description" and not self._center_reorder_mode:
+                column["sortable"] = False
+            if not self._center_reorder_mode and field == self._center_sort_field:
+                column["sort"] = "desc" if self._center_sort_desc else "asc"
+        return columns
+
     def _render_center_rules(self) -> None:
-        """仅使用已加载的中心规则缓存重画 Grid，不重新访问业务服务。"""
+        """渲染当前 SQL 页；排序模式例外地渲染完整规则集。"""
 
         if self._center_grid_container is None or not self._center_tab_active:
             return
         if self._center_refresh_running:
             return
 
-        all_rows = list(self._center_all_rows)
+        rows = list(self._center_all_rows)
         pending_owner_id = self._pending_center_owner_id
         if pending_owner_id:
-            owner_labels = sorted({
-                str(row.get("owner_label") or "")
-                for row in all_rows
-                if str(row.get("owner_id") or "") == pending_owner_id
-                and str(row.get("owner_label") or "")
-            })
-            if owner_labels:
+            label = self._center_owner_label_by_id.get(pending_owner_id)
+            if label:
                 self._center_filter_model["owner_label"] = {
                     "filterType": "niceVpnSet",
-                    "values": owner_labels,
+                    "values": [label],
                 }
+                self._center_page = 1
             else:
                 self._center_filter_model.pop("owner_label", None)
             self._pending_center_owner_id = ""
 
-        matched_rows = self._filter_center_rows(all_rows)
         query = (
             str(self._center_search_input.value or "").strip()
             if self._center_search_input is not None
             else ""
         )
+
         if self._center_reorder_mode:
             rows_by_id = {
                 str(row.get("id") or ""): row
-                for row in matched_rows
+                for row in rows
                 if str(row.get("id") or "")
             }
             pending_ids = [
@@ -247,14 +415,14 @@ class FirewallCenterGridMixin:
             seen_ids = set(pending_ids)
             pending_ids.extend(
                 str(row.get("id") or "")
-                for row in matched_rows
+                for row in rows
                 if str(row.get("id") or "")
                 and str(row.get("id") or "") not in seen_ids
             )
             self._pending_center_order = pending_ids
-            matched_rows = [rows_by_id[rule_id] for rule_id in pending_ids]
+            rows = [rows_by_id[rule_id] for rule_id in pending_ids]
 
-        self._center_display_rows = matched_rows
+        self._center_display_rows = rows
         self._center_reorder_allowed = bool(
             self._center_reorder_mode
             and not query
@@ -263,53 +431,62 @@ class FirewallCenterGridMixin:
         )
         self._sync_center_reorder_controls()
 
-        for row in all_rows:
+        for row in rows:
             row["actions"] = "操作"
 
         visible_ids = [
             str(row.get("id") or "")
-            for row in matched_rows
+            for row in rows
             if str(row.get("id") or "")
         ]
         self._visible_center_rule_ids = visible_ids
-        self.selected_rule_ids.intersection_update(set(visible_ids))
         self._sync_action_bar_count()
 
         self._center_grid_container.clear()
         self._center_grid_view = None
         with self._center_grid_container:
-            if not all_rows:
-                empty_state(
-                    "暂无中心规则",
-                    description="新建规则或从备份导入后会显示在这里。",
-                    action_label="新建规则",
-                    on_action=self._show_create_dialog,
-                    icon="shield",
-                )
+            if self._center_total_rows <= 0 and not self._center_reorder_mode:
+                if query or self._center_filter_model:
+                    no_match_state(
+                        description="当前搜索或列筛选没有匹配规则。",
+                        on_clear=self._clear_center_filters,
+                    )
+                else:
+                    empty_state(
+                        "暂无中心规则",
+                        description="新建规则或从备份导入后会显示在这里。",
+                        action_label="新建规则",
+                        on_action=self._show_create_dialog,
+                        icon="shield",
+                    )
                 return
-            if query and not matched_rows:
+            if not rows:
                 no_match_state(
-                    description="当前关键词没有匹配规则。",
+                    description="当前页没有匹配规则。",
                     on_clear=self._clear_center_filters,
                 )
                 return
 
-            grid_rows = matched_rows if self._center_reorder_mode else all_rows
             self._center_grid_view = render_data_grid(
-                self._center_grid_columns(
-                    can_reorder=self._center_reorder_allowed,
-                    reorder_mode=self._center_reorder_mode,
-                ),
-                grid_rows,
+                self._center_columns_for_query(),
+                rows,
                 row_id="id",
-                page_size=50,
+                page_size=self._center_page_size,
                 pagination=not self._center_reorder_mode,
                 selectable=not self._center_reorder_mode,
                 selected_ids=self.selected_rule_ids,
                 on_cell_click=self._on_center_grid_cell_click,
-                external_filter_text=query,
                 row_drag_managed=self._center_reorder_allowed,
                 show_summary=False,
+                server_total=(
+                    None if self._center_reorder_mode else self._center_total_rows
+                ),
+                server_page=self._center_page,
+                on_server_page_change=(
+                    None
+                    if self._center_reorder_mode
+                    else self._on_center_page_change
+                ),
             )
             if not self._center_reorder_mode:
                 self._center_grid_view.grid.on(
@@ -336,6 +513,24 @@ class FirewallCenterGridMixin:
                     self._on_center_grid_row_drag_end,
                 )
 
+    def _on_center_page_change(self, page: int) -> None:
+        target = max(1, int(page))
+        pages = max(
+            1,
+            (self._center_total_rows + self._center_page_size - 1)
+            // self._center_page_size,
+        )
+        target = min(target, pages)
+        if target == self._center_page:
+            return
+        self._center_page = target
+        self._refresh_rules()
+
+    def _on_center_search_changed(self, _event=None) -> None:
+        if self._center_reorder_mode:
+            return
+        self._center_page = 1
+        self._refresh_rules()
 
     def _sync_center_reorder_controls(self) -> None:
         """同步排序模式按钮、搜索框和页脚提示。"""
@@ -384,11 +579,16 @@ class FirewallCenterGridMixin:
                     "getColumnState"
                 )
                 filter_model = model if isinstance(model, dict) else {}
-                sort_active = any(
-                    isinstance(column, dict) and column.get("sort")
-                    for column in (column_state or [])
+                sort_field, sort_desc = first_sort_spec(
+                    column_state if isinstance(column_state, list) else [],
+                    default_field="priority",
+                )
+                sort_active = not (
+                    sort_field == "priority" and sort_desc is False
                 )
                 self._center_filter_model = filter_model
+                self._center_sort_field = sort_field
+                self._center_sort_desc = sort_desc
                 self._center_grid_sort_active = sort_active
             except Exception as exc:
                 logger.debug("读取排序前的 Grid 状态失败: %s", exc)
@@ -400,15 +600,28 @@ class FirewallCenterGridMixin:
             )
             return
 
+        try:
+            full_rows = await run.io_bound(self._load_center_grid_rows)
+        except Exception as exc:
+            logger.exception("加载完整中心规则排序集失败")
+            self._notify_for_page(f"加载完整规则失败: {exc}", type="negative")
+            return
+
         order = [
             str(row.get("id") or "")
-            for row in self._center_all_rows
+            for row in full_rows
             if str(row.get("id") or "")
         ]
         if not order:
             self._notify_for_page("暂无规则可排序", type="warning")
             return
 
+        self._center_all_rows = full_rows
+        self._center_total_rows = len(full_rows)
+        self._center_raw_by_id = {
+            str(row["id"]): dict(row.get("raw") or {})
+            for row in full_rows
+        }
         self._center_reorder_original_order = list(order)
         self._pending_center_order = list(order)
         self._center_reorder_mode = True
@@ -428,8 +641,8 @@ class FirewallCenterGridMixin:
         self._pending_center_order = []
         self._center_reorder_original_order = []
         self._sync_center_reorder_controls()
-        self._render_center_rules()
         self._notify_for_page("已取消优先级调整，未修改真实规则顺序", type="info")
+        self._refresh_rules()
 
     def _save_center_reorder(self) -> None:
         """一次性持久化拖动后的全局顺序；写入失败时保留预览供重试。"""
@@ -474,8 +687,11 @@ class FirewallCenterGridMixin:
         self._pending_center_owner_id = ""
         self.current_owner_id = ""
         self._is_unified_list = True
+        self._center_sort_field = "priority"
+        self._center_sort_desc = False
         self._center_grid_sort_active = False
-        self._render_center_rules()
+        self._center_page = 1
+        self._refresh_rules()
 
     def _schedule_grid_filter_model(
         self,
@@ -516,46 +732,66 @@ class FirewallCenterGridMixin:
 
         label = str(values[0])
         owner_ids = {
-            str(row.get("owner_id") or "")
-            for row in self._center_all_rows
-            if str(row.get("owner_label") or "") == label
-            and str(row.get("owner_id") or "")
+            str(owner_id)
+            for owner_id in self._center_owner_ids_by_label.get(label, [])
+            if str(owner_id)
         }
         self.current_owner_id = next(iter(owner_ids)) if len(owner_ids) == 1 else ""
 
     async def _on_center_grid_filter_changed(self, *_args) -> None:
-        """保存列筛选/排序状态并更新排序保护。"""
+        """把列筛选/排序状态下推到下一次 SQLite 查询。"""
 
         view = self._center_grid_view
-        if view is None:
+        if view is None or self._center_reorder_mode:
             return
         try:
             model = await view.grid.run_grid_method("getFilterModel")
-            self._center_filter_model = model if isinstance(model, dict) else {}
             column_state = await view.grid.run_grid_method("getColumnState")
-            self._center_grid_sort_active = any(
-                isinstance(column, dict) and column.get("sort")
-                for column in (column_state or [])
-            )
-            self._sync_center_owner_scope_from_filter_model()
-            displayed = int(await view.grid.run_grid_method("getDisplayedRowCount"))
         except Exception as exc:
             logger.debug("同步中心规则筛选状态失败: %s", exc)
             return
 
+        normalized_model = model if isinstance(model, dict) else {}
+        sort_field, sort_desc = first_sort_spec(
+            column_state if isinstance(column_state, list) else [],
+            default_field="priority",
+        )
+        sort_active = not (sort_field == "priority" and sort_desc is False)
+
+        if (
+            normalized_model == self._center_filter_model
+            and sort_field == self._center_sort_field
+            and sort_desc == self._center_sort_desc
+        ):
+            return
+
+        self._center_filter_model = normalized_model
+        self._center_sort_field = sort_field
+        self._center_sort_desc = sort_desc
+        self._center_grid_sort_active = sort_active
+        self._center_page = 1
+        self._sync_center_owner_scope_from_filter_model()
+        self._refresh_rules()
+
     async def _on_center_grid_selection_changed(self, *_args) -> None:
-        """同步 AG Grid 选中行到现有批量操作集合。"""
+        """把当前页选择合并到跨页批量操作集合。"""
 
         if self._center_grid_view is None:
-            self.selected_rule_ids.clear()
             self._sync_action_bar_count()
             return
         selected = await self._center_grid_view.get_selected_rows()
-        self.selected_rule_ids = {
+        visible_ids = {
+            str(row.get("id") or "").strip()
+            for row in self._center_all_rows
+            if str(row.get("id") or "").strip()
+        }
+        selected_on_page = {
             str(row.get("id") or "").strip()
             for row in selected
             if str(row.get("id") or "").strip()
         }
+        self.selected_rule_ids.difference_update(visible_ids)
+        self.selected_rule_ids.update(selected_on_page)
         self._sync_action_bar_count()
 
     async def _on_center_grid_cell_click(self, event) -> None:

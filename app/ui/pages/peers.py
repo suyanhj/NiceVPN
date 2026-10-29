@@ -25,6 +25,7 @@ from app.ui.components.actions import create_action, primary_action, secondary_a
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
+from app.ui.components.server_pager import render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.copy_clipboard import copy_text_to_clipboard
@@ -55,6 +56,9 @@ class PeersPage:
         self._busy_peer_ids: set[str] = set()
         self._ng_client: Any = None
         self._mesh_sync_running = False
+        self.page = 1
+        self.page_size = 50
+        self.total_peers = 0
 
     def _notify_for_page(
         self,
@@ -804,13 +808,35 @@ class PeersPage:
             return False
         return bool(str(cfg.get("global_ssh_private_key") or "").strip())
 
+    def _load_peer_page(self) -> tuple[list[dict], int]:
+        page_method = getattr(self.peer_service, "list_page", None)
+        offset = max(0, (self.page - 1) * self.page_size)
+        if callable(page_method):
+            peers, total = page_method(
+                offset=offset,
+                limit=self.page_size,
+                sort_by="name",
+            )
+            return [dict(peer) for peer in peers], int(total)
+
+        peers = sorted(
+            self.peer_service.list_all(),
+            key=lambda item: (item.get("name") or "", item.get("id") or ""),
+        )
+        total = len(peers)
+        return peers[offset : offset + self.page_size], total
+
     def _refresh_list(self) -> None:
-        """刷新对端列表，并隔离列表读取异常。"""
+        """刷新当前 SQLite 对端页，并隔离列表读取异常。"""
 
         if self.list_container is None:
             return
         try:
-            peers = self.peer_service.list_all()
+            peers, total = self._load_peer_page()
+            pages = max(1, (total + self.page_size - 1) // self.page_size)
+            if self.page > pages:
+                self.page = pages
+                peers, total = self._load_peer_page()
         except Exception as exc:
             logger.exception("加载对端列表失败")
             if self._peers_total_label is not None:
@@ -824,12 +850,20 @@ class PeersPage:
                 )
             return
 
+        self.total_peers = int(total)
         if self._peers_total_label is not None:
-            self._peers_total_label.text = f"共 {len(peers)} 个"
+            self._peers_total_label.text = f"共 {total} 个"
         self.list_container.clear()
         try:
             with self.list_container:
                 self._render_peer_list(peers)
+                if total > self.page_size:
+                    render_server_pager(
+                        total=total,
+                        page=self.page,
+                        page_size=self.page_size,
+                        on_change=self._on_peer_page_change,
+                    )
         except Exception as exc:
             logger.exception("渲染对端辅助数据失败")
             if self._peers_total_label is not None:
@@ -841,6 +875,15 @@ class PeersPage:
                     title="对端辅助数据加载失败",
                     on_retry=self._refresh_list,
                 )
+
+    def _on_peer_page_change(self, page: int) -> None:
+        target = max(1, int(page))
+        pages = max(1, (self.total_peers + self.page_size - 1) // self.page_size)
+        target = min(target, pages)
+        if target == self.page:
+            return
+        self.page = target
+        self._refresh_list()
 
     def _render_peer_list(self, peers: list[dict]) -> None:
         if not peers:
@@ -855,7 +898,7 @@ class PeersPage:
         group_names = self._group_id_to_name()
         has_global_key = self._has_global_ssh_key()
         with ui.element("div").classes("mgmt-record-list peers-record-list"):
-            for row in sorted(peers, key=lambda item: (item.get("name") or "", item.get("id") or "")):
+            for row in peers:
                 self._render_peer_card(
                     row,
                     group_names=group_names,

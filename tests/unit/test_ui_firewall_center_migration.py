@@ -80,6 +80,101 @@ class FakeRuleService:
     def list_unified_flat(self):
         return [dict(row) for row in self.rows]
 
+    def list_unified_facets(self):
+        owners = []
+        seen_owners = set()
+        protocols = set()
+        actions = set()
+        kind_keys = set()
+        for row in self.rows:
+            owner = (str(row.get("owner_type") or ""), str(row.get("owner_id") or ""))
+            if owner not in seen_owners and owner[1]:
+                seen_owners.add(owner)
+                owners.append({"owner_type": owner[0], "owner_id": owner[1]})
+            protocols.add(str(row.get("protocol") or "all").lower())
+            actions.add(str(row.get("action") or "accept").lower())
+            if row.get("_row_kind") == "center_peer":
+                kind_keys.add("center_peer")
+            elif str(row.get("deployment_target") or "center") == "peer":
+                kind_keys.add("peer_marker")
+            else:
+                kind_keys.add("center")
+        return {
+            "owners": owners,
+            "protocols": sorted(protocols),
+            "actions": sorted(actions),
+            "kind_keys": sorted(kind_keys),
+        }
+
+    def list_unified_page(
+        self,
+        *,
+        offset=0,
+        limit=50,
+        search="",
+        owner_ids=None,
+        enabled_values=None,
+        protocols=None,
+        actions=None,
+        kind_keys=None,
+        sort_by="priority",
+        sort_desc=False,
+        **_kwargs,
+    ):
+        rows = [dict(row) for row in self.rows]
+        query = str(search or "").strip().casefold()
+        if query:
+            def search_text(row):
+                source = str(row.get("source_subnet") or "") or ",".join(
+                    str(value) for value in (row.get("source_ips") or [])
+                )
+                return " ".join([
+                    str(row.get("id") or ""),
+                    source,
+                    str(row.get("dest_ip") or ""),
+                    str(row.get("dest_port") or ""),
+                ]).casefold()
+            rows = [row for row in rows if query in search_text(row)]
+        if owner_ids:
+            allowed = {str(value) for value in owner_ids}
+            rows = [row for row in rows if str(row.get("owner_id") or "") in allowed]
+        if enabled_values is not None:
+            allowed = {bool(value) for value in enabled_values}
+            rows = [row for row in rows if bool(row.get("enabled", True)) in allowed]
+        if protocols:
+            allowed = {str(value).lower() for value in protocols}
+            rows = [row for row in rows if str(row.get("protocol") or "all").lower() in allowed]
+        if actions:
+            allowed = {str(value).lower() for value in actions}
+            rows = [row for row in rows if str(row.get("action") or "accept").lower() in allowed]
+        if kind_keys:
+            allowed = {str(value) for value in kind_keys}
+            def kind_key(row):
+                if row.get("_row_kind") == "center_peer":
+                    return "center_peer"
+                if str(row.get("deployment_target") or "center") == "peer":
+                    return "peer_marker"
+                return "center"
+            rows = [row for row in rows if kind_key(row) in allowed]
+        key_field = {
+            "owner_label": "owner_id",
+            "kind_label": "deployment_target",
+            "status_label": "enabled",
+            "action_label": "action",
+            "source": "source_subnet",
+            "dest": "dest_ip",
+        }.get(sort_by, sort_by)
+        rows.sort(
+            key=lambda row: (
+                row.get(key_field) if isinstance(row.get(key_field), (int, float, bool))
+                else str(row.get(key_field) or "").casefold(),
+                str(row.get("id") or ""),
+            ),
+            reverse=bool(sort_desc),
+        )
+        total = len(rows)
+        return rows[max(0, int(offset)): max(0, int(offset)) + max(1, int(limit))], total
+
     def set_enabled(self, rule_id: str, enabled: bool):
         self.enabled_calls.append((rule_id, enabled))
         for row in self.rows:
@@ -191,6 +286,7 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
             await user.should_see("中心策略")
             await user.should_see("对端远端")
             await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             await user.should_not_see("点击“调整优先级”进入拖动排序模式")
 
     asyncio.run(verify())
@@ -212,8 +308,8 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
 
     assert page._center_grid_view is not None
     options = page._center_grid_view.grid.options
-    assert options["pagination"] is True
-    assert options["paginationPageSize"] == 50
+    assert options["pagination"] is False
+    assert "paginationPageSize" not in options
     assert options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in options
     assert len(options["rowData"]) == 3
@@ -236,31 +332,40 @@ def test_center_firewall_keyword_search_and_no_match_state(
         async with user_simulation(page.render) as user:
             await user.open("/")
             await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             page._center_search_input.set_value("172.16.0.10")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
 
             assert page._center_grid_view is not None
             assert len(page._center_display_rows) == 1
             assert page._center_display_rows[0]["id"] == "rule-accept"
-            assert len(page._center_grid_view.grid.options["rowData"]) == 3
-            assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
+            assert len(page._center_grid_view.grid.options["rowData"]) == 1
+            assert ":isExternalFilterPresent" not in page._center_grid_view.grid.options
             assert page._center_grid_view.summary is None
 
             page._center_search_input.set_value("443")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             assert len(page._center_display_rows) == 1
             assert page._center_display_rows[0]["id"] == "rule-accept"
 
             page._center_search_input.set_value("开发访问")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             assert len(page._center_display_rows) == 0
 
             page._center_search_input.set_value("definitely-not-found")
-            page._render_center_rules()
+            page._on_center_search_changed()
             await user.should_see("没有匹配结果")
-            await user.should_see("当前关键词没有匹配规则")
+            await user.should_see("当前搜索或列筛选没有匹配规则")
 
             page._clear_center_filters()
+            await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             assert page._center_grid_view is not None
             assert len(page._center_grid_view.grid.options["rowData"]) == 3
 
@@ -303,6 +408,7 @@ def test_center_firewall_true_empty_state(
         async with user_simulation(page.render) as user:
             await user.open("/")
             await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             await user.should_see("暂无中心规则")
             await user.should_see("新建规则")
 
@@ -353,6 +459,7 @@ def test_center_priority_reorder_mode_shows_full_order_without_pagination(
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_not_see("正在加载中心规则…")
+            await user.should_not_see("正在刷新中心规则…")
             assert page._center_grid_view is not None
             options = page._center_grid_view.grid.options
             assert options["pagination"] is False
@@ -1086,10 +1193,10 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "firewall-filter-bar" in source
     assert "window.NiceVpnSetFilter" in helper_source
     assert "搜索 IP / 端口 / 规则 ID" in source
-    assert "on_change=lambda _event: self._render_center_rules()" in source
-    assert "on_change=lambda _event: self._refresh_rules()" not in source
+    assert "on_change=self._on_center_search_changed" in source
     assert "async def _load_center_grid_rows_async" in center_source
-    assert "run.io_bound(self.rule_service.list_unified_flat)" in center_source
+    assert "self.rule_service.list_unified_page(" in center_source
+    assert "self.rule_service.list_unified_facets" in center_source
     assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source

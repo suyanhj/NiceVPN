@@ -360,6 +360,34 @@ class GroupService:
         """列出所有组，按创建时间排序。"""
         return self.store.list_groups()
 
+    def list_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        statuses: list[str] | None = None,
+        sort_by: str = "created_at",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict], int]:
+        """数据库级用户组分页查询。"""
+        return self.store.list_groups_page(
+            offset=offset,
+            limit=limit,
+            search=search,
+            statuses=statuses,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
+    def summary(self) -> dict[str, int]:
+        """组页数据库摘要统计。"""
+        return self.store.group_summary()
+
+    def first_group_id(self) -> str:
+        """返回最早创建的根组 ID。"""
+        return self.store.first_group_id()
+
     def count(self) -> int:
         """返回用户组数量。"""
         return self.store.count_groups()

@@ -184,9 +184,12 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert ".groups-page--v2 .groups-root-badge" in shell_css
     assert "background: #0c0c0d !important;" in shell_css
     assert "color: #15bde8 !important;" in shell_css
-    assert source.index("self._render_summary_metrics(groups)") < source.index(
+    assert source.index("self._render_summary_metrics(summary)") < source.index(
         "self.bulk_bar = render_bulk_action_bar"
     )
+    assert "self.group_service.list_page(" not in source
+    assert "page_method(" in source
+    assert "render_server_pager(" in source
     assert ".vpn-v2-overview-grid" in shell_css
     assert ".vpn-metric-card--compact" in shell_css
     assert "fetch(" not in source
