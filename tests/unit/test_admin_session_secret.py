@@ -68,6 +68,7 @@ def test_auth_disabled_does_not_initialize_session_storage(monkeypatch) -> None:
 
     assert run_arguments["storage_secret"] is None
     assert run_arguments["session_middleware_kwargs"] is None
+    assert run_arguments["reconnect_timeout"] == 300.0
 
 
 def test_auth_enabled_uses_persistent_session_secret(monkeypatch) -> None:
@@ -100,3 +101,4 @@ def test_auth_enabled_uses_persistent_session_secret(monkeypatch) -> None:
         "same_site": "lax",
         "https_only": False,
     }
+    assert run_arguments["reconnect_timeout"] == 300.0
