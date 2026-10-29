@@ -11,7 +11,7 @@
 - **内网分流**：`push_lan_routes` 推送局域网路由；与中心 NAT / FORWARD / iptables 等联动。
 - **设备绑定**：`client-connect` + 客户端 **IV** 指纹；支持仅审计、弱指纹（默认）、强 MAC 三档；单账号绑定档案，可控制台或 API 按前缀重置。
 - **对端与 Mesh**：站点绑定用户 + 后方 LAN CIDR，`ifconfig-push` / `**iroute`**；按用户组下发 **mesh** `push route`，多站点经中心互访内网（变更后需重连等以界面为准）。对端管理借鉴了项目：**netmaker**
-- **防火墙**：iptables + ipset、规则 JSON、简单导入、与对端规则协作。
+- **防火墙**：iptables + ipset、SQLite 中心规则、简单导入、与对端规则协作。
 - **通知**：钉钉、企业微信等插件式通道。
 - **CLI**：`python main.py cli` 或 `cli.py`；bash 补全见 `deploy/shell/install-ovpn-cli-symlink.sh`。
 
@@ -81,6 +81,8 @@ CLI 不需要前端构建：
 
 初始化后 `**data/api_basic_credentials.json`** 等为运行时数据，勿提交版本库。
 
+结构化管理元数据（用户、用户组、对端、中心防火墙规则）使用 `data/nicevpn.db`。旧版本升级时会在启动阶段自动把对应 JSON 迁入 SQLite，并将旧 JSON 归档到 `backups/storage-migration-<UTC>/`；CCD、设备绑定、PKI/CRL、OVPN、远端链缓存与日志继续保持文件形态。
+
 ## 测试
 
 本地与 GitHub Actions 使用同一条单元测试命令：
@@ -97,7 +99,7 @@ GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Pytho
 main.py / cli.py        # Web 与 CLI 入口
 app/                    # api、core、models、services、ui
 deploy/                 # systemd、shell 等示例
-data/                   # 运行时 JSON
+data/                   # 运行时数据（结构化元数据使用 nicevpn.db）
 docs/overview.md        # 产品说明
 api.md                  # 对外 API
 ```
