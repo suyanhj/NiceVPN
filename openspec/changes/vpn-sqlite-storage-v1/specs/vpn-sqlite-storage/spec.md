@@ -48,3 +48,33 @@
 #### Scenario: 单 owner 修改后重建失败
 - **WHEN** 规则修改已写入 SQLite 但 VPN_FORWARD 刷新抛出异常
 - **THEN** 该 owner 的 SQLite 规则恢复到修改前内容，并把异常继续返回调用方
+
+### Requirement: 结构化列表查询分页下推 SQLite
+系统 SHALL 对 Users、Groups、Peers 与中心 Firewall Rules 的主列表使用数据库级分页，正常浏览时 SHALL NOT 先读取全部结构化 payload 再由前端分页。
+
+#### Scenario: 用户列表翻到第二页
+- **WHEN** 用户列表每页 50 条且管理员打开第二页
+- **THEN** UserService 使用 SQL LIMIT/OFFSET 返回对应页与过滤后总数，AG Grid 仅持有当前页 rowData
+
+#### Scenario: 用户按组和状态筛选
+- **WHEN** 管理员在用户表选择用户组或账号状态筛选
+- **THEN** 对应条件下推 SQLite，并基于过滤后的总数计算页数
+
+#### Scenario: 中心防火墙筛选
+- **WHEN** 管理员按归属、启停、协议、动作或部署类型筛选中心规则
+- **THEN** FirewallRuleService 从 SQLite 统一查询集合返回当前页，且分类筛选可选值来自完整数据库 facets
+
+#### Scenario: 防火墙调整优先级
+- **WHEN** 管理员显式进入规则优先级调整模式
+- **THEN** 系统可临时加载完整有序规则集合以保证全局顺序正确，退出排序后恢复数据库分页
+
+#### Scenario: 运行时派生字段筛选
+- **WHEN** 用户筛选在线会话、设备来源等无法直接由 SQLite 表达的运行时字段
+- **THEN** 系统允许回退到 Python 计算，但结果与筛选语义必须正确
+
+### Requirement: SQLite schema 支持在线升级
+系统 SHALL 通过 schema_migrations 将已有数据库升级到当前查询 schema，并在新增索引列时从现有 payload 回填，不要求用户手工重建数据库。
+
+#### Scenario: schema v1 实例升级
+- **WHEN** 应用打开已有 schema v1 的 nicevpn.db
+- **THEN** 系统自动升级到 schema v2、回填 Peer/Firewall 查询列并继续启动
