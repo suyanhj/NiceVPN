@@ -2,29 +2,26 @@
 """防火墙规则业务逻辑服务
 
 提供规则的 CRUD、拖拽排序、备份恢复等业务操作。
-规则以 JSON 文件持久化，按 owner（组/用户）分文件存储在 FIREWALL_DIR 下。
+规则以 SQLite 持久化，按 owner 保持原有逻辑分组。
 
-严格语义：在覆盖某 owner 的 ``*.json`` 后，若 :meth:`_rebuild_all_rules` **任意**失败
-（``RuntimeError`` 或其它异常），用当次改库前的 ``<owner>.prepush.bak`` 写回主文件，或
-删除本操作新建之文件，与对端 ``remote_chain_cache`` 的写回前快照语义对齐。
+严格语义：覆盖某 owner 后，若 :meth:`_rebuild_all_rules` **任意**失败，
+立即用本次操作前的数据库快照恢复该 owner，与对端 ``remote_chain_cache``
+的写回前快照语义对齐。
 """
 
 import json
 import logging
 import os
-import shutil
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-from app.core.constants import FIREWALL_DIR
 from app.models.firewall import FirewallRule
 from app.services.firewall.iptables_mgr import IptablesManager
 from app.utils.audit_log import AuditLogger
 from app.utils.cidr import validate_cidr, validate_iptables_addr_or_cidr
-from app.utils.file_lock import read_json, write_json_atomic
+from app.storage.sqlite_store import SqliteStore, get_default_store
 
 logger = logging.getLogger(__name__)
 
@@ -34,90 +31,39 @@ CE_PEER_RULE_PREFIX = "ce-peer-"
 class FirewallRuleService:
     """防火墙规则业务逻辑层。
 
-    规则按 owner_id 分文件存储：FIREWALL_DIR/<owner_id>.json
-    每个文件内容为规则字典列表。
+    规则存储于 SQLite firewall_rules 表，对外继续按 owner_id 返回规则字典列表。
     """
 
-    def __init__(self):
+    def __init__(self, store: SqliteStore | None = None):
         self.iptables_mgr = IptablesManager()
         self.audit = AuditLogger()
-        # 确保存储目录存在
-        FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _center_rules_prepush_bak_path(self, owner_id: str) -> Path:
-        p = self._get_rules_path(owner_id)
-        return p.parent / f"{p.stem}.prepush.bak"
+        self.store = store or get_default_store()
+        self._prepush_snapshots: dict[str, list[dict]] = {}
 
     def _backup_center_rules_before_mutation(self, owner_id: str) -> None:
-        """主 JSON 已存在时复制为 prepush.bak，供 iptables 重建失败时回滚。"""
-        main = self._get_rules_path(owner_id)
-        if not main.is_file():
-            return
-        bak = self._center_rules_prepush_bak_path(owner_id)
-        try:
-            shutil.copy2(main, bak)
-            logger.info("中心规则已生成写前备份 owner=%s", owner_id)
-        except OSError as exc:
-            logger.error("中心规则写前备份失败 owner=%s: %s", owner_id, exc)
-            raise RuntimeError(f"无法备份中心规则文件，已中止写入: {exc}") from exc
+        """保存 owner 当前数据库快照，供 iptables 刷新失败时回滚。"""
+        self._prepush_snapshots[str(owner_id)] = [
+            dict(rule) for rule in self._load_rules(owner_id)
+        ]
 
     def _clear_center_prepush_backup(self, owner_id: str) -> None:
-        p = self._center_rules_prepush_bak_path(owner_id)
-        try:
-            if p.is_file():
-                p.unlink()
-        except OSError as exc:
-            logger.warning("删除中心规则 prepush 备份失败 owner=%s: %s", owner_id, exc)
+        self._prepush_snapshots.pop(str(owner_id), None)
 
     def _rollback_center_json_after_rebuild_fail(
         self, owner_id: str, had_main_before: bool
     ) -> None:
-        """iptables 重建失败时恢复该 owner 主文件，避免库与改前可对照状态分离。"""
-        main = self._get_rules_path(owner_id)
-        bak = self._center_rules_prepush_bak_path(owner_id)
-        if bak.is_file():
-            try:
-                shutil.copy2(bak, main)
-                bak.unlink()
-            except OSError as exc:
-                logger.error("中心规则从 prepush 回滚主文件失败 owner=%s: %s", owner_id, exc)
-                raise RuntimeError(f"回滚中心规则文件失败: {exc}") from exc
-            logger.info("中心规则重建失败，已从 prepush 恢复 owner=%s", owner_id)
-            return
-        if had_main_before:
-            logger.error("中心规则回滚缺少 prepush 备份 owner=%s", owner_id)
-            raise RuntimeError(f"回滚中心规则需要 prepush 备份但缺失: {owner_id}")
-        if main.is_file():
-            try:
-                main.unlink()
-            except OSError as exc:
-                logger.error("中心规则回滚时删除误建主文件失败 owner=%s: %s", owner_id, exc)
-                raise RuntimeError(f"回滚新规则文件失败: {exc}") from exc
-            logger.info("中心规则重建失败，已删除本操作新建之 owner 文件 owner=%s", owner_id)
+        """恢复 owner 写入前快照；原先不存在时恢复为空规则集。"""
+        snapshot = self._prepush_snapshots.pop(str(owner_id), None)
+        if snapshot is None:
+            snapshot = [] if not had_main_before else self._load_rules(owner_id)
+        self._save_rules(owner_id, snapshot)
+        logger.warning("中心规则已回滚 SQLite 快照 owner=%s", owner_id)
 
     def _rollback_center_json_owners_after_rebuild_fail(
         self, owner_ids: list[str], had_main: dict[str, bool]
     ) -> None:
         for oid in owner_ids:
-            self._rollback_center_json_after_rebuild_fail(oid, had_main[oid])
-
-    @staticmethod
-    def _validate_json_rule_addr_fields(rule: FirewallRule) -> None:
-        """落库前校验目标/源 IP 字串，与对端链 ``-s``/``-d`` 及 :func:`validate_iptables_addr_or_cidr` 同语义。"""
-        d = (rule.dest_ip or "").strip()
-        if d:
-            for p in d.split(","):
-                t = p.strip()
-                if t:
-                    validate_iptables_addr_or_cidr(t)
-        ips = rule.source_ips
-        if ips:
-            for ip in ips:
-                t = str(ip).strip()
-                if t:
-                    validate_iptables_addr_or_cidr(t)
-
-    # ---- 公开接口 ----
+            self._rollback_center_json_after_rebuild_fail(oid, had_main.get(oid, False))
 
     def create(self, rule_data: dict, *, refresh_kernel: bool = True) -> dict:
         """创建防火墙规则，执行三重校验后持久化并可选刷新 ``VPN_FORWARD``。
@@ -153,7 +99,7 @@ class FirewallRuleService:
         # 读取该 owner 的现有规则
         owner_id = rule.owner_id
         existing_rules = self._load_rules(owner_id)
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
 
@@ -232,7 +178,7 @@ class FirewallRuleService:
             rules_to_add.append(rule.model_dump())
 
         existing_rules = self._load_rules(owner_id)
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         existing_ids = {str(r.get("id") or "") for r in existing_rules}
         incoming_ids = {str(r.get("id") or "") for r in rules_to_add}
         if existing_ids & incoming_ids:
@@ -303,7 +249,7 @@ class FirewallRuleService:
             )
         out = rule.model_dump()
         rules[idx] = out
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
         self._save_rules(owner_id, rules)
@@ -363,7 +309,7 @@ class FirewallRuleService:
             if rule["id"] not in reordered_ids:
                 reordered.append(rule)
 
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
         self._save_rules(owner_id, reordered)
@@ -387,7 +333,7 @@ class FirewallRuleService:
         return True
 
     def _reorder_unified_global(self, new_id_order: list[str]) -> bool:
-        """全局排序：JSON 规则与对端 ``center_forward_priority`` 同步为 (n*10)，仅刷新 ``VPN_FORWARD``。"""
+        """全局排序：中心规则与对端 ``center_forward_priority`` 同步为 (n*10)，仅刷新 ``VPN_FORWARD``。"""
         from app.services.peer_instance.service import PeerService
 
         unified = self.list_unified_flat()
@@ -426,7 +372,7 @@ class FirewallRuleService:
             reordered_by_owner[oid].append(r)
 
         oids = list(dict.fromkeys(oid for oid in reordered_by_owner if oid))
-        had_main = {oid: self._get_rules_path(oid).is_file() for oid in oids}
+        had_main = {oid: self.store.firewall_owner_exists(oid) for oid in oids}
         for oid in oids:
             if had_main[oid]:
                 self._backup_center_rules_before_mutation(oid)
@@ -488,7 +434,7 @@ class FirewallRuleService:
 
         # 移除目标规则
         updated_rules = [r for r in rules if r["id"] != rule_id]
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
         self._save_rules(owner_id, updated_rules)
@@ -539,7 +485,7 @@ class FirewallRuleService:
                 r["enabled"] = enabled
                 r["updated_at"] = datetime.now().isoformat()
                 break
-        had_main = self._get_rules_path(owner_id).is_file()
+        had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
         self._save_rules(owner_id, rules)
@@ -565,18 +511,17 @@ class FirewallRuleService:
     def backup(self) -> str:
         """导出所有 owner 的防火墙规则为 JSON 字符串。
 
-        除 ``FIREWALL_DIR`` 下按归属分文件的 JSON 规则外，包含对端在中心侧
+        除 SQLite 中按归属保存的中心规则外，包含对端在中心侧
         ``VPN_FORWARD`` 合并所需的 LAN / 优先级 / 启停，与界面「全部归属」中对端
         卡片一致，避免仅配置对端放行时导出看似「无规则」。
 
         返回:
             包含 ``rules_by_owner`` 与 ``peers_center_forward`` 的 JSON 字符串
         """
-        all_rules: dict[str, list[dict]] = {}
-        for rule_file in FIREWALL_DIR.glob("*.json"):
-            owner_id = rule_file.stem
-            rules = self._load_rules(owner_id)
-            all_rules[owner_id] = rules
+        all_rules: dict[str, list[dict]] = {
+            owner_id: self._load_rules(owner_id)
+            for owner_id in self.store.list_firewall_owner_ids()
+        }
 
         from app.services.peer_instance.service import PeerService
 
@@ -646,7 +591,7 @@ class FirewallRuleService:
                 str(oid) for oid, rlist in rules_by_owner.items() if isinstance(rlist, list)
             )
         )
-        had_main = {oid: self._get_rules_path(oid).is_file() for oid in oids}
+        had_main = {oid: self.store.firewall_owner_exists(oid) for oid in oids}
         for oid in oids:
             if had_main[oid]:
                 self._backup_center_rules_before_mutation(oid)
@@ -724,7 +669,7 @@ class FirewallRuleService:
             self._rollback_center_json_owners_after_rebuild_fail(oids, had_main)
             if isinstance(peers_cf, list) and peers_cf:
                 logger.warning(
-                    "从备份恢复时 iptables 重建失败，已回滚 rules JSON；对端中心策略的 Peer 已写入，未自动回滚"
+                    "从备份恢复时 iptables 重建失败，已回滚中心规则 SQLite 快照；对端中心策略的 Peer 已写入，未自动回滚"
                 )
             return False
 
@@ -759,13 +704,11 @@ class FirewallRuleService:
     def list_all_flat(self) -> list[dict]:
         """列出所有 owner 的规则，每项附带 owner_id 字段。"""
         merged: list[dict] = []
-        for rule_file in sorted(FIREWALL_DIR.glob("*.json")):
-            oid = rule_file.stem
-            for r in self._load_rules(oid):
-                row = dict(r)
-                row["_owner_id"] = oid
-                merged.append(row)
-        return sorted(merged, key=lambda x: (x.get("priority", 0), x.get("_owner_id", "")))
+        for rule in self.store.list_firewall_rules():
+            row = dict(rule)
+            row["_owner_id"] = str(row.get("owner_id") or "")
+            merged.append(row)
+        return merged
 
     def list_unified_flat(self) -> list[dict]:
         """防火墙首页「全部归属」：JSON 规则与**中心侧**对端放行合并列表。
@@ -822,37 +765,17 @@ class FirewallRuleService:
 
     # ---- 内部方法 ----
 
-    def _get_rules_path(self, owner_id: str) -> Path:
-        """获取指定 owner 的规则文件路径。"""
-        return FIREWALL_DIR / f"{owner_id}.json"
-
     def _load_rules(self, owner_id: str) -> list[dict]:
         """读取指定 owner 的规则列表。"""
-        path = self._get_rules_path(owner_id)
-        data = read_json(path)
-        if not data:
-            return []
-        if isinstance(data, list):
-            return data
-        return data.get("rules", [])
+        return self.store.get_firewall_owner(owner_id)
 
     def _save_rules(self, owner_id: str, rules: list[dict]) -> None:
-        """保存规则列表到文件。"""
-        path = self._get_rules_path(owner_id)
-        write_json_atomic(path, {"rules": rules})
+        """原子替换指定 owner 的规则列表。"""
+        self.store.replace_firewall_owner(owner_id, rules)
 
     def _find_rule_owner(self, rule_id: str) -> tuple[Optional[str], list[dict]]:
-        """遍历所有规则文件，查找包含指定 rule_id 的 owner。
-
-        返回:
-            (owner_id, rules) 元组。未找到时返回 (None, [])。
-        """
-        for rule_file in FIREWALL_DIR.glob("*.json"):
-            owner_id = rule_file.stem
-            rules = self._load_rules(owner_id)
-            if any(r["id"] == rule_id for r in rules):
-                return owner_id, rules
-        return None, []
+        """按规则主键定位 owner，并返回该 owner 的完整规则集。"""
+        return self.store.find_firewall_rule_owner(rule_id)
 
     def _collect_center_peers(self) -> list[tuple[str, list[str], int, dict]]:
         """对端内网非空时参与 ``VPN_FORWARD`` 合并，priority 与 JSON 规则同一数值空间。
@@ -883,10 +806,7 @@ class FirewallRuleService:
 
     def _rebuild_all_rules(self) -> None:
         """合并全部 owner 的已启用规则、对端中心放行，一次性重建 iptables / ipset。"""
-        merged_raw: list[dict] = []
-        for rule_file in FIREWALL_DIR.glob("*.json"):
-            owner_id = rule_file.stem
-            merged_raw.extend(self._load_rules(owner_id))
+        merged_raw = self.store.list_firewall_rules()
         enabled_rules = [
             FirewallRule(**r) for r in merged_raw if r.get("enabled", True)
         ]
@@ -902,10 +822,7 @@ class FirewallRuleService:
 
     def _refresh_vpn_forward_only(self) -> None:
         """规则管理专用：只刷新 ``VPN_FORWARD`` 链，不触碰 INPUT、FORWARD 钩子、ip_forward、MASQUERADE。"""
-        merged_raw: list[dict] = []
-        for rule_file in FIREWALL_DIR.glob("*.json"):
-            owner_id = rule_file.stem
-            merged_raw.extend(self._load_rules(owner_id))
+        merged_raw = self.store.list_firewall_rules()
         enabled_rules = [
             FirewallRule(**r) for r in merged_raw if r.get("enabled", True)
         ]
