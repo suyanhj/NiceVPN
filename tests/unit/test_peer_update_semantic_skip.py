@@ -25,11 +25,9 @@ def _patch_peer_os(monkeypatch, plat_name: str) -> None:
 
 
 @pytest.fixture()
-def isolated_peers(monkeypatch, tmp_path):
-    d = tmp_path / "peers"
-    d.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(peer_mod, "PEERS_DIR", d)
-    yield d
+def isolated_peers():
+    """SQLite 由全局 pytest fixture 按测试隔离。"""
+    yield
 
 
 def _mk_row(**kwargs) -> dict:
