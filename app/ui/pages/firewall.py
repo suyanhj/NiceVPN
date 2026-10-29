@@ -104,6 +104,14 @@ class FirewallPage(
         self._pending_center_owner_id = ""
         self._center_filter_model: dict[str, Any] = {}
         self._center_grid_sort_active = False
+        self._center_sort_field = "priority"
+        self._center_sort_desc = False
+        self._center_page = 1
+        self._center_page_size = 50
+        self._center_total_rows = 0
+        self._center_filter_values: dict[str, list[str]] = {}
+        self._center_owner_ids_by_label: dict[str, list[str]] = {}
+        self._center_owner_label_by_id: dict[str, str] = {}
         self._center_refresh_running = False
         self._center_refresh_generation = 0
         self._center_all_rows: list[dict[str, Any]] = []
@@ -295,7 +303,7 @@ class FirewallPage(
                     self._center_search_input = (
                         ui.input(
                             placeholder="搜索 IP / 端口 / 规则 ID",
-                            on_change=lambda _event: self._render_center_rules(),
+                            on_change=self._on_center_search_changed,
                         )
                         .props("outlined dense clearable debounce=250")
                         .classes("firewall-search-input flex-1 min-w-0")
