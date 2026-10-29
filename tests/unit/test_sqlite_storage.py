@@ -142,6 +142,26 @@ def test_legacy_json_migrates_once_and_is_archived(
     assert second.migrated is False
 
 
+def test_existing_unmarked_database_with_legacy_json_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _legacy_layout(monkeypatch, tmp_path)
+    SqliteStore(paths["db"]).initialize()
+    legacy = paths["users"] / "alice.json"
+    _write_json(legacy, {
+        "username": "alice",
+        "group_id": "g1",
+        "status": "active",
+    })
+
+    migration.reset_storage_ready_for_tests()
+    with pytest.raises(RuntimeError, match="未完成标记"):
+        migration.ensure_storage_ready(paths["db"])
+
+    assert legacy.is_file()
+
+
 def test_migration_failure_keeps_legacy_json_and_no_live_database(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
