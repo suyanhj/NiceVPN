@@ -189,6 +189,7 @@ class SqliteStore:
             raise
         finally:
             conn.close()
+            self._fix_permissions()
 
     # ---- storage metadata ----
 
