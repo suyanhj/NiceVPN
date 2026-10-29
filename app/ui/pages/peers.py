@@ -25,7 +25,7 @@ from app.ui.components.actions import create_action, primary_action, secondary_a
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
-from app.ui.components.server_pager import render_server_pager
+from app.ui.components.server_pager import page_after_size_change, render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.copy_clipboard import copy_text_to_clipboard
@@ -857,12 +857,13 @@ class PeersPage:
         try:
             with self.list_container:
                 self._render_peer_list(peers)
-                if total > self.page_size:
+                if total > 0:
                     render_server_pager(
                         total=total,
                         page=self.page,
                         page_size=self.page_size,
                         on_change=self._on_peer_page_change,
+                        on_page_size_change=self._on_peer_page_size_change,
                     )
         except Exception as exc:
             logger.exception("渲染对端辅助数据失败")
@@ -883,6 +884,18 @@ class PeersPage:
         if target == self.page:
             return
         self.page = target
+        self._refresh_list()
+
+    def _on_peer_page_size_change(self, page_size: int) -> None:
+        new_size = max(1, int(page_size))
+        if new_size == self.page_size:
+            return
+        self.page = page_after_size_change(
+            page=self.page,
+            old_size=self.page_size,
+            new_size=new_size,
+        )
+        self.page_size = new_size
         self._refresh_list()
 
     def _render_peer_list(self, peers: list[dict]) -> None:
