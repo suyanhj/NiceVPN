@@ -58,6 +58,7 @@ def test_certs_page_uses_shared_grid_bulk_state_and_native_filters(monkeypatch: 
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
+            await user.should_not_see("正在加载证书…")
             await user.should_see("1 个证书将到期")
             await user.should_see("证书总数")
             await user.should_see("有效证书")
