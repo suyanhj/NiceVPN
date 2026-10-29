@@ -150,6 +150,11 @@ def test_legacy_json_migrates_once_and_is_archived(
     assert (result.backup_dir / "users" / "alice.json").is_file()
     assert (result.backup_dir / "users" / "alice.json.lock").is_file()
     assert (result.backup_dir / "firewall" / "g1.prepush.bak").is_file()
+    if os.name != "nt":
+        assert (result.backup_dir.stat().st_mode & 0o777) == 0o700
+        assert (
+            (result.backup_dir / "peers" / "p1.json").stat().st_mode & 0o777
+        ) == 0o600
 
     migration.reset_storage_ready_for_tests()
     second = migration.ensure_storage_ready(paths["db"])
@@ -190,6 +195,8 @@ def test_migration_failure_keeps_legacy_json_and_no_live_database(
     assert broken.is_file()
     assert not paths["db"].exists()
     assert not (paths["db"].parent / "nicevpn.db.migrating").exists()
+    assert not (paths["db"].parent / "nicevpn.db.migrating-wal").exists()
+    assert not (paths["db"].parent / "nicevpn.db.migrating-shm").exists()
 
 
 def test_device_bindings_are_not_part_of_structured_sqlite_migration(
