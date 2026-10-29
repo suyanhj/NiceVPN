@@ -310,11 +310,11 @@ class FirewallCenterGridMixin:
                 "正在刷新中心规则…" if self._center_all_rows else "正在加载中心规则…",
                 refreshing=bool(self._center_all_rows),
             )
-        ui.timer(
-            0.01,
-            lambda: self._refresh_rules_async(generation),
-            once=True,
-        )
+            ui.timer(
+                0.01,
+                lambda: self._refresh_rules_async(generation),
+                once=True,
+            )
 
     async def _refresh_rules_async(self, generation: int) -> None:
         """后台加载当前 SQL 页；丢弃已过期的加载结果。"""
