@@ -254,14 +254,22 @@ def ensure_storage_ready(
                 raise RuntimeError(
                     f"不支持的 SQLite schema version: {store.schema_version()}"
                 )
+            backend_marker = store.get_meta("storage_backend")
+            has_legacy = _has_legacy_json()
+            if has_legacy and backend_marker != "sqlite":
+                raise RuntimeError(
+                    "检测到未完成标记的 SQLite 与 legacy JSON 同时存在；"
+                    "为避免误归档旧数据，已拒绝启动，请先确认数据库来源"
+                )
+
             backup_dir = None
-            if _has_legacy_json():
+            if has_legacy:
                 try:
                     backup_dir = _archive_legacy_files(
                         label="storage-migration-leftovers"
                     )
                     logger.warning(
-                        "检测到 SQLite 已存在但仍有 legacy JSON，已归档且不会参与运行: %s",
+                        "检测到已启用 SQLite 旁仍有 legacy JSON，已归档且不会参与运行: %s",
                         backup_dir,
                     )
                 except OSError as exc:
