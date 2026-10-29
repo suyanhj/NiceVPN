@@ -638,22 +638,24 @@ body {
 
 
 /* V2 文案按钮：统一恢复圆角、图标间距和 Quasar 默认覆盖。 */
-.vpn-action:not(.vpn-action--icon-only) {
+.vpn-action:not(.vpn-action--icon-only),
+.vpn-form-dialog__actions .q-btn:not(.q-btn--round),
+.q-dialog .q-btn:not(.q-btn--round) {
   border-radius: 10px !important;
 }
 
-.vpn-action .q-btn__content {
+.q-btn .q-btn__content {
   gap: 8px;
   text-transform: none;
   font-weight: 500;
 }
 
-.vpn-action.q-btn {
+.q-btn {
   box-shadow: none !important;
 }
 
-.vpn-action.q-btn--rectangle::before,
-.vpn-action.q-btn--round::before {
+.q-btn--rectangle::before,
+.q-btn--round::before {
   display: none !important;
 }
 
