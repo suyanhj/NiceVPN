@@ -73,18 +73,6 @@
     line-height: 1.7;
   }
 
-  .dashboard-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
-    gap: 18px;
-  }
-
-  .dashboard-mini-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 18px;
-  }
-
   .page-topbar {
     display: flex;
     flex-wrap: wrap;
@@ -409,38 +397,42 @@
     background-image: none !important;
     box-shadow: none !important;
   
-}.q-btn.user-toolbar-btn.is-primary,
-  .q-btn.primary-action {
+}.q-btn.primary-action {
+
 
     background: rgba(79, 143, 199, 0.12) !important;
     border: 1px solid rgba(79, 143, 199, 0.26) !important;
     color: #c8ddf0 !important;
     box-shadow: none !important;
   
-}.q-btn.user-toolbar-btn.is-primary:hover,
-  .q-btn.primary-action:hover {
+
+}.q-btn.primary-action:hover {
+
 
     background: rgba(79, 143, 199, 0.18) !important;
     border-color: rgba(118, 168, 212, 0.38) !important;
     color: #e1ebf5 !important;
   
-}.q-btn.user-toolbar-btn.is-outline,
-  .q-btn.secondary-action,
+
+}.q-btn.secondary-action,
   .q-btn.ghost-action {
+
 
     background: rgba(8, 15, 28, 0.56) !important;
     border: 1px solid rgba(88, 103, 125, 0.34) !important;
     color: #7f8b9c !important;
     box-shadow: none !important;
   
-}.q-btn.user-toolbar-btn.is-outline:hover,
-  .q-btn.secondary-action:hover,
+
+}.q-btn.secondary-action:hover,
   .q-btn.ghost-action:hover {
+
 
     color: #c0cad6 !important;
     background: rgba(12, 22, 40, 0.72) !important;
     border-color: rgba(107, 124, 148, 0.46) !important;
   
+
 }.group-list-count {
 
     color: #6b7280;
@@ -462,30 +454,12 @@
   
 }
 
-/* 用户在线状态徽标仍被共享视图使用；其余旧用户页 CSS 已迁除。 */
-  .user-session-badge {
-    padding: 4px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(45, 212, 191, 0.2);
-    background: rgba(45, 212, 191, 0.1);
-    color: #2dd4bf;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
 
-  .user-session-badge.is-offline {
-    border-color: rgba(75, 85, 99, 0.35);
-    background: rgba(31, 41, 55, 0.72);
-    color: #94a3b8;
-  }
+  @media (max-width: 1120px) {.setup-shell {
 
-
-  @media (max-width: 1120px) {
-    .dashboard-grid,
-    .setup-shell {
       grid-template-columns: 1fr;
-    }
+    
+}
 
     /* 窄屏纵向堆叠：恢复整页自然滚动，避免双列视口锁高导致布局异常 */
     .setup-shell {
@@ -503,17 +477,12 @@
 
     .record-card-head {
       grid-template-columns: 1fr;
-    }.user-record-card {
+    }.group-record-side {
 
-      flex-direction: column;
-      align-items: flex-start;
-    
-}.group-record-side,
-  .user-record-side,
-  .user-actions {
 
       justify-content: flex-start;
     
+
 }
   }
 
@@ -531,13 +500,12 @@
     .setup-brand,
     .setup-panel {
       padding: 18px;
-    }
+    }.overview-grid,
+  .setup-steps {
 
-    .overview-grid,
-    .dashboard-mini-grid,
-    .setup-steps {
       grid-template-columns: 1fr;
-    }
+    
+}
   }
 
   /* ========= mgmt-* 通用管理页面组件 ========= */
@@ -1000,18 +968,6 @@
     align-items: center;
     gap: 4px;
     white-space: nowrap;
-  }
-
-  /* 用户卡片：元信息分两行，避免宽屏下两行并排 */
-  .user-card-meta {
-    flex-direction: column !important;
-    align-items: flex-start !important;
-    gap: 8px !important;
-    width: 100%;
-  }
-
-  .user-meta-session-line {
-    width: 100%;
   }
 
   .mgmt-record-side {
