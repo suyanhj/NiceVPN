@@ -1,0 +1,15 @@
+/* Firewall V2 defensive cleanup and drag affordance. */
+
+.firewall-page--v2 .firewall-footer-count,
+.firewall-page--v2 .vpn-data-grid__summary {
+  display: none !important;
+}
+
+/* AG Grid adds the drag handle only while row dragging is actually enabled. */
+.firewall-page--v2 .ag-row:has(.ag-row-drag) {
+  cursor: grab;
+}
+
+.firewall-page--v2 .ag-row:has(.ag-row-drag):active {
+  cursor: grabbing;
+}
