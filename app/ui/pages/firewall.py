@@ -104,6 +104,8 @@ class FirewallPage(
         self._pending_center_owner_id = ""
         self._center_filter_model: dict[str, Any] = {}
         self._center_grid_sort_active = False
+        self._center_refresh_running = False
+        self._center_refresh_generation = 0
         self._center_all_rows: list[dict[str, Any]] = []
         self._center_display_rows: list[dict[str, Any]] = []
         self._center_raw_by_id: dict[str, dict[str, Any]] = {}
@@ -293,7 +295,7 @@ class FirewallPage(
                     self._center_search_input = (
                         ui.input(
                             placeholder="搜索 IP / 端口 / 规则 ID",
-                            on_change=lambda _event: self._refresh_rules(),
+                            on_change=lambda _event: self._render_center_rules(),
                         )
                         .props("outlined dense clearable debounce=250")
                         .classes("firewall-search-input flex-1 min-w-0")
@@ -369,6 +371,8 @@ class FirewallPage(
             self._sync_action_bar_count()
             self._refresh_rules()
         else:
+            self._center_refresh_generation += 1
+            self._center_refresh_running = False
             self.selected_rule_ids.clear()
             self._sync_action_bar_count()
             self._on_enter_remote_tab()
@@ -397,7 +401,7 @@ class FirewallPage(
         self._pending_center_owner_id = normalized
         if not normalized:
             self._center_filter_model.pop("owner_label", None)
-        self._refresh_rules()
+        self._render_center_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
