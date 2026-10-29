@@ -51,6 +51,28 @@ def test_firewall_uses_aggrid_row_drag_without_duplicate_sortable_bundle() -> No
     assert not (STATIC_DIR / "Sortable.min.js").exists()
 
 
+def test_firewall_remote_import_batch_methods_stay_out_of_remote_core() -> None:
+    """远端导入/批量边界保持独立，避免重新长回 Remote 核心模块。"""
+
+    page_source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
+    remote_source = (UI_DIR / "pages" / "firewall_remote.py").read_text(encoding="utf-8")
+    import_source = (
+        UI_DIR / "pages" / "firewall_remote_imports.py"
+    ).read_text(encoding="utf-8")
+
+    assert "FirewallRemoteImportBatchMixin" in page_source
+    for method in (
+        "_prepare_remote_import",
+        "_execute_remote_import",
+        "_show_remote_import_dialog",
+        "_import_ok_remote_async",
+        "_do_batch_remote_delete_async",
+        "_do_batch_remote_set_enabled_async",
+    ):
+        assert f"def {method}(" in import_source
+        assert f"def {method}(" not in remote_source
+
+
 def test_page_modules_do_not_duplicate_clipboard_scripts() -> None:
     """页面只能调用共享剪贴板入口，不得散落浏览器复制脚本。"""
 
