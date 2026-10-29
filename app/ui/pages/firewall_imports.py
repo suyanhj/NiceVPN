@@ -810,4 +810,3 @@ class FirewallImportMixin:
             dialog.close()
             self._notify_for_page("已导入并写回", type="positive")
         self._refresh_remote_view()
-
