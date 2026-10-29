@@ -22,6 +22,7 @@ from app.ui.components.list_selection import (
     update_visible_selection,
 )
 from app.ui.components.states import empty_state, error_state
+from app.ui.components.server_pager import render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
@@ -42,17 +43,22 @@ class GroupsPage:
         self.bulk_enable_button = None
         self.bulk_disable_button = None
         self.bulk_delete_button = None
+        self.page = 1
+        self.page_size = 50
+        self.total_groups = 0
+        self.list_container = None
+        self.total_label = None
 
     def render(self):
-        """渲染用户组管理页面。"""
+        """渲染用户组管理页面；列表仅读取当前 SQLite 页。"""
 
         try:
-            groups = self.group_service.list_all()
-            load_error: Exception | None = None
+            summary = self._load_summary()
+            summary_error: Exception | None = None
         except Exception as exc:
-            logger.exception("加载用户组列表失败")
-            groups = []
-            load_error = exc
+            logger.exception("加载用户组摘要失败")
+            summary = {"total": 0, "active": 0, "disabled": 0, "users": 0}
+            summary_error = exc
 
         def bulk_actions() -> None:
             create_action(
@@ -84,7 +90,7 @@ class GroupsPage:
             )
 
         with ui.column().classes("page-shell mgmt-page groups-page--v2"):
-            self._render_summary_metrics(groups)
+            self._render_summary_metrics(summary)
 
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_ids),
@@ -97,36 +103,109 @@ class GroupsPage:
                         self.select_all_checkbox = ui.checkbox(
                             value=False,
                             on_change=lambda e: self._toggle_select_all(bool(e.value)),
-                        ).classes("mgmt-checkbox").tooltip("选择当前全部用户组")
+                        ).classes("mgmt-checkbox").tooltip("选择当前页全部用户组")
                         ui.label("用户组列表").classes("mgmt-kicker")
-                    ui.label(
-                        "加载失败" if load_error else f"共 {len(groups)} 个用户组"
+                    self.total_label = ui.label(
+                        "摘要加载失败" if summary_error else "共 0 个用户组"
                     ).classes("group-list-count")
 
-                with ui.column().classes("w-full"):
-                    if load_error is not None:
-                        error_state(
-                            str(load_error),
-                            title="用户组列表加载失败",
-                            on_retry=lambda: ui.navigate.to("/groups"),
-                        )
-                    else:
-                        self._render_group_list(groups)
+                self.list_container = ui.column().classes("w-full")
 
+        self._refresh_group_page()
         self._sync_bulk_state()
 
-    @staticmethod
-    def _render_summary_metrics(groups: list[dict]) -> None:
-        """基于当前列表快照渲染分组摘要，不增加额外业务请求。"""
+    def _load_summary(self) -> dict[str, int]:
+        summary_method = getattr(self.group_service, "summary", None)
+        if callable(summary_method):
+            return dict(summary_method())
+        groups = self.group_service.list_all()
+        active = sum(
+            str(group.get("status") or "active") == "active"
+            for group in groups
+        )
+        return {
+            "total": len(groups),
+            "active": active,
+            "disabled": len(groups) - active,
+            "users": sum(int(group.get("user_count") or 0) for group in groups),
+        }
 
-        active_count = sum(str(group.get("status") or "active") == "active" for group in groups)
-        disabled_count = len(groups) - active_count
-        user_count = sum(int(group.get("user_count") or 0) for group in groups)
+    def _load_group_page(self) -> tuple[list[dict], int, str]:
+        page_method = getattr(self.group_service, "list_page", None)
+        offset = max(0, (self.page - 1) * self.page_size)
+        if callable(page_method):
+            groups, total = page_method(offset=offset, limit=self.page_size)
+        else:
+            all_groups = self.group_service.list_all()
+            total = len(all_groups)
+            groups = all_groups[offset : offset + self.page_size]
+
+        root_method = getattr(self.group_service, "first_group_id", None)
+        if callable(root_method):
+            root_id = str(root_method() or "")
+        else:
+            all_groups = self.group_service.list_all()
+            root_id = str(all_groups[0].get("id") or "") if all_groups else ""
+        return [dict(group) for group in groups], int(total), root_id
+
+    def _refresh_group_page(self) -> None:
+        if self.list_container is None:
+            return
+        try:
+            groups, total, root_id = self._load_group_page()
+            pages = max(1, (total + self.page_size - 1) // self.page_size)
+            if self.page > pages:
+                self.page = pages
+                groups, total, root_id = self._load_group_page()
+        except Exception as exc:
+            logger.exception("加载用户组列表失败")
+            if self.total_label is not None:
+                self.total_label.text = "加载失败"
+            self.list_container.clear()
+            with self.list_container:
+                error_state(
+                    str(exc),
+                    title="用户组列表加载失败",
+                    on_retry=self._refresh_group_page,
+                )
+            return
+
+        self.total_groups = total
+        if self.total_label is not None:
+            self.total_label.text = f"共 {total} 个用户组"
+        self.list_container.clear()
+        with self.list_container:
+            self._render_group_list(groups, root_id=root_id)
+            if total > self.page_size:
+                render_server_pager(
+                    total=total,
+                    page=self.page,
+                    page_size=self.page_size,
+                    on_change=self._on_group_page_change,
+                )
+
+    def _on_group_page_change(self, page: int) -> None:
+        target = max(1, int(page))
+        pages = max(1, (self.total_groups + self.page_size - 1) // self.page_size)
+        target = min(target, pages)
+        if target == self.page:
+            return
+        self.page = target
+        self._refresh_group_page()
+
+    @staticmethod
+    def _render_summary_metrics(summary: dict[str, int]) -> None:
+        """使用数据库聚合结果渲染分组摘要，不读取全部 group payload。"""
+
+        total_count = int(summary.get("total") or 0)
+        active_count = int(summary.get("active") or 0)
+        disabled_count = int(summary.get("disabled") or 0)
+        user_count = int(summary.get("users") or 0)
 
         with ui.element("div").classes("vpn-v2-overview-grid"):
             metric_card(
                 "用户组总数",
-                len(groups),
+                total_count,
                 helper_tooltip="包含根组和所有业务子组",
                 icon="folder_shared",
                 tone="info",
@@ -157,8 +236,13 @@ class GroupsPage:
                 compact=True,
             )
 
-    def _render_group_list(self, groups: list[dict]):
-        """少量流程对象使用卡片列表，不强制表格化。"""
+    def _render_group_list(
+        self,
+        groups: list[dict],
+        *,
+        root_id: str = "",
+    ):
+        """只渲染当前数据库页的用户组卡片。"""
 
         self.visible_group_ids = [group["id"] for group in groups]
         self.group_checkboxes.clear()
@@ -173,7 +257,7 @@ class GroupsPage:
             )
             return
 
-        root_id = str(groups[0]["id"])
+        root_id = str(root_id or groups[0]["id"])
         with ui.element("div").classes("mgmt-record-list"):
             for group in groups:
                 view = self._build_group_view_model(group, root_id=root_id)
