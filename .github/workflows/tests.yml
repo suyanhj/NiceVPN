@@ -13,13 +13,46 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  generate-lockfile:
+    name: Generate frontend lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Generate and commit package-lock.json when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          lockfile="app/ui/vue/frontend/package-lock.json"
+          if [[ -f "${lockfile}" ]]; then
+            echo "Lockfile already exists; nothing to do."
+            exit 0
+          fi
+          cd app/ui/vue/frontend
+          npm config set registry "https://registry.npmmirror.com"
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          cd ../../../..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${lockfile}"
+          git commit -m "build(ui): add reproducible frontend lockfile"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
   changes:
     name: Detect expensive test scope
     runs-on: ubuntu-latest
