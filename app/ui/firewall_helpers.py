@@ -10,18 +10,118 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
+from app.core.constants import CCD_DIR
 from app.services.firewall.simple_rule_import import (
     peer_rests_from_simplified_line,
     try_parse_simplified_line,
 )
+from app.ui.adapters.firewall import parse_remote_rule_hints
+from app.utils.cidr import validate_cidr
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     STATUS_PILL_RENDERER,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def read_ccd_vpn_ips(usernames: list[str]) -> list[str]:
+    """从多用户 CCD 读取 ifconfig-push 的隧道 IP（各用户至多一条）。"""
+
+    ips: list[str] = []
+    for username in usernames:
+        path = CCD_DIR / str(username)
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == "ifconfig-push":
+                ips.append(parts[1])
+                break
+    return ips
+
+
+def parse_user_source_for_create(
+    text: str,
+) -> tuple[str | None, list[str] | None]:
+    """用户模式手填源解析为单 CIDR 或 IP 列表。"""
+
+    value = (text or "").strip()
+    if not value:
+        return None, None
+    chunks = [item.strip() for item in value.split(",") if item.strip()]
+    if not chunks:
+        return None, None
+    cidrs = [item for item in chunks if validate_cidr(item)]
+    if len(cidrs) == len(chunks) and len(chunks) == 1:
+        return cidrs[0], None
+    for item in chunks:
+        if not validate_cidr(item) and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", item):
+            return None, list(chunks)
+    raise ValueError("用户源手填需为单段 CIDR，或为逗号分隔的仅数字 IP 列表。")
+
+
+def remote_row_to_edit_form_dict(row: dict) -> dict:
+    """将远端工作副本一行转换为共享规则编辑表单字段。"""
+
+    rest = str(row.get("rest") or "").strip()
+    description = str(row.get("description") or "").strip()
+    enabled = bool(row.get("enabled", True))
+    spec = try_parse_simplified_line(rest) if rest else None
+    if spec:
+        return {
+            "action": spec.action,
+            "protocol": (spec.protocol or "all").lower(),
+            "source_subnet": (spec.source or "").strip() or None,
+            "source_ips": None,
+            "dest_ip": (spec.dest or "").strip() or None,
+            "dest_port": (spec.dest_port or "").strip() or None,
+            "description": description,
+            "enabled": enabled,
+        }
+
+    hints = parse_remote_rule_hints(rest)
+    jump = (hints.get("action") or "ACCEPT").upper()
+    action = {
+        "ACCEPT": "accept",
+        "DROP": "drop",
+        "REJECT": "reject",
+    }.get(jump, "accept")
+    protocol = (hints.get("proto") or "all").strip()
+    if protocol.upper() in ("ALL", "ANY", "0", ""):
+        protocol = "all"
+    else:
+        protocol = protocol.lower()
+
+    return {
+        "action": action,
+        "protocol": protocol,
+        "source_subnet": (hints.get("source") or "").strip() or None,
+        "source_ips": None,
+        "dest_ip": (hints.get("dest") or "").strip() or None,
+        "dest_port": (hints.get("dport") or "").strip() or None,
+        "description": description,
+        "enabled": enabled,
+    }
+
+
+def parse_source_text_for_remote_save(
+    text: str,
+) -> tuple[str | None, list[str] | None]:
+    """远端保存时解析源字段，保持与中心创建规则一致。"""
+
+    value = (text or "").strip()
+    if not value:
+        return None, None
+    if "," in value:
+        try:
+            return parse_user_source_for_create(value)
+        except ValueError:
+            return value, None
+    return value, None
 
 
 def rows_from_remote_import_payload(raw: dict) -> list[dict]:

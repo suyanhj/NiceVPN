@@ -55,12 +55,11 @@ jobs:
           base_sha="${BEFORE_SHA:-}"
           head_sha="${GITHUB_SHA}"
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            # pull_request synchronize 事件的 before 是“上一次 PR head”，
-            # 用它只判断本次新增提交；否则从 PR base 比较，确保首次 PR 完整验证。
+            # PR 的 before 在 synchronize 事件中可能指向临时 merge ref，
+            # 与真实 head 比较会得到空 diff。PR 一律以 base -> head 计算，
+            # 宁可重复跑相关浏览器测试，也不要漏掉本次 PR 的 UI 变更。
+            base_sha="${PR_BASE_SHA:-}"
             head_sha="${PR_HEAD_SHA:-${GITHUB_SHA}}"
-            if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]]; then
-              base_sha="${PR_BASE_SHA:-}"
-            fi
           fi
 
           echo "Diff base: ${base_sha}"

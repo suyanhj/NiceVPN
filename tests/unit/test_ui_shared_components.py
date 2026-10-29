@@ -220,6 +220,9 @@ def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
     firewall_source = (
         root / "app" / "ui" / "pages" / "firewall.py"
     ).read_text(encoding="utf-8")
+    firewall_remote_source = (
+        root / "app" / "ui" / "pages" / "firewall_remote.py"
+    ).read_text(encoding="utf-8")
     peers_source = (
         root / "app" / "ui" / "pages" / "peers.py"
     ).read_text(encoding="utf-8")
@@ -227,7 +230,7 @@ def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
     assert 'create_action(\n                "新建用户"' in users_source
     assert 'secondary_action("取消"' in users_source
     assert 'primary_action(\n                    "切换"' in users_source
-    assert "primary_action(" in firewall_source
+    assert "primary_action(" in (firewall_source + firewall_remote_source)
     assert "primary_action(" in peers_source
 
 
