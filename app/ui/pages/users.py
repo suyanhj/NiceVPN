@@ -7,7 +7,7 @@ import threading
 import re
 from datetime import datetime
 
-from nicegui import run, ui
+from nicegui import background_tasks, run, ui
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,13 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.grid_query import (
+    filter_rows,
+    first_sort_spec,
+    set_filter_values,
+    sort_rows,
+    text_filter_spec,
+)
 from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
@@ -70,6 +77,11 @@ class UsersPage:
         self._import_progress_ui: dict[str, object] | None = None
         self.page = 1
         self.page_size = 50
+        self.total_rows = 0
+        self._user_filter_model: dict[str, dict] = {}
+        self._user_sort_field = "username"
+        self._user_sort_desc = False
+        self._user_filter_values: dict[str, list[str]] = {}
         self._refresh_running = False
 
     def render(self):
