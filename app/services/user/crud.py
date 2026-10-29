@@ -475,6 +475,30 @@ class UserService:
         """列出所有用户（排除已删除）。"""
         return self.store.list_users()
 
+    def list_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        search_mode: str = "contains",
+        group_ids: list[str] | None = None,
+        statuses: list[str] | None = None,
+        sort_by: str = "username",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict], int]:
+        """数据库级用户分页查询。"""
+        return self.store.list_users_page(
+            offset=offset,
+            limit=limit,
+            search=search,
+            search_mode=search_mode,
+            group_ids=group_ids,
+            statuses=statuses,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
     def count(self) -> int:
         """返回未删除用户数量。"""
         return self.store.count_users()
