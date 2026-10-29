@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from nicegui import ui
+from nicegui import run, ui
 
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.cert.cert_service import CertService
@@ -27,7 +27,7 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.feedback import AsyncOperationGuard
-from app.ui.components.states import empty_state, error_state
+from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 
@@ -48,6 +48,7 @@ class CertsPage:
         self.cert_service = CertService()
         self.data_container = None
         self.summary_container = None
+        self.alert_container = None
         self.grid_view = None
         self.all_rows: list[dict[str, Any]] = []
         self.selected_certs: set[str] = set()
@@ -67,6 +68,7 @@ class CertsPage:
         self.visible_cert_names: list[str] = []
         self.cert_checkboxes: dict[str, Any] = {}
         self.page = 1
+        self._refresh_running = False
 
     def render(self):
         """使用共享页面结构和 AG Grid 渲染证书库。"""
@@ -112,7 +114,7 @@ class CertsPage:
 
         with ui.column().classes("page-shell mgmt-page certs-page--v2"):
             self.summary_container = ui.element("div").classes("vpn-v2-overview-grid")
-            self._render_expiry_alerts()
+            self.alert_container = ui.column().classes("w-full")
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_certs),
                 actions=bulk_actions,
@@ -204,26 +206,51 @@ class CertsPage:
         return [self._adapt_cert_row(cert) for cert in self.cert_service.list_all()]
 
     def _refresh_cert_list(self):
-        """刷新证书数据，并保留仍存在的选择和搜索条件。"""
+        """先呈现页面骨架，再异步刷新证书数据。"""
 
         if self.data_container is None:
             return
+        if self._refresh_running:
+            ui.notify("证书列表正在刷新，请稍候", type="info")
+            return
+
+        self._refresh_running = True
+        self.data_container.clear()
+        with self.data_container:
+            loading_state(
+                "正在刷新证书…" if self.all_rows else "正在加载证书…",
+                refreshing=bool(self.all_rows),
+            )
+        ui.timer(0.01, self._refresh_cert_list_async, once=True)
+
+    async def _refresh_cert_list_async(self) -> None:
+        """在线程池读取 PKI index，避免阻塞 NiceGUI 事件循环。"""
+
         try:
-            rows = self._load_rows()
+            rows = await run.io_bound(self._load_rows)
         except Exception as exc:
             logger.exception("加载证书列表失败")
             if self.summary_container is not None:
                 self.summary_container.clear()
-            self.data_container.clear()
-            with self.data_container:
-                error_state(
-                    str(exc),
-                    title="证书列表加载失败",
-                    on_retry=self._refresh_cert_list,
-                )
+            if self.alert_container is not None:
+                self.alert_container.clear()
+            if self.data_container is not None:
+                self.data_container.clear()
+                with self.data_container:
+                    error_state(
+                        str(exc),
+                        title="证书列表加载失败",
+                        on_retry=self._refresh_cert_list,
+                    )
+            return
+        finally:
+            self._refresh_running = False
+
+        if self.data_container is None:
             return
 
         self._render_summary_metrics(rows)
+        self._render_expiry_alerts(rows)
 
         existing = {str(row["id"]) for row in rows if row.get("id")}
         self.selected_certs.intersection_update(existing)
@@ -299,21 +326,22 @@ class CertsPage:
                 compact=True,
             )
 
-    def _render_expiry_alerts(self):
-        """渲染即将到期告警；告警源失败不影响主证书库。"""
+    def _render_expiry_alerts(self, rows: list[dict[str, Any]]) -> None:
+        """复用当前证书快照渲染临期告警，不再二次读取 index.txt。"""
 
-        try:
-            expiring = self.cert_service.get_expiring()
-        except Exception as exc:
-            logger.exception("加载临期证书告警失败")
-            alert_card.show(
-                level="warning",
-                title="临期证书检查不可用",
-                message=str(exc),
-            )
+        if self.alert_container is None:
             return
-        if expiring:
-            names = "、".join(str(cert.get("common_name") or "—") for cert in expiring[:5])
+
+        expiring = [row for row in rows if row.get("status") == "expiring"]
+        self.alert_container.clear()
+        if not expiring:
+            return
+
+        with self.alert_container:
+            names = "、".join(
+                str(cert.get("common_name") or "—")
+                for cert in expiring[:5]
+            )
             alert_card.show(
                 level="warning",
                 title=f"{len(expiring)} 个证书将到期",
