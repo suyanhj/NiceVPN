@@ -236,3 +236,35 @@ def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
     assert "fetch(" not in source
     assert "axios" not in source
     assert "/api/" not in source
+
+
+def test_firewall_page_is_composed_from_stable_modules() -> None:
+    """Firewall 主入口保持轻量组合，远端/中心网格/导入/批量各自有明确边界。"""
+
+    page_source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
+    center_source = (UI_DIR / "pages" / "firewall_center.py").read_text(encoding="utf-8")
+    remote_source = (UI_DIR / "pages" / "firewall_remote.py").read_text(encoding="utf-8")
+    import_source = (UI_DIR / "pages" / "firewall_imports.py").read_text(encoding="utf-8")
+    batch_source = (UI_DIR / "pages" / "firewall_batch.py").read_text(encoding="utf-8")
+
+    assert "FirewallCenterGridMixin" in page_source
+    assert "FirewallRemoteMixin" in page_source
+    assert "FirewallImportMixin" in page_source
+    assert "FirewallBatchMixin" in page_source
+
+    assert "def _refresh_rules(" in center_source
+    assert "def _on_remote_pull(" in remote_source
+    assert "def _prepare_remote_import(" in remote_source
+    assert "def _do_batch_remote_delete_async(" in remote_source
+
+    assert "def _prepare_center_import(" in import_source
+    assert "def _show_import_dialog(" in import_source
+    assert "def _prepare_remote_import(" not in import_source
+
+    assert "def _batch_delete(" in batch_source
+    assert "def _do_batch_delete_center(" in batch_source
+    assert "def _batch_set_enabled(" in batch_source
+    assert "def _do_batch_remote_delete_async(" not in batch_source
+
+    assert "def _prepare_center_import(" not in page_source
+    assert "def _batch_delete(" not in page_source
