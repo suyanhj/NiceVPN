@@ -10,7 +10,7 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 WORKDIR /build/app/ui/vue/frontend
 
-# 前端源码一次复制、一次构建；npm 缓存只留在 BuildKit cache，不进入镜像层。
+# 前端源码一次复制、一次 npm ci 构建；依赖由 package-lock.json 锁定，npm 缓存只留在 BuildKit cache。
 COPY app/ui/vue/frontend/ ./
 RUN --mount=type=cache,target=/root/.npm \
     npm config set registry "${NPM_REGISTRY}" \
