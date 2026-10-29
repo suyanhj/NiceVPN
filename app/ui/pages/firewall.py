@@ -36,6 +36,7 @@ from app.ui.firewall_helpers import (
 from app.ui.pages.firewall_center import FirewallCenterGridMixin
 from app.ui.pages.firewall_center_actions import FirewallCenterActionsMixin
 from app.ui.pages.firewall_center_imports import FirewallCenterImportMixin
+from app.ui.pages.firewall_remote_imports import FirewallRemoteImportBatchMixin
 from app.ui.pages.firewall_remote import FirewallRemoteMixin
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
@@ -59,6 +60,7 @@ class FirewallPage(
     FirewallCenterGridMixin,
     FirewallCenterActionsMixin,
     FirewallCenterImportMixin,
+    FirewallRemoteImportBatchMixin,
     FirewallRemoteMixin,
 ):
     """中心 JSON 规则、中心侧对端虚拟行、以及对端机 filter 用户链的本地工作副本与 UI。
