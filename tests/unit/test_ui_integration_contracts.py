@@ -37,6 +37,7 @@ def test_legacy_cleanup_has_valid_css_structure() -> None:
 
 def test_removed_legacy_certificate_and_user_page_selectors_stay_removed() -> None:
     legacy = (CSS_DIR / "legacy.css").read_text(encoding="utf-8")
+    shell = (CSS_DIR / "shell.css").read_text(encoding="utf-8")
 
     assert ".cert-page" not in legacy
     assert ".cert-header-panel" not in legacy
@@ -46,11 +47,10 @@ def test_removed_legacy_certificate_and_user_page_selectors_stay_removed() -> No
     assert ".user-page" not in legacy
     assert ".user-header-panel" not in legacy
     assert ".user-record-list" not in legacy
+    assert ".user-session-badge" not in legacy
 
-    # 少量 user-* 仍可能作为与 group/service 共用的响应式 selector
-    # 留在兼容规则中；旧用户页主体必须保持移除。
-    # 该徽标仍被共享视图引用，不能误删。
-    assert ".user-session-badge" in legacy
+    # 仍在共享视图使用的徽标属于 V2 shell，不再由 legacy.css 托管。
+    assert ".user-session-badge" in shell
 
 
 def test_pages_do_not_reintroduce_handwritten_business_javascript() -> None:
