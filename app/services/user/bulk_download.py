@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.constants import OVPN_PROFILES_DIR, USERS_DIR
-from app.utils.file_lock import read_json
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +59,11 @@ class BulkDownloadService:
         p2 = USERS_DIR / username / f"{username}.ovpn"
         if p2.exists():
             return p2
-        user_json = USERS_DIR / f"{username}.json"
-        if user_json.exists():
-            data = read_json(user_json)
-            if data and data.get("ovpn_file_path"):
-                p3 = Path(data["ovpn_file_path"])
-                if p3.exists():
-                    return p3
+        from app.services.user.crud import UserService
+
+        data = UserService().get(username)
+        if data and data.get("ovpn_file_path"):
+            p3 = Path(data["ovpn_file_path"])
+            if p3.exists():
+                return p3
         return None
