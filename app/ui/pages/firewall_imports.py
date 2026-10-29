@@ -378,7 +378,7 @@ class FirewallImportMixin:
 
         chain = IptablesManager.peer_chain_name_for_id(target)
         rows, parsed_chain, chain_exists = (
-            FirewallPage._rows_from_remote_import_text_mixed(
+            self._rows_from_remote_import_text_mixed(
                 normalized,
                 target,
                 chain,
@@ -799,7 +799,7 @@ class FirewallImportMixin:
             return
         cname = IptablesManager.peer_chain_name_for_id(pid)
         try:
-            rows, chn, cex = FirewallPage._rows_from_remote_import_text_mixed(text, pid, cname)
+            rows, chn, cex = self._rows_from_remote_import_text_mixed(text, pid, cname)
         except ValueError as exc:
             logger.error("对端规则导入解析失败: %s", exc)
             self._notify_for_page(str(exc), type="negative")
