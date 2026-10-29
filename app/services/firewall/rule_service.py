@@ -725,58 +725,115 @@ class FirewallRuleService:
             merged.append(row)
         return merged
 
-    def list_unified_flat(self) -> list[dict]:
-        """防火墙首页「全部归属」：JSON 规则与**中心侧**对端放行合并列表。
+    @staticmethod
+    def _center_peer_virtual_rule(peer: dict) -> dict | None:
+        """把 Peer 元数据转换为中心 VPN_FORWARD 的虚拟规则行。"""
 
-        每条对端卡片只代表本机 ``VPN_FORWARD``（允许对端内网源）；对端机器上放行中心源须 SSH 下发，
-        见 ``remote_peer_iptables``，不在此列表展示。
-        """
+        pid = str(peer.get("id") or "").strip()
+        if not pid:
+            return None
+        lan = [
+            str(c).strip()
+            for c in (peer.get("lan_cidrs") or [])
+            if str(c).strip()
+        ]
+        if not lan:
+            return None
+        c_raw = f"{IptablesManager.CENTER_PEER_COMMENT_TAG} peer={pid}"
+        c_peer = c_raw[:256].replace('"', "'")
+        return {
+            "id": f"{CE_PEER_RULE_PREFIX}{pid}",
+            "_row_kind": "center_peer",
+            "_peer_id": pid,
+            "owner_type": "peer",
+            "owner_id": pid,
+            "priority": int(peer.get("center_forward_priority", 500_000)),
+            "description": str(
+                peer.get("center_forward_rule_description") or ""
+            ).strip(),
+            "_center_tag_line": c_peer,
+            "enabled": bool(peer.get("center_forward_enabled", True)),
+            "protocol": str(
+                peer.get("center_forward_protocol") or "all"
+            ).strip()
+            or "all",
+            "action": "accept",
+            "deployment_target": "center",
+            "source_subnet": ",".join(lan),
+            "source_ips": None,
+            "dest_ip": str(peer.get("center_forward_dest_ip") or "").strip() or None,
+            "dest_port": (
+                str(peer.get("center_forward_dest_port") or "").strip() or None
+            ),
+            "instance": "server",
+            "_owner_id": pid,
+        }
+
+    def list_unified_flat(self) -> list[dict]:
+        """列出全部中心规则；完整排序/备份/优先级调整路径使用。"""
+
         from app.services.peer_instance.service import PeerService
 
         out: list[dict] = []
-        for r in self.list_all_flat():
-            row = dict(r)
+        for rule in self.list_all_flat():
+            row = dict(rule)
             row["_row_kind"] = "json"
             out.append(row)
-        for p in PeerService().list_all():
-            pid = str(p.get("id") or "").strip()
-            if not pid:
-                continue
-            lan = [str(c).strip() for c in (p.get("lan_cidrs") or []) if str(c).strip()]
-            if not lan:
-                continue
-            pri = int(p.get("center_forward_priority", 500_000))
-            cen_en = bool(p.get("center_forward_enabled", True))
-            # 与 ``IptablesManager`` 中默认 tag 同文，供未填自定义说明时第二行与 iptables 一致
-            c_raw = f"{IptablesManager.CENTER_PEER_COMMENT_TAG} peer={pid}"
-            c_peer = c_raw[:256].replace('"', "'")
-            d_ip = str(p.get("center_forward_dest_ip") or "").strip() or None
-            d_port = str(p.get("center_forward_dest_port") or "").strip() or None
-            proto = str(p.get("center_forward_protocol") or "all").strip() or "all"
-            udesc = str(p.get("center_forward_rule_description") or "").strip()
-            out.append(
-                {
-                    "id": f"{CE_PEER_RULE_PREFIX}{pid}",
-                    "_row_kind": "center_peer",
-                    "_peer_id": pid,
-                    "owner_type": "peer",
-                    "owner_id": pid,
-                    "priority": pri,
-                    "description": udesc,
-                    "_center_tag_line": c_peer,
-                    "enabled": cen_en,
-                    "protocol": proto,
-                    "action": "accept",
-                    "deployment_target": "center",
-                    "source_subnet": ",".join(lan),
-                    "source_ips": None,
-                    "dest_ip": d_ip,
-                    "dest_port": d_port,
-                    "instance": "server",
-                    "_owner_id": pid,
-                }
-            )
+        for peer in PeerService().list_all():
+            row = self._center_peer_virtual_rule(peer)
+            if row is not None:
+                out.append(row)
         return sorted(out, key=lambda x: (x.get("priority", 0), str(x.get("id", ""))))
+
+    def list_unified_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        owner_ids: list[str] | None = None,
+        owner_types: list[str] | None = None,
+        enabled_values: list[bool] | None = None,
+        protocols: list[str] | None = None,
+        actions: list[str] | None = None,
+        kind_keys: list[str] | None = None,
+        sort_by: str = "priority",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict], int]:
+        """数据库级分页读取统一中心规则集合。"""
+
+        records, total = self.store.list_firewall_unified_page(
+            offset=offset,
+            limit=limit,
+            search=search,
+            owner_ids=owner_ids,
+            owner_types=owner_types,
+            enabled_values=enabled_values,
+            protocols=protocols,
+            actions=actions,
+            kind_keys=kind_keys,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+        rows: list[dict] = []
+        for record in records:
+            payload = dict(record.get("payload") or {})
+            if record.get("row_kind") == "center_peer":
+                row = self._center_peer_virtual_rule(payload)
+                if row is not None:
+                    rows.append(row)
+                continue
+            payload["_row_kind"] = "json"
+            payload["_owner_id"] = str(
+                payload.get("owner_id") or record.get("owner_id") or ""
+            )
+            rows.append(payload)
+        return rows, total
+
+    def list_unified_facets(self) -> dict[str, list]:
+        """服务端分页 Grid 使用的完整筛选值元数据。"""
+
+        return self.store.list_firewall_unified_facets()
 
     # ---- 内部方法 ----
 
