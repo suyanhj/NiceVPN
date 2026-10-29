@@ -7,7 +7,7 @@ import threading
 import re
 from datetime import datetime
 
-from nicegui import background_tasks, run, ui
+from nicegui import run, ui
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
@@ -1418,8 +1418,6 @@ class UsersPage:
             current="",
             result=summary,
         )
-        if created:
-            self._copy_download_link(created[0])
         self._refresh_user_list()
 
     def _ensure_one_time_download_url(self, username: str) -> str | None:
@@ -1463,17 +1461,14 @@ class UsersPage:
         logger.info("已生成一次性下载链接 user=%s", username)
         return url
 
-    def _copy_download_link(self, username: str):
-        """生成一次性链接并通过统一剪贴板辅助复制。"""
+    async def _copy_download_link(self, username: str):
+        """由用户点击触发复制，保持当前 NiceGUI 客户端/slot 上下文。"""
         url = self._ensure_one_time_download_url(username)
         if not url:
             return
-        background_tasks.create(
-            self._copy_text(
-                url,
-                "下载链接已复制（约 1 小时内有效，仅可下载一次）",
-            ),
-            name=f"copy download link {username}",
+        await self._copy_text(
+            url,
+            "下载链接已复制（约 1 小时内有效，仅可下载一次）",
         )
 
     def _push_download_link_notify(self, username: str):
