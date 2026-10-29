@@ -14,7 +14,7 @@ WORKDIR /build/app/ui/vue/frontend
 COPY app/ui/vue/frontend/ ./
 RUN --mount=type=cache,target=/root/.npm \
     npm config set registry "${NPM_REGISTRY}" \
-    && npm install --no-audit --no-fund --package-lock=false \
+    && npm ci --no-audit --no-fund \
     && npm run check
 
 
