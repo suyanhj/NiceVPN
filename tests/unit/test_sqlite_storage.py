@@ -47,6 +47,20 @@ def test_sqlite_database_permissions_are_private(tmp_path: Path) -> None:
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
+def test_structured_services_do_not_read_legacy_json_directories() -> None:
+    root = Path(__file__).resolve().parents[2]
+    contracts = {
+        "app/services/user/crud.py": ("USERS_DIR", "GROUPS_DIR", "read_json(", "write_json_atomic("),
+        "app/services/group/crud.py": ("GROUPS_DIR", "read_json(", "write_json_atomic("),
+        "app/services/peer_instance/service.py": ("PEERS_DIR", "read_json(", "write_json_atomic("),
+        "app/services/firewall/rule_service.py": ("FIREWALL_DIR", "read_json(", "write_json_atomic("),
+    }
+    for rel, forbidden in contracts.items():
+        source = (root / rel).read_text(encoding="utf-8")
+        for token in forbidden:
+            assert token not in source, f"{rel} must not use legacy storage token: {token}"
+
+
 def test_repository_query_and_pagination(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "db.sqlite")
     store.upsert_group({
