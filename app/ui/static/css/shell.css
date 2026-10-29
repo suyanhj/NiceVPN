@@ -234,7 +234,7 @@ body {
 
 
 
-/* Shared live styles migrated out of legacy.css. */
+/* V2 仍在使用的共享样式：已从 legacy.css 正式迁入。 */
 .user-session-badge {
   padding: 4px 8px;
   border: 1px solid rgba(45, 212, 191, 0.2);
