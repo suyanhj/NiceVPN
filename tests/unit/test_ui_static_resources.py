@@ -73,6 +73,28 @@ def test_firewall_remote_import_batch_methods_stay_out_of_remote_core() -> None:
         assert f"def {method}(" not in remote_source
 
 
+def test_firewall_remote_single_rule_actions_stay_out_of_remote_core() -> None:
+    """远端单条规则动作保持独立，Remote 核心只负责同步/Grid/排序。"""
+
+    page_source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
+    remote_source = (UI_DIR / "pages" / "firewall_remote.py").read_text(encoding="utf-8")
+    actions_source = (
+        UI_DIR / "pages" / "firewall_remote_actions.py"
+    ).read_text(encoding="utf-8")
+
+    assert "FirewallRemoteActionsMixin" in page_source
+    for method in (
+        "_show_edit_remote_line_dialog",
+        "_save_remote_rows_and_push",
+        "_confirm_delete_remote_line",
+        "_do_delete_remote_line_async",
+        "_show_create_remote_line_dialog",
+        "_insert_remote_rows_and_push",
+    ):
+        assert f"def {method}(" in actions_source
+        assert f"def {method}(" not in remote_source
+
+
 def test_page_modules_do_not_duplicate_clipboard_scripts() -> None:
     """页面只能调用共享剪贴板入口，不得散落浏览器复制脚本。"""
 
