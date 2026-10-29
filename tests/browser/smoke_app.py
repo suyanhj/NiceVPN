@@ -349,11 +349,23 @@ def _firewall() -> None:
     page.rule_service = FakeRuleService()
     page._peer_service = FakePeerService()
     import app.ui.pages.firewall as firewall_module
-    firewall_module.GroupService.list_all = lambda _self: [dict(row) for row in GROUPS]
-    firewall_module.UserService.list_all = lambda _self: [dict(row) for row in USERS]
+    import app.ui.pages.firewall_center as firewall_center_module
+    import app.ui.pages.firewall_center_actions as firewall_center_actions_module
+    import app.ui.pages.firewall_remote as firewall_remote_module
+
+    firewall_center_module.GroupService.list_all = (
+        lambda _self: [dict(row) for row in GROUPS]
+    )
+    firewall_center_actions_module.GroupService.list_all = (
+        lambda _self: [dict(row) for row in GROUPS]
+    )
+    firewall_center_actions_module.UserService.list_all = (
+        lambda _self: [dict(row) for row in USERS]
+    )
     # Browser smoke 不落盘远端链缓存，保持 nondestructive。
-    firewall_module.remote_chain_cache.record_from_fetch = lambda _snap, _peer_id: None
-    firewall_module.remote_chain_cache.read_remote_chain_cache = lambda _peer_id: None
+    for module in (firewall_module, firewall_remote_module):
+        module.remote_chain_cache.record_from_fetch = lambda _snap, _peer_id: None
+        module.remote_chain_cache.read_remote_chain_cache = lambda _peer_id: None
     page.render()
 
 
