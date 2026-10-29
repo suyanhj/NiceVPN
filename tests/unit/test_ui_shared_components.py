@@ -223,7 +223,10 @@ def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
     peers_source = (
         root / "app" / "ui" / "pages" / "peers.py"
     ).read_text(encoding="utf-8")
-    assert "primary_action(" not in users_source
+    # 页级“新建”动作保持 create variant；弹窗确认动作可复用 primary/secondary。
+    assert 'create_action(\n                "新建用户"' in users_source
+    assert 'secondary_action("取消"' in users_source
+    assert 'primary_action(\n                    "切换"' in users_source
     assert "primary_action(" in firewall_source
     assert "primary_action(" in peers_source
 
