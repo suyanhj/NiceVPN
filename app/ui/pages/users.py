@@ -324,7 +324,11 @@ class UsersPage:
                 group_ids = ["__no_group_match__"]
 
         db_sort_fields = {"username", "account_status", "group", "created_at"}
-        use_db_page = not unsupported_filter and self._user_sort_field in db_sort_fields
+        use_db_page = (
+            not unsupported_filter
+            and self._user_sort_field in db_sort_fields
+            and callable(getattr(self.user_service, "list_page", None))
+        )
 
         async def load_user_source():
             if not use_db_page:
