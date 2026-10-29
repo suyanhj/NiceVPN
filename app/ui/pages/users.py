@@ -17,7 +17,7 @@ from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
 from app.ui.components.data_grid import render_data_grid
-from app.ui.components.actions import create_action
+from app.ui.components.actions import create_action, primary_action, secondary_action
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     STATUS_PILL_RENDERER,
@@ -963,11 +963,11 @@ class UsersPage:
             with ui.row().classes(
                 "w-full justify-end q-mt-md vpn-form-dialog__actions"
             ):
-                ui.button("取消", on_click=dialog.close).props("flat no-caps")
-                ui.button(
+                secondary_action("取消", on_click=dialog.close)
+                primary_action(
                     "切换",
                     on_click=lambda: self._do_change_group(dialog, username, group_select.value),
-                ).props("unelevated no-caps color=primary")
+                )
         dialog.open()
 
     def _do_change_group(self, dialog, username: str, new_group_id: str):
@@ -1030,11 +1030,11 @@ class UsersPage:
             )
 
             with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
+                secondary_action("取消", on_click=dialog.close)
+                primary_action(
                     "保存",
                     on_click=lambda: self._save_ovpn(dialog, username, ovpn_path, editor.value),
-                ).props("color=primary")
+                )
         dialog.open()
 
     def _save_ovpn(self, dialog, username: str, ovpn_path, new_content: str):
@@ -1188,7 +1188,7 @@ class UsersPage:
             refs["result"] = ui.label("").classes("section-caption")
             refs["result"].set_visibility(False)
             with ui.row().classes("w-full justify-end"):
-                refs["close"] = ui.button("关闭", on_click=dialog.close).props("flat no-caps")
+                refs["close"] = secondary_action("关闭", on_click=dialog.close)
                 refs["close"].set_visibility(False)
         refs["dialog"] = dialog
         dialog.open()
@@ -1483,12 +1483,12 @@ class UsersPage:
             with ui.row().classes(
                 "w-full justify-end q-mt-md vpn-form-dialog__actions"
             ):
-                ui.button("取消", on_click=dialog.close).props("flat no-caps")
-                ui.button(
+                secondary_action("取消", on_click=dialog.close)
+                primary_action(
                     "预检查并导入",
                     icon="playlist_add_check",
                     on_click=lambda: self._do_import(dialog, textarea.value, GroupService()),
-                ).props("unelevated no-caps color=primary")
+                )
         dialog.open()
 
     def _do_import(self, dialog, raw_text: str, group_service):

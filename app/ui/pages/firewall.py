@@ -35,7 +35,6 @@ from app.services.firewall.simple_rule_import import (
     center_rule_payload_from_simplified,
     is_center_backup_json_text,
     parse_center_simplified_lines,
-    peer_rests_from_simplified_line,
     remote_rests_from_create_fields,
     resolve_center_owner_type,
     source_fields_for_center,
@@ -54,6 +53,16 @@ from app.ui.adapters.firewall import (
     format_remote_cache_timestamp,
     parse_remote_rule_hints,
 )
+from app.ui.firewall_helpers import (
+    center_grid_columns,
+    move_order,
+    remote_grid_columns,
+    rows_from_iptables_paste,
+    rows_from_remote_import_payload,
+    rows_from_remote_import_text_mixed,
+    second_line_comment_text,
+    short_peer_id,
+)
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     create_action,
@@ -62,10 +71,6 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.data_grid import render_data_grid
-from app.ui.components.data_grid_renderers import (
-    ACTION_BUTTON_RENDERER,
-    STATUS_PILL_RENDERER,
-)
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
@@ -922,107 +927,17 @@ class FirewallPage:
 
     @staticmethod
     def _rows_from_remote_import_payload(raw: dict) -> list[dict]:
-        """从导入 JSON 根对象解析 ``rows``，与 ``remote_chain_cache`` 工作副本同形。"""
-        if not isinstance(raw, dict):
-            raise ValueError("JSON 根须为 object")
-        if raw.get("rows") and isinstance(raw["rows"], list):
-            out: list[dict] = []
-            for x in raw["rows"]:
-                if not isinstance(x, dict):
-                    continue
-                r = str(x.get("rest", "")).strip()
-                if not r:
-                    continue
-                if "\n" in r or "\r" in r:
-                    raise ValueError("规则片段不得含换行")
-                item: dict[str, Any] = {
-                    "rest": r,
-                    "enabled": bool(x.get("enabled", True)),
-                }
-                description = str(x.get("description") or "").strip()
-                if description:
-                    item["description"] = description
-                if x.get("priority") is not None:
-                    try:
-                        item["priority"] = int(x.get("priority"))
-                    except (TypeError, ValueError):
-                        raise ValueError(
-                            f"规则优先级无效: {x.get('priority')!r}"
-                        )
-                out.append(item)
-            return out
-        rests = [str(s).strip() for s in (raw.get("rests") or []) if str(s).strip()]
-        return [{"rest": s, "enabled": True} for s in rests]
+        return rows_from_remote_import_payload(raw)
 
     @staticmethod
     def _rows_from_iptables_paste(text: str, chain: str) -> list[dict]:
-        """从粘贴的 iptables 文本得到 ``rows``，与对端 ``iptables -S <链>`` 解析结果同形。
-
-        支持：1) 每行 ``-A <链名> <rest>`` 与 SSH 拉取一致；2) 无 ``-A`` 前缀时每行整段作为 ``rest``。
-        """
-        ch = (chain or "").strip()
-        if not ch:
-            raise ValueError("链名为空")
-        prefix = f"-A {ch} "
-        rows: list[dict] = []
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            if s.startswith("-A "):
-                if not s.startswith(prefix):
-                    raise ValueError(
-                        f"第 {line_number} 行不属于当前对端链 {ch}，"
-                        f"请只贴本链规则：{s[:120]}"
-                    )
-                rest = s[len(prefix) :].strip()
-                if not rest:
-                    continue
-                if "\n" in rest or "\r" in rest:
-                    raise ValueError("规则片段不得含换行")
-                rows.append({"rest": rest, "enabled": True})
-                continue
-            spec = try_parse_simplified_line(s)
-            if spec is not None:
-                for r in peer_rests_from_simplified_line(spec):
-                    if "\n" in r or "\r" in r:
-                        raise ValueError("规则片段不得含换行")
-                    rows.append({"rest": r, "enabled": True})
-            else:
-                rest = s
-                if not rest:
-                    continue
-                if "\n" in rest or "\r" in rest:
-                    raise ValueError("规则片段不得含换行")
-                rows.append({"rest": rest, "enabled": True})
-        if not rows:
-            raise ValueError(
-                "未解析到任何规则。请贴入 ``iptables -S <链名>`` 输出，或每行一条规则片段（-s/-j/...）。"
-            )
-        return rows
+        return rows_from_iptables_paste(text, chain)
 
     @staticmethod
     def _rows_from_remote_import_text_mixed(
         text: str, peer_id: str, cname: str
     ) -> tuple[list[dict], str, bool]:
-        """对端导入：以 ``{`` 开头则按历史 JSON 工作副本解析，否则按 iptables 文本解析。"""
-        t = (text or "").strip()
-        if t.startswith("{"):
-            try:
-                raw = json.loads(t)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"JSON 解析失败: {exc}") from exc
-            in_pid = str(raw.get("peer_id") or "").strip() if isinstance(raw, dict) else ""
-            if in_pid and in_pid != str(peer_id).strip():
-                raise ValueError("JSON 中 peer_id 与当前所选对端不一致。")
-            if not isinstance(raw, dict):
-                raise ValueError("JSON 根须为 object")
-            rows = FirewallPage._rows_from_remote_import_payload(raw)
-            chn = str(raw.get("chain") or cname)
-            cex = bool(raw.get("chain_exists", True))
-            return rows, chn, cex
-        rows = FirewallPage._rows_from_iptables_paste(t, cname)
-        return rows, cname, True
+        return rows_from_remote_import_text_mixed(text, peer_id, cname)
 
     def _schedule_remote_coro(self, coro) -> None:
         try:
@@ -1032,111 +947,7 @@ class FirewallPage:
 
     @staticmethod
     def _remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
-        """对端链规则列定义；状态、协议、动作支持可搜索多选筛选。"""
-
-        number_column: dict[str, Any] = {
-            "field": "row_number",
-            "headerName": "#",
-            "width": 85,
-            "pinned": "left",
-            "filter": False,
-            "rowDrag": bool(can_reorder),
-        }
-
-        return [
-            number_column,
-            {
-                "field": "status_label",
-                "headerName": "状态",
-                "width": 95,
-                ":cellRenderer": STATUS_PILL_RENDERER,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索状态...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配状态",
-                    "valueOrder": ["启用", "停用"],
-                },
-                "cellClass": "vpn-grid-renderer-cell",
-            },
-            {
-                "field": "priority",
-                "headerName": "优先级",
-                "width": 105,
-            },
-            {
-                "field": "protocol",
-                "headerName": "协议",
-                "width": 90,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索协议...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配协议",
-                    "valueOrder": ["ALL", "TCP", "UDP", "ICMP"],
-                },
-            },
-            {
-                "field": "action_label",
-                "headerName": "动作",
-                "width": 105,
-                ":cellRenderer": STATUS_PILL_RENDERER,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索动作...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配动作",
-                    "valueOrder": ["ACCEPT", "DROP", "REJECT"],
-                },
-                "cellClass": "vpn-grid-renderer-cell",
-            },
-            {
-                "field": "source",
-                "headerName": "来源",
-                "minWidth": 170,
-                "flex": 1,
-            },
-            {
-                "field": "dest",
-                "headerName": "目标",
-                "minWidth": 160,
-                "flex": 1,
-            },
-            {
-                "field": "dest_port",
-                "headerName": "端口",
-                "minWidth": 105,
-            },
-            {
-                "field": "description",
-                "headerName": "说明",
-                "minWidth": 200,
-                "flex": 1,
-            },
-            {
-                "field": "raw_rest",
-                "headerName": "原始规则",
-                "minWidth": 320,
-                "flex": 2,
-            },
-            {
-                "field": "actions",
-                "headerName": "操作",
-                "width": 92,
-                "minWidth": 92,
-                "maxWidth": 92,
-                "sortable": False,
-                "filter": False,
-                "resizable": False,
-                "pinned": "right",
-                "lockPinned": True,
-                ":cellRenderer": ACTION_BUTTON_RENDERER,
-                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
-            },
-        ]
+        return remote_grid_columns(can_reorder=can_reorder)
 
     def _refresh_remote_view(self) -> None:
         """按当前对端缓存刷新 AG Grid；拉取失败时保留可用旧缓存。"""
@@ -1458,21 +1269,11 @@ class FirewallPage:
         return ok
 
     def _peer_id_short_label(self, pid: str) -> str:
-        p = str(pid or "")
-        if len(p) > 8:
-            return f"{p[:8]}…"
-        return p or "—"
+        return short_peer_id(pid)
 
     @staticmethod
     def _move_order(items: list[Any], old_index: int, new_index: int) -> list[Any]:
-        """按拖拽前后索引生成新顺序，不修改调用方列表。"""
-
-        if not items or not 0 <= old_index < len(items) or not 0 <= new_index < len(items):
-            logger.error("拖拽索引越界: old=%s new=%s count=%s", old_index, new_index, len(items))
-            return []
-        result = list(items)
-        result.insert(new_index, result.pop(old_index))
-        return result
+        return move_order(items, old_index, new_index)
 
     def _on_remote_grid_row_drag_end(self, event) -> None:
         """AG Grid 拖动结束后按缓存索引生成新顺序并立即写回。"""
@@ -2124,145 +1925,10 @@ class FirewallPage:
     def _center_grid_columns(
         *, can_reorder: bool = False, reorder_mode: bool = False
     ) -> list[dict[str, Any]]:
-        """中心策略列定义；五个分类列使用可搜索、可全选的多选筛选。"""
-
-        priority_column: dict[str, Any] = {
-            "field": "priority",
-            "headerName": "优先级",
-            "width": 105,
-            "pinned": "left",
-            "filter": False,
-            "rowDrag": bool(can_reorder),
-        }
-
-        columns = [
-            priority_column,
-            {
-                "field": "status_label",
-                "headerName": "状态",
-                "width": 100,
-                ":cellRenderer": STATUS_PILL_RENDERER,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索状态...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配状态",
-                    "valueOrder": ["启用", "停用"],
-                },
-                "cellClass": "vpn-grid-renderer-cell",
-            },
-            {
-                "field": "owner_label",
-                "headerName": "归属",
-                "minWidth": 160,
-                "flex": 1,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索归属...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配归属",
-                },
-            },
-            {
-                "field": "kind_label",
-                "headerName": "部署",
-                "minWidth": 135,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索部署类型...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配部署类型",
-                    "valueOrder": ["中心节点", "对端仅标识", "对端·中心放行"],
-                },
-            },
-            {
-                "field": "protocol",
-                "headerName": "协议",
-                "width": 95,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索协议...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配协议",
-                    "valueOrder": ["ALL", "TCP", "UDP", "ICMP", "SCTP", "UDPLITE", "ESP", "AH"],
-                },
-            },
-            {
-                "field": "action_label",
-                "headerName": "动作",
-                "width": 105,
-                ":cellRenderer": STATUS_PILL_RENDERER,
-                ":filter": "window.NiceVpnSetFilter",
-                "filterParams": {
-                    "searchPlaceholder": "搜索动作...",
-                    "selectAllLabel": "(全选)",
-                    "showValuesFromOtherFilters": False,
-                    "noMatchesLabel": "没有匹配动作",
-                    "valueOrder": ["ACCEPT", "DROP", "REJECT", "UNKNOWN"],
-                },
-                "cellClass": "vpn-grid-renderer-cell",
-            },
-            {
-                "field": "source",
-                "headerName": "来源",
-                "minWidth": 180,
-                "flex": 1,
-                "filter": False,
-            },
-            {
-                "field": "dest",
-                "headerName": "目标",
-                "minWidth": 160,
-                "flex": 1,
-                "filter": False,
-            },
-            {
-                "field": "dest_port",
-                "headerName": "端口",
-                "minWidth": 110,
-                "filter": False,
-            },
-            {
-                "field": "description",
-                "headerName": "说明",
-                "minWidth": 220,
-                "flex": 1,
-                "filter": False,
-            },
-            {
-                "field": "id",
-                "headerName": "规则 ID",
-                "minWidth": 210,
-                "filter": False,
-            },
-            {
-                "field": "actions",
-                "headerName": "操作",
-                "width": 92,
-                "minWidth": 92,
-                "maxWidth": 92,
-                "sortable": False,
-                "filter": False,
-                "resizable": False,
-                "pinned": "right",
-                "lockPinned": True,
-                ":cellRenderer": ACTION_BUTTON_RENDERER,
-                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
-            },
-        ]
-        if reorder_mode:
-            for column in columns:
-                column["sortable"] = False
-                column["filter"] = False
-                column.pop(":filter", None)
-                column.pop("filterParams", None)
-                if column.get("field") == "actions":
-                    column["hide"] = True
-        return columns
+        return center_grid_columns(
+            can_reorder=can_reorder,
+            reorder_mode=reorder_mode,
+        )
 
     def _load_center_grid_rows(self) -> list[dict[str, Any]]:
         """从 service 获取统一中心规则并转换为稳定 Grid 行。"""
@@ -2897,25 +2563,13 @@ class FirewallPage:
         is_remote_row: bool = False,
         iptables_comment: str = "",
     ) -> str:
-        """第二行只放注释/说明：有则显，与主标题同文不重复。中心/对端/``center_peer`` 共用。"""
-        if is_center_peer:
-            u = str(data.get("description") or "").strip()
-            tag = str(data.get("_center_tag_line") or "").strip()
-            if u and tag:
-                return f"{u} | {tag}"
-            return u or tag
-        if is_remote_row:
-            a = str(data.get("description") or "").strip()
-            b = str(iptables_comment or "").strip()
-            return a or b
-        t = (title_text or "").strip()
-        c = str(data.get("comment") or "").strip()
-        if c:
-            return c
-        d = str(data.get("description") or "").strip()
-        if d and d != t:
-            return d
-        return ""
+        return second_line_comment_text(
+            data,
+            title_text=title_text,
+            is_center_peer=is_center_peer,
+            is_remote_row=is_remote_row,
+            iptables_comment=iptables_comment,
+        )
 
     def _show_create_dialog(self) -> None:
         self._show_create_center_dialog()

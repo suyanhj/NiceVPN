@@ -1056,6 +1056,9 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     source = (root / "app" / "ui" / "pages" / "firewall.py").read_text(
         encoding="utf-8"
     )
+    helper_source = (root / "app" / "ui" / "firewall_helpers.py").read_text(
+        encoding="utf-8"
+    )
     shell_css = (
         root / "app" / "ui" / "static" / "css" / "shell.css"
     ).read_text(encoding="utf-8")
@@ -1064,17 +1067,18 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     ).read_text(encoding="utf-8")
 
     assert "firewall-page--v2" in source
+    assert "from app.ui.firewall_helpers import (" in source
     assert "firewall-tab-shell" in source
     assert "firewall-bulk-bar" in source
     assert "firewall-filter-bar" in source
-    assert "window.NiceVpnSetFilter" in source
+    assert "window.NiceVpnSetFilter" in helper_source
     assert "搜索 IP / 端口 / 规则 ID" in source
     assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source
     assert "more_actions(" not in source
-    assert "ACTION_BUTTON_RENDERER" in source
-    assert "STATUS_PILL_RENDERER" in source
+    assert "ACTION_BUTTON_RENDERER" in helper_source
+    assert "STATUS_PILL_RENDERER" in helper_source
     assert "firewall-action-dialog" in source
     assert "firewall-rule-drawer" in source
     assert "firewall-rule-card" not in source
