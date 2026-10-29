@@ -80,6 +80,101 @@ class FakeRuleService:
     def list_unified_flat(self):
         return [dict(row) for row in self.rows]
 
+    def list_unified_facets(self):
+        owners = []
+        seen_owners = set()
+        protocols = set()
+        actions = set()
+        kind_keys = set()
+        for row in self.rows:
+            owner = (str(row.get("owner_type") or ""), str(row.get("owner_id") or ""))
+            if owner not in seen_owners and owner[1]:
+                seen_owners.add(owner)
+                owners.append({"owner_type": owner[0], "owner_id": owner[1]})
+            protocols.add(str(row.get("protocol") or "all").lower())
+            actions.add(str(row.get("action") or "accept").lower())
+            if row.get("_row_kind") == "center_peer":
+                kind_keys.add("center_peer")
+            elif str(row.get("deployment_target") or "center") == "peer":
+                kind_keys.add("peer_marker")
+            else:
+                kind_keys.add("center")
+        return {
+            "owners": owners,
+            "protocols": sorted(protocols),
+            "actions": sorted(actions),
+            "kind_keys": sorted(kind_keys),
+        }
+
+    def list_unified_page(
+        self,
+        *,
+        offset=0,
+        limit=50,
+        search="",
+        owner_ids=None,
+        enabled_values=None,
+        protocols=None,
+        actions=None,
+        kind_keys=None,
+        sort_by="priority",
+        sort_desc=False,
+        **_kwargs,
+    ):
+        rows = [dict(row) for row in self.rows]
+        query = str(search or "").strip().casefold()
+        if query:
+            def search_text(row):
+                source = str(row.get("source_subnet") or "") or ",".join(
+                    str(value) for value in (row.get("source_ips") or [])
+                )
+                return " ".join([
+                    str(row.get("id") or ""),
+                    source,
+                    str(row.get("dest_ip") or ""),
+                    str(row.get("dest_port") or ""),
+                ]).casefold()
+            rows = [row for row in rows if query in search_text(row)]
+        if owner_ids:
+            allowed = {str(value) for value in owner_ids}
+            rows = [row for row in rows if str(row.get("owner_id") or "") in allowed]
+        if enabled_values is not None:
+            allowed = {bool(value) for value in enabled_values}
+            rows = [row for row in rows if bool(row.get("enabled", True)) in allowed]
+        if protocols:
+            allowed = {str(value).lower() for value in protocols}
+            rows = [row for row in rows if str(row.get("protocol") or "all").lower() in allowed]
+        if actions:
+            allowed = {str(value).lower() for value in actions}
+            rows = [row for row in rows if str(row.get("action") or "accept").lower() in allowed]
+        if kind_keys:
+            allowed = {str(value) for value in kind_keys}
+            def kind_key(row):
+                if row.get("_row_kind") == "center_peer":
+                    return "center_peer"
+                if str(row.get("deployment_target") or "center") == "peer":
+                    return "peer_marker"
+                return "center"
+            rows = [row for row in rows if kind_key(row) in allowed]
+        key_field = {
+            "owner_label": "owner_id",
+            "kind_label": "deployment_target",
+            "status_label": "enabled",
+            "action_label": "action",
+            "source": "source_subnet",
+            "dest": "dest_ip",
+        }.get(sort_by, sort_by)
+        rows.sort(
+            key=lambda row: (
+                row.get(key_field) if isinstance(row.get(key_field), (int, float, bool))
+                else str(row.get(key_field) or "").casefold(),
+                str(row.get("id") or ""),
+            ),
+            reverse=bool(sort_desc),
+        )
+        total = len(rows)
+        return rows[max(0, int(offset)): max(0, int(offset)) + max(1, int(limit))], total
+
     def set_enabled(self, rule_id: str, enabled: bool):
         self.enabled_calls.append((rule_id, enabled))
         for row in self.rows:
@@ -212,8 +307,8 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
 
     assert page._center_grid_view is not None
     options = page._center_grid_view.grid.options
-    assert options["pagination"] is True
-    assert options["paginationPageSize"] == 50
+    assert options["pagination"] is False
+    assert "paginationPageSize" not in options
     assert options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in options
     assert len(options["rowData"]) == 3
