@@ -114,7 +114,7 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
             await user.should_see("已与远端同步")
             await user.should_see("从对端拉取")
             await user.should_see("推送到对端")
-            await user.should_see("远端链以 SSH 真值为准；修改后立即写回")
+            await user.should_not_see("远端链以 SSH 真值为准；修改后立即写回")
 
     asyncio.run(verify())
 
