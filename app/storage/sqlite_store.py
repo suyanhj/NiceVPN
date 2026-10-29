@@ -626,6 +626,7 @@ class SqliteStore:
             str(payload.get("created_at") or ""),
             str(payload.get("updated_at") or ""),
             _dump_payload(payload),
+            *_firewall_index_values(payload),
         )
 
     def replace_firewall_owner(
@@ -640,8 +641,9 @@ class SqliteStore:
                 """
                 INSERT INTO firewall_rules(
                     id, owner_id, owner_type, priority, enabled,
-                    created_at, updated_at, payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, payload,
+                    protocol, action, deployment_target, source_text, dest_ip, dest_port
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [self._firewall_values(oid, rule) for rule in rules],
             )
