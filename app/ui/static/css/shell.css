@@ -233,32 +233,6 @@ body {
 }
 
 
-.vpn-breadcrumbs {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  margin-bottom: var(--vpn-space-2);
-  gap: var(--vpn-space-1);
-  color: var(--vpn-text-muted);
-  font-size: 12px;
-}
-
-.vpn-breadcrumbs__link,
-.vpn-breadcrumbs__current {
-  overflow: hidden;
-  color: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vpn-breadcrumbs__link:hover {
-  color: var(--vpn-color-brand);
-}
-
-.vpn-breadcrumbs__separator {
-  flex: 0 0 auto;
-  font-size: 16px;
-}
 
 .vpn-toolbar,
 .vpn-bulk-bar {
