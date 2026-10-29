@@ -26,6 +26,7 @@ from app.ui.components.states import (
     no_match_state,
 )
 from app.ui.firewall_helpers import center_grid_columns, move_order
+from app.ui.grid_query import first_sort_spec, set_filter_values
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +67,17 @@ class FirewallCenterGridMixin:
         }
         return rows
 
-    async def _load_center_grid_rows_async(self) -> list[dict[str, Any]]:
-        """并行读取中心规则、组与对端，避免阻塞 NiceGUI 事件循环。"""
+    async def _load_center_grid_rows_async(
+        self,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """从 SQLite 分页读取中心规则，并构建完整的列筛选 facets。"""
 
-        rules_result, groups_result, peers_result = await asyncio.gather(
-            run.io_bound(self.rule_service.list_unified_flat),
+        groups_result, peers_result, facets_result = await asyncio.gather(
             run.io_bound(GroupService().list_all),
             run.io_bound(self._peer_service.list_all),
+            run.io_bound(self.rule_service.list_unified_facets),
             return_exceptions=True,
         )
-        if isinstance(rules_result, BaseException):
-            raise rules_result
 
         group_names: dict[str, str] = {}
         if isinstance(groups_result, BaseException):
@@ -98,11 +99,153 @@ class FirewallCenterGridMixin:
                 if str(peer.get("id") or "").strip()
             }
 
-        return adapt_center_rule_rows(
-            rules_result,
+        if isinstance(facets_result, BaseException):
+            raise facets_result
+        facets = facets_result
+
+        owner_ids_by_label: dict[str, list[str]] = {}
+        owner_label_by_id: dict[str, str] = {}
+        for owner in facets.get("owners", []):
+            if not isinstance(owner, dict):
+                continue
+            owner_type = str(owner.get("owner_type") or "")
+            owner_id = str(owner.get("owner_id") or "")
+            if not owner_id:
+                continue
+            if owner_type == "group":
+                label = group_names.get(owner_id) or owner_id
+            elif owner_type == "peer":
+                peer_name = peer_names.get(owner_id) or ""
+                label = (
+                    f"{peer_name} ({owner_id[:8]})"
+                    if peer_name
+                    else owner_id
+                )
+            else:
+                label = owner_id
+            owner_ids_by_label.setdefault(label, []).append(owner_id)
+            owner_label_by_id[owner_id] = label
+
+        self._center_owner_ids_by_label = owner_ids_by_label
+        self._center_owner_label_by_id = owner_label_by_id
+
+        kind_label_to_key = {
+            "中心节点": "center",
+            "对端仅标识": "peer_marker",
+            "对端·中心放行": "center_peer",
+        }
+        kind_key_to_label = {value: key for key, value in kind_label_to_key.items()}
+        self._center_filter_values = {
+            "status_label": ["启用", "停用"],
+            "owner_label": sorted(owner_ids_by_label, key=str.casefold),
+            "kind_label": [
+                kind_key_to_label[key]
+                for key in ("center", "peer_marker", "center_peer")
+                if key in set(facets.get("kind_keys") or [])
+            ],
+            "protocol": [
+                str(value).upper()
+                for value in (facets.get("protocols") or [])
+            ],
+            "action_label": [
+                str(value).upper()
+                for value in (facets.get("actions") or [])
+            ],
+        }
+
+        filter_model = dict(self._center_filter_model)
+
+        owner_ids: list[str] | None = None
+        if "owner_label" in filter_model:
+            owner_ids = []
+            for label in set_filter_values(filter_model, "owner_label"):
+                owner_ids.extend(owner_ids_by_label.get(label, []))
+            if not owner_ids:
+                owner_ids = ["__no_owner_match__"]
+
+        enabled_values: list[bool] | None = None
+        if "status_label" in filter_model:
+            enabled_values = [
+                value == "启用"
+                for value in set_filter_values(filter_model, "status_label")
+                if value in {"启用", "停用"}
+            ]
+            if not enabled_values:
+                owner_ids = ["__no_owner_match__"]
+
+        kind_keys: list[str] | None = None
+        if "kind_label" in filter_model:
+            kind_keys = [
+                kind_label_to_key[value]
+                for value in set_filter_values(filter_model, "kind_label")
+                if value in kind_label_to_key
+            ]
+            if not kind_keys:
+                owner_ids = ["__no_owner_match__"]
+
+        protocols: list[str] | None = None
+        if "protocol" in filter_model:
+            protocols = [
+                value.lower()
+                for value in set_filter_values(filter_model, "protocol")
+            ]
+            if not protocols:
+                owner_ids = ["__no_owner_match__"]
+
+        actions: list[str] | None = None
+        if "action_label" in filter_model:
+            actions = [
+                value.lower()
+                for value in set_filter_values(filter_model, "action_label")
+            ]
+            if not actions:
+                owner_ids = ["__no_owner_match__"]
+
+        query = (
+            str(self._center_search_input.value or "").strip()
+            if self._center_search_input is not None
+            else ""
+        )
+        offset = max(0, (self._center_page - 1) * self._center_page_size)
+
+        rules, total = await run.io_bound(
+            lambda: self.rule_service.list_unified_page(
+                offset=offset,
+                limit=self._center_page_size,
+                search=query,
+                owner_ids=owner_ids,
+                enabled_values=enabled_values,
+                protocols=protocols,
+                actions=actions,
+                kind_keys=kind_keys,
+                sort_by=self._center_sort_field,
+                sort_desc=self._center_sort_desc,
+            )
+        )
+        pages = max(1, (total + self._center_page_size - 1) // self._center_page_size)
+        if self._center_page > pages:
+            self._center_page = pages
+            rules, total = await run.io_bound(
+                lambda: self.rule_service.list_unified_page(
+                    offset=(self._center_page - 1) * self._center_page_size,
+                    limit=self._center_page_size,
+                    search=query,
+                    owner_ids=owner_ids,
+                    enabled_values=enabled_values,
+                    protocols=protocols,
+                    actions=actions,
+                    kind_keys=kind_keys,
+                    sort_by=self._center_sort_field,
+                    sort_desc=self._center_sort_desc,
+                )
+            )
+
+        rows = adapt_center_rule_rows(
+            rules,
             group_names=group_names,
             peer_names=peer_names,
         )
+        return rows, int(total)
 
     def _filter_center_rows(
         self,
