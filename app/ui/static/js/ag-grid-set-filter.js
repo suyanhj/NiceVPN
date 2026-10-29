@@ -3,7 +3,7 @@
  *
  * Mirrors the UX of AG Grid Enterprise Set Filter while staying on the
  * Community build: mini search, select all, unique values, multi-select.
- * Visual-only component; filtering remains entirely client-side in AG Grid.
+ * Can use server-provided filterParams.values so paged grids still expose the full value set.
  */
 (() => {
   class NiceVpnSetFilter {
@@ -119,16 +119,23 @@
 
     collectValues() {
       const values = new Set();
-      this.params.api.forEachLeafNode(node => {
-        if (
-          this.params.showValuesFromOtherFilters !== false &&
-          typeof this.params.doesRowPassOtherFilter === 'function' &&
-          !this.params.doesRowPassOtherFilter(node)
-        ) {
-          return;
-        }
-        values.add(this.filterValue(node));
-      });
+      const configuredValues = Array.isArray(this.params.values)
+        ? this.params.values
+        : null;
+      if (configuredValues) {
+        configuredValues.forEach(value => values.add(this.normalize(value)));
+      } else {
+        this.params.api.forEachLeafNode(node => {
+          if (
+            this.params.showValuesFromOtherFilters !== false &&
+            typeof this.params.doesRowPassOtherFilter === 'function' &&
+            !this.params.doesRowPassOtherFilter(node)
+          ) {
+            return;
+          }
+          values.add(this.filterValue(node));
+        });
+      }
 
       const preferred = Array.isArray(this.params.valueOrder)
         ? this.params.valueOrder.map(value => this.normalize(value))
