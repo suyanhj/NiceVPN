@@ -320,6 +320,21 @@ class SqliteStore:
             ).fetchall()
         return [str(row["username"]) for row in rows]
 
+    def list_users_by_group(
+        self,
+        group_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT payload FROM users WHERE group_id = ?"
+        params: list[Any] = [str(group_id)]
+        if not include_deleted:
+            sql += " AND status <> 'deleted'"
+        sql += " ORDER BY username COLLATE NOCASE"
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_load_payload(row["payload"]) for row in rows]
+
     def count_users(self, *, include_deleted: bool = False) -> int:
         where = "" if include_deleted else " WHERE status <> 'deleted'"
         with self.connection() as conn:
