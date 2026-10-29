@@ -1443,4 +1443,3 @@ class FirewallRemoteMixin:
             "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
         )
         form.open()
-
