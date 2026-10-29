@@ -473,18 +473,12 @@ class PeerService:
         u = str(username or "").strip()
         if not u:
             return
-        ex = str(exclude_peer_id or "").strip()
-        for p in self.list_all():
-            pid = str(p.get("id") or "").strip()
-            if ex and pid == ex:
-                continue
-            if str(p.get("bound_username") or "").strip() == u:
-                logger.info(
-                    "拒绝绑定：用户已被其它对端占用 user=%s other_peer=%s",
-                    u,
-                    pid[:8] if pid else "?",
-                )
-                raise ValueError(f"用户「{u}」已被其它对端实例绑定，一个用户只能绑定一个对端实例")
+        ex = str(exclude_peer_id or "").strip() or None
+        if u in self.store.list_bound_usernames(exclude_peer_id=ex):
+            logger.info("拒绝绑定：用户已被其它对端占用 user=%s", u)
+            raise ValueError(
+                f"用户「{u}」已被其它对端实例绑定，一个用户只能绑定一个对端实例"
+            )
 
     def create(self, data: dict) -> dict:
         if "id" not in data or not str(data.get("id", "")).strip():
