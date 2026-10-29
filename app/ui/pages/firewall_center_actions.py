@@ -32,7 +32,6 @@ from app.ui.components import confirm_dialog
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.firewall_helpers import (
-    firewall_export_json_filename,
     parse_lan_cidrs_text,
     parse_user_source_for_create,
     read_ccd_vpn_ips,
