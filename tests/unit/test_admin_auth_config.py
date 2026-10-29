@@ -25,6 +25,7 @@ def test_admin_auth_is_disabled_by_default() -> None:
     assert config.admin_password_hash is None
     assert config.admin_auth_enabled is False
     assert config.admin_session_lifetime_minutes == 480
+    assert config.admin_reconnect_timeout_seconds == 300
 
 
 def test_complete_admin_credentials_enable_auth() -> None:
@@ -54,6 +55,14 @@ def test_partial_or_invalid_admin_credentials_fail_validation(values: dict) -> N
 
     with pytest.raises(ValidationError):
         SystemConfig(**values)
+
+
+@pytest.mark.parametrize("timeout", (0, 2, 3601))
+def test_admin_reconnect_timeout_has_safe_bounds(timeout: int) -> None:
+    """断线页面保留窗口必须处于明确范围内。"""
+
+    with pytest.raises(ValidationError):
+        SystemConfig(admin_reconnect_timeout_seconds=timeout)
 
 
 @pytest.mark.parametrize("lifetime", (0, 4, 10081))
