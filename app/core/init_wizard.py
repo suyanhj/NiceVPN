@@ -172,8 +172,13 @@ class InitWizard:
         return StepResult(False, result.get("error", "路径无效"))
 
     def _config_pki(self, data: dict) -> StepResult:
-        """步骤三：初始化 PKI 和 CA"""
-        from app.services.easyrsa.wrapper import EasyRSAWrapper, EasyRSAError
+        """步骤三：检测/复用现有 EasyRSA PKI，并补齐 NiceVPN 运行材料。"""
+        from app.services.easyrsa.wrapper import (
+            EasyRSAError,
+            EasyRSAWrapper,
+            find_existing_easyrsa_pki,
+            inspect_easyrsa_pki,
+        )
 
         def emit(message: str):
             """输出初始化 PKI 的阶段日志。"""
@@ -186,40 +191,149 @@ class InitWizard:
         if not easyrsa_dir:
             return StepResult(False, "未找到 EasyRSA，请检查 OpenVPN 安装")
 
-        pki_dir = str(data.get("pki_dir") or "/etc/openvpn/pki").strip()
+        requested_pki = str(data.get("pki_dir") or "").strip()
+        configured_pki = str(self.config.get("pki_dir") or "").strip()
+        openvpn_conf_dir = str(
+            self.config.get("openvpn_conf_dir") or "/etc/openvpn"
+        ).strip()
+        detected_pki = None
+        if not requested_pki and not configured_pki:
+            detected_pki = find_existing_easyrsa_pki(openvpn_conf_dir)
+
+        pki_dir = (
+            requested_pki
+            or configured_pki
+            or detected_pki
+            or str(Path(openvpn_conf_dir) / "pki")
+        )
+        if not Path(pki_dir).is_absolute():
+            return StepResult(False, "PKI 目录必须使用绝对路径")
+
         try:
-            emit(f"[阶段] 开始初始化 PKI: {pki_dir}")
+            if detected_pki:
+                emit(f"[检测] 发现现有 EasyRSA PKI: {detected_pki}")
+            emit(f"[阶段] 检查 PKI 状态: {pki_dir}")
+
             wrapper = EasyRSAWrapper(easyrsa_dir, pki_dir)
-            emit("[阶段] 正在创建 PKI 目录结构")
-            wrapper.init_pki()
-            emit("[阶段] 正在生成无密码 CA")
-            wrapper.build_ca()
-            emit("[阶段] 正在生成 DH 参数")
-            wrapper.gen_dh()
-            emit("[阶段] 正在生成服务端证书 (CN=server，对应 issued/server.crt)")
-            wrapper.gen_req("server")
-            wrapper.sign_req("server", "server")
-            emit("[阶段] 正在生成 CRL")
-            wrapper.gen_crl()
-            emit("[阶段] 正在生成 tls-crypt-v2 服务端密钥")
-            # 生成 tls-crypt-v2 服务端密钥
-            tc2_key = wrapper.gen_tls_crypt_v2_server()
-            emit("[完成] PKI 初始化完成")
+            pki_state = inspect_easyrsa_pki(pki_dir)
+            reused_pki = pki_state["state"] == "ready"
+            generated: list[str] = []
+
+            if pki_state["state"] == "ready":
+                emit("[复用] 已检测到完整 CA/PKI，跳过 init-pki 与 build-ca")
+            elif pki_state["state"] == "partial":
+                missing = ", ".join(pki_state["missing"])
+                raise EasyRSAError(
+                    f"检测到不完整的 EasyRSA PKI，拒绝自动覆盖。"
+                    f"目录: {pki_dir}; 缺失: {missing}"
+                )
+            else:
+                if pki_state["state"] == "missing":
+                    emit("[阶段] 正在创建 PKI 目录结构")
+                    wrapper.init_pki()
+                    generated.append("pki")
+                else:
+                    emit("[恢复] 已存在 PKI 目录结构，将继续生成 CA")
+                emit("[阶段] 正在生成无密码 CA")
+                wrapper.build_ca()
+                generated.append("ca")
+
+            pki = Path(pki_dir)
+
+            dh_path = pki / "dh.pem"
+            if dh_path.is_file():
+                emit("[复用] 已存在 DH 参数")
+            else:
+                emit("[阶段] 正在生成 DH 参数")
+                wrapper.gen_dh()
+                generated.append("dh")
+
+            server_cert = pki / "issued" / "server.crt"
+            server_key = pki / "private" / "server.key"
+            server_req = pki / "reqs" / "server.req"
+            cert_exists = server_cert.is_file()
+            key_exists = server_key.is_file()
+            req_exists = server_req.is_file()
+
+            if cert_exists and key_exists:
+                emit("[复用] 已存在服务端证书与私钥 (CN=server)")
+            elif not cert_exists and key_exists and req_exists:
+                emit("[恢复] 已存在 server 请求与私钥，继续签发服务端证书")
+                wrapper.sign_req("server", "server")
+                generated.append("server_cert")
+            elif not cert_exists and not key_exists and not req_exists:
+                emit(
+                    "[阶段] 正在生成服务端证书 "
+                    "(CN=server，对应 issued/server.crt)"
+                )
+                wrapper.gen_req("server")
+                wrapper.sign_req("server", "server")
+                generated.append("server_cert")
+            else:
+                raise EasyRSAError(
+                    "检测到不完整的 server 证书材料，拒绝自动覆盖。"
+                    f" cert={cert_exists}, key={key_exists}, req={req_exists}"
+                )
+
+            crl_path = pki / "crl.pem"
+            if crl_path.is_file():
+                emit("[复用] 已存在 CRL")
+            else:
+                emit("[阶段] 正在生成 CRL")
+                wrapper.gen_crl()
+                generated.append("crl")
+
+            tc2_path = pki.parent / "tc2-server.key"
+            if tc2_path.is_file():
+                tc2_key = str(tc2_path)
+                emit("[复用] 已存在 tls-crypt-v2 服务端密钥")
+            else:
+                emit("[阶段] 正在生成 tls-crypt-v2 服务端密钥")
+                tc2_key = wrapper.gen_tls_crypt_v2_server()
+                generated.append("tls_crypt_v2")
 
             self.config.pki_dir = pki_dir
             save_config(self.config)
             sync_openvpn_runtime_permissions_from_config()
-            self.audit.log("init_pki", "system", None,
-                           {"pki_dir": pki_dir}, "success")
+            self.audit.log(
+                "init_pki",
+                "system",
+                None,
+                {
+                    "pki_dir": pki_dir,
+                    "reused_pki": reused_pki,
+                    "generated": generated,
+                },
+                "success",
+            )
+
+            if reused_pki:
+                emit("[完成] 已复用现有 PKI，并补齐 NiceVPN 所需运行材料")
+                message = "已复用现有 PKI"
+            else:
+                emit("[完成] PKI 初始化完成")
+                message = "PKI 初始化完成"
+
             return StepResult(
-                True, "PKI 初始化完成",
-                data={"pki_dir": pki_dir, "tc2_server_key": tc2_key},
-                next_step=WizardStep.CONFIG_SUBNET
+                True,
+                message,
+                data={
+                    "pki_dir": pki_dir,
+                    "tc2_server_key": tc2_key,
+                    "reused_pki": reused_pki,
+                    "generated": generated,
+                },
+                next_step=WizardStep.CONFIG_SUBNET,
             )
         except EasyRSAError as e:
             emit(f"[错误] PKI 初始化失败: {e}")
-            self.audit.log("init_pki", "system", None,
-                           {"error": str(e)}, "failure")
+            self.audit.log(
+                "init_pki",
+                "system",
+                None,
+                {"pki_dir": pki_dir, "error": str(e)},
+                "failure",
+            )
             return StepResult(False, f"PKI 初始化失败: {e}")
 
     # 全局子网允许的最小前缀长度（/16 = 65534 台主机，再大的网段不适合单个 VPN 实例）
@@ -297,15 +411,12 @@ class InitWizard:
         if not global_subnet:
             return StepResult(False, "请先配置全局子网")
 
-        groups = GroupService().list_all()
+        service = GroupService()
         existing = next(
-            (g for g in groups if g.get("name") == "默认用户组"),
+            (g for g in service.list_all() if g.get("name") == "默认用户组"),
             None,
         )
-        if existing:
-            group = existing
-        else:
-            group = GroupService().create("默认用户组", global_subnet)
+        group = existing or service.create("默认用户组", global_subnet)
 
         logger.info(
             "步骤 4/5：默认用户组创建完成，group_id=%s, subnet=%s",
