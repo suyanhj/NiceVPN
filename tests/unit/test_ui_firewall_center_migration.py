@@ -1056,6 +1056,9 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     source = (root / "app" / "ui" / "pages" / "firewall.py").read_text(
         encoding="utf-8"
     )
+    center_source = (
+        root / "app" / "ui" / "pages" / "firewall_center.py"
+    ).read_text(encoding="utf-8")
     helper_source = (root / "app" / "ui" / "firewall_helpers.py").read_text(
         encoding="utf-8"
     )
@@ -1079,7 +1082,7 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "more_actions(" not in source
     assert "ACTION_BUTTON_RENDERER" in helper_source
     assert "STATUS_PILL_RENDERER" in helper_source
-    assert "firewall-action-dialog" in source
+    assert "firewall-action-dialog" in center_source
     assert "firewall-rule-drawer" in source
     assert "firewall-rule-card" not in source
 
