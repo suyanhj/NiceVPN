@@ -29,6 +29,7 @@ from app.ui.pages.services import ServicesPage
 from app.ui.pages.settings import SettingsPage
 from app.ui.pages.users import UsersPage
 from app.ui.theme import setup_theme
+from app.storage import ensure_storage_ready
 from app.utils.api_basic_credentials import ensure_api_basic_credentials_file
 from app.utils.listen_lan import set_listen_http_base
 from app.utils.logging_setup import setup_logging
@@ -40,6 +41,7 @@ def init():
     app.add_static_files("/static", Path(__file__).parent / "app" / "ui" / "static")
 
     config = load_config()
+    ensure_storage_ready()
 
     app.include_router(download_router)
     app.include_router(vpn_ops_router, prefix="/api")
