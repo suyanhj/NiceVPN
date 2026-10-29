@@ -332,30 +332,34 @@ def test_center_firewall_keyword_search_and_no_match_state(
             await user.open("/")
             await user.should_not_see("正在加载中心规则…")
             page._center_search_input.set_value("172.16.0.10")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
 
             assert page._center_grid_view is not None
             assert len(page._center_display_rows) == 1
             assert page._center_display_rows[0]["id"] == "rule-accept"
-            assert len(page._center_grid_view.grid.options["rowData"]) == 3
-            assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
+            assert len(page._center_grid_view.grid.options["rowData"]) == 1
+            assert ":isExternalFilterPresent" not in page._center_grid_view.grid.options
             assert page._center_grid_view.summary is None
 
             page._center_search_input.set_value("443")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
             assert len(page._center_display_rows) == 1
             assert page._center_display_rows[0]["id"] == "rule-accept"
 
             page._center_search_input.set_value("开发访问")
-            page._render_center_rules()
+            page._on_center_search_changed()
+            await user.should_not_see("正在加载中心规则…")
             assert len(page._center_display_rows) == 0
 
             page._center_search_input.set_value("definitely-not-found")
-            page._render_center_rules()
+            page._on_center_search_changed()
             await user.should_see("没有匹配结果")
-            await user.should_see("当前关键词没有匹配规则")
+            await user.should_see("当前搜索或列筛选没有匹配规则")
 
             page._clear_center_filters()
+            await user.should_not_see("正在加载中心规则…")
             assert page._center_grid_view is not None
             assert len(page._center_grid_view.grid.options["rowData"]) == 3
 
@@ -1181,10 +1185,10 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "firewall-filter-bar" in source
     assert "window.NiceVpnSetFilter" in helper_source
     assert "搜索 IP / 端口 / 规则 ID" in source
-    assert "on_change=lambda _event: self._render_center_rules()" in source
-    assert "on_change=lambda _event: self._refresh_rules()" not in source
+    assert "on_change=self._on_center_search_changed" in source
     assert "async def _load_center_grid_rows_async" in center_source
-    assert "run.io_bound(self.rule_service.list_unified_flat)" in center_source
+    assert "self.rule_service.list_unified_page(" in center_source
+    assert "self.rule_service.list_unified_facets" in center_source
     assert "firewall-owner-filter" not in source
     assert "firewall-bar-icon-action" in source
     assert "render_page_toolbar(" not in source
