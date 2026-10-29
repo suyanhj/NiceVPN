@@ -24,6 +24,7 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.server_pager import page_after_size_change
 from app.ui.grid_query import (
     filter_rows,
     first_sort_spec,
@@ -733,6 +734,7 @@ class UsersPage:
             server_total=self.total_rows,
             server_page=self.page,
             on_server_page_change=self._on_user_page_change,
+            on_server_page_size_change=self._on_user_page_size_change,
         )
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
         self.grid_view.grid.on("filterChanged", self._on_user_grid_query_changed)
@@ -768,6 +770,18 @@ class UsersPage:
         if target == self.page:
             return
         self.page = target
+        self._refresh_user_list()
+
+    def _on_user_page_size_change(self, page_size: int) -> None:
+        new_size = max(1, int(page_size))
+        if new_size == self.page_size:
+            return
+        self.page = page_after_size_change(
+            page=self.page,
+            old_size=self.page_size,
+            new_size=new_size,
+        )
+        self.page_size = new_size
         self._refresh_user_list()
 
     def _clear_user_filters(self) -> None:
