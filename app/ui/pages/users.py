@@ -1483,7 +1483,7 @@ class UsersPage:
             with ui.row().classes(
                 "w-full justify-end q-mt-md vpn-form-dialog__actions"
             ):
-                ui.button("取消", on_click=dialog.close).props("flat no-caps")
+                secondary_action("取消", on_click=dialog.close)
                 primary_action(
                     "预检查并导入",
                     icon="playlist_add_check",
