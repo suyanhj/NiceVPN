@@ -241,7 +241,6 @@ class FirewallPage:
         self._center_reorder_button = None
         self._center_save_reorder_button = None
         self._center_cancel_reorder_button = None
-        self._rules_footer_hint = None
         self._remote_fetch_generation = 0
         self._remote_fetch_running_peer: str | None = None
         self._remote_fetch_error_by_peer: dict[str, str] = {}
@@ -450,18 +449,6 @@ class FirewallPage:
                                 "w-full min-h-0 flex-1"
                             )
                             self.rules_container = self._center_grid_container
-
-                        with ui.element("div").classes(
-                            "mgmt-page-foot firewall-page-foot "
-                            "w-full mt-auto flex-shrink-0"
-                        ):
-                            with ui.row().classes(
-                                "mgmt-page-footer-row w-full items-center "
-                                "justify-start text-grey-6"
-                            ):
-                                self._rules_footer_hint = ui.label(
-                                    "点击“调整优先级”进入拖动排序模式"
-                                ).classes("firewall-footer-hint")
 
                 with ui.tab_panel("remote").classes(
                     "h-full min-h-0 flex-1 firewall-remote-panel"
@@ -686,16 +673,6 @@ class FirewallPage:
             "firewall-remote-list-stretch firewall-remote-data-region "
             "w-full min-h-0 gap-0 h-full"
         )
-
-        with ui.element("div").classes(
-            "mgmt-page-foot w-full mt-auto flex-shrink-0"
-        ):
-            with ui.row().classes(
-                "mgmt-page-footer-row w-full items-center justify-start text-grey-6"
-            ):
-                ui.label(
-                    "远端链以 SSH 真值为准；修改后立即写回"
-                ).classes("firewall-footer-hint")
 
         self._refresh_remote_toolbar_state()
 
@@ -2516,12 +2493,6 @@ class FirewallPage:
                 self._center_search_input.disable()
             else:
                 self._center_search_input.enable()
-        if self._rules_footer_hint is not None:
-            self._rules_footer_hint.text = (
-                "拖动调整顺序；点击“保存排序”后才会更新真实优先级"
-                if reorder_mode
-                else "点击“调整优先级”进入拖动排序模式"
-            )
 
     async def _enter_center_reorder_mode(self) -> None:
         """只有全局、无搜索/筛选/表格排序时才允许进入优先级预览。"""
