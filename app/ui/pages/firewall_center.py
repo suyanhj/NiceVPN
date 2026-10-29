@@ -568,11 +568,16 @@ class FirewallCenterGridMixin:
                     "getColumnState"
                 )
                 filter_model = model if isinstance(model, dict) else {}
-                sort_active = any(
-                    isinstance(column, dict) and column.get("sort")
-                    for column in (column_state or [])
+                sort_field, sort_desc = first_sort_spec(
+                    column_state if isinstance(column_state, list) else [],
+                    default_field="priority",
+                )
+                sort_active = not (
+                    sort_field == "priority" and sort_desc is False
                 )
                 self._center_filter_model = filter_model
+                self._center_sort_field = sort_field
+                self._center_sort_desc = sort_desc
                 self._center_grid_sort_active = sort_active
             except Exception as exc:
                 logger.debug("读取排序前的 Grid 状态失败: %s", exc)
@@ -584,15 +589,28 @@ class FirewallCenterGridMixin:
             )
             return
 
+        try:
+            full_rows = await run.io_bound(self._load_center_grid_rows)
+        except Exception as exc:
+            logger.exception("加载完整中心规则排序集失败")
+            self._notify_for_page(f"加载完整规则失败: {exc}", type="negative")
+            return
+
         order = [
             str(row.get("id") or "")
-            for row in self._center_all_rows
+            for row in full_rows
             if str(row.get("id") or "")
         ]
         if not order:
             self._notify_for_page("暂无规则可排序", type="warning")
             return
 
+        self._center_all_rows = full_rows
+        self._center_total_rows = len(full_rows)
+        self._center_raw_by_id = {
+            str(row["id"]): dict(row.get("raw") or {})
+            for row in full_rows
+        }
         self._center_reorder_original_order = list(order)
         self._pending_center_order = list(order)
         self._center_reorder_mode = True
@@ -612,8 +630,8 @@ class FirewallCenterGridMixin:
         self._pending_center_order = []
         self._center_reorder_original_order = []
         self._sync_center_reorder_controls()
-        self._render_center_rules()
         self._notify_for_page("已取消优先级调整，未修改真实规则顺序", type="info")
+        self._refresh_rules()
 
     def _save_center_reorder(self) -> None:
         """一次性持久化拖动后的全局顺序；写入失败时保留预览供重试。"""
@@ -658,8 +676,11 @@ class FirewallCenterGridMixin:
         self._pending_center_owner_id = ""
         self.current_owner_id = ""
         self._is_unified_list = True
+        self._center_sort_field = "priority"
+        self._center_sort_desc = False
         self._center_grid_sort_active = False
-        self._render_center_rules()
+        self._center_page = 1
+        self._refresh_rules()
 
     def _schedule_grid_filter_model(
         self,
@@ -700,46 +721,66 @@ class FirewallCenterGridMixin:
 
         label = str(values[0])
         owner_ids = {
-            str(row.get("owner_id") or "")
-            for row in self._center_all_rows
-            if str(row.get("owner_label") or "") == label
-            and str(row.get("owner_id") or "")
+            str(owner_id)
+            for owner_id in self._center_owner_ids_by_label.get(label, [])
+            if str(owner_id)
         }
         self.current_owner_id = next(iter(owner_ids)) if len(owner_ids) == 1 else ""
 
     async def _on_center_grid_filter_changed(self, *_args) -> None:
-        """保存列筛选/排序状态并更新排序保护。"""
+        """把列筛选/排序状态下推到下一次 SQLite 查询。"""
 
         view = self._center_grid_view
-        if view is None:
+        if view is None or self._center_reorder_mode:
             return
         try:
             model = await view.grid.run_grid_method("getFilterModel")
-            self._center_filter_model = model if isinstance(model, dict) else {}
             column_state = await view.grid.run_grid_method("getColumnState")
-            self._center_grid_sort_active = any(
-                isinstance(column, dict) and column.get("sort")
-                for column in (column_state or [])
-            )
-            self._sync_center_owner_scope_from_filter_model()
-            displayed = int(await view.grid.run_grid_method("getDisplayedRowCount"))
         except Exception as exc:
             logger.debug("同步中心规则筛选状态失败: %s", exc)
             return
 
+        normalized_model = model if isinstance(model, dict) else {}
+        sort_field, sort_desc = first_sort_spec(
+            column_state if isinstance(column_state, list) else [],
+            default_field="priority",
+        )
+        sort_active = not (sort_field == "priority" and sort_desc is False)
+
+        if (
+            normalized_model == self._center_filter_model
+            and sort_field == self._center_sort_field
+            and sort_desc == self._center_sort_desc
+        ):
+            return
+
+        self._center_filter_model = normalized_model
+        self._center_sort_field = sort_field
+        self._center_sort_desc = sort_desc
+        self._center_grid_sort_active = sort_active
+        self._center_page = 1
+        self._sync_center_owner_scope_from_filter_model()
+        self._refresh_rules()
+
     async def _on_center_grid_selection_changed(self, *_args) -> None:
-        """同步 AG Grid 选中行到现有批量操作集合。"""
+        """把当前页选择合并到跨页批量操作集合。"""
 
         if self._center_grid_view is None:
-            self.selected_rule_ids.clear()
             self._sync_action_bar_count()
             return
         selected = await self._center_grid_view.get_selected_rows()
-        self.selected_rule_ids = {
+        visible_ids = {
+            str(row.get("id") or "").strip()
+            for row in self._center_all_rows
+            if str(row.get("id") or "").strip()
+        }
+        selected_on_page = {
             str(row.get("id") or "").strip()
             for row in selected
             if str(row.get("id") or "").strip()
         }
+        self.selected_rule_ids.difference_update(visible_ids)
+        self.selected_rule_ids.update(selected_on_page)
         self._sync_action_bar_count()
 
     async def _on_center_grid_cell_click(self, event) -> None:
