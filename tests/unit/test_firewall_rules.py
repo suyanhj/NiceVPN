@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """防火墙规则校验单元测试"""
-import json
 
 import pytest
 from pydantic import ValidationError
@@ -96,25 +95,23 @@ class TestPriorityAndReorder:
         assert sorted_rules[2].description == "低优先级"
 
 
-def test_center_json_rollback_on_rebuild_fail(tmp_path, monkeypatch):
-    """iptables 重建失败时，中心 owner JSON 从 prepush 恢复为改前内容。"""
+def test_center_sqlite_rollback_on_rebuild_fail(tmp_path, monkeypatch):
+    """iptables 重建失败时，中心 owner SQLite 从写前快照恢复。"""
     from app.services.firewall import rule_service as rs
+    from app.storage.sqlite_store import SqliteStore
 
-    monkeypatch.setattr(rs, "FIREWALL_DIR", tmp_path)
-    original = {
-        "rules": [
-            {
-                **REQUIRED_FIELDS,
-                "id": "r1",
-                "priority": 100,
-                "enabled": True,
-                "description": "orig",
-            },
-        ]
-    }
-    (tmp_path / "grp-001.json").write_text(json.dumps(original), encoding="utf-8")
-
-    svc = rs.FirewallRuleService()
+    store = SqliteStore(tmp_path / "db.sqlite")
+    original_rules = [
+        {
+            **REQUIRED_FIELDS,
+            "id": "r1",
+            "priority": 100,
+            "enabled": True,
+            "description": "orig",
+        },
+    ]
+    store.replace_firewall_owner("grp-001", original_rules)
+    svc = rs.FirewallRuleService(store)
 
     def boom():
         raise RuntimeError("iptables 模拟失败")
@@ -124,30 +121,26 @@ def test_center_json_rollback_on_rebuild_fail(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="iptables"):
         svc.set_enabled("r1", False)
 
-    data = json.loads((tmp_path / "grp-001.json").read_text(encoding="utf-8"))
-    assert data["rules"][0]["enabled"] is True
-    assert data["rules"][0]["description"] == "orig"
-    assert not (tmp_path / "grp-001.prepush.bak").is_file()
+    data = store.get_firewall_owner("grp-001")
+    assert data[0]["enabled"] is True
+    assert data[0]["description"] == "orig"
+    assert svc._prepush_snapshots == {}
 
 
 def test_owner_reorder_only_refreshes_vpn_forward(tmp_path, monkeypatch):
     """owner 内拖拽排序只能走 VPN_FORWARD 专用刷新路径，不能触发完整重建。"""
     from app.services.firewall import rule_service as rs
+    from app.storage.sqlite_store import SqliteStore
 
-    monkeypatch.setattr(rs, "FIREWALL_DIR", tmp_path)
-    (tmp_path / "grp-001.json").write_text(
-        json.dumps(
-            {
-                "rules": [
-                    {**REQUIRED_FIELDS, "id": "r1", "priority": 10, "enabled": True},
-                    {**REQUIRED_FIELDS, "id": "r2", "priority": 20, "enabled": True},
-                ]
-            }
-        ),
-        encoding="utf-8",
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.replace_firewall_owner(
+        "grp-001",
+        [
+            {**REQUIRED_FIELDS, "id": "r1", "priority": 10, "enabled": True},
+            {**REQUIRED_FIELDS, "id": "r2", "priority": 20, "enabled": True},
+        ],
     )
-
-    svc = rs.FirewallRuleService()
+    svc = rs.FirewallRuleService(store)
     called = {"vpn_forward": 0}
     monkeypatch.setattr(
         svc,
@@ -162,61 +155,65 @@ def test_owner_reorder_only_refreshes_vpn_forward(tmp_path, monkeypatch):
 
     assert svc.reorder("grp-001", ["r2", "r1"])
 
-    data = json.loads((tmp_path / "grp-001.json").read_text(encoding="utf-8"))
-    assert [r["id"] for r in data["rules"]] == ["r2", "r1"]
-    assert [r["priority"] for r in data["rules"]] == [10, 20]
+    data = store.get_firewall_owner("grp-001")
+    assert [row["id"] for row in data] == ["r2", "r1"]
+    assert [row["priority"] for row in data] == [10, 20]
     assert called["vpn_forward"] == 1
-    assert not (tmp_path / "grp-001.prepush.bak").is_file()
+    assert svc._prepush_snapshots == {}
 
 
-def test_center_update_rejects_invalid_dest_before_save(tmp_path, monkeypatch):
-    """目标地址非法时须在落库前拒绝，不触发 prepush/iptables，与对端链地址策略一致。"""
+def test_center_update_rejects_invalid_dest_before_save(tmp_path):
+    """目标地址非法时须在落库前拒绝，不触发 SQLite/iptables。"""
     from app.services.firewall import rule_service as rs
+    from app.storage.sqlite_store import SqliteStore
 
-    monkeypatch.setattr(rs, "FIREWALL_DIR", tmp_path)
-    (tmp_path / "grp-001.json").write_text(
-        json.dumps(
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.replace_firewall_owner(
+        "grp-001",
+        [
             {
-                "rules": [
-                    {**REQUIRED_FIELDS, "id": "r1", "priority": 100, "dest_ip": "10.0.0.1"},
-                ]
-            }
-        ),
-        encoding="utf-8",
+                **REQUIRED_FIELDS,
+                "id": "r1",
+                "priority": 100,
+                "dest_ip": "10.0.0.1",
+            },
+        ],
     )
-    svc = rs.FirewallRuleService()
+    svc = rs.FirewallRuleService(store)
     with pytest.raises(ValueError, match="非法 IP"):
         svc.update_by_id("r1", {"dest_ip": "1.1.1.1.1"})
 
 
-def test_center_json_rollback_on_rebuild_non_runtime_error(tmp_path, monkeypatch):
-    """重建阶段抛出非 RuntimeError 时须同样从 prepush 回滚，与对端「失败即回滚」一致。"""
+def test_center_sqlite_rollback_on_rebuild_non_runtime_error(tmp_path, monkeypatch):
+    """重建抛出非 RuntimeError 时同样恢复 SQLite 写前快照。"""
     from app.services.firewall import rule_service as rs
+    from app.storage.sqlite_store import SqliteStore
 
-    monkeypatch.setattr(rs, "FIREWALL_DIR", tmp_path)
-    original = {
-        "rules": [
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.replace_firewall_owner(
+        "grp-001",
+        [
             {
                 **REQUIRED_FIELDS,
                 "id": "r1",
                 "priority": 100,
                 "enabled": True,
             },
-        ]
-    }
-    (tmp_path / "grp-001.json").write_text(json.dumps(original), encoding="utf-8")
-
-    svc = rs.FirewallRuleService()
+        ],
+    )
+    svc = rs.FirewallRuleService(store)
     monkeypatch.setattr(
-        svc, "_refresh_vpn_forward_only", lambda: (_ for _ in ()).throw(ValueError("模拟子系统异常"))
+        svc,
+        "_refresh_vpn_forward_only",
+        lambda: (_ for _ in ()).throw(ValueError("模拟子系统异常")),
     )
 
     with pytest.raises(ValueError, match="模拟"):
         svc.set_enabled("r1", False)
 
-    data = json.loads((tmp_path / "grp-001.json").read_text(encoding="utf-8"))
-    assert data["rules"][0]["enabled"] is True
-    assert not (tmp_path / "grp-001.prepush.bak").is_file()
+    data = store.get_firewall_owner("grp-001")
+    assert data[0]["enabled"] is True
+    assert svc._prepush_snapshots == {}
 
 
 class TestIptablesInstCommentSanitize:
