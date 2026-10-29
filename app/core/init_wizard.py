@@ -207,6 +207,8 @@ class InitWizard:
             or detected_pki
             or str(Path(openvpn_conf_dir) / "pki")
         )
+        if not Path(pki_dir).is_absolute():
+            return StepResult(False, "PKI 目录必须使用绝对路径")
 
         try:
             if detected_pki:

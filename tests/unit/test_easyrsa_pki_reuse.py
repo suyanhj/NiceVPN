@@ -201,3 +201,26 @@ def test_wrapper_rejects_partial_ca_before_running_command(
 
     with pytest.raises(EasyRSAError, match="不完整的 EasyRSA PKI"):
         wrapper.init_pki()
+
+
+def test_core_wizard_rejects_relative_custom_pki_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Config(dict):
+        __getattr__ = dict.get
+
+    wizard = InitWizard.__new__(InitWizard)
+    wizard.config = Config(easyrsa_dir="/fake/easyrsa")
+    result = wizard._config_pki({"pki_dir": "relative/pki"})
+    assert result.success is False
+    assert "绝对路径" in result.message
+
+
+def test_pki_path_status_supports_manual_directories(tmp_path: Path) -> None:
+    from app.ui.pages.init_page import InitPage
+
+    pki = tmp_path / "custom-pki"
+    _write_ready_pki(pki)
+    assert "复用 CA" in InitPage._pki_path_status(str(pki))
+    assert "绝对路径" in InitPage._pki_path_status("relative/pki")

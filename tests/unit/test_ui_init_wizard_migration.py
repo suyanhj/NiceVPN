@@ -405,3 +405,31 @@ def test_root_page_uses_dashboard_after_initialized(
 
     asyncio.run(verify())
     assert events == ["shell"]
+
+
+def test_init_page_pki_step_offers_manual_path_and_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wizard = FakeWizard(
+        results={
+            WizardStep.DETECT_OPENVPN: StepResult(
+                True,
+                "已检测到 OpenVPN 2.7.0",
+                next_step=WizardStep.CONFIG_PKI,
+            )
+        }
+    )
+    page = _page(monkeypatch, wizard)
+    monkeypatch.setattr(
+        "app.services.easyrsa.wrapper.find_existing_easyrsa_pki",
+        lambda _base: None,
+    )
+
+    async def verify() -> None:
+        async with user_simulation(page.render) as user:
+            await user.open("/")
+            await user.should_see("EasyRSA PKI 目录（可手动指定）")
+            await user.should_see("检查此目录")
+            await user.should_see("重新自动识别")
+
+    asyncio.run(verify())

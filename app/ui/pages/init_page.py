@@ -5,6 +5,7 @@ import logging
 import queue
 import threading
 import json
+from pathlib import Path
 
 from nicegui import context, ui
 
@@ -44,6 +45,7 @@ class InitPage:
         self._pki_result: StepResult | None = None
         self._pki_running = False
         self._pki_timer = None
+        self._pki_selected_path: str | None = None
         self._client_deleted = False
         self._complete_timer = None
 
@@ -447,12 +449,21 @@ class InitPage:
 
         self._render_detect_result(result)
 
-    def _handle_pki_init(self):
+    def _handle_pki_init(self, pki_dir: str | None = None):
         """后台执行 PKI 初始化，并保护重复提交与 UI 生命周期。"""
 
         if self._pki_running:
             ui.notify("证书体系初始化进行中，请稍候", type="warning")
             return
+
+        # 不允许空白或相对路径意外落在进程工作目录中。
+        selected = str(pki_dir if pki_dir is not None else (
+            self._pki_selected_path or self._pki_default_path()
+        )).strip()
+        if not selected or not Path(selected).is_absolute():
+            ui.notify("PKI 目录必须是绝对路径", type="warning")
+            return
+        self._pki_selected_path = selected
 
         self.current_step = WizardStep.CONFIG_PKI
         self._update_step_indicator()
@@ -487,7 +498,7 @@ class InitPage:
                 try:
                     self._pki_result = self.wizard.run_step(
                         WizardStep.CONFIG_PKI,
-                        {"on_output": on_output},
+                        {"on_output": on_output, "pki_dir": selected},
                     )
                 except Exception as exc:
                     logger.exception("PKI 初始化步骤异常")
@@ -540,29 +551,124 @@ class InitPage:
         self.current_step = WizardStep.CONFIG_PKI
         self._render_step_result(result)
 
+    def _pki_default_path(self) -> str:
+        """优先采用已配置目录，再检测系统常见目录，最后使用 OpenVPN 默认路径。"""
+        from app.services.easyrsa.wrapper import find_existing_easyrsa_pki
+
+        config = self.wizard.config
+        configured = str(config.get("pki_dir") or "").strip()
+        if configured:
+            return configured
+        base = str(config.get("openvpn_conf_dir") or "/etc/openvpn").strip()
+        try:
+            detected = find_existing_easyrsa_pki(base)
+            if detected:
+                return detected
+        except OSError as exc:
+            logger.warning("自动检测 PKI 目录失败: %s", exc)
+        return str(Path(base) / "pki")
+
+    @staticmethod
+    def _pki_path_status(path: str) -> str:
+        """只读探测目录，初始化按钮才会执行证书操作。"""
+        from app.services.easyrsa.wrapper import inspect_easyrsa_pki
+
+        selected = str(path or "").strip()
+        if not selected or not Path(selected).is_absolute():
+            return "请填写 PKI 目录绝对路径（例如 /etc/openvpn/pki）。"
+        try:
+            state = inspect_easyrsa_pki(selected)
+        except OSError as exc:
+            return f"无法访问该目录: {exc}"
+        if state["state"] == "ready":
+            return "检测到已有完整 EasyRSA PKI：会复用 CA，按需补齐其余材料。"
+        if state["state"] == "initialized":
+            return "已存在 PKI 目录结构，但尚无 CA；将尝试继续初始化。"
+        if state["state"] == "partial":
+            return "检测到不完整的 CA/PKI，初始化会拒绝覆盖；缺失: " + ", ".join(
+                state["missing"]
+            )
+        return "未发现已有 PKI；将使用此路径建立新的证书体系。"
+
     def _render_pki_form(self):
-        """渲染共享 PKI 初始化步骤。"""
+        """渲染 PKI 路径自动识别、手动检测与初始化入口。"""
+        from app.services.easyrsa.wrapper import find_existing_easyrsa_pki
+
+        refs: dict[str, object] = {}
+        default_path = self._pki_selected_path or self._pki_default_path()
 
         def body() -> None:
             ui.label(
-                "平台会先检测 /etc/openvpn 下已有 EasyRSA PKI；完整则直接复用，"
-                "缺少运行材料时仅补齐缺项，否则才创建新 PKI。"
-                " 此页面不会回显任何私钥材料。"
+                "优先识别系统已有 EasyRSA PKI；也可手动填写 PKI 工作目录。"
+                " 此处不是 easyrsa 脚本路径，也不是单独的证书文件路径。"
+            ).classes("section-caption")
+            refs["path"] = ui.input(
+                "EasyRSA PKI 目录（可手动指定）",
+                value=default_path,
+                placeholder="/etc/openvpn/pki",
+            ).classes("w-full")
+            refs["status"] = ui.label(
+                self._pki_path_status(default_path)
+            ).classes("section-caption")
+
+            def check_path() -> None:
+                selected = str(refs["path"].value or "").strip()
+                self._pki_selected_path = selected
+                refs["status"].text = self._pki_path_status(selected)
+
+            def auto_find_path() -> None:
+                base = str(
+                    self.wizard.config.get("openvpn_conf_dir")
+                    or "/etc/openvpn"
+                ).strip()
+                try:
+                    found = find_existing_easyrsa_pki(base)
+                except OSError as exc:
+                    refs["status"].text = f"自动识别失败: {exc}"
+                    return
+                if not found:
+                    refs["status"].text = (
+                        "未在常见 OpenVPN 目录找到完整 EasyRSA PKI。"
+                        " 可手动填写其他路径并检测。"
+                    )
+                    return
+                refs["path"].value = found
+                self._pki_selected_path = found
+                refs["status"].text = self._pki_path_status(found)
+
+            with ui.row().classes("w-full gap-sm"):
+                secondary_action(
+                    "检查此目录",
+                    icon="fact_check",
+                    on_click=check_path,
+                    disabled=self._pki_running,
+                )
+                secondary_action(
+                    "重新自动识别",
+                    icon="search",
+                    on_click=auto_find_path,
+                    disabled=self._pki_running,
+                )
+            ui.label(
+                "检查只读取文件状态，不执行 init-pki 或 build-ca；"
+                "不完整的 CA 不会被覆盖。"
             ).classes("section-caption")
 
         def actions() -> None:
             primary_action(
                 "开始建立证书体系",
                 icon="vpn_key",
-                on_click=self._handle_pki_init,
+                on_click=lambda: self._handle_pki_init(
+                    str(refs["path"].value or "").strip()
+                ),
                 disabled=self._pki_running,
             )
 
         with self.content:
-            self.status_label.text = "OpenVPN 已就绪，可建立证书体系。"
+            self.status_label.text = "OpenVPN 已就绪，可识别或指定 PKI 工作目录。"
             render_form_section(
                 "建立平台证书体系",
-                description="自动识别并复用现有 PKI，或安全创建新 CA，并准备 CRL / tls-crypt-v2。",
+                description="自动识别或手动指定 PKI，安全复用已有 CA 并补齐运行材料。",
                 kicker="PKI",
                 body=body,
                 actions=actions,
