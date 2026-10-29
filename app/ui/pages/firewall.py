@@ -13,42 +13,22 @@
   把当前工作副本推上去，以保障「先拉真值 → 再改库 → 再推对端」。
 """
 
-import asyncio
-import hashlib
 import json
 import logging
-import os
-import re
-import threading
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from nicegui import context, run, ui
-from pydantic import ValidationError
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
-from app.core.constants import CCD_DIR
-from app.models.firewall import FirewallRule
 from app.services.firewall.iptables_mgr import IptablesManager
-from app.services.firewall.rule_service import CE_PEER_RULE_PREFIX, FirewallRuleService
+from app.services.firewall.rule_service import FirewallRuleService
 from app.services.firewall.simple_rule_import import (
-    center_rule_payload_from_simplified,
     is_center_backup_json_text,
     parse_center_simplified_lines,
-    remote_rests_from_create_fields,
-    resolve_center_owner_type,
-    source_fields_for_center,
-    try_parse_simplified_line,
 )
-from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
-from app.services.user.crud import UserService
-from app.ui.adapters.firewall import (
-    format_remote_cache_timestamp,
-    parse_remote_rule_hints,
-)
-from app.ui.firewall_helpers import second_line_comment_text
+from app.ui.adapters.firewall import format_remote_cache_timestamp
+from app.ui.firewall_helpers import firewall_export_json_filename, second_line_comment_text
 from app.ui.pages.firewall_center import FirewallCenterGridMixin
 from app.ui.pages.firewall_center_actions import FirewallCenterActionsMixin
 from app.ui.pages.firewall_remote import FirewallRemoteMixin
@@ -56,130 +36,18 @@ from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     create_action,
     danger_action,
-    primary_action,
     secondary_action,
 )
-from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
-from app.utils.cidr import validate_cidr
 
 logger = logging.getLogger(__name__)
-
-
-def _read_ccd_vpn_ips(usernames: list[str]) -> list[str]:
-    """从多用户 CCD 读取 ifconfig-push 的隧道 IP（各用户至多取一条）。"""
-    ips: list[str] = []
-    for uname in usernames:
-        p = CCD_DIR / str(uname)
-        if not p.is_file():
-            continue
-        for line in p.read_text(encoding="utf-8").splitlines():
-            parts = line.strip().split()
-            if len(parts) >= 2 and parts[0] == "ifconfig-push":
-                ips.append(parts[1])
-                break
-    return ips
-
-
-def _parse_lan_cidrs_text(raw: str) -> list[str]:
-    """多行/逗号分隔的 CIDR 拆成列表。"""
-    if not raw or not str(raw).strip():
-        return []
-    parts = re.split(r"[\s,;]+", str(raw).strip())
-    return [p.strip() for p in parts if p.strip()]
-
-
-def _hints_from_iptables_rest_line(rest: str) -> dict[str, str]:
-    """兼容旧调用入口；解析逻辑统一由纯适配层维护。"""
-
-    return parse_remote_rule_hints(rest)
-
-
-def _remote_row_to_edit_form_dict(row: dict) -> dict:
-    """将工作副本一行转为与中心「编辑中心规则」表单同形字段（无 id/owner）。"""
-    rest = str(row.get("rest") or "").strip()
-    desc = str(row.get("description") or "").strip()
-    en = bool(row.get("enabled", True))
-    spec = try_parse_simplified_line(rest) if rest else None
-    if spec:
-        return {
-            "action": spec.action,
-            "protocol": (spec.protocol or "all").lower(),
-            "source_subnet": (spec.source or "").strip() or None,
-            "source_ips": None,
-            "dest_ip": (spec.dest or "").strip() or None,
-            "dest_port": (spec.dest_port or "").strip() or None,
-            "description": desc,
-            "enabled": en,
-        }
-    h = _hints_from_iptables_rest_line(rest)
-    j = (h.get("action") or "ACCEPT").upper()
-    act = {"ACCEPT": "accept", "DROP": "drop", "REJECT": "reject"}.get(j, "accept")
-    proto = (h.get("proto") or "all").strip()
-    pu = proto.upper()
-    if pu in ("ALL", "ANY", "0", ""):
-        proto = "all"
-    else:
-        proto = proto.lower()
-    return {
-        "action": act,
-        "protocol": proto,
-        "source_subnet": (h.get("source") or "").strip() or None,
-        "source_ips": None,
-        "dest_ip": (h.get("dest") or "").strip() or None,
-        "dest_port": (h.get("dport") or "").strip() or None,
-        "description": desc,
-        "enabled": en,
-    }
-
-
-def _parse_source_text_for_remote_save(t: str) -> tuple[str | None, list[str] | None]:
-    """与中心保存时源解析一致：逗号优先走用户 IP 列表规则，否则整段为子网。"""
-    t = (t or "").strip()
-    if not t:
-        return None, None
-    if "," in t:
-        try:
-            return _parse_user_source_for_create(t)
-        except ValueError:
-            return t, None
-    return t, None
-
-
-# 中国标准时间（上海）：与 IANA Asia/Shanghai 当前一致，无夏令时；不依赖系统 tz 数据库
-_TZ_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
 def _format_peer_cache_timestamp(raw: str | None) -> str:
     """兼容旧调用入口；缓存时间格式化统一由纯适配层维护。"""
 
     return format_remote_cache_timestamp(raw)
-
-
-def _firewall_export_json_filename(stem: str) -> str:
-    """下载用 JSON 文件名：``stem`` + ``_YYYYMMDD_HHMMSS``，避免连续导出覆盖。"""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe = re.sub(r'[<>:"/\\|?*]', "_", (stem or "export").strip()) or "export"
-    return f"{safe}_{ts}.json"
-
-
-def _parse_user_source_for_create(text: str) -> tuple[str | None, list[str] | None]:
-    """用户模式手填源：逗号分隔的 CIDR 或单 IP 列表。返回 (source_subnet, source_ips) 之一。"""
-    t = (text or "").strip()
-    if not t:
-        return None, None
-    chunks = [x.strip() for x in t.split(",") if x.strip()]
-    if not chunks:
-        return None, None
-    cidrs = [c for c in chunks if validate_cidr(c)]
-    if len(cidrs) == len(chunks) and len(chunks) == 1:
-        return cidrs[0], None
-    for c in chunks:
-        if not validate_cidr(c) and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", c):
-            return None, list(chunks)
-    raise ValueError("用户源手填需为单段 CIDR，或为逗号分隔的仅数字 IP 列表。")
 
 
 class FirewallPage(FirewallCenterGridMixin, FirewallCenterActionsMixin, FirewallRemoteMixin):
@@ -573,7 +441,7 @@ class FirewallPage(FirewallCenterGridMixin, FirewallCenterActionsMixin, Firewall
                 s = self.rule_service.backup()
                 ui.download(
                     s.encode("utf-8"),
-                    _firewall_export_json_filename("firewall-rules-backup"),
+                    firewall_export_json_filename("firewall-rules-backup"),
                 )
                 self._notify_for_page(
                     "已导出（中心 JSON + 对端中心侧策略）",
@@ -608,7 +476,7 @@ class FirewallPage(FirewallCenterGridMixin, FirewallCenterActionsMixin, Firewall
         short = pid[:8] if len(pid) > 8 else pid
         ui.download(
             s.encode("utf-8"),
-            _firewall_export_json_filename(f"firewall-remote-peer-{short}"),
+            firewall_export_json_filename(f"firewall-remote-peer-{short}"),
         )
         self._notify_for_page("已导出对端副本", type="positive")
 
