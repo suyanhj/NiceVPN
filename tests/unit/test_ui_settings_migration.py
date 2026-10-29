@@ -56,7 +56,6 @@ def test_settings_page_uses_shared_header_tabs_and_form_section(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("系统设置")
             await user.should_see("OpenVPN")
             await user.should_see("服务端")
             await user.should_see("设备绑定")
@@ -743,3 +742,39 @@ def test_settings_page_invalid_initial_tab_falls_back_to_openvpn(
             await user.should_see("OpenVPN 配置")
 
     asyncio.run(verify())
+
+
+def test_settings_v2_uses_dedicated_tabs_and_current_palette() -> None:
+    """设置页不再复用 Firewall 样式，并锁定当前 V2 黑灰/青蓝/青绿主题。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "settings-page--v2" in source
+    assert "settings-tab-shell" in source
+    assert "settings-tabs" in source
+    assert "settings-tabpanels" in source
+
+    assert "firewall-control-header" not in source
+    assert "firewall-compact-tabs" not in source
+    assert "firewall-tabpanels" not in source
+
+    assert ".settings-page--v2 .settings-tab-shell" in shell_css
+    assert ".settings-page--v2 .settings-tabs .q-tab--active" in shell_css
+    assert "color: #5eead4 !important;" in shell_css
+    assert "background: #0c0c0d !important;" in shell_css
+
+    assert ".settings-page--v2 .vpn-form-section" in shell_css
+    assert "background: #111214 !important;" in shell_css
+    assert (
+        ".settings-page--v2 .vpn-form-section__actions .vpn-action--primary"
+        in shell_css
+    )
+    assert "background: rgba(21, 189, 232, 0.12) !important;" in shell_css

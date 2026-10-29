@@ -8,7 +8,27 @@ from typing import Any, Callable, Mapping
 
 from nicegui import ui
 
+from app.ui.components.help import help_hint
 from app.ui.components.states import empty_state, error_state
+
+
+_DARK_ECHART_THEME: dict[str, Any] = {
+    "darkMode": True,
+    "backgroundColor": "transparent",
+    "textStyle": {"color": "#cbd5e1"},
+    "title": {"textStyle": {"color": "#d9e2ec"}},
+    "legend": {"textStyle": {"color": "#94a3b8"}},
+    "categoryAxis": {
+        "axisLine": {"lineStyle": {"color": "#475569"}},
+        "axisLabel": {"color": "#94a3b8"},
+        "splitLine": {"lineStyle": {"color": "rgba(148,163,184,0.12)"}},
+    },
+    "valueAxis": {
+        "axisLine": {"lineStyle": {"color": "#475569"}},
+        "axisLabel": {"color": "#94a3b8"},
+        "splitLine": {"lineStyle": {"color": "rgba(148,163,184,0.12)"}},
+    },
+}
 
 
 @dataclass(slots=True)
@@ -16,6 +36,7 @@ class ChartCard:
     container: Any
     chart: Any | None
     placeholder: Any | None
+    help: Any | None
 
 
 def chart_options(options: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -63,10 +84,15 @@ def render_chart_card(
         raise ValueError("图表标题不能为空")
 
     merged = chart_options(options)
+    help_element = None
     with ui.card().classes("vpn-chart-card w-full") as container:
-        ui.label(normalized_title).classes("vpn-chart-card__title")
-        if description:
-            ui.label(str(description)).classes("vpn-chart-card__description")
+        with ui.row().classes("items-center gap-1 no-wrap"):
+            ui.label(normalized_title).classes("vpn-chart-card__title")
+            if description and str(description).strip():
+                help_element = help_hint(
+                    str(description).strip(),
+                    aria_label=f"{normalized_title}说明",
+                )
 
         chart = None
         placeholder = None
@@ -80,7 +106,16 @@ def render_chart_card(
             ).container
         else:
             chart = (
-                ui.echart(merged, theme="dark", on_point_click=on_point_click)
+                ui.echart(
+                    merged,
+                    theme=_DARK_ECHART_THEME,
+                    on_point_click=on_point_click,
+                )
                 .classes("vpn-chart-card__chart w-full")
             )
-    return ChartCard(container=container, chart=chart, placeholder=placeholder)
+    return ChartCard(
+        container=container,
+        chart=chart,
+        placeholder=placeholder,
+        help=help_element,
+    )

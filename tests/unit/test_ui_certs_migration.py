@@ -43,7 +43,7 @@ def test_cert_adapter_covers_valid_expiring_expired_revoked_and_invalid_fields()
     assert partial["expires_display"] == "—"
 
 
-def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_certs_page_uses_shared_grid_bulk_state_and_native_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     page = CertsPage()
     sample = [
         _cert("alice", "valid", days=90),
@@ -57,21 +57,20 @@ def test_certs_page_uses_shared_grid_bulk_state_and_search(monkeypatch: pytest.M
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("证书管理")
             await user.should_see("1 个证书将到期")
+            await user.should_see("证书总数")
+            await user.should_see("有效证书")
+            await user.should_see("临期证书")
+            await user.should_see("失效 / 吊销")
             await user.should_see("共 3 个证书")
             await user.should_see("已选择 0 项")
-
-            page.search_input.set_value("no-such-cert")
-            page._handle_search()
-            await user.should_see("没有匹配结果")
-            await user.should_see("没有证书匹配“no-such-cert”")
 
     asyncio.run(verify_page())
 
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
     assert page.grid_view.grid.options["paginationPageSize"] == 50
+    assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
     assert ":getRowId" in page.grid_view.grid.options
     assert page.bulk_renew_button._props["disable"] is True
     assert page.bulk_revoke_button._props["disable"] is True
@@ -163,4 +162,124 @@ def test_cert_adapter_handles_5000_rows_as_lightweight_grid_data() -> None:
     assert len(rows) == 5000
     assert rows[0]["common_name"] == "user-0000"
     assert rows[-1]["common_name"] == "user-4999"
-    assert CertsPage._row_matches_query(rows[-1], "user-4999")
+    assert rows[-1]["serial"]
+
+
+def test_certs_v2_visual_contract_uses_shared_page_primitives() -> None:
+    """证书页复用 V2 视觉原语，不建立第二套 Vue 业务层。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "certs.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+    grid_css = (
+        root / "app" / "ui" / "static" / "css" / "ag-grid-theme.css"
+    ).read_text(encoding="utf-8")
+
+    assert "certs-page--v2" in source
+    assert "vpn-v2-page-intro" not in source
+    assert "vpn-v2-overview-grid" in source
+    assert "compact=True" in source
+    assert "helper_tooltip=" in source
+    assert 'helper="当前证书库"' not in source
+    assert 'helper="状态正常，可继续使用"' not in source
+    assert "v2_effect=True" not in source
+    assert "render_page_toolbar" not in source
+    assert source.index('self.summary_container = ui.element("div")') < source.index(
+        "self.bulk_bar = render_bulk_action_bar("
+    )
+    assert ".vpn-v2-page-intro" not in shell_css
+    assert ".vpn-metric-card--compact" in shell_css
+    assert ".vpn-metric-card__help-icon" in shell_css
+    assert ".vpn-v2-overview-grid" in shell_css
+    assert "certs-data-region" in source
+    assert ".certs-page--v2 .certs-data-region" in shell_css
+    assert "--ag-header-background-color" in grid_css
+    assert "--ag-selected-row-background-color" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-panel" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-page-size" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-row-summary-panel" in grid_css
+    assert ".vpn-data-grid__grid .ag-paging-page-summary-panel" in grid_css
+    assert "align-items: center;" in grid_css
+    assert "calc(100dvh - 360px)" not in shell_css
+    assert ".certs-page--v2 {" in shell_css
+    assert "flex: 1 1 0%;" in shell_css
+    assert "height: 100% !important;" not in shell_css
+    assert ".vpn-data-grid__grid .ag-row-odd" in grid_css
+    assert ".vpn-data-grid__grid .ag-row-hover" in grid_css
+    assert ".certs-page--v2 .vpn-data-grid__summary" in shell_css
+    assert "cert-search-input" not in source
+    assert "search_region" not in source
+    assert "_handle_search" not in source
+    assert "_clear_search" not in source
+    assert "vpn-toolbar--end" not in source
+    assert "certs-refresh-action" in source
+    assert "certs-advanced-action" in source
+    assert "certs-action-separator" in source
+    assert ".certs-page--v2 .vpn-bulk-bar" in shell_css
+    assert ".certs-page--v2 .vpn-metric-card--compact" in shell_css
+    assert "background: #111214" in shell_css
+    assert ".ag-body-horizontal-scroll" in shell_css
+    assert ".vpn-grid-status-pill" in grid_css
+    assert ".vpn-grid-stacked-value" in grid_css
+    assert ".vpn-grid-inline-action" in grid_css
+    assert "--ag-background-color" in grid_css
+    assert "certs-action-dialog" in source
+    assert "certs-action-dialog__status" in source
+    assert "certs-action-dialog__serial" in source
+    assert "certs-action-dialog__renew" in source
+    assert "certs-action-dialog__revoke" in source
+    assert ".q-dialog .q-card.certs-action-dialog {" in shell_css
+    assert "background: #111214 !important;" in shell_css
+    assert "color: #15bde8 !important;" in shell_css
+    assert "fetch(" not in source
+
+
+def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
+    """保持标准表格，只增强状态、有效期和操作单元格。"""
+
+    columns = {column["field"]: column for column in CertsPage._grid_columns()}
+
+    identity = columns["common_name"]
+    assert identity["pinned"] == "left"
+    assert identity["lockPinned"] is True
+    assert identity["width"] == 146
+    assert identity["maxWidth"] == 176
+    assert identity["cellClass"] == "vpn-grid-primary-cell"
+    assert ":cellRenderer" not in identity
+
+    status = columns["status_label"]
+    assert status["flex"] > 0
+    assert "vpn-grid-status-pill" in status[":cellRenderer"]
+    assert status[":filter"] == "window.NiceVpnSetFilter"
+    assert status["filterParams"]["selectAllLabel"] == "(全选)"
+    assert status["filterParams"]["searchPlaceholder"] == "搜索状态..."
+    assert status["filterParams"]["valueOrder"] == [
+        "有效",
+        "即将到期",
+        "已吊销",
+        "已过期",
+        "未知",
+    ]
+
+    serial = columns["serial_display"]
+    assert serial["flex"] > 0
+    assert serial["cellClass"] == "vpn-grid-mono"
+    assert ":cellRenderer" not in serial
+
+    expiry = columns["expires_display"]
+    assert expiry["flex"] > 0
+    assert "days_left" in expiry[":cellRenderer"]
+    assert "vpn-grid-stacked-value" in expiry[":cellRenderer"]
+
+    actions = columns["actions"]
+    assert actions["pinned"] == "right"
+    assert actions["lockPinned"] is True
+    assert actions["width"] == 92
+    assert actions["resizable"] is False
+    assert "vpn-grid-inline-action" in actions[":cellRenderer"]
+
+    assert "days_left" not in columns

@@ -48,10 +48,10 @@ def _user(name: str, *, status: str = "active", group_id: str = "group-main") ->
     }
 
 
-def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
+def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """用户页统一到 AG Grid，并用稳定用户名恢复有效选择。"""
+    """用户页统一到 AG Grid；页级动作与批量动作共享单条操作栏。"""
 
     page = UsersPage()
     page.user_service = FakeUserService([
@@ -92,47 +92,133 @@ def test_users_page_uses_aggrid_toolbar_bulk_state_and_selection_restore(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("用户管理")
-            await user.should_see("新建用户")
-            await user.should_see("批量导入")
-            await user.should_see("刷新")
             await user.should_see("已选择 1 项")
-            await user.should_see("共 2 个用户")
 
     asyncio.run(verify_page())
+
+    bar_labels = {
+        element._props.get("aria-label")
+        for element in page.bulk_bar.actions.client.elements.values()
+        if getattr(element, "_props", {}).get("aria-label")
+    }
+    assert {
+        "新建用户",
+        "批量导入",
+        "刷新用户列表",
+        "批量下载",
+        "批量启用",
+        "批量停用",
+        "批量踢下线",
+        "批量切换组",
+        "批量重置绑定",
+        "批量删除",
+    } <= bar_labels
 
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
     assert page.grid_view.grid.options["paginationPageSize"] == 50
+    assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
     assert page.grid_view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in page.grid_view.grid.options
     assert ":onFirstDataRendered" in page.grid_view.grid.options
     assert len(page.grid_view.grid.options["rowData"]) == 2
     assert page.bulk_download_button._props.get("disable") is not True
-    assert page.bulk_more_menu.button._props.get("disable") is not True
+    assert len(page.bulk_icon_buttons) == 5
+    assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
 
 
-def test_users_search_distinguishes_no_match_from_true_empty(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """有数据但筛选无结果时显示无匹配状态，而不是“暂无用户”。"""
+def test_users_grid_columns_follow_certs_v2_table_template() -> None:
+    """Users 主表只保留高频字段，并复用共享状态/操作 renderer。"""
 
+    columns = {column["field"]: column for column in UsersPage._user_grid_columns()}
+
+    assert list(columns) == [
+        "username",
+        "account_status",
+        "session_status",
+        "virtual_ip",
+        "group",
+        "traffic",
+        "connection",
+        "device_source",
+        "actions",
+    ]
+
+    username = columns["username"]
+    assert username["pinned"] == "left"
+    assert username["lockPinned"] is True
+    assert username["cellClass"] == "vpn-grid-primary-cell"
+
+    account = columns["account_status"]
+    session = columns["session_status"]
+    assert "vpn-grid-status-pill" in account[":cellRenderer"]
+    assert "vpn-grid-status-pill" in session[":cellRenderer"]
+    assert account[":filter"] == "window.NiceVpnSetFilter"
+    assert session[":filter"] == "window.NiceVpnSetFilter"
+
+    group = columns["group"]
+    device = columns["device_source"]
+    assert group[":filter"] == "window.NiceVpnSetFilter"
+    assert group["filterParams"]["selectAllLabel"] == "(全选)"
+    assert group["filterParams"]["searchPlaceholder"] == "搜索用户组..."
+
+    assert device[":filter"] == "window.NiceVpnSetFilter"
+    assert device["filterParams"]["filterValueField"] == "device_filter"
+    assert device["filterParams"]["selectAllLabel"] == "(全选)"
+    assert device["filterParams"]["valueOrder"] == [
+        "安卓",
+        "iOS",
+        "Mac",
+        "Windows",
+        "Linux",
+        "未知",
+    ]
+
+    actions = columns["actions"]
+    assert actions["pinned"] == "right"
+    assert actions["lockPinned"] is True
+    assert actions["width"] == 92
+    assert actions["resizable"] is False
+    assert "vpn-grid-inline-action" in actions[":cellRenderer"]
+
+    for removed in ("cert_serial_display", "source", "device", "created_at"):
+        assert removed not in columns
+
+
+def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -> None:
     page = UsersPage()
-    page.user_service = FakeUserService([_user("alice")])
-    monkeypatch.setattr(page, "_load_live_sessions", lambda: {})
-    monkeypatch.setattr(DeviceBindingService, "build_user_binding_aux", lambda self: {})
-    monkeypatch.setattr(GroupService, "list_all", lambda self: [])
 
-    async def verify_page() -> None:
-        async with user_simulation(page.render) as user:
-            await user.open("/")
-            page.search_input.set_value("not-exists")
-            page._handle_search()
-            await user.should_see("没有匹配结果")
-            await user.should_see("没有用户匹配“not-exists”")
+    online = page._build_user_grid_row(
+        _user("alice"),
+        {
+            "virtual_address": "10.8.0.10",
+            "real_address": "203.0.113.10:50000",
+            "bytes_received": 1024,
+            "bytes_sent": 2048,
+            "connected_since": "2026-10-20 08:00:00",
+        },
+        {"device_label": "Mac"},
+        "10.8.0.10",
+        {"group-main": "默认接入组"},
+        live_available=True,
+    )
+    disabled = page._build_user_grid_row(
+        _user("bob", status="disabled"),
+        None,
+        {},
+        "10.8.0.11",
+        {"group-main": "默认接入组"},
+        live_available=True,
+    )
 
-    asyncio.run(verify_page())
-    assert page.grid_view.summary.text == "匹配 0 / 共 1 个用户"
+    assert online["account_status_tone"] == "success"
+    assert online["session_status_tone"] == "success"
+    assert online["device_filter"] == "Mac"
+    assert online["device_source"] == "Mac · 203.0.113.10:50000"
+
+    assert disabled["device_filter"] == "未知"
+    assert disabled["account_status_tone"] == "warning"
+    assert disabled["session_status_tone"] == "unknown"
 
 
 def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion() -> None:
@@ -154,9 +240,6 @@ def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion(
     assert len(rows) == 5000
     assert rows[0]["username"] == "user-0000"
     assert rows[-1]["username"] == "user-4999"
-    assert page._row_matches_query(rows[4999], "user-4999")
-    assert page._row_matches_query(rows[4999], str(rows[4999]["virtual_ip"]).casefold())
-    assert not page._row_matches_query(rows[4999], "definitely-not-found")
 
 
 def test_batch_enable_summarizes_success_skip_and_failure(
@@ -258,3 +341,71 @@ def test_user_download_link_push_uses_notification_registry(
 
     assert messages[-1][1] == "negative"
     assert "系统设置 → 通知" in messages[-1][0]
+
+
+def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "users.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+    renderer_source = (
+        root / "app" / "ui" / "components" / "data_grid_renderers.py"
+    ).read_text(encoding="utf-8")
+
+    assert "users-page--v2" in source
+    assert "users-toolbar" not in source
+    assert "users-bulk-bar" in source
+    assert "users-action-separator" in source
+    assert "users-bar-icon-action" in source
+    assert "users-bar-icon-action--create" in source
+    assert 'create_action(\n                "新建用户"' in source
+    assert "icon_only=True" in source
+    assert 'create_action(\n                ""' not in source
+    assert "more_actions(" not in source
+    assert "MenuAction(" not in source
+    assert "aria-label='{tooltip}'" in source
+    for label in (
+        "新建用户",
+        "批量导入",
+        "刷新用户列表",
+        "批量下载",
+        "批量启用",
+        "批量停用",
+        "批量踢下线",
+        "批量切换组",
+        "批量重置绑定",
+        "批量删除",
+    ):
+        assert f'"{label}"' in source
+    assert "search_input" not in source
+    assert "_handle_search" not in source
+    assert "_clear_search" not in source
+    assert "users-data-region" in source
+    assert "users-action-dialog" in source
+    assert "users-dialog-icon-action" in source
+    assert "users-import-dialog" in source
+    assert "users-change-group-dialog" in source
+    assert "users-config-drawer" in source
+    assert "suppress_horizontal_scroll=True" in source
+    assert "self.grid_view.summary.set_visibility(False)" in source
+    assert 'self.grid_view.summary.text = f"共 {len(rows)} 个用户"' not in source
+
+    assert ".users-page--v2 .users-toolbar" not in shell_css
+    assert ".users-page--v2 .users-action-separator" in shell_css
+    assert ".users-page--v2 .users-bar-icon-action" in shell_css
+    assert ".users-page--v2 .users-bar-icon-action--create" in shell_css
+    assert ".users-page--v2 .users-data-region" in shell_css
+    assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
+    assert ".q-dialog .q-card.users-action-dialog" in shell_css
+    assert ".users-dialog-icon-action" in shell_css
+    assert ".q-dialog .q-card.users-config-drawer" in shell_css
+
+    assert "field + '_tone'" in renderer_source
+    set_filter_source = (
+        root / "app" / "ui" / "static" / "js" / "ag-grid-set-filter.js"
+    ).read_text(encoding="utf-8")
+    assert "filterValueField" in set_filter_source
+    assert "this.filterValue(params.node)" in set_filter_source

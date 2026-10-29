@@ -8,6 +8,8 @@ from typing import Any, Callable, Literal
 
 from nicegui import ui
 
+from app.ui.vue import VpnSpotlightSurface
+
 
 CardTone = Literal["default", "success", "warning", "danger", "info"]
 
@@ -19,6 +21,7 @@ class MetricCard:
     label: Any
     helper: Any | None
     icon: Any | None
+    help_icon: Any | None
 
 
 @dataclass(slots=True)
@@ -37,6 +40,18 @@ class QuickLinkCard:
     icon: Any | None
 
 
+
+
+def _make_card_keyboard_clickable(container: Any, callback: Callable[..., Any]) -> None:
+    """让可点击卡片具备按钮等价的键盘与语义行为。"""
+
+    container.classes(add="vpn-card--clickable")
+    container.props("tabindex=0 role=button")
+    container.on("click", callback)
+    container.on("keydown.enter", callback)
+    container.on("keydown.space", callback)
+
+
 def _validate_tone(tone: CardTone) -> None:
     if tone not in {"default", "success", "warning", "danger", "info"}:
         raise ValueError(f"不支持的卡片状态: {tone}")
@@ -47,24 +62,42 @@ def metric_card(
     value: object,
     *,
     helper: str | None = None,
+    helper_tooltip: str | None = None,
     icon: str | None = None,
     tone: CardTone = "default",
     on_click: Callable[..., Any] | None = None,
+    v2_effect: bool = False,
+    compact: bool = False,
 ) -> MetricCard:
     """渲染可选状态与导航动作的指标卡。"""
 
     _validate_tone(tone)
+    if v2_effect and compact:
+        raise ValueError("紧凑指标卡不能同时启用 V2 Spotlight")
+
     normalized_label = str(label).strip()
     if not normalized_label:
         raise ValueError("指标名称不能为空")
 
-    with ui.card().classes(f"vpn-metric-card vpn-card-tone--{tone}") as container:
+    with ui.card().classes(
+        f"vpn-metric-card vpn-card-tone--{tone}"
+        + (" vpn-metric-card--v2" if v2_effect else "")
+        + (" vpn-metric-card--compact" if compact else "")
+    ) as container:
+        if v2_effect:
+            VpnSpotlightSurface()
         if on_click is not None:
-            container.on("click", on_click)
-            container.classes(add="vpn-card--clickable")
+            _make_card_keyboard_clickable(container, on_click)
         with ui.row().classes("items-start justify-between no-wrap w-full"):
             with ui.column().classes("gap-1 min-w-0"):
-                label_element = ui.label(normalized_label).classes("vpn-metric-card__label")
+                with ui.row().classes("items-center no-wrap gap-1"):
+                    label_element = ui.label(normalized_label).classes("vpn-metric-card__label")
+                    help_icon = None
+                    if helper_tooltip:
+                        help_icon = ui.icon("help_outline").classes(
+                            "vpn-metric-card__help-icon"
+                        )
+                        help_icon.tooltip(str(helper_tooltip))
                 value_element = ui.label(str(value)).classes("vpn-metric-card__value")
                 helper_element = (
                     ui.label(str(helper)).classes("vpn-metric-card__helper") if helper else None
@@ -78,6 +111,7 @@ def metric_card(
         label=label_element,
         helper=helper_element,
         icon=icon_element,
+        help_icon=help_icon,
     )
 
 
@@ -126,8 +160,7 @@ def quick_link_card(
 
     with ui.card().classes("vpn-quick-card") as container:
         if callback is not None:
-            container.on("click", callback)
-            container.classes(add="vpn-card--clickable")
+            _make_card_keyboard_clickable(container, callback)
         with ui.row().classes("items-center no-wrap w-full gap-3"):
             icon_element = ui.icon(icon).classes("vpn-quick-card__icon") if icon else None
             with ui.column().classes("gap-1 min-w-0 grow"):

@@ -16,19 +16,16 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import (
-    MenuAction,
-    danger_action,
-    more_actions,
-    primary_action,
-    secondary_action,
-)
 from app.ui.components.data_grid import render_data_grid
+from app.ui.components.actions import create_action
+from app.ui.components.data_grid_renderers import (
+    ACTION_BUTTON_RENDERER,
+    STATUS_PILL_RENDERER,
+)
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state, error_state, no_match_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
-from app.ui.components.toolbars import render_bulk_action_bar, render_page_toolbar
+from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -44,15 +41,13 @@ class UsersPage:
     def __init__(self):
         self.user_service = UserService()
         self.selected_users: set[str] = set()
-        self.search_input = None
         self.data_container = None
-        self.search_state_container = None
         self.grid_view = None
         self.all_grid_rows: list[dict] = []
         self.bulk_bar = None
         self.bulk_download_button = None
         self.bulk_enable_button = None
-        self.bulk_more_menu = None
+        self.bulk_icon_buttons: list[object] = []
 
         # 兼容旧列表选择辅助与既有测试；AG Grid 迁移后不再作为主视图。
         self.list_container = None
@@ -76,84 +71,122 @@ class UsersPage:
         self.page_size = 50
 
     def render(self):
-        """渲染用户管理页面；数据密集集合统一使用 AG Grid。"""
-
-        def search_region() -> None:
-            self.search_input = (
-                ui.input(placeholder="搜索用户名、虚拟 IP、组、证书或设备")
-                .props("clearable")
-                .classes("w-full")
-            )
-            self.search_input.on("keydown.enter", self._handle_search)
-            ui.button("搜索", icon="search", on_click=self._handle_search).props(
-                "outline no-caps color=primary"
-            )
-            ui.button("清除", icon="filter_alt_off", on_click=self._clear_search).props(
-                "flat no-caps color=primary"
-            )
-
-        def primary_region() -> None:
-            primary_action(
-                "新建用户",
-                icon="person_add",
-                on_click=self._show_create_dialog,
-            )
-
-        def secondary_region() -> None:
-            secondary_action(
-                "批量导入",
-                icon="upload_file",
-                on_click=self._show_import_dialog,
-            )
-            secondary_action(
-                "刷新",
-                icon="refresh",
-                on_click=self._refresh_user_list,
-            )
+        """渲染用户管理页面；页级动作与批量动作统一收敛到单条操作栏。"""
 
         def bulk_actions() -> None:
             disabled = not self.selected_users
-            self.bulk_download_button = secondary_action(
+
+            def icon_action(
+                icon: str,
+                tooltip: str,
+                callback,
+                *,
+                disabled_action: bool = False,
+                danger: bool = False,
+                track_bulk: bool = False,
+            ):
+                classes = "users-bar-icon-action"
+                if danger:
+                    classes += " users-bar-icon-action--danger"
+                button = ui.button(
+                    icon=icon,
+                    on_click=callback,
+                ).props(
+                    f"flat round dense aria-label='{tooltip}'"
+                ).classes(classes)
+                button.tooltip(
+                    "请先选择用户"
+                    if disabled_action and disabled
+                    else tooltip
+                )
+                if disabled_action and disabled:
+                    button.disable()
+                if track_bulk:
+                    self.bulk_icon_buttons.append(button)
+                return button
+
+            create_button = create_action(
+                "新建用户",
+                icon="person_add",
+                on_click=self._show_create_dialog,
+                tooltip="新建用户",
+                icon_only=True,
+            )
+            create_button.props("round dense")
+            create_button.classes(
+                add="users-bar-icon-action users-bar-icon-action--create"
+            )
+            icon_action(
+                "upload_file",
+                "批量导入",
+                self._show_import_dialog,
+            )
+            icon_action(
+                "refresh",
+                "刷新用户列表",
+                self._refresh_user_list,
+            )
+            ui.element("span").classes("users-action-separator")
+
+            self.bulk_icon_buttons = []
+            self.bulk_download_button = icon_action(
+                "download",
                 "批量下载",
-                icon="download",
-                on_click=self._batch_download,
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else None,
+                self._batch_download,
+                disabled_action=True,
             )
-            self.bulk_enable_button = secondary_action(
+            self.bulk_enable_button = icon_action(
+                "toggle_on",
                 "批量启用",
-                icon="toggle_on",
-                on_click=lambda: self._batch_set_status(True),
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else None,
+                lambda: self._batch_set_status(True),
+                disabled_action=True,
             )
-            self.bulk_more_menu = more_actions(
-                (
-                    MenuAction("批量停用", icon="toggle_off", on_click=self._batch_disable_confirm),
-                    MenuAction("批量踢下线", icon="power_settings_new", on_click=self._batch_kick_offline),
-                    MenuAction("批量切换组", icon="drive_file_move", on_click=self._show_batch_change_group_dialog),
-                    MenuAction("批量重置绑定", icon="phonelink_erase", on_click=self._batch_reset_binding_confirm),
-                    MenuAction("批量删除", icon="delete", danger=True, on_click=self._batch_delete_confirm),
-                ),
-                disabled=disabled,
-                tooltip="请先选择用户" if disabled else "更多批量操作",
+            icon_action(
+                "toggle_off",
+                "批量停用",
+                self._batch_disable_confirm,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
+                "power_settings_new",
+                "批量踢下线",
+                self._batch_kick_offline,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
+                "drive_file_move",
+                "批量切换组",
+                self._show_batch_change_group_dialog,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
+                "phonelink_erase",
+                "批量重置绑定",
+                self._batch_reset_binding_confirm,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
+                "delete",
+                "批量删除",
+                self._batch_delete_confirm,
+                disabled_action=True,
+                danger=True,
+                track_bulk=True,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "用户管理",
-                description="统一查看账号状态、在线会话、虚拟 IP、证书、流量与设备绑定，并执行配置和链接操作。",
-            )
-            render_page_toolbar(
-                search=search_region,
-                primary=primary_region,
-                secondary=secondary_region,
-            )
+        with ui.column().classes("page-shell mgmt-page users-page--v2"):
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_users),
                 actions=bulk_actions,
             )
-            self.data_container = ui.column().classes("w-full")
+            self.bulk_bar.container.classes(add="users-bulk-bar")
+            self.data_container = ui.column().classes(
+                "w-full users-data-region"
+            )
 
         self._refresh_user_list()
 
@@ -263,8 +296,12 @@ class UsersPage:
             "id": username,
             "username": username,
             "account_status": "启用" if status == "active" else "停用",
+            "account_status_tone": "success" if status == "active" else "warning",
             "session_status": (
                 "在线" if is_online else ("离线" if live_available else "未知")
+            ),
+            "session_status_tone": (
+                "success" if is_online else ("unknown" if live_available else "warning")
             ),
             "virtual_ip": virtual_ip,
             "group": group_name,
@@ -275,6 +312,12 @@ class UsersPage:
             "connection": connection,
             "source": real_address,
             "device": device,
+            "device_filter": device if device != "—" else "未知",
+            "device_source": (
+                f"{device} · {real_address}"
+                if device != "—" and real_address != "—"
+                else (device if device != "—" else real_address)
+            ),
             "created_at": created_at,
             "actions": "操作",
             "_status": status,
@@ -284,28 +327,112 @@ class UsersPage:
 
     @staticmethod
     def _user_grid_columns() -> tuple[dict, ...]:
-        """用户表格列定义；原始敏感/长值保留在行对象但不强制全部展示。"""
+        """用户主表保持紧凑；长值和低频字段放入操作弹窗。"""
 
         return (
-            {"field": "username", "headerName": "用户名", "pinned": "left", "minWidth": 150},
-            {"field": "account_status", "headerName": "账号", "width": 92},
-            {"field": "session_status", "headerName": "会话", "width": 92},
-            {"field": "virtual_ip", "headerName": "虚拟 IP", "minWidth": 140, "cellClass": "vpn-grid-mono"},
-            {"field": "group", "headerName": "用户组", "minWidth": 120},
-            {"field": "cert_serial_display", "headerName": "证书序列号", "minWidth": 160, "cellClass": "vpn-grid-mono"},
-            {"field": "traffic", "headerName": "流量", "minWidth": 160, "cellClass": "vpn-grid-mono"},
-            {"field": "connection", "headerName": "连接时间", "minWidth": 190},
-            {"field": "source", "headerName": "来源地址", "minWidth": 170, "cellClass": "vpn-grid-mono"},
-            {"field": "device", "headerName": "设备", "minWidth": 140},
-            {"field": "created_at", "headerName": "创建日期", "width": 120},
+            {
+                "field": "username",
+                "headerName": "用户名",
+                "pinned": "left",
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 142,
+                "minWidth": 120,
+                "maxWidth": 172,
+                "cellClass": "vpn-grid-primary-cell",
+            },
+            {
+                "field": "account_status",
+                "headerName": "账号",
+                "width": 94,
+                "minWidth": 90,
+                "maxWidth": 108,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索账号状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["启用", "停用"],
+                },
+                "cellClass": "vpn-grid-renderer-cell",
+            },
+            {
+                "field": "session_status",
+                "headerName": "会话",
+                "width": 94,
+                "minWidth": 90,
+                "maxWidth": 108,
+                ":cellRenderer": STATUS_PILL_RENDERER,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索会话状态...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配状态",
+                    "valueOrder": ["在线", "离线", "未知"],
+                },
+                "cellClass": "vpn-grid-renderer-cell",
+            },
+            {
+                "field": "virtual_ip",
+                "headerName": "虚拟 IP",
+                "flex": 0.82,
+                "minWidth": 122,
+                "cellClass": "vpn-grid-mono",
+            },
+            {
+                "field": "group",
+                "headerName": "用户组",
+                "flex": 0.78,
+                "minWidth": 110,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "searchPlaceholder": "搜索用户组...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配用户组",
+                },
+            },
+            {
+                "field": "traffic",
+                "headerName": "流量",
+                "flex": 0.88,
+                "minWidth": 132,
+                "cellClass": "vpn-grid-mono",
+            },
+            {
+                "field": "connection",
+                "headerName": "连接时间",
+                "flex": 1.04,
+                "minWidth": 168,
+            },
+            {
+                "field": "device_source",
+                "headerName": "设备 / 来源",
+                "flex": 1.15,
+                "minWidth": 188,
+                ":filter": "window.NiceVpnSetFilter",
+                "filterParams": {
+                    "filterValueField": "device_filter",
+                    "searchPlaceholder": "搜索设备类型...",
+                    "selectAllLabel": "(全选)",
+                    "noMatchesLabel": "没有匹配设备",
+                    "valueOrder": ["安卓", "iOS", "Mac", "Windows", "Linux", "未知"],
+                },
+            },
             {
                 "field": "actions",
                 "headerName": "操作",
                 "pinned": "right",
-                "width": 100,
+                "lockPinned": True,
+                "suppressMovable": True,
+                "width": 92,
+                "minWidth": 92,
+                "maxWidth": 92,
                 "sortable": False,
                 "filter": False,
-                "cellClass": "vpn-grid-action-cell",
+                "resizable": False,
+                ":cellRenderer": ACTION_BUTTON_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell vpn-grid-action-cell",
             },
         )
 
@@ -335,7 +462,6 @@ class UsersPage:
         with self.data_container:
             self._render_user_grid(rows, warnings)
         self._sync_bulk_state()
-        self._handle_search()
 
     def _render_user_grid(self, rows: list[dict], warnings: list[str]) -> None:
         """构建用户数据区及局部状态。"""
@@ -347,7 +473,6 @@ class UsersPage:
 
         if not rows:
             self.grid_view = None
-            self.search_state_container = None
             empty_state(
                 "暂无用户",
                 description="创建用户或批量导入后会显示在这里。",
@@ -357,69 +482,17 @@ class UsersPage:
             )
             return
 
-        self.search_state_container = ui.column().classes("w-full")
         self.grid_view = render_data_grid(
             self._user_grid_columns(),
             rows,
             page_size=self.page_size,
             selected_ids=self.selected_users,
             on_cell_click=self._on_grid_cell_clicked,
+            suppress_horizontal_scroll=True,
         )
-        self.grid_view.summary.text = f"共 {len(rows)} 个用户"
+        self.grid_view.summary.set_visibility(False)
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
 
-    def _handle_search(self):
-        """客户端快速筛选，同时在服务端镜像计算结果数与无匹配状态。"""
-
-        if self.grid_view is None:
-            return
-        query = str(self.search_input.value or "").strip() if self.search_input else ""
-        normalized = query.casefold()
-        matched = [
-            row
-            for row in self.all_grid_rows
-            if not normalized or self._row_matches_query(row, normalized)
-        ]
-
-        self.grid_view.grid.options["quickFilterText"] = query
-        self.grid_view.grid.update()
-        self.grid_view.summary.text = (
-            f"匹配 {len(matched)} / 共 {len(self.all_grid_rows)} 个用户"
-            if query
-            else f"共 {len(self.all_grid_rows)} 个用户"
-        )
-
-        if self.search_state_container is not None:
-            self.search_state_container.clear()
-            if query and not matched:
-                self.grid_view.container.set_visibility(False)
-                with self.search_state_container:
-                    no_match_state(
-                        description=f"没有用户匹配“{query}”。",
-                        on_clear=self._clear_search,
-                    )
-            else:
-                self.grid_view.container.set_visibility(True)
-
-    @staticmethod
-    def _row_matches_query(row: dict, query: str) -> bool:
-        fields = (
-            "username",
-            "virtual_ip",
-            "group",
-            "group_id",
-            "cert_serial",
-            "source",
-            "device",
-            "account_status",
-            "session_status",
-        )
-        return any(query in str(row.get(field) or "").casefold() for field in fields)
-
-    def _clear_search(self) -> None:
-        if self.search_input is not None:
-            self.search_input.set_value("")
-        self._handle_search()
 
     async def _on_grid_selection_changed(self, _event=None) -> None:
         """把 AG Grid 当前选择同步到批量操作状态。"""
@@ -445,11 +518,11 @@ class UsersPage:
                 button.enable()
             else:
                 button.disable()
-        if self.bulk_more_menu is not None:
+        for button in self.bulk_icon_buttons:
             if enabled:
-                self.bulk_more_menu.button.enable()
+                button.enable()
             else:
-                self.bulk_more_menu.button.disable()
+                button.disable()
 
     def _on_grid_cell_clicked(self, event) -> None:
         """点击固定操作列时打开当前用户操作面板。"""
@@ -467,16 +540,20 @@ class UsersPage:
             self._show_user_actions(row)
 
     def _show_user_actions(self, row: dict) -> None:
-        """集中承载单用户高频与低频操作，避免表格被按钮挤占。"""
+        """集中承载单用户操作；主表只保留一个稳定操作入口。"""
 
         username = str(row.get("username") or "")
         is_active = str(row.get("_status") or "") == "active"
         is_online = bool(row.get("_online"))
 
-        with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog users-action-dialog"
+        ):
             with ui.row().classes("w-full items-start justify-between no-wrap"):
                 with ui.column().classes("gap-1 min-w-0"):
-                    ui.label(username).classes("vpn-form-dialog__title")
+                    ui.label(username).classes(
+                        "vpn-form-dialog__title users-action-dialog__title"
+                    )
                     with ui.row().classes("items-center gap-2 flex-wrap"):
                         status_badge(
                             "running" if is_active else "disabled",
@@ -487,9 +564,12 @@ class UsersPage:
                             label="在线" if is_online else "离线",
                             icon="wifi" if is_online else "wifi_off",
                         )
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+                ui.button(
+                    icon="close",
+                    on_click=dialog.close,
+                ).props("flat round dense").classes("users-action-dialog__close")
 
-            with ui.column().classes("w-full gap-2"):
+            with ui.column().classes("w-full gap-2 users-action-dialog__details"):
                 structured_value(
                     row.get("virtual_ip") or "—",
                     kind="ip",
@@ -508,65 +588,94 @@ class UsersPage:
                     copyable=bool(row.get("group_id")),
                     copy_message="组 ID 已复制",
                 )
+                ui.label(
+                    f"设备：{row.get('device') or '—'} · "
+                    f"来源：{row.get('source') or '—'} · "
+                    f"创建：{row.get('created_at') or '未知'}"
+                ).classes("section-caption users-action-dialog__meta")
 
             def invoke(callback):
                 dialog.close()
                 return callback()
 
-            with ui.row().classes("w-full gap-2 flex-wrap"):
+            def icon_action(
+                icon: str,
+                tooltip: str,
+                callback,
+                *,
+                disabled: bool = False,
+                danger: bool = False,
+            ):
+                classes = "users-dialog-icon-action"
+                if danger:
+                    classes += " users-dialog-icon-action--danger"
+                button = ui.button(
+                    icon=icon,
+                    on_click=lambda: invoke(callback),
+                ).props(
+                    f"flat round dense aria-label='{tooltip}'"
+                ).classes(classes)
+                button.tooltip(tooltip)
+                if disabled:
+                    button.disable()
+                return button
+
+            with ui.row().classes(
+                "w-full items-center gap-1 flex-wrap users-action-dialog__actions"
+            ):
                 if is_active:
-                    secondary_action(
+                    icon_action(
+                        "toggle_off",
                         "停用",
-                        icon="toggle_off",
-                        on_click=lambda: invoke(lambda: self._confirm_user_disable(username)),
+                        lambda: self._confirm_user_disable(username),
                     )
                 else:
-                    secondary_action(
+                    icon_action(
+                        "toggle_on",
                         "启用",
-                        icon="toggle_on",
-                        on_click=lambda: invoke(lambda: self._toggle_user_status(username)),
+                        lambda: self._toggle_user_status(username),
                     )
-                secondary_action(
+                icon_action(
+                    "power_settings_new",
                     "踢下线",
-                    icon="power_settings_new",
-                    on_click=lambda: invoke(lambda: self._kick_offline(username)),
+                    lambda: self._kick_offline(username),
                     disabled=not is_online,
-                    tooltip=None if is_online else "当前用户不在线",
                 )
-                secondary_action(
+                icon_action(
+                    "drive_file_move",
                     "切换组",
-                    icon="drive_file_move",
-                    on_click=lambda: invoke(lambda: self._show_change_group_dialog(username)),
+                    lambda: self._show_change_group_dialog(username),
                 )
-                secondary_action(
+                icon_action(
+                    "download",
                     "下载配置",
-                    icon="download",
-                    on_click=lambda: invoke(lambda: self._download_ovpn(username)),
+                    lambda: self._download_ovpn(username),
                 )
-                secondary_action(
+                icon_action(
+                    "edit_note",
                     "编辑配置",
-                    icon="edit_note",
-                    on_click=lambda: invoke(lambda: self._edit_ovpn(username)),
+                    lambda: self._edit_ovpn(username),
                 )
-                secondary_action(
+                icon_action(
+                    "link",
                     "复制下载链接",
-                    icon="link",
-                    on_click=lambda: invoke(lambda: self._copy_download_link(username)),
+                    lambda: self._copy_download_link(username),
                 )
-                secondary_action(
+                icon_action(
+                    "send",
                     "推送下载链接",
-                    icon="send",
-                    on_click=lambda: invoke(lambda: self._push_download_link_notify(username)),
+                    lambda: self._push_download_link_notify(username),
                 )
-                secondary_action(
+                icon_action(
+                    "phonelink_erase",
                     "重置绑定",
-                    icon="phonelink_erase",
-                    on_click=lambda: invoke(lambda: self._confirm_reset_binding(username)),
+                    lambda: self._confirm_reset_binding(username),
                 )
-                danger_action(
+                icon_action(
+                    "delete",
                     "删除",
-                    icon="delete",
-                    on_click=lambda: invoke(lambda: self._confirm_delete(username)),
+                    lambda: self._confirm_delete(username),
+                    danger=True,
                 )
         dialog.open()
 
@@ -838,8 +947,12 @@ class UsersPage:
             return
 
         group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label(f"切换用户组 — {username}").classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog w-96 users-change-group-dialog"
+        ):
+            ui.label(f"切换用户组 — {username}").classes(
+                "vpn-form-dialog__title"
+            )
             ui.label("切换后会重新分配虚拟 IP，并立即踢下线，用户重连后生效。").classes(
                 "text-caption text-grey"
             )
@@ -847,12 +960,14 @@ class UsersPage:
                 'behavior=menu popup-content-class="vpn-group-select-menu"'
             )
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
+            with ui.row().classes(
+                "w-full justify-end q-mt-md vpn-form-dialog__actions"
+            ):
+                ui.button("取消", on_click=dialog.close).props("flat no-caps")
                 ui.button(
                     "切换",
                     on_click=lambda: self._do_change_group(dialog, username, group_select.value),
-                ).props("color=primary")
+                ).props("unelevated no-caps color=primary")
         dialog.open()
 
     def _do_change_group(self, dialog, username: str, new_group_id: str):
@@ -900,9 +1015,11 @@ class UsersPage:
             return
 
         with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
-            "w-[min(100vw,48rem)] h-full no-wrap overflow-y-auto"
+            "w-[min(100vw,48rem)] h-full no-wrap overflow-y-auto users-config-drawer"
         ):
-            ui.label(f"编辑 .ovpn 配置 — {username}").classes("text-h6")
+            ui.label(f"编辑 .ovpn 配置 — {username}").classes(
+                "text-h6 users-config-drawer__title"
+            )
             ui.label(f"文件路径: {ovpn_path}").classes("text-caption text-grey q-mb-sm")
             ui.label(
                 "保存后对用户下次下载/使用该 .ovpn 生效；内嵌证书与密钥勿随意改动。"
@@ -1330,8 +1447,10 @@ class UsersPage:
         """显示批量导入弹窗：支持 CSV/TXT 文件及可选创建数量。"""
         from app.services.group.crud import GroupService
 
-        with ui.dialog() as dialog, ui.card().classes("min-w-[480px]"):
-            ui.label("批量导入用户").classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes(
+            "vpn-form-dialog min-w-[480px] users-import-dialog"
+        ):
+            ui.label("批量导入用户").classes("vpn-form-dialog__title")
             ui.label(
                 "每行：用户名 + 组名 + 可选数量，空格或逗号分隔。数量省略时为 1，组不存在则整批不导入。"
             ).classes("section-caption")
@@ -1361,13 +1480,15 @@ class UsersPage:
                 max_files=1,
             ).props('accept=".csv,.txt,.text"').classes("w-full q-mt-sm")
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
+            with ui.row().classes(
+                "w-full justify-end q-mt-md vpn-form-dialog__actions"
+            ):
+                ui.button("取消", on_click=dialog.close).props("flat no-caps")
                 ui.button(
                     "预检查并导入",
                     icon="playlist_add_check",
                     on_click=lambda: self._do_import(dialog, textarea.value, GroupService()),
-                ).props("color=primary")
+                ).props("unelevated no-caps color=primary")
         dialog.open()
 
     def _do_import(self, dialog, raw_text: str, group_service):

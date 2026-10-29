@@ -188,16 +188,26 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("规则管理")
             await user.should_see("中心策略")
             await user.should_see("对端远端")
-            await user.should_see("新建规则")
-            await user.should_see("批量启用")
-            await user.should_see("批量停用")
-            await user.should_see("批量删除")
-            await user.should_see("3 RULES TOTAL")
+            await user.should_not_see("点击“调整优先级”进入拖动排序模式")
 
     asyncio.run(verify())
+
+    assert page._action_bar is not None
+    action_labels = {
+        element._props.get("aria-label")
+        for element in page._action_bar.actions.client.elements.values()
+        if getattr(element, "_props", {}).get("aria-label")
+    }
+    assert {
+        "新建规则",
+        "导入",
+        "导出",
+        "批量启用",
+        "批量停用",
+        "批量删除",
+    } <= action_labels
 
     assert page._center_grid_view is not None
     options = page._center_grid_view.grid.options
@@ -212,6 +222,8 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
     assert rows[1]["owner_label"] == "alice"
     assert rows[2]["owner_label"] == "广州站点 (peer-001)"
     assert rows[2]["kind_label"] == "对端·中心放行"
+    assert rows[0]["action_label_tone"] == "success"
+    assert rows[1]["action_label_tone"] == "failed"
 
 
 def test_center_firewall_keyword_search_and_no_match_state(
@@ -222,18 +234,29 @@ def test_center_firewall_keyword_search_and_no_match_state(
     async def verify() -> None:
         async with user_simulation(page.render) as user:
             await user.open("/")
-            page._center_search_input.set_value("开发组")
+            page._center_search_input.set_value("172.16.0.10")
             page._refresh_rules()
 
             assert page._center_grid_view is not None
-            assert len(page._center_grid_view.grid.options["rowData"]) == 1
-            assert page._center_grid_view.grid.options["rowData"][0]["id"] == "rule-accept"
-            assert page._rules_total_footer.text == "1 MATCHED / 3 TOTAL"
+            assert len(page._center_display_rows) == 1
+            assert page._center_display_rows[0]["id"] == "rule-accept"
+            assert len(page._center_grid_view.grid.options["rowData"]) == 3
+            assert page._center_grid_view.grid.options[":isExternalFilterPresent"] == "() => true"
+            assert page._center_grid_view.summary is None
+
+            page._center_search_input.set_value("443")
+            page._refresh_rules()
+            assert len(page._center_display_rows) == 1
+            assert page._center_display_rows[0]["id"] == "rule-accept"
+
+            page._center_search_input.set_value("开发访问")
+            page._refresh_rules()
+            assert len(page._center_display_rows) == 0
 
             page._center_search_input.set_value("definitely-not-found")
             page._refresh_rules()
             await user.should_see("没有匹配结果")
-            await user.should_see("当前关键词或归属筛选没有匹配规则")
+            await user.should_see("当前关键词没有匹配规则")
 
             page._clear_center_filters()
             assert page._center_grid_view is not None
@@ -242,23 +265,31 @@ def test_center_firewall_keyword_search_and_no_match_state(
     asyncio.run(verify())
 
 
-def test_center_firewall_owner_filter_includes_peer_virtual_rows(
+def test_center_firewall_classification_filters_are_searchable_multiselects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = _prepare_page(monkeypatch)
+    columns = {
+        column["field"]: column
+        for column in FirewallPage._center_grid_columns()
+    }
 
-    async def verify() -> None:
-        async with user_simulation(page.render) as user:
-            await user.open("/")
-            page._center_owner_filter.set_value("peer-001")
-            page._refresh_rules()
+    for field in (
+        "status_label",
+        "owner_label",
+        "kind_label",
+        "protocol",
+        "action_label",
+    ):
+        column = columns[field]
+        assert column[":filter"] == "window.NiceVpnSetFilter"
+        assert column["filterParams"]["selectAllLabel"] == "(全选)"
+        assert column["filterParams"]["showValuesFromOtherFilters"] is False
+        assert column["filterParams"]["searchPlaceholder"]
 
-            rows = page._center_grid_view.grid.options["rowData"]
-            assert [row["id"] for row in rows] == ["ce-peer-peer-001"]
-            assert page.current_owner_id == "peer-001"
-            assert page._is_unified_list is False
-
-    asyncio.run(verify())
+    assert "checkboxSelection" not in columns["priority"]
+    assert "headerCheckboxSelection" not in columns["priority"]
+    assert page._center_filter_model == {}
 
 
 def test_center_firewall_true_empty_state(
@@ -271,7 +302,6 @@ def test_center_firewall_true_empty_state(
             await user.open("/")
             await user.should_see("暂无中心规则")
             await user.should_see("新建规则")
-            assert page._rules_total_footer.text == "0 RULES TOTAL"
 
     asyncio.run(verify())
 
@@ -295,8 +325,43 @@ def test_center_grid_columns_keep_priority_owner_flow_and_id() -> None:
     ]
     first = FirewallPage._center_grid_columns()[0]
     assert first["pinned"] == "left"
-    assert first["checkboxSelection"] is True
-    assert first["headerCheckboxSelection"] is True
+    assert first["filter"] is False
+    assert "checkboxSelection" not in first
+    assert "headerCheckboxSelection" not in first
+    assert FirewallPage._center_grid_columns(can_reorder=True)[0]["rowDrag"] is True
+    assert FirewallPage._center_grid_columns(can_reorder=False)[0]["rowDrag"] is False
+
+
+def test_center_priority_reorder_mode_shows_full_order_without_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _prepare_page(monkeypatch)
+    expected = ["rule-drop", "ce-peer-peer-001", "rule-accept"]
+    page._center_reorder_mode = True
+    page._center_reorder_original_order = [
+        "rule-accept",
+        "rule-drop",
+        "ce-peer-peer-001",
+    ]
+    page._pending_center_order = list(expected)
+
+    async def verify() -> None:
+        async with user_simulation(page.render) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            assert page._center_grid_view is not None
+            options = page._center_grid_view.grid.options
+            assert options["pagination"] is False
+            assert "paginationPageSize" not in options
+            assert "rowSelection" not in options
+            assert options["rowDragManaged"] is True
+            assert options["suppressMoveWhenRowDragging"] is False
+            assert options["columnDefs"][0]["rowDrag"] is True
+            assert ":rowDrag" not in options["columnDefs"][0]
+            assert page._center_grid_view.summary is None
+            assert [row["id"] for row in options["rowData"]] == expected
+
+    asyncio.run(verify())
 
 
 def test_center_grid_selection_syncs_existing_batch_state() -> None:
@@ -312,51 +377,89 @@ def test_center_grid_selection_syncs_existing_batch_state() -> None:
     assert page.selected_rule_ids == {"rule-accept", "rule-drop"}
 
 
-def test_center_grid_row_drag_enabled_only_without_filters() -> None:
-    plain = FirewallPage._center_grid_columns(can_reorder=True)
-    filtered = FirewallPage._center_grid_columns(can_reorder=False)
+def test_center_grid_row_drag_is_only_available_in_explicit_reorder_mode() -> None:
+    normal = FirewallPage._center_grid_columns()
+    reorder = FirewallPage._center_grid_columns(
+        can_reorder=True,
+        reorder_mode=True,
+    )
 
-    assert plain[0]["rowDrag"] is True
-    assert filtered[0]["rowDrag"] is False
+    assert normal[0]["rowDrag"] is False
+    assert reorder[0]["rowDrag"] is True
+    assert ":rowDrag" not in reorder[0]
+    assert all(column["sortable"] is False for column in reorder)
+    assert all(column["filter"] is False for column in reorder)
+    assert reorder[-1]["hide"] is True
 
 
-def test_center_grid_drag_persists_global_order(
+def test_center_grid_drag_previews_order_until_explicit_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = FirewallPage()
     service = FakeRuleService()
     page.rule_service = service
+    page._center_reorder_mode = True
     page._center_reorder_allowed = True
-    page._is_unified_list = True
-    page._visible_center_rule_ids = [
+    page._center_reorder_original_order = [
         "rule-accept",
         "rule-drop",
         "ce-peer-peer-001",
     ]
+    page._pending_center_order = list(page._center_reorder_original_order)
+    page._visible_center_rule_ids = list(page._pending_center_order)
+    page._center_all_rows = [dict(row) for row in CENTER_RULES]
     monkeypatch.setattr(page, "_refresh_rules", lambda: None)
     monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
 
     class Event:
         args = {
-            "data": {"id": "rule-accept"},
-            "overIndex": 2,
+            "rowId": "rule-accept",
+            "rowIndex": 0,
+            "toIndex": 2,
         }
 
     page._on_center_grid_row_drag_end(Event())
 
-    assert service.reorder_calls == [
-        (
-            "",
-            ["rule-drop", "ce-peer-peer-001", "rule-accept"],
-        )
+    expected = ["rule-drop", "ce-peer-peer-001", "rule-accept"]
+    assert service.reorder_calls == []
+    assert page._pending_center_order == expected
+
+    page._save_center_reorder()
+    assert service.reorder_calls == [("", expected)]
+    assert page._center_reorder_mode is False
+
+
+
+def test_center_grid_drag_to_bottom_moves_rule_to_last_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._center_reorder_mode = True
+    page._center_reorder_allowed = True
+    page._center_reorder_original_order = ["rule-accept", "rule-drop"]
+    page._pending_center_order = ["rule-accept", "rule-drop"]
+    page._visible_center_rule_ids = list(page._pending_center_order)
+    page._center_all_rows = [
+        dict(row) for row in CENTER_RULES
+        if row["id"] in {"rule-accept", "rule-drop"}
     ]
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+
+    class Event:
+        args = {"rowId": "rule-accept", "rowIndex": 0, "toIndex": -1}
+
+    page._on_center_grid_row_drag_end(Event())
+
+    assert page._pending_center_order == ["rule-drop", "rule-accept"]
 
 
 def test_center_grid_drag_is_blocked_while_filtered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = FirewallPage()
-    page._center_reorder_allowed = False
+    page._center_reorder_mode = True
+    page._center_reorder_allowed = True
+    page._center_filter_model = {"owner_label": {"values": ["开发组"]}}
     messages: list[str] = []
     refreshed: list[bool] = []
     monkeypatch.setattr(
@@ -367,11 +470,11 @@ def test_center_grid_drag_is_blocked_while_filtered(
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
 
     class Event:
-        args = {"data": {"id": "rule-accept"}, "overIndex": 1}
+        args = {"rowId": "rule-accept", "rowIndex": 0, "toIndex": 1}
 
     page._on_center_grid_row_drag_end(Event())
 
-    assert messages == ["搜索或归属筛选状态下不能调整优先级"]
+    assert messages == ["请进入“调整优先级”模式，并确保没有搜索、筛选或表格排序"]
     assert refreshed == [True]
 
 
@@ -581,6 +684,30 @@ def test_center_json_edit_success_and_failure_refresh_semantics(
     assert messages[-1] == ("更新失败: rebuild failed", "negative")
 
 
+def test_center_edit_can_set_a_manual_global_priority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    service = FakeRuleService()
+    page.rule_service = service
+    monkeypatch.setattr(page, "_notify_for_page", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(page, "_refresh_rules", lambda: None)
+
+    assert page._save_center_rule_edit(
+        dict(CENTER_RULES[0]),
+        action="accept",
+        protocol="tcp",
+        source_input="10.8.0.0/24",
+        dest_ip="172.16.0.10",
+        dest_port="443",
+        description="开发访问 API",
+        enabled=True,
+        priority=25,
+    ) is True
+
+    assert service.update_calls[-1][1]["priority"] == 25
+
+
 def test_center_peer_edit_updates_peer_fields_and_validates_accept_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -675,7 +802,7 @@ def test_center_create_and_edit_dialogs_use_shared_form(
         ) as user:
             await user.open("/")
             await user.should_see("编辑中心规则")
-            await user.should_see("优先级：10")
+            await user.should_see("优先级（全局唯一）")
             await user.should_see("保存")
 
     asyncio.run(verify_edit())
@@ -920,3 +1047,44 @@ def test_center_import_dialog_uses_shared_form_and_precheck_copy(
             await user.should_see("尚未执行预检查")
 
     asyncio.run(verify())
+
+
+def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "firewall.py").read_text(
+        encoding="utf-8"
+    )
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+    legacy_css = (
+        root / "app" / "ui" / "static" / "css" / "legacy.css"
+    ).read_text(encoding="utf-8")
+
+    assert "firewall-page--v2" in source
+    assert "firewall-tab-shell" in source
+    assert "firewall-bulk-bar" in source
+    assert "firewall-filter-bar" in source
+    assert "window.NiceVpnSetFilter" in source
+    assert "搜索 IP / 端口 / 规则 ID" in source
+    assert "firewall-owner-filter" not in source
+    assert "firewall-bar-icon-action" in source
+    assert "render_page_toolbar(" not in source
+    assert "more_actions(" not in source
+    assert "ACTION_BUTTON_RENDERER" in source
+    assert "STATUS_PILL_RENDERER" in source
+    assert "firewall-action-dialog" in source
+    assert "firewall-rule-drawer" in source
+    assert "firewall-rule-card" not in source
+
+    assert ".firewall-page--v2 .firewall-tab-shell" in shell_css
+    assert ".firewall-page--v2 .firewall-bulk-bar" in shell_css
+    assert ".firewall-page--v2 .firewall-filter-bar" in shell_css
+    assert ".firewall-page--v2 .firewall-center-shell" in shell_css
+    assert ".firewall-page--v2 .firewall-remote-control" in shell_css
+    assert ".firewall-rule-card" not in legacy_css
+    assert ".firewall-search-shell" not in legacy_css
+    assert ".q-dialog .q-card.firewall-action-dialog" in shell_css
+    assert ".q-dialog .q-card.firewall-rule-drawer" in shell_css

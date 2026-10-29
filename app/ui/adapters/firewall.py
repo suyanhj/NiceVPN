@@ -103,21 +103,14 @@ def adapt_center_rule_row(
         detail = description or center_tag
 
     rule_expression = f"{source} → {dest}:{port}"
+    # Global search stays focused on concise operational fields. Descriptions and
+    # iptables comments can be very long, so they are deliberately not indexed.
     search_text = " ".join(
         [
             rule_id,
-            owner_type,
-            owner_id,
-            owner_label,
-            kind_label,
-            protocol,
-            action_label,
             source,
             dest,
             port,
-            detail,
-            str(priority),
-            "启用" if enabled else "停用",
         ]
     ).casefold()
 
@@ -136,6 +129,7 @@ def adapt_center_rule_row(
         "action": action,
         "action_label": action_label,
         "action_tone": action_tone,
+        "action_label_tone": action_tone,
         "protocol": protocol,
         "source": source,
         "dest": dest,
@@ -267,6 +261,7 @@ def adapt_remote_rule_row(
         "protocol": protocol,
         "action_label": action,
         "action_tone": action_tone,
+        "action_label_tone": action_tone,
         "source": source,
         "dest": dest,
         "dest_port": dest_port,

@@ -87,10 +87,8 @@ def test_services_page_shared_shell_local_status_and_empty_peer_state(
         async with user_simulation(lambda: page.render(initial_tab="local")) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("服务管理")
             await user.should_see("本机实例")
             await user.should_see("对端实例")
-            await user.should_see("刷新")
             await user.should_see("server1")
             await user.should_see("运行中")
             await user.should_see("在线 3")
@@ -159,7 +157,6 @@ def test_peer_focus_is_rendered_first(
             lambda: page.render(initial_tab="peers", focus_peer_id="peer-b")
         ) as user:
             await user.open("/")
-            await user.should_see("服务管理")
 
     asyncio.run(verify())
     assert order[:2] == ["peer-b", "peer-a"]
@@ -282,6 +279,8 @@ def test_service_log_dialog_lifecycle_and_log_paths_are_guarded() -> None:
     assert ".scroll_to(percent=1.0)" in source
 
     peer_source = inspect.getsource(ServicesPage._show_peer_client_file_log_viewer)
+    assert "services-view-dialog" in source
+    assert "services-view-dialog" in peer_source
     assert 'dialog.on("hide"' in peer_source
     assert 'state["open"]' in peer_source
     assert 'state["generation"]' in peer_source
@@ -367,3 +366,54 @@ def test_config_editor_uses_shared_form_and_does_not_open_missing_file(
             await user.should_see("保存")
 
     asyncio.run(verify())
+
+
+def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
+    """Services 只迁移视觉层，不把服务控制或日志逻辑搬进 Vue。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "services.py").read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "services-page--v2" in source
+    assert "vpn-v2-page-intro" not in source
+    assert "render_page_toolbar" not in source
+    assert "_refresh_button" not in source
+    assert 'label="更多"' not in source
+    assert 'label="…"' not in source
+    assert "MenuAction" not in source
+    assert "more_actions(" not in source
+    assert "services-more-action" not in source
+    assert "services-icon-action" in source
+    assert ".services-page--v2 .services-icon-action" in shell_css
+    assert '.tooltip("启动")' in source
+    assert '.tooltip("停止")' in source
+    assert '.tooltip("重启")' in source
+    assert '.tooltip("守护进程日志")' in source
+    assert '.tooltip("设备绑定日志")' in source
+    assert '.tooltip("OpenVPN 状态文件")' in source
+    assert '.tooltip("编辑配置")' in source
+    assert "services-instance-tabs" in source
+    assert "services-tabpanels" in source
+    assert "services-list-panel" in source
+    assert "services-record-card" in source
+    assert "services-record-icon" in source
+    assert "services-record-name" in source
+    assert "services-record-proto" in source
+    assert "services-view-dialog" in source
+    assert "firewall-compact-tabs" not in source
+    assert "firewall-tabpanels" not in source
+    assert 'classes("service-name")' not in source
+    assert 'classes("service-proto")' not in source
+    assert 'classes("service-running-chip")' not in source
+    assert 'classes("service-status-shell")' not in source
+    assert ".services-page--v2 .services-instance-tabs" in shell_css
+    assert ".services-page--v2 .services-record-card" in shell_css
+    assert ".q-dialog .q-card.services-view-dialog" in shell_css
+    assert source.index("with ui.tabs(") < source.index("with ui.tab_panels(")
+    assert "start_instance" in source
+    assert "stop_instance" in source
+    assert "restart_instance" in source
+    assert "fetch(" not in source

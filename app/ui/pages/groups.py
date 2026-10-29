@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from nicegui import ui
@@ -12,18 +13,20 @@ from app.core.config import load_config
 from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
-from app.ui.components.actions import danger_action, primary_action, secondary_action
+from app.ui.components.actions import create_action, danger_action, secondary_action
+from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
     update_visible_selection,
 )
-from app.ui.components.page_header import render_page_header
-from app.ui.components.states import empty_state
+from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
+
+logger = logging.getLogger(__name__)
 
 
 class GroupsPage:
@@ -43,16 +46,20 @@ class GroupsPage:
     def render(self):
         """渲染用户组管理页面。"""
 
-        groups = self.group_service.list_all()
-
-        def header_actions() -> None:
-            primary_action(
-                "新建用户组",
-                icon="group_add",
-                on_click=self._show_create_dialog,
-            )
+        try:
+            groups = self.group_service.list_all()
+            load_error: Exception | None = None
+        except Exception as exc:
+            logger.exception("加载用户组列表失败")
+            groups = []
+            load_error = exc
 
         def bulk_actions() -> None:
+            create_action(
+                "新建用户组",
+                icon="add",
+                on_click=self._show_create_dialog,
+            )
             disabled = not self.selected_ids
             self.bulk_enable_button = secondary_action(
                 "批量启用",
@@ -76,12 +83,8 @@ class GroupsPage:
                 tooltip="请先选择用户组" if disabled else None,
             )
 
-        with ui.column().classes("page-shell mgmt-page"):
-            render_page_header(
-                "用户组管理",
-                description="管理 VPN 子网划分、成员归属、启停状态与根组约束。",
-                actions=header_actions,
-            )
+        with ui.column().classes("page-shell mgmt-page groups-page--v2"):
+            self._render_summary_metrics(groups)
 
             self.bulk_bar = render_bulk_action_bar(
                 len(self.selected_ids),
@@ -96,12 +99,63 @@ class GroupsPage:
                             on_change=lambda e: self._toggle_select_all(bool(e.value)),
                         ).classes("mgmt-checkbox").tooltip("选择当前全部用户组")
                         ui.label("用户组列表").classes("mgmt-kicker")
-                    ui.label(f"共 {len(groups)} 个用户组").classes("group-list-count")
+                    ui.label(
+                        "加载失败" if load_error else f"共 {len(groups)} 个用户组"
+                    ).classes("group-list-count")
 
                 with ui.column().classes("w-full"):
-                    self._render_group_list(groups)
+                    if load_error is not None:
+                        error_state(
+                            str(load_error),
+                            title="用户组列表加载失败",
+                            on_retry=lambda: ui.navigate.to("/groups"),
+                        )
+                    else:
+                        self._render_group_list(groups)
 
         self._sync_bulk_state()
+
+    @staticmethod
+    def _render_summary_metrics(groups: list[dict]) -> None:
+        """基于当前列表快照渲染分组摘要，不增加额外业务请求。"""
+
+        active_count = sum(str(group.get("status") or "active") == "active" for group in groups)
+        disabled_count = len(groups) - active_count
+        user_count = sum(int(group.get("user_count") or 0) for group in groups)
+
+        with ui.element("div").classes("vpn-v2-overview-grid"):
+            metric_card(
+                "用户组总数",
+                len(groups),
+                helper_tooltip="包含根组和所有业务子组",
+                icon="folder_shared",
+                tone="info",
+                compact=True,
+            )
+            metric_card(
+                "启用分组",
+                active_count,
+                helper_tooltip="当前处于启用状态、可继续参与管理操作的用户组",
+                icon="check_circle",
+                tone="success" if active_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "停用分组",
+                disabled_count,
+                helper_tooltip="当前已停用、暂停参与后续管理操作的用户组",
+                icon="block",
+                tone="warning" if disabled_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "组内用户",
+                user_count,
+                helper_tooltip="按当前用户组列表快照汇总的组内用户数量",
+                icon="people",
+                tone="default",
+                compact=True,
+            )
 
     def _render_group_list(self, groups: list[dict]):
         """少量流程对象使用卡片列表，不强制表格化。"""
@@ -150,7 +204,13 @@ class GroupsPage:
         is_active = status == "active"
         user_count = int(group.get("user_count") or 0)
 
-        with ui.element("div").classes("mgmt-record-card"):
+        card_classes = "mgmt-record-card groups-record-card"
+        if is_root:
+            card_classes += " groups-record-card--root"
+        if not is_active:
+            card_classes += " groups-record-card--disabled"
+
+        with ui.element("div").classes(card_classes):
             with ui.element("div").classes("mgmt-record-main"):
                 self.group_checkboxes[group_id] = ui.checkbox(
                     value=group_id in self.selected_ids,
@@ -161,7 +221,7 @@ class GroupsPage:
                     with ui.row().classes("items-center gap-2 flex-wrap"):
                         ui.label(str(group["name"])).classes("mgmt-record-title")
                         if is_root:
-                            ui.badge("根组", color="primary").props("outline")
+                            ui.badge("根组").props("outline").classes("groups-root-badge")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
