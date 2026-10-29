@@ -114,12 +114,12 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
 
     theme_source = (UI_DIR / "theme.py").read_text(encoding="utf-8")
     token_index = theme_source.index('"tokens.css"')
+    legacy_index = theme_source.index('"legacy.css"')
     shell_index = theme_source.index('"shell.css"')
     grid_index = theme_source.index('"ag-grid-theme.css"')
     effects_index = theme_source.index('"effects.css"')
-    legacy_index = theme_source.index('"legacy.css"')
     setup_index = theme_source.index('"setup-v2.css"')
-    assert token_index < shell_index < grid_index < effects_index < legacy_index < setup_index
+    assert token_index < legacy_index < shell_index < grid_index < effects_index < setup_index
 
     shell_source = (STATIC_DIR / "css" / "shell.css").read_text(encoding="utf-8")
     grid_source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
@@ -149,6 +149,10 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
         ".settings-page",
         ".settings-header-panel",
         ".settings-toolbar",
+        ".dashboard-grid",
+        ".dashboard-mini-grid",
+        ".user-record-card",
+        ".user-toolbar-btn",
     ):
         assert retired_selector not in legacy_source
     assert ".group-list-count" in legacy_source
