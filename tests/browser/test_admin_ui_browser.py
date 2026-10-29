@@ -336,6 +336,31 @@ def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen.should_contain("对端实例")
 
     screen.open("/settings")
+    settings_geometry = screen.selenium.execute_script(
+        """
+        const page = document.querySelector(".settings-page--v2");
+        const section = document.querySelector(".settings-page--v2 .vpn-form-section");
+        const actions = Array.from(
+          document.querySelectorAll(
+            ".settings-page--v2 .vpn-action:not(.vpn-action--icon-only)"
+          )
+        ).filter((button) => {
+          const style = getComputedStyle(button);
+          return style.display !== "none" && style.visibility !== "hidden";
+        });
+        const pageWidth = page?.getBoundingClientRect().width ?? 0;
+        const sectionWidth = section?.getBoundingClientRect().width ?? 0;
+        const radii = actions.map((button) =>
+          Number.parseFloat(getComputedStyle(button).borderTopLeftRadius) || 0
+        );
+        return { pageWidth, sectionWidth, radii };
+        """
+    )
+    assert settings_geometry["pageWidth"] > 0, settings_geometry
+    assert settings_geometry["sectionWidth"] >= settings_geometry["pageWidth"] * 0.9, settings_geometry
+    assert settings_geometry["radii"], settings_geometry
+    assert min(settings_geometry["radii"]) >= 9.5, settings_geometry
+
     for tab, expected in (
         ("服务端", "服务端连接配置"),
         ("设备绑定", "设备绑定策略"),
