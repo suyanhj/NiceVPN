@@ -566,9 +566,7 @@ class UserService:
         from ipaddress import IPv4Address
 
         used: set[str] = set()
-        for data in self.store.list_users():
-            if data.get("group_id") != group_id:
-                continue
+        for data in self.store.list_users_by_group(group_id):
             ccd_file = CCD_DIR / str(data.get("username") or "")
             if ccd_file.exists():
                 try:
