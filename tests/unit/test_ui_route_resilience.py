@@ -50,8 +50,8 @@ def test_groups_route_survives_primary_list_failure(
 ) -> None:
     monkeypatch.setattr(
         GroupService,
-        "list_all",
-        lambda _self: (_ for _ in ()).throw(RuntimeError("groups broken")),
+        "list_page",
+        lambda _self, **_kwargs: (_ for _ in ()).throw(RuntimeError("groups broken")),
     )
     _open(lambda: GroupsPage().render(), "用户组列表加载失败")
 
@@ -61,8 +61,8 @@ def test_peers_route_survives_primary_list_failure(
 ) -> None:
     monkeypatch.setattr(
         PeerService,
-        "list_all",
-        lambda _self: (_ for _ in ()).throw(RuntimeError("peers broken")),
+        "list_page",
+        lambda _self, **_kwargs: (_ for _ in ()).throw(RuntimeError("peers broken")),
     )
     _open(lambda: PeersPage().render(), "对端列表加载失败")
 
@@ -72,8 +72,8 @@ def test_peers_route_survives_auxiliary_group_failure(
 ) -> None:
     monkeypatch.setattr(
         PeerService,
-        "list_all",
-        lambda _self: [{"id": "peer-1", "name": "站点 A"}],
+        "list_page",
+        lambda _self, **_kwargs: ([{"id": "peer-1", "name": "站点 A"}], 1),
     )
     monkeypatch.setattr(
         GroupService,
