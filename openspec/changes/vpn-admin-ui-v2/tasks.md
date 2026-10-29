@@ -16,11 +16,11 @@
 - [x] 2.1 建立 Vite + TypeScript 子模块，并固定一层依赖版本。
 - [x] 2.2 引入 Tailwind CSS，仅用于 Vue 构建层和基础布局工具。
 - [x] 2.3 引入 motion-v 作为复杂 Vue 动效统一引擎。
-- [ ] 2.4 选择 3–5 个适合运维后台的 Inspira UI 组件；首个 InteractiveGrid 已完成本地适配并记录 MIT 来源。
+- [x] 2.4 完成视觉组件选型收口：保留已适配的 InteractiveGrid，并以 SpotlightSurface 作为共享视觉增强原语；不为凑组件数量额外引入 Vue Bits/TresJS/更多第三方 UI。
 - [x] 2.5 增加独立 frontend build/typecheck CI，确保 Vue/TypeScript/Tailwind/motion-v 在真实 Node 22 环境可构建。
 - [x] 2.6 为生产镜像增加 Node 多阶段构建，并提供 frontend-assets 导出目标；运行镜像保持纯 Python。
 - [x] 2.7 Python 组件优先加载正式 Vite 构建产物，并保留原生 SFC 作为未构建时的开发回退。
-- [ ] 2.8 增加并提交可复现的前端依赖锁文件，再将 CI 从 npm install 切换到 npm ci。
+- [x] 2.8 提交 `package-lock.json`，CI 与 Docker 前端构建统一使用 `npm ci`；lockfile 使用官方 registry URL，运行时仍可按 `NPM_REGISTRY` 切换镜像。
 
 ## 3. 双部署模式
 
@@ -38,7 +38,7 @@
 - [x] 4.2 Certs：增加 V2 状态摘要与共享视觉层，不增加内容区页标题；保留证书续签、吊销、CRL、CA 操作原 Python 业务路径。
 - [x] 4.3 Groups：复用共享 V2 页面原语与列表/状态组件，保留现有分组业务与批量操作路径。
 - [x] 4.4 Services：升级信息层级、Tabs 与列表 Surface，不改本机/对端服务控制和日志业务路径。
-- [ ] 4.5 Peers：升级站点/远端运维视觉，保持 Python 状态管理。
-- [ ] 4.6 Users：升级高密度用户与会话视图。
-- [ ] 4.7 Settings：按设置域拆分视觉层级并减少页面私有 CSS。
-- [ ] 4.8 Firewall：最后迁移，并同步拆分超大页面模块；不整页 Vue 化。
+- [x] 4.5 Peers：升级站点/远端运维视觉，保持 Python 状态管理。
+- [x] 4.6 Users：升级高密度用户与会话视图，并统一 AG Grid、批量操作与对话框视觉。
+- [x] 4.7 Settings：按设置域拆分视觉层级，统一共享表单与按钮样式，并补浏览器几何回归检查。
+- [x] 4.8 Firewall：完成 V2 视觉迁移、AG Grid Community 拖动排序与页脚清理；业务逻辑仍由 Python/NiceGUI 管理。超大页面的结构拆分移至 V2 合并后的独立重构 PR，避免与视觉迁移耦合。
