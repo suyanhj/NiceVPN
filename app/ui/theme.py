@@ -14,6 +14,7 @@ _CSS_FILES = (
     "effects.css",
     "legacy.css",
     "setup-v2.css",
+    "firewall-v2-fixes.css",
 )
 _JS_FILES = (
     "/static/vendor/clipboard-2.0.11.min.js",
