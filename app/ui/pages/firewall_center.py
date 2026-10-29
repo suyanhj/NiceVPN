@@ -153,6 +153,15 @@ class FirewallCenterGridMixin:
             ],
         }
 
+        pending_owner_id = str(self._pending_center_owner_id or "").strip()
+        if pending_owner_id:
+            label = owner_label_by_id.get(pending_owner_id)
+            self._center_filter_model["owner_label"] = {
+                "filterType": "niceVpnSet",
+                "values": [label or "__no_owner_match__"],
+            }
+            self._pending_center_owner_id = ""
+
         filter_model = dict(self._center_filter_model)
 
         owner_ids: list[str] | None = None
@@ -358,6 +367,8 @@ class FirewallCenterGridMixin:
                 values = self._center_filter_values.get(field)
                 if values is not None:
                     column["filterParams"]["values"] = list(values)
+            if field == "description" and not self._center_reorder_mode:
+                column["sortable"] = False
             if not self._center_reorder_mode and field == self._center_sort_field:
                 column["sort"] = "desc" if self._center_sort_desc else "asc"
         return columns
