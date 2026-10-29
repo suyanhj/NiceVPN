@@ -19,7 +19,12 @@ from app.services.group.crud import GroupService
 from app.ui.adapters.firewall import adapt_center_rule_rows
 from app.ui.components.actions import danger_action, secondary_action
 from app.ui.components.data_grid import render_data_grid
-from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
+from app.ui.components.states import (
+    empty_state,
+    error_state,
+    loading_state,
+    no_match_state,
+)
 from app.ui.firewall_helpers import center_grid_columns, move_order
 
 logger = logging.getLogger(__name__)
@@ -93,16 +98,11 @@ class FirewallCenterGridMixin:
                 if str(peer.get("id") or "").strip()
             }
 
-        rows = adapt_center_rule_rows(
+        return adapt_center_rule_rows(
             rules_result,
             group_names=group_names,
             peer_names=peer_names,
         )
-        self._center_raw_by_id = {
-            str(row["id"]): dict(row.get("raw") or {})
-            for row in rows
-        }
-        return rows
 
     def _filter_center_rows(
         self,
@@ -195,6 +195,10 @@ class FirewallCenterGridMixin:
 
         self._center_refresh_running = False
         self._center_all_rows = all_rows
+        self._center_raw_by_id = {
+            str(row["id"]): dict(row.get("raw") or {})
+            for row in all_rows
+        }
         self._render_center_rules()
 
     def _render_center_rules(self) -> None:
