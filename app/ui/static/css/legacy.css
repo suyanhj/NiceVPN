@@ -1,4 +1,4 @@
-.page-panel,
+  .page-panel,
   .metric-card,
   .alert-card,
   .setup-shell,
@@ -381,7 +381,7 @@
   .ghost-action .q-focus-helper {
     display: none !important;
     opacity: 0 !important;
-}
+  }
 
   .primary-action::before,
   .secondary-action::before,
@@ -390,27 +390,27 @@
     opacity: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-}
+  }
 
   .primary-action.q-btn--active,
   .secondary-action.q-btn--active,
   .ghost-action.q-btn--active {
     background-image: none !important;
     box-shadow: none !important;
-}
+  }
 
   .q-btn.primary-action {
     background: rgba(79, 143, 199, 0.12) !important;
     border: 1px solid rgba(79, 143, 199, 0.26) !important;
     color: #c8ddf0 !important;
     box-shadow: none !important;
-}
+  }
 
   .q-btn.primary-action:hover {
     background: rgba(79, 143, 199, 0.18) !important;
     border-color: rgba(118, 168, 212, 0.38) !important;
     color: #e1ebf5 !important;
-}
+  }
 
   .q-btn.secondary-action,
   .q-btn.ghost-action {
@@ -418,19 +418,19 @@
     border: 1px solid rgba(88, 103, 125, 0.34) !important;
     color: #7f8b9c !important;
     box-shadow: none !important;
-}
+  }
 
   .q-btn.secondary-action:hover,
   .q-btn.ghost-action:hover {
     color: #c0cad6 !important;
     background: rgba(12, 22, 40, 0.72) !important;
     border-color: rgba(107, 124, 148, 0.46) !important;
-}
+  }
 
   .group-list-count {
     color: #6b7280;
     font-size: 12px;
-}
+  }
 
   .group-record-side {
     display: flex;
@@ -438,18 +438,18 @@
     gap: 12px;
     flex-wrap: wrap;
     justify-content: flex-end;
-}
+  }
 
   .primary-action,
   .secondary-action,
   .ghost-action {
     overflow: hidden;
-}
+  }
 
   @media (max-width: 1120px) {
     .setup-shell {
       grid-template-columns: 1fr;
-}
+    }
 
     /* 窄屏纵向堆叠：恢复整页自然滚动，避免双列视口锁高导致布局异常 */
     .setup-shell {
@@ -457,21 +457,21 @@
       max-height: none;
     }
 
-  .setup-brand {
+    .setup-brand {
       min-height: min(520px, 70vh);
     }
 
-  .setup-panel {
+    .setup-panel {
       overflow-y: visible;
     }
 
-  .record-card-head {
+    .record-card-head {
       grid-template-columns: 1fr;
     }
 
-  .group-record-side {
+    .group-record-side {
       justify-content: flex-start;
-}
+    }
   }
 
   @media (max-width: 768px) {
@@ -479,21 +479,21 @@
       padding: 16px;
     }
 
-  .vpn-header {
+    .vpn-header {
       padding: 10px 16px;
     }
 
-  .page-panel,
+    .page-panel,
     .metric-card,
     .setup-brand,
     .setup-panel {
       padding: 18px;
     }
 
-  .overview-grid,
-  .setup-steps {
+    .overview-grid,
+    .setup-steps {
       grid-template-columns: 1fr;
-}
+    }
   }
 
   /* ========= mgmt-* 通用管理页面组件 ========= */
@@ -1264,7 +1264,7 @@
     padding: 0 !important;
     overflow: hidden;
     background:
-      linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98)) !important;
+    linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98)) !important;
   }
 
   .peer-manual-drawer-head {
@@ -1449,7 +1449,7 @@
   .peer-manual-empty {
     border: 1px solid rgba(148, 163, 184, 0.14);
     background:
-      linear-gradient(180deg, rgba(24, 35, 56, 0.94), rgba(15, 23, 42, 0.94));
+    linear-gradient(180deg, rgba(24, 35, 56, 0.94), rgba(15, 23, 42, 0.94));
     border-radius: 18px;
     box-shadow: var(--vpn-shadow-soft);
   }
@@ -1698,12 +1698,12 @@
       flex-direction: column;
     }
 
-  .peer-manual-hero-actions {
+    .peer-manual-hero-actions {
       width: 100%;
       justify-content: flex-start;
     }
 
-  .peer-manual-grid {
+    .peer-manual-grid {
       grid-template-columns: 1fr;
     }
   }
@@ -1735,7 +1735,7 @@
     padding: 0 !important;
     overflow: hidden;
     background:
-      linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98)) !important;
+    linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98)) !important;
   }
 
   .peer-remote-log-frame {
