@@ -258,25 +258,123 @@ class UsersPage:
         ]
         return rows, warnings
 
-    async def _load_user_grid_rows_async(self) -> tuple[list[dict], list[str]]:
-        """并行读取用户页的独立数据源，避免阻塞 NiceGUI 事件循环。"""
+    async def _load_user_grid_rows_async(
+        self,
+    ) -> tuple[list[dict], list[str], int]:
+        """按 SQL 分页读取用户；运行时字段筛选时自动回退为正确的全量计算。"""
 
         from app.services.group.crud import GroupService
 
+        warnings: list[str] = []
+        try:
+            groups_result = await run.io_bound(GroupService().list_all)
+        except Exception as exc:
+            logger.error("加载用户组名称失败: %s", exc)
+            groups_result = []
+            warnings.append(f"用户组名称不可用: {exc}")
+
+        group_names = {
+            str(group.get("id") or ""): str(group.get("name") or "")
+            for group in groups_result
+            if str(group.get("id") or "")
+        }
+        group_ids_by_label: dict[str, list[str]] = {}
+        for group_id, label in group_names.items():
+            group_ids_by_label.setdefault(label or group_id, []).append(group_id)
+
+        self._user_filter_values = {
+            "account_status": ["启用", "停用"],
+            "session_status": ["在线", "离线", "未知"],
+            "group": sorted(
+                {label or gid for gid, label in group_names.items()},
+                key=str.casefold,
+            ),
+            "device_source": ["安卓", "iOS", "Mac", "Windows", "Linux", "未知"],
+        }
+
+        filter_model = dict(self._user_filter_model)
+        db_filter_fields = {"username", "account_status", "group"}
+        unsupported_filter = any(
+            field not in db_filter_fields for field in filter_model
+        )
+
+        username_spec = text_filter_spec(filter_model, "username")
+        if "username" in filter_model and username_spec is None:
+            unsupported_filter = True
+
+        account_values = set_filter_values(filter_model, "account_status")
+        statuses: list[str] | None = None
+        if "account_status" in filter_model:
+            statuses = [
+                {"启用": "active", "停用": "disabled"}.get(value, value)
+                for value in account_values
+            ]
+            if not statuses:
+                statuses = ["__no_status_match__"]
+
+        group_values = set_filter_values(filter_model, "group")
+        group_ids: list[str] | None = None
+        if "group" in filter_model:
+            group_ids = []
+            for value in group_values:
+                group_ids.extend(group_ids_by_label.get(value, []))
+                if value in group_names:
+                    group_ids.append(value)
+            if not group_ids:
+                group_ids = ["__no_group_match__"]
+
+        db_sort_fields = {"username", "account_status", "group", "created_at"}
+        use_db_page = not unsupported_filter and self._user_sort_field in db_sort_fields
+
+        async def load_user_source():
+            if not use_db_page:
+                users = await run.io_bound(self.user_service.list_all)
+                return users, len(users)
+
+            search = username_spec[0] if username_spec else ""
+            search_mode = username_spec[1] if username_spec else "contains"
+            offset = max(0, (self.page - 1) * self.page_size)
+            rows, total = await run.io_bound(
+                lambda: self.user_service.list_page(
+                    offset=offset,
+                    limit=self.page_size,
+                    search=search,
+                    search_mode=search_mode,
+                    group_ids=group_ids,
+                    statuses=statuses,
+                    sort_by=self._user_sort_field,
+                    sort_desc=self._user_sort_desc,
+                )
+            )
+            pages = max(1, (total + self.page_size - 1) // self.page_size)
+            if self.page > pages:
+                self.page = pages
+                rows, total = await run.io_bound(
+                    lambda: self.user_service.list_page(
+                        offset=(self.page - 1) * self.page_size,
+                        limit=self.page_size,
+                        search=search,
+                        search_mode=search_mode,
+                        group_ids=group_ids,
+                        statuses=statuses,
+                        sort_by=self._user_sort_field,
+                        sort_desc=self._user_sort_desc,
+                    )
+                )
+            return rows, total
+
         results = await asyncio.gather(
-            run.io_bound(self.user_service.list_all),
+            load_user_source(),
             run.io_bound(self._load_live_sessions),
             run.io_bound(DeviceBindingService().build_user_binding_aux),
             run.io_bound(self.user_service.list_ccd_virtual_ipv4_by_username),
-            run.io_bound(GroupService().list_all),
             return_exceptions=True,
         )
 
-        users_result, live_result, binding_result, ccd_result, groups_result = results
+        users_result, live_result, binding_result, ccd_result = results
         if isinstance(users_result, BaseException):
             raise users_result
-
-        warnings: list[str] = []
+        users, total = users_result
 
         if isinstance(live_result, BaseException):
             logger.error("加载 OpenVPN 在线会话失败: %s", live_result)
@@ -301,16 +399,6 @@ class UsersPage:
         else:
             ccd_vip_map = ccd_result
 
-        if isinstance(groups_result, BaseException):
-            logger.error("加载用户组名称失败: %s", groups_result)
-            group_names = {}
-            warnings.append(f"用户组名称不可用: {groups_result}")
-        else:
-            group_names = {
-                str(group.get("id") or ""): str(group.get("name") or "")
-                for group in groups_result
-            }
-
         rows = [
             self._build_user_grid_row(
                 user,
@@ -320,9 +408,33 @@ class UsersPage:
                 group_names,
                 live_available=live_available,
             )
-            for user in users_result
+            for user in users
         ]
-        return rows, warnings
+
+        if not use_db_page:
+            rows = filter_rows(
+                rows,
+                filter_model,
+                value_fields={"device_source": "device_filter"},
+            )
+            rows = sort_rows(
+                rows,
+                [
+                    {
+                        "colId": self._user_sort_field,
+                        "sort": "desc" if self._user_sort_desc else "asc",
+                    }
+                ],
+                default_field="username",
+            )
+            total = len(rows)
+            pages = max(1, (total + self.page_size - 1) // self.page_size)
+            if self.page > pages:
+                self.page = pages
+            start = (self.page - 1) * self.page_size
+            rows = rows[start : start + self.page_size]
+
+        return rows, warnings, int(total)
 
     def _build_user_grid_row(
         self,
