@@ -252,11 +252,68 @@ body {
   color: #94a3b8;
 }
 
+.settings-panel,
+.vpn-form-section {
+  width: 100%;
+}
+
+.settings-panel-head,
+.vpn-form-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+}
+
+.settings-panel-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+
+.settings-kicker {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .settings-panel-title {
   color: var(--vpn-text-heading);
   font-size: 20px;
   font-weight: 700;
   line-height: 1.3;
+}
+
+.settings-stack,
+.vpn-form-section__body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.settings-toolbar,
+.vpn-form-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.settings-status-text {
+  margin-top: 12px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .settings-inline-grid {
@@ -579,6 +636,26 @@ body {
   color: #15bde8 !important;
 }
 
+
+/* V2 文案按钮：统一恢复圆角、图标间距和 Quasar 默认覆盖。 */
+.vpn-action:not(.vpn-action--icon-only) {
+  border-radius: 10px !important;
+}
+
+.vpn-action .q-btn__content {
+  gap: 8px;
+  text-transform: none;
+  font-weight: 500;
+}
+
+.vpn-action.q-btn {
+  box-shadow: none !important;
+}
+
+.vpn-action.q-btn--rectangle::before,
+.vpn-action.q-btn--round::before {
+  display: none !important;
+}
 
 /* 页级“新建 / 创建”动作沿用系统设置页的青绿色语言，但使用完整荧光边框。 */
 .vpn-action--create {
@@ -2518,7 +2595,7 @@ body {
 
 .settings-page--v2 .vpn-form-section__actions .vpn-action {
   min-height: 32px;
-  border-radius: 9px;
+  border-radius: 10px !important;
   font-size: 12px;
 }
 
