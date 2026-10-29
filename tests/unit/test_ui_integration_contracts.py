@@ -159,4 +159,3 @@ def test_frontend_dependency_install_is_reproducible() -> None:
 
     assert "npm ci --no-audit --no-fund" in dockerfile
     assert "npm install --no-audit --no-fund --package-lock=false" not in dockerfile
-
