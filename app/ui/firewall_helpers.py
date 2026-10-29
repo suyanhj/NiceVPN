@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 from app.core.constants import CCD_DIR
@@ -62,6 +63,23 @@ def parse_user_source_for_create(
         if not validate_cidr(item) and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", item):
             return None, list(chunks)
     raise ValueError("用户源手填需为单段 CIDR，或为逗号分隔的仅数字 IP 列表。")
+
+
+def parse_lan_cidrs_text(raw: str) -> list[str]:
+    """多行、逗号或分号分隔的 LAN CIDR 拆成稳定列表。"""
+
+    if not raw or not str(raw).strip():
+        return []
+    parts = re.split(r"[\s,;]+", str(raw).strip())
+    return [part.strip() for part in parts if part.strip()]
+
+
+def firewall_export_json_filename(stem: str) -> str:
+    """生成带时间戳且兼容常见文件系统的 Firewall JSON 下载文件名。"""
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe = re.sub(r'[<>:"/\\|?*]', "_", (stem or "export").strip()) or "export"
+    return f"{safe}_{timestamp}.json"
 
 
 def remote_row_to_edit_form_dict(row: dict) -> dict:
