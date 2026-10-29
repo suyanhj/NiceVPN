@@ -215,10 +215,15 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
         return {
           gridSummaries: document.querySelectorAll('.firewall-center-panel .vpn-data-grid__summary').length,
           footerCounts: document.querySelectorAll('.firewall-center-panel .firewall-footer-count').length,
+          footerHints: document.querySelectorAll('.firewall-center-panel .firewall-footer-hint').length,
         };
         """
     )
-    assert duplicate_counts == {"gridSummaries": 0, "footerCounts": 0}, duplicate_counts
+    assert duplicate_counts == {
+        "gridSummaries": 0,
+        "footerCounts": 0,
+        "footerHints": 0,
+    }, duplicate_counts
 
     _click_aria_button(screen, "调整优先级")
     screen.wait(0.5)
