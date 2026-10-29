@@ -228,7 +228,7 @@ jobs:
           node-version: "22"
 
       - name: Validate Git diff whitespace
-        run: git diff --check origin/admin-ui...HEAD
+        run: git diff --check origin/main...HEAD
 
       - name: Validate UTF-8 and replacement characters
         run: |
@@ -241,6 +241,7 @@ jobs:
               Path("tests/browser"),
               Path("openspec/changes/vpn-admin-ui"),
               Path("openspec/changes/vpn-admin-ui-v2"),
+              Path("openspec/changes/vpn-sqlite-storage-v1"),
           )
           failures = []
           for root in roots:
@@ -272,6 +273,7 @@ jobs:
         run: |
           npx --yes @fission-ai/openspec@1.14.2 validate vpn-admin-ui --strict --no-interactive
           npx --yes @fission-ai/openspec@1.14.2 validate vpn-admin-ui-v2 --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.14.2 validate vpn-sqlite-storage-v1 --strict --no-interactive
 
       - name: Verify clean repository after validation
         run: |
