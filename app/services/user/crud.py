@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """用户 CRUD 服务 — 用户创建、删除、查询，含证书和配置文件全流程"""
-import json
 import logging
 import socket
 import threading
@@ -10,10 +9,10 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from app.core.config import load_config
-from app.core.constants import CCD_DIR, GROUPS_DIR, USERS_DIR
+from app.core.constants import CCD_DIR
 from app.models.user import User
 from app.utils.audit_log import AuditLogger
-from app.utils.file_lock import read_json, write_json_atomic
+from app.storage.sqlite_store import SqliteStore, get_default_store
 from app.utils.posix_data_perms import (
     fix_path_for_openvpn_shared_data,
     sync_openvpn_runtime_permissions_from_config,
@@ -44,8 +43,9 @@ def _ifconfig_push_netmask(group_subnet: IPv4Network) -> str:
 class UserService:
     """用户全生命周期管理服务"""
 
-    def __init__(self):
+    def __init__(self, store: SqliteStore | None = None):
         self.audit = AuditLogger()
+        self.store = store or get_default_store()
 
     def create(self, username: str, group_id: str,
                password_enabled: bool = False,
@@ -147,12 +147,8 @@ class UserService:
             updated_at=now,
         )
 
-        # 保存用户 JSON
-        USERS_DIR.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(
-            USERS_DIR / f"{username}.json",
-            user.model_dump()
-        )
+        # 保存结构化用户元数据
+        self.store.upsert_user(user.model_dump())
 
         # 更新组的用户计数
         self._increment_group_user_count(group_id, 1)
@@ -231,7 +227,7 @@ class UserService:
         # 更新用户状态为 deleted
         user_data["status"] = "deleted"
         user_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(USERS_DIR / f"{username}.json", user_data)
+        self.store.upsert_user(user_data)
 
         # 减少组用户计数
         self._increment_group_user_count(user_data.get("group_id", ""), -1)
@@ -298,7 +294,7 @@ class UserService:
         new_status = "disabled" if data["status"] == "active" else "active"
         data["status"] = new_status
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(USERS_DIR / f"{username}.json", data)
+        self.store.upsert_user(data)
 
         # CCD 文件增删 disable 指令
         self._update_ccd_disable(username, new_status == "disabled")
@@ -364,7 +360,7 @@ class UserService:
             now = datetime.now(timezone.utc).isoformat()
             user["group_id"] = target_group_id
             user["updated_at"] = now
-            write_json_atomic(USERS_DIR / f"{username}.json", user)
+            self.store.upsert_user(user)
             self._increment_group_user_count(old_group_id, -1)
             self._increment_group_user_count(target_group_id, 1)
 
@@ -473,73 +469,34 @@ class UserService:
             raise ValueError(f"用户不存在: {username}")
         data["cert_serial"] = cert_serial
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(USERS_DIR / f"{username}.json", data)
+        self.store.upsert_user(data)
 
     def list_all(self) -> list[dict]:
-        """列出所有用户（排除已删除）"""
-        users = []
-        if not USERS_DIR.exists():
-            return users
-        for f in USERS_DIR.glob("*.json"):
-            data = read_json(f)
-            if data and data.get("status") != "deleted":
-                users.append(data)
-        users.sort(key=lambda u: str(u.get("username") or "").lower())
-        return users
+        """列出所有用户（排除已删除）。"""
+        return self.store.list_users()
+
+    def count(self) -> int:
+        """返回未删除用户数量。"""
+        return self.store.count_users()
 
     def list_usernames_by_group(self, group_id: str) -> list[str]:
-        """扫描 USERS_DIR，返回指定组下 status==active 的用户名（升序）。
-
-        用于按组展开用户后批量更新 CCD（如对端 push/iroute 联动），不以独立「组→用户」JSON 为主数据源。
-
-        Args:
-            group_id: 组 UUID，与 User.group_id 一致
-
-        Returns:
-            用户名列表，升序排序
-
-        Raises:
-            ValueError: group_id 为空
-        """
+        """返回指定组下 status==active 的用户名（升序）。"""
         gid = str(group_id or "").strip()
         if not gid:
             raise ValueError("group_id 不能为空")
-        names: list[str] = []
-        if not USERS_DIR.exists():
-            return names
-        for f in USERS_DIR.glob("*.json"):
-            data = read_json(f)
-            if not data or data.get("status") != "active":
-                continue
-            if data.get("group_id") != gid:
-                continue
-            u = data.get("username")
-            if u:
-                names.append(str(u))
-        names.sort()
-        return names
+        return self.store.list_active_usernames_by_group(gid)
 
     def _user_exists(self, username: str) -> bool:
-        """检查用户名是否已存在"""
-        user_file = USERS_DIR / f"{username}.json"
-        if not user_file.exists():
-            return False
-        data = read_json(user_file)
-        return data.get("status") != "deleted"
+        """检查未删除用户名是否已存在。"""
+        return self.store.user_exists(username)
 
     def _load_user(self, username: str) -> dict | None:
-        """加载用户 JSON 数据"""
-        user_file = USERS_DIR / f"{username}.json"
-        if not user_file.exists():
-            return None
-        return read_json(user_file)
+        """加载用户元数据。"""
+        return self.store.get_user(username)
 
     def _load_group(self, group_id: str) -> dict | None:
-        """加载组 JSON 数据"""
-        group_file = GROUPS_DIR / f"{group_id}.json"
-        if not group_file.exists():
-            return None
-        return read_json(group_file)
+        """加载用户组元数据。"""
+        return self.store.get_group(group_id)
 
     def _write_ccd(self, username: str, group: dict):
         """写入 CCD 文件，为用户分配固定 IP。
@@ -607,17 +564,12 @@ class UserService:
     def _collect_used_ips_in_group(self, group_id: str, network: IPv4Network) -> set[str]:
         """收集指定组内所有用户已分配的虚拟 IP 地址。"""
         from ipaddress import IPv4Address
+
         used: set[str] = set()
-        if not USERS_DIR.exists():
-            return used
-        for f in USERS_DIR.glob("*.json"):
-            data = read_json(f)
-            if not data or data.get("status") == "deleted":
-                continue
+        for data in self.store.list_users():
             if data.get("group_id") != group_id:
                 continue
-            # 从 CCD 文件读取已分配 IP
-            ccd_file = CCD_DIR / data["username"]
+            ccd_file = CCD_DIR / str(data.get("username") or "")
             if ccd_file.exists():
                 try:
                     content = ccd_file.read_text(encoding="utf-8")
@@ -649,11 +601,12 @@ class UserService:
         return result
 
     def _increment_group_user_count(self, group_id: str, delta: int):
-        """更新组的用户计数"""
-        group_file = GROUPS_DIR / f"{group_id}.json"
-        if not group_file.exists():
+        """更新组的用户计数。"""
+        if not group_id:
             return
-        data = read_json(group_file)
-        data["user_count"] = max(0, data.get("user_count", 0) + delta)
+        data = self.store.get_group(group_id)
+        if not data:
+            return
+        data["user_count"] = max(0, int(data.get("user_count", 0)) + delta)
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(group_file, data)
+        self.store.upsert_group(data)
