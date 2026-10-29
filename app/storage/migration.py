@@ -227,10 +227,17 @@ def _archive_legacy_files(*, label: str = "storage-migration") -> Path | None:
 
     backup_dir = BACKUPS_DIR / f"{label}-{_utc_stamp()}"
     backup_dir.mkdir(parents=True, exist_ok=False)
+    if os.name != "nt":
+        os.chmod(backup_dir, 0o700)
     for source_dir, path in candidates:
         target_dir = backup_dir / source_dir.name
         target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(path), str(target_dir / path.name))
+        if os.name != "nt":
+            os.chmod(target_dir, 0o700)
+        target = target_dir / path.name
+        shutil.move(str(path), str(target))
+        if os.name != "nt":
+            os.chmod(target, 0o600)
     return backup_dir
 
 
