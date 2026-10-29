@@ -82,6 +82,7 @@ CLI 不需要前端构建：
 初始化后 `**data/api_basic_credentials.json`** 等为运行时数据，勿提交版本库。
 
 结构化管理元数据（用户、用户组、对端、中心防火墙规则）使用 `data/nicevpn.db`。旧版本升级时会在启动阶段自动把对应 JSON 迁入 SQLite，并将旧 JSON 归档到 `backups/storage-migration-<UTC>/`；CCD、设备绑定、PKI/CRL、OVPN、远端链缓存与日志继续保持文件形态。
+若需要降级到仍使用 JSON 的旧版本，必须先停止服务并从上述迁移归档恢复对应 JSON；旧版本不会读取 `nicevpn.db`。
 
 ## 测试
 
