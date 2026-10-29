@@ -2,7 +2,8 @@
 """Firewall 页面纯 UI/数据转换辅助。
 
 这里仅放不依赖 NiceGUI 页面实例状态的逻辑，便于独立测试并降低
-`app.ui.pages.firewall.FirewallPage` 的单文件复杂度。
+`app.ui.pages.firewall.FirewallPage` 的单文件复杂度。页面类保留兼容包装方法，
+避免本轮结构重构改变既有调用接口或业务行为。
 """
 
 from __future__ import annotations
