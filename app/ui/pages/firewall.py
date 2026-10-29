@@ -14,16 +14,14 @@
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
 import re
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from nicegui import context, run, ui
+from nicegui import context, ui
 from pydantic import ValidationError
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
@@ -31,15 +29,7 @@ from app.core.constants import CCD_DIR
 from app.models.firewall import FirewallRule
 from app.services.firewall.iptables_mgr import IptablesManager
 from app.services.firewall.rule_service import CE_PEER_RULE_PREFIX, FirewallRuleService
-from app.services.firewall.simple_rule_import import (
-    center_rule_payload_from_simplified,
-    is_center_backup_json_text,
-    parse_center_simplified_lines,
-    remote_rests_from_create_fields,
-    resolve_center_owner_type,
-    source_fields_for_center,
-    try_parse_simplified_line,
-)
+from app.services.firewall.simple_rule_import import try_parse_simplified_line
 from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
@@ -57,7 +47,6 @@ from app.ui.components import confirm_dialog
 from app.ui.components.actions import (
     create_action,
     danger_action,
-    primary_action,
     secondary_action,
 )
 from app.ui.components.form_dialog import create_form_dialog
