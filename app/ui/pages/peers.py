@@ -518,8 +518,8 @@ class PeersPage:
                 ui.notify("对端配置推送完成", type="positive")
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
-                ui.button("关闭", on_click=dialog.close).props("flat no-caps")
-                ui.button("开始推送", icon="cloud_upload", on_click=do_push).props("unelevated no-caps")
+                secondary_action("关闭", on_click=dialog.close)
+                primary_action("开始推送", icon="cloud_upload", on_click=do_push)
         dialog.open()
 
     def _show_peer_openvpn_setup_dialog(self, row: dict) -> None:
@@ -638,8 +638,8 @@ class PeersPage:
                 dialog.close()
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
-                ui.button("关闭", on_click=close_dialog).props("flat no-caps")
-                ui.button("安装", icon="build", on_click=do_run).props("unelevated no-caps")
+                secondary_action("关闭", on_click=close_dialog)
+                primary_action("安装", icon="build", on_click=do_run)
         dialog.open()
 
     def _show_peer_remote_log_dialog(self, row: dict) -> None:
@@ -722,8 +722,8 @@ class PeersPage:
 
             realtime_sw.on_value_change(lambda _: on_realtime_change())
             with ui.row().classes("peer-manual-drawer-foot"):
-                ui.button("刷新", icon="refresh", on_click=refresh_log).props("outline no-caps no-ripple")
-                ui.button("关闭", on_click=close_log_dialog).props("flat no-caps no-ripple")
+                secondary_action("刷新", icon="refresh", on_click=refresh_log)
+                secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
 
     async def _apply_peer_snat_policy_after_save(self, peer_id: str, *, source: str) -> None:
