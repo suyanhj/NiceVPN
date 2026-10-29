@@ -592,6 +592,15 @@
   font-size: 12px;
 }
 
+/* Managed row dragging: make the whole draggable row feel draggable. */
+.vpn-data-grid__grid .ag-row:has(.ag-row-drag) {
+  cursor: grab;
+}
+
+.vpn-data-grid__grid .ag-row:has(.ag-row-drag):active {
+  cursor: grabbing;
+}
+
 @media (max-width: 767px) {
   .vpn-data-grid__grid {
     min-height: 320px;
