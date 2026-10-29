@@ -152,6 +152,11 @@ class SqliteStore:
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executescript(_SCHEMA_SQL)
                 self._fix_permissions()
+                check = conn.execute("PRAGMA quick_check").fetchone()
+                if check is None or str(check[0]).lower() != "ok":
+                    raise RuntimeError(
+                        f"SQLite quick_check 失败: {check[0] if check else 'no result'}"
+                    )
                 row = conn.execute(
                     "SELECT MAX(version) AS version FROM schema_migrations"
                 ).fetchone()
