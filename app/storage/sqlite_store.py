@@ -596,6 +596,36 @@ class SqliteStore:
             ).fetchall()
         return [_load_payload(row["payload"]) for row in rows], total
 
+    def group_summary(self) -> dict[str, int]:
+        """返回组页摘要，避免为统计读取全部 group payload。"""
+        with self.connection() as conn:
+            group_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+                FROM groups
+                """
+            ).fetchone()
+            user_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE status <> 'deleted'"
+            ).fetchone()
+        total = int(group_row["total"] or 0)
+        active = int(group_row["active"] or 0)
+        return {
+            "total": total,
+            "active": active,
+            "disabled": max(0, total - active),
+            "users": int(user_row["n"] or 0),
+        }
+
+    def first_group_id(self) -> str:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM groups ORDER BY created_at, id LIMIT 1"
+            ).fetchone()
+        return str(row["id"]) if row else ""
+
     def delete_group(self, group_id: str) -> None:
         with self.connection(write=True) as conn:
             conn.execute("DELETE FROM groups WHERE id = ?", (str(group_id),))
