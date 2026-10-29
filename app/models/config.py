@@ -35,6 +35,12 @@ class SystemConfig(BaseModel):
         le=10080,
         description="管理后台登录会话有效期，单位为分钟",
     )
+    admin_reconnect_timeout_seconds: int = Field(
+        default=300,
+        ge=3,
+        le=3600,
+        description="管理后台 WebSocket 断线后的页面状态保留时间，单位为秒",
+    )
     global_subnet: Optional[str] = Field(default=None, description="全局子网 CIDR")
     openvpn_bin: Optional[str] = Field(default=None, description="OpenVPN 可执行文件路径")
     easyrsa_dir: Optional[str] = Field(default=None, description="EasyRSA 目录路径")
