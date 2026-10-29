@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """用户管理页面。"""
 
+import asyncio
 import logging
 import threading
 import re
 from datetime import datetime
 
-from nicegui import background_tasks, ui
+from nicegui import background_tasks, run, ui
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ from app.ui.components.data_grid_renderers import (
     STATUS_PILL_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
-from app.ui.components.states import empty_state, error_state
+from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
@@ -69,6 +70,7 @@ class UsersPage:
         self._import_progress_ui: dict[str, object] | None = None
         self.page = 1
         self.page_size = 50
+        self._refresh_running = False
 
     def render(self):
         """渲染用户管理页面；页级动作与批量动作统一收敛到单条操作栏。"""
@@ -241,6 +243,72 @@ class UsersPage:
                 live_available=live_available,
             )
             for user in users
+        ]
+        return rows, warnings
+
+    async def _load_user_grid_rows_async(self) -> tuple[list[dict], list[str]]:
+        """并行读取用户页的独立数据源，避免阻塞 NiceGUI 事件循环。"""
+
+        from app.services.group.crud import GroupService
+
+        results = await asyncio.gather(
+            run.io_bound(self.user_service.list_all),
+            run.io_bound(self._load_live_sessions),
+            run.io_bound(DeviceBindingService().build_user_binding_aux),
+            run.io_bound(self.user_service.list_ccd_virtual_ipv4_by_username),
+            run.io_bound(GroupService().list_all),
+            return_exceptions=True,
+        )
+
+        users_result, live_result, binding_result, ccd_result, groups_result = results
+        if isinstance(users_result, BaseException):
+            raise users_result
+
+        warnings: list[str] = []
+
+        if isinstance(live_result, BaseException):
+            logger.error("加载 OpenVPN 在线会话失败: %s", live_result)
+            live_sessions = {}
+            live_available = False
+            warnings.append(f"在线会话不可用: {live_result}")
+        else:
+            live_sessions = live_result
+            live_available = True
+
+        if isinstance(binding_result, BaseException):
+            logger.error("加载设备绑定辅助数据失败: %s", binding_result)
+            binding_aux = {}
+            warnings.append(f"设备绑定数据不可用: {binding_result}")
+        else:
+            binding_aux = binding_result
+
+        if isinstance(ccd_result, BaseException):
+            logger.error("加载 CCD 虚拟 IP 失败: %s", ccd_result)
+            ccd_vip_map = {}
+            warnings.append(f"虚拟 IP 数据不可用: {ccd_result}")
+        else:
+            ccd_vip_map = ccd_result
+
+        if isinstance(groups_result, BaseException):
+            logger.error("加载用户组名称失败: %s", groups_result)
+            group_names = {}
+            warnings.append(f"用户组名称不可用: {groups_result}")
+        else:
+            group_names = {
+                str(group.get("id") or ""): str(group.get("name") or "")
+                for group in groups_result
+            }
+
+        rows = [
+            self._build_user_grid_row(
+                user,
+                live_sessions.get(str(user.get("username") or "")),
+                binding_aux.get(str(user.get("username") or "")) or {},
+                str(ccd_vip_map.get(str(user.get("username") or "")) or "").strip(),
+                group_names,
+                live_available=live_available,
+            )
+            for user in users_result
         ]
         return rows, warnings
 
@@ -437,21 +505,43 @@ class UsersPage:
         )
 
     def _refresh_user_list(self):
-        """刷新用户数据，同时保留仍存在的选择和搜索上下文。"""
+        """先呈现页面骨架，再异步刷新用户数据。"""
 
         if self.data_container is None:
             return
+        if self._refresh_running:
+            ui.notify("用户列表正在刷新，请稍候", type="info")
+            return
+
+        self._refresh_running = True
+        self.data_container.clear()
+        with self.data_container:
+            loading_state(
+                "正在刷新用户…" if self.all_grid_rows else "正在加载用户…",
+                refreshing=bool(self.all_grid_rows),
+            )
+        ui.timer(0.01, self._refresh_user_list_async, once=True)
+
+    async def _refresh_user_list_async(self) -> None:
+        """在线程池并行加载用户页数据，完成后再更新 AG Grid。"""
+
         try:
-            rows, warnings = self._load_user_grid_rows()
+            rows, warnings = await self._load_user_grid_rows_async()
         except Exception as exc:
             logger.exception("加载用户列表失败")
-            self.data_container.clear()
-            with self.data_container:
-                error_state(
-                    str(exc),
-                    title="用户列表加载失败",
-                    on_retry=self._refresh_user_list,
-                )
+            if self.data_container is not None:
+                self.data_container.clear()
+                with self.data_container:
+                    error_state(
+                        str(exc),
+                        title="用户列表加载失败",
+                        on_retry=self._refresh_user_list,
+                    )
+            return
+        finally:
+            self._refresh_running = False
+
+        if self.data_container is None:
             return
 
         existing = {str(row.get("username") or "") for row in rows}
