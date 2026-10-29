@@ -58,20 +58,20 @@ class FakeRuleService:
         ]
 
 
-def test_snapshot_normal_values(tmp_path) -> None:
-    users = tmp_path / "users"
-    groups = tmp_path / "groups"
-    users.mkdir()
-    groups.mkdir()
-    (users / "alice.json").write_text("{}", encoding="utf-8")
-    (users / "bob.json").write_text("{}", encoding="utf-8")
-    (groups / "default.json").write_text("{}", encoding="utf-8")
+class FakeCountService:
+    def __init__(self, count: int):
+        self.value = count
 
+    def count(self) -> int:
+        return self.value
+
+
+def test_snapshot_normal_values(tmp_path) -> None:
     snap = collect_dashboard_snapshot(
         ["server1", "stopped"],
         monitor=FakeMonitor(),
-        users_dir=users,
-        groups_dir=groups,
+        user_service_factory=lambda: FakeCountService(2),
+        group_service_factory=lambda: FakeCountService(1),
         cert_service_factory=lambda: FakeCertService(20),
         rule_service_factory=FakeRuleService,
     )
@@ -94,8 +94,8 @@ def test_snapshot_partial_instance_failure_is_isolated(tmp_path) -> None:
     snap = collect_dashboard_snapshot(
         ["server1", "broken", "stopped"],
         monitor=FakeMonitor(fail={"broken"}),
-        users_dir=tmp_path / "missing-users",
-        groups_dir=tmp_path / "missing-groups",
+        user_service_factory=lambda: FakeCountService(0),
+        group_service_factory=lambda: FakeCountService(0),
         cert_service_factory=lambda: FakeCertService(30),
         rule_service_factory=FakeRuleService,
     )
@@ -116,8 +116,8 @@ def test_snapshot_no_instances_stays_healthy(tmp_path) -> None:
     snap = collect_dashboard_snapshot(
         [],
         monitor=FakeMonitor(),
-        users_dir=tmp_path / "users",
-        groups_dir=tmp_path / "groups",
+        user_service_factory=lambda: FakeCountService(0),
+        group_service_factory=lambda: FakeCountService(0),
         cert_service_factory=lambda: FakeCertService(90),
         rule_service_factory=FakeRuleService,
     )
