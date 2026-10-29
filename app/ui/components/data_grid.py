@@ -101,11 +101,33 @@ def render_data_grid(
     pagination: bool = True,
     row_drag_managed: bool = False,
     show_summary: bool = True,
+    server_total: int | None = None,
+    server_page: int = 1,
+    on_server_page_change: Callable[[int], Any] | None = None,
 ) -> DataGrid:
-    """构建统一的 Community AG Grid、分页、选择和结果摘要。"""
+    """构建统一的 Community AG Grid、分页、选择和结果摘要。
+
+    server_total 与 on_server_page_change 同时提供时启用服务端分页：
+    Grid 只持有当前页 rowData，页码由 Python 驱动，避免浏览器一次加载全量数据。
+    """
 
     if page_size <= 0:
         raise ValueError("分页大小必须大于 0")
+
+    server_pagination = (
+        server_total is not None and on_server_page_change is not None
+    )
+    total_rows = max(0, int(server_total or 0)) if server_pagination else None
+    total_pages = (
+        max(1, (total_rows + page_size - 1) // page_size)
+        if server_pagination
+        else 1
+    )
+    current_page = (
+        min(max(1, int(server_page)), total_pages)
+        if server_pagination
+        else 1
+    )
 
     normalized_rows = [dict(row) for row in rows]
     options: dict[str, Any] = {
@@ -117,7 +139,7 @@ def render_data_grid(
         },
         "rowData": normalized_rows,
         "localeText": dict(AG_GRID_LOCALE_ZH_CN),
-        "pagination": bool(pagination),
+        "pagination": bool(pagination and not server_pagination),
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
@@ -135,7 +157,7 @@ def render_data_grid(
             "if (Number.isInteger(event.overIndex)) event.toIndex = event.overIndex; "
             "}"
         )
-    if pagination:
+    if pagination and not server_pagination:
         options["paginationPageSize"] = page_size
     if suppress_horizontal_scroll:
         options["suppressHorizontalScroll"] = True
@@ -180,8 +202,29 @@ def render_data_grid(
         if on_cell_click is not None:
             grid.on("cellClicked", on_cell_click)
         summary = (
-            ui.label(f"共 {len(normalized_rows)} 条").classes("vpn-data-grid__summary")
+            ui.label(
+                f"共 {total_rows if server_pagination else len(normalized_rows)} 条"
+            ).classes("vpn-data-grid__summary")
             if show_summary
             else None
         )
+        if server_pagination:
+            with ui.row().classes(
+                "vpn-data-grid__server-pager w-full items-center justify-end gap-1"
+            ):
+                previous = ui.button(
+                    icon="chevron_left",
+                    on_click=lambda: on_server_page_change(current_page - 1),
+                ).props("flat round dense aria-label='上一页'")
+                ui.label(
+                    f"第 {current_page} / {total_pages} 页 · 共 {total_rows} 条"
+                ).classes("vpn-data-grid__server-page-label")
+                following = ui.button(
+                    icon="chevron_right",
+                    on_click=lambda: on_server_page_change(current_page + 1),
+                ).props("flat round dense aria-label='下一页'")
+                if current_page <= 1:
+                    previous.disable()
+                if current_page >= total_pages:
+                    following.disable()
     return DataGrid(container=container, grid=grid, summary=summary)
