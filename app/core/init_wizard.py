@@ -11,7 +11,6 @@ from pathlib import Path
 from app.core.config import load_config, save_config
 from app.core.constants import (
     DATA_DIR,
-    GROUPS_DIR,
     LOGS_DIR,
     OPENVPN_DEFAULT_MAX_CLIENTS,
 )
@@ -290,44 +289,41 @@ class InitWizard:
         )
 
     def _create_default_group(self, data: dict) -> StepResult:
-        """步骤五：创建默认用户组"""
-        import json
-        from ipaddress import IPv4Network
+        """步骤五：创建默认用户组。"""
+        from app.services.group.crud import GroupService
 
         global_subnet = self.config.global_subnet
         logger.info("步骤 4/5：开始创建默认用户组，global_subnet=%s", global_subnet)
         if not global_subnet:
             return StepResult(False, "请先配置全局子网")
 
-        # 默认用户组就是全局组，子网 = 全局子网
-        # 后续创建的子组必须是全局组子网的子网
-        default_subnet = global_subnet
+        groups = GroupService().list_all()
+        existing = next(
+            (g for g in groups if g.get("name") == "默认用户组"),
+            None,
+        )
+        if existing:
+            group = existing
+        else:
+            group = GroupService().create("默认用户组", global_subnet)
 
-        now = datetime.now(timezone.utc).isoformat()
-        group = {
-            "id": str(uuid.uuid4()),
-            "name": "默认用户组",
-            "subnet": default_subnet,
-            "status": "active",
-            "user_count": 0,
-            "firewall_rule_ids": [],
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        # 确保目录存在
-        GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-        group_file = GROUPS_DIR / f"{group['id']}.json"
-        with open(group_file, "w", encoding="utf-8") as f:
-            json.dump(group, f, ensure_ascii=False, indent=2)
-
-        logger.info("步骤 4/5：默认用户组创建完成，group_id=%s, subnet=%s", group["id"], default_subnet)
-        self.audit.log("create_default_group", "group", group["id"],
-                       {"name": "默认用户组", "subnet": default_subnet}, "success")
+        logger.info(
+            "步骤 4/5：默认用户组创建完成，group_id=%s, subnet=%s",
+            group["id"],
+            global_subnet,
+        )
+        self.audit.log(
+            "create_default_group",
+            "group",
+            group["id"],
+            {"name": "默认用户组", "subnet": global_subnet},
+            "success",
+        )
         return StepResult(
-            True, f"默认用户组已创建（子网: {default_subnet}）",
+            True,
+            f"默认用户组已创建（子网: {global_subnet}）",
             data=group,
-            next_step=WizardStep.START_SERVICE
+            next_step=WizardStep.START_SERVICE,
         )
 
     def _start_service(self, data: dict) -> StepResult:
