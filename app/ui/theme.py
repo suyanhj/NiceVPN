@@ -9,10 +9,10 @@ from nicegui import ui
 
 _CSS_FILES = (
     "tokens.css",
+    "legacy.css",
     "shell.css",
     "ag-grid-theme.css",
     "effects.css",
-    "legacy.css",
     "setup-v2.css",
 )
 _JS_FILES = (
