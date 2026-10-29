@@ -380,6 +380,14 @@ class GroupService:
             sort_desc=sort_desc,
         )
 
+    def summary(self) -> dict[str, int]:
+        """组页数据库摘要统计。"""
+        return self.store.group_summary()
+
+    def first_group_id(self) -> str:
+        """返回最早创建的根组 ID。"""
+        return self.store.first_group_id()
+
     def count(self) -> int:
         """返回用户组数量。"""
         return self.store.count_groups()
