@@ -409,7 +409,8 @@ class FirewallPage(
         self._pending_center_owner_id = normalized
         if not normalized:
             self._center_filter_model.pop("owner_label", None)
-        self._render_center_rules()
+        self._center_page = 1
+        self._refresh_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
