@@ -94,13 +94,15 @@ def test_firewall_route_survives_center_source_failure(
     _open(lambda: FirewallPage().render(), "中心规则加载失败")
 
 
-def test_certs_route_survives_alert_and_list_failures(
+def test_certs_route_survives_single_snapshot_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         CertService,
         "get_expiring",
-        lambda _self: (_ for _ in ()).throw(RuntimeError("expiry broken")),
+        lambda _self: (_ for _ in ()).throw(
+            AssertionError("证书页不应为临期告警重复读取证书")
+        ),
     )
     monkeypatch.setattr(
         CertService,
@@ -112,8 +114,8 @@ def test_certs_route_survives_alert_and_list_failures(
         async with user_simulation(lambda: CertsPage().render()) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("临期证书检查不可用")
             await user.should_see("证书列表加载失败")
+            await user.should_not_see("临期证书检查不可用")
 
     asyncio.run(verify())
 
