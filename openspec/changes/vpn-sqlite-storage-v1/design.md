@@ -64,9 +64,19 @@ NiceVPN 是单节点控制器、低并发读多写少，SQLite 与其部署模�
 
 中心规则写入前在内存保留 owner 旧规则快照。若 iptables/VPN_FORWARD 重建失败，立即把旧快照写回 SQLite。多 owner 排序/恢复同理按 owner 快照回滚，不再依赖 `*.prepush.bak`。
 
+### 7. 查询分页下推到 SQLite
+
+schema v2 为 Peer 与 Firewall 补充筛选/排序所需的反规范化索引列，并在升级时从 payload 自动回填。
+
+- Users 使用 SQL `LIMIT/OFFSET`，用户名搜索、用户组/状态筛选和受支持排序直接下推；
+- Groups / Peers 主列表只读取当前页，Groups 摘要使用聚合 SQL；
+- Firewall 将中心规则与 Peer 中心放行虚拟行通过统一查询集合分页，关键词、归属、启停、协议、动作、类型与排序在 SQL 层处理；
+- AG Grid 仅持有当前页 rowData，分类过滤器的可选值使用数据库 facets，而不是扫描当前页；
+- 在线会话、设备来源等运行时派生字段无法直接由 SQLite 表达时，允许回退到 Python 全量计算以保持筛选语义正确；
+- Firewall 优先级拖拽是明确例外：仅在用户进入排序模式时加载完整有序集合，普通浏览不全量读取。
+
 ## Non-Goals
 
 - 本变更不把证书事实源改成 SQLite。
 - 本变更不改 OpenVPN client-connect 的 Device Binding 文件协议。
-- 本变更不实现 AG Grid 服务端分页，但存储接口需为后续 SQL 分页保留清晰边界。
 - 不支持 JSON/SQLite 长期双写或运行时切换。
