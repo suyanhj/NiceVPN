@@ -9,6 +9,8 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from nicegui import ui
 
+from app.ui.components.server_pager import SERVER_PAGE_SIZE_OPTIONS
+
 
 AG_GRID_LOCALE_ZH_CN: dict[str, str] = {
     # Text / simple filter
@@ -104,6 +106,8 @@ def render_data_grid(
     server_total: int | None = None,
     server_page: int = 1,
     on_server_page_change: Callable[[int], Any] | None = None,
+    on_server_page_size_change: Callable[[int], Any] | None = None,
+    server_page_size_options: Sequence[int] = SERVER_PAGE_SIZE_OPTIONS,
 ) -> DataGrid:
     """构建统一的 Community AG Grid、分页、选择和结果摘要。
 
@@ -210,8 +214,25 @@ def render_data_grid(
         )
         if server_pagination:
             with ui.row().classes(
-                "vpn-data-grid__server-pager w-full items-center justify-end gap-1"
+                "vpn-data-grid__server-pager w-full items-center justify-end gap-2"
             ):
+                if on_server_page_size_change is not None:
+                    normalized_options = tuple(
+                        dict.fromkeys(
+                            max(1, int(value))
+                            for value in (*server_page_size_options, page_size)
+                        )
+                    )
+                    ui.label("每页").classes("vpn-data-grid__server-page-label")
+                    ui.select(
+                        list(normalized_options),
+                        value=page_size,
+                        on_change=lambda event: on_server_page_size_change(
+                            int(event.value)
+                        ),
+                    ).props(
+                        "dense outlined options-dense"
+                    ).classes("vpn-data-grid__server-page-size")
                 previous = ui.button(
                     icon="chevron_left",
                     on_click=lambda: on_server_page_change(current_page - 1),
