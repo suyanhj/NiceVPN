@@ -39,8 +39,8 @@ def test_users_route_survives_primary_list_failure(
 ) -> None:
     monkeypatch.setattr(
         UserService,
-        "list_all",
-        lambda _self: (_ for _ in ()).throw(RuntimeError("users broken")),
+        "list_page",
+        lambda _self, **_kwargs: (_ for _ in ()).throw(RuntimeError("users broken")),
     )
     _open(lambda: UsersPage().render(), "用户列表加载失败")
 
@@ -88,8 +88,8 @@ def test_firewall_route_survives_center_source_failure(
 ) -> None:
     monkeypatch.setattr(
         FirewallRuleService,
-        "list_unified_flat",
-        lambda _self: (_ for _ in ()).throw(RuntimeError("rules broken")),
+        "list_unified_page",
+        lambda _self, **_kwargs: (_ for _ in ()).throw(RuntimeError("rules broken")),
     )
     _open(lambda: FirewallPage().render(), "中心规则加载失败")
 
