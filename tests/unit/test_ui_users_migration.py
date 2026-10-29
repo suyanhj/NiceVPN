@@ -21,6 +21,47 @@ class FakeUserService:
     def list_all(self):
         return [dict(item) for item in self.users.values()]
 
+    def list_page(
+        self,
+        *,
+        offset=0,
+        limit=50,
+        search="",
+        search_mode="contains",
+        group_ids=None,
+        statuses=None,
+        sort_by="username",
+        sort_desc=False,
+    ):
+        rows = [dict(item) for item in self.users.values()]
+        text = str(search or "").casefold()
+        if text:
+            if search_mode == "equals":
+                rows = [row for row in rows if str(row["username"]).casefold() == text]
+            elif search_mode == "notEqual":
+                rows = [row for row in rows if str(row["username"]).casefold() != text]
+            elif search_mode == "startsWith":
+                rows = [row for row in rows if str(row["username"]).casefold().startswith(text)]
+            elif search_mode == "endsWith":
+                rows = [row for row in rows if str(row["username"]).casefold().endswith(text)]
+            elif search_mode == "notContains":
+                rows = [row for row in rows if text not in str(row["username"]).casefold()]
+            else:
+                rows = [row for row in rows if text in str(row["username"]).casefold()]
+        if group_ids:
+            allowed = {str(value) for value in group_ids}
+            rows = [row for row in rows if str(row.get("group_id") or "") in allowed]
+        if statuses:
+            allowed = {str(value) for value in statuses}
+            rows = [row for row in rows if str(row.get("status") or "") in allowed]
+        key = {
+            "account_status": "status",
+            "group": "group_id",
+        }.get(sort_by, sort_by)
+        rows.sort(key=lambda row: str(row.get(key) or "").casefold(), reverse=bool(sort_desc))
+        total = len(rows)
+        return rows[max(0, int(offset)): max(0, int(offset)) + max(1, int(limit))], total
+
     def list_ccd_virtual_ipv4_by_username(self):
         return {
             name: f"10.8.0.{index + 10}"
@@ -117,7 +158,8 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
 
     assert page.grid_view is not None
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
-    assert page.grid_view.grid.options["paginationPageSize"] == 50
+    assert page.grid_view.grid.options["pagination"] is False
+    assert "paginationPageSize" not in page.grid_view.grid.options
     assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
     assert page.grid_view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in page.grid_view.grid.options
@@ -391,9 +433,11 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-change-group-dialog" in source
     assert "users-config-drawer" in source
     assert "suppress_horizontal_scroll=True" in source
-    assert "self.grid_view.summary.set_visibility(False)" in source
+    assert "show_summary=False" in source
+    assert "server_total=self.total_rows" in source
+    assert "on_server_page_change=self._on_user_page_change" in source
     assert 'self.grid_view.summary.text = f"共 {len(rows)} 个用户"' not in source
-    assert "background_tasks.create(" not in source
+    assert "background_tasks.create(" in source
     assert "if created:\n            self._copy_download_link(created[0])" not in source
     assert "async def _copy_download_link" in source
     assert "await self._copy_text(" in source
