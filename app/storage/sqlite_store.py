@@ -554,6 +554,52 @@ class SqliteStore:
             ).fetchall()
         return [_load_payload(row["payload"]) for row in rows]
 
+    def list_groups_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        statuses: Sequence[str] | None = None,
+        sort_by: str = "created_at",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        text = str(search or "").strip()
+        if text:
+            pattern = _like_pattern(text)
+            clauses.append("(name LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
+            params.extend([pattern, pattern])
+        sts = [str(v) for v in (statuses or []) if str(v)]
+        if sts:
+            clauses.append("status IN (" + ",".join("?" for _ in sts) + ")")
+            params.extend(sts)
+        sort_sql = {
+            "created_at": "created_at",
+            "name": "name COLLATE NOCASE",
+            "status": "status",
+            "id": "id",
+        }.get(str(sort_by or "created_at"), "created_at")
+        direction = "DESC" if sort_desc else "ASC"
+        where = " AND ".join(clauses)
+        with self.connection() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS n FROM groups WHERE {where}", params
+                ).fetchone()["n"]
+            )
+            rows = conn.execute(
+                f"""
+                SELECT payload FROM groups
+                WHERE {where}
+                ORDER BY {sort_sql} {direction}, id ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, max(1, int(limit)), max(0, int(offset))],
+            ).fetchall()
+        return [_load_payload(row["payload"]) for row in rows], total
+
     def delete_group(self, group_id: str) -> None:
         with self.connection(write=True) as conn:
             conn.execute("DELETE FROM groups WHERE id = ?", (str(group_id),))
@@ -629,6 +675,51 @@ class SqliteStore:
                 "SELECT payload FROM peers ORDER BY created_at, id"
             ).fetchall()
         return [_load_payload(row["payload"]) for row in rows]
+
+    def list_peers_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str = "",
+        sort_by: str = "created_at",
+        sort_desc: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        text = str(search or "").strip()
+        if text:
+            pattern = _like_pattern(text)
+            clauses.append(
+                "(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' "
+                "OR bound_username LIKE ? ESCAPE '\\' OR lan_cidrs_text LIKE ? ESCAPE '\\')"
+            )
+            params.extend([pattern, pattern, pattern, pattern])
+        sort_sql = {
+            "created_at": "created_at",
+            "name": "name COLLATE NOCASE",
+            "bound_username": "bound_username COLLATE NOCASE",
+            "center_forward_priority": "center_forward_priority",
+            "id": "id",
+        }.get(str(sort_by or "created_at"), "created_at")
+        direction = "DESC" if sort_desc else "ASC"
+        where = " AND ".join(clauses)
+        with self.connection() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS n FROM peers WHERE {where}", params
+                ).fetchone()["n"]
+            )
+            rows = conn.execute(
+                f"""
+                SELECT payload FROM peers
+                WHERE {where}
+                ORDER BY {sort_sql} {direction}, id ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, max(1, int(limit)), max(0, int(offset))],
+            ).fetchall()
+        return [_load_payload(row["payload"]) for row in rows], total
 
     def delete_peer(self, peer_id: str) -> None:
         with self.connection(write=True) as conn:
