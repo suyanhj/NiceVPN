@@ -49,11 +49,15 @@ def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _read_json_object(path: Path) -> dict[str, Any]:
+def _read_json_value(path: Path) -> Any:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"读取 legacy JSON 失败: {path}: {exc}") from exc
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    raw = _read_json_value(path)
     if not isinstance(raw, dict):
         raise RuntimeError(f"legacy JSON 顶层必须为 object: {path}")
     return raw
@@ -127,8 +131,13 @@ def _import_firewall(store: SqliteStore) -> int:
     count = 0
     seen_ids: set[str] = set()
     for path in _legacy_json_files(FIREWALL_DIR):
-        raw = _read_json_object(path)
-        rows = raw.get("rules", [])
+        raw = _read_json_value(path)
+        if isinstance(raw, list):
+            rows = raw
+        elif isinstance(raw, dict):
+            rows = raw.get("rules", [])
+        else:
+            raise RuntimeError(f"防火墙 JSON 顶层必须为 object/list: {path}")
         if not isinstance(rows, list):
             raise RuntimeError(f"防火墙 JSON rules 必须为数组: {path}")
         owner_id = path.stem
