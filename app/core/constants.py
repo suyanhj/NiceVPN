@@ -30,7 +30,9 @@ VPN_CONNECTION_AUDIT_LOG_FILE = OPENVPN_LOG_ROOT / "openvpn-connection-audit.jso
 
 # ---------- 管理端应用数据（Python 进程读写，放项目 data/）----------
 DATA_DIR = BASE_DIR / "data"
-# 用户业务 JSON 由 UserService / 界面读写；.ovpn 见 OVPN_PROFILES_DIR
+# NiceVPN 结构化管理元数据 SQLite（Users / Groups / Peers / Center Firewall Rules）
+SQLITE_DB_FILE = DATA_DIR / "nicevpn.db"
+# 旧版本 JSON 目录；仅用于一次性迁移/兼容旧分发物，迁移后运行时不再读取
 USERS_DIR = DATA_DIR / "users"
 GROUPS_DIR = DATA_DIR / "groups"
 FIREWALL_DIR = DATA_DIR / "firewall"
