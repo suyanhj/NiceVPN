@@ -2,7 +2,6 @@
 """服务管理页面。"""
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Callable
@@ -24,13 +23,17 @@ from app.services.openvpn.instance import (
     stop_instance,
 )
 from app.services.peer_instance.service import PeerService
+from app.ui.adapters.services import adapt_local_service_view, adapt_peer_service_view
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import secondary_action
+from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.states import empty_state, error_state
+from app.ui.components.status import status_badge, structured_value
 
 logger = logging.getLogger(__name__)
 
 # 日志正文外层可滚动视口（供实时 tail 判断是否贴底并自动跟随）
-_LOG_VIEWPORT_ID = "vpn-log-tail-viewport"
-_LOG_TAIL_CODE_STYLE = "max-height: 500px; overflow-y: auto; overflow-x: auto; font-size: 12px;"
+_LOG_TAIL_CODE_STYLE = "height: min(500px, 55vh); font-size: 12px;"
 _LOG_TAIL_STICK_PX = 48
 # 非实时「刷新」展示行数；实时模式仅保留最新若干行，控制内存与 DOM
 _LOG_SNAPSHOT_MAX_LINES = 200
@@ -57,9 +60,9 @@ class ServicesPage:
         self._peer_refresh_generation = 0
         self._peer_refresh_concurrency = 4
         self._peer_refresh_running = False
-        self._refresh_button: Any = None
         # 本机 systemctl 启停与事件循环解耦：同实例不并发重复点
         self._local_instance_busy: set[str] = set()
+        self._peer_action_busy: set[str] = set()
         # background_tasks / run.io_bound 无当前 slot 栈时不能直接用 ui.notify
         self._ng_client: Any = None
 
@@ -109,55 +112,48 @@ class ServicesPage:
         c.safe_invoke(lambda: self._refresh_list())
 
     def render(self, *, initial_tab: str = "local", focus_peer_id: str | None = None):
-        """渲染服务管理页面。"""
+        """使用统一后台外壳渲染服务管理页面。"""
+
         try:
             self._ng_client = context.client
         except RuntimeError:
             self._ng_client = None
+
         config = load_config()
         self._instances: dict = dict(config.get("instances", {}))
         self._conf_dir: str = config.get("openvpn_conf_dir", "/etc/openvpn")
         self._active_tab = "peers" if initial_tab == "peers" else "local"
         self._focus_peer_id = str(focus_peer_id or "").strip()
 
-        with ui.column().classes("page-shell mgmt-page"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.element("div").classes("mgmt-header-row"):
-                    with ui.element("div").classes("mgmt-header-copy"):
-                        ui.label("服务管理").classes("mgmt-title")
-                        ui.label("本机 OpenVPN 实例与对端客户端服务；启停、日志与配置。").classes("mgmt-desc")
+        with ui.column().classes("page-shell mgmt-page services-page--v2"):
+            with ui.tabs(
+                value=self._active_tab,
+                on_change=self._on_service_tab_change,
+            ).classes("services-instance-tabs w-full") as self._service_tabs:
+                ui.tab("local", label="本机实例")
+                ui.tab("peers", label="对端实例")
 
-            with ui.element("div").classes("firewall-control-header firewall-tab-bar"):
-                with ui.tabs(value=self._active_tab, on_change=self._on_service_tab_change).classes(
-                    "firewall-compact-tabs"
-                ) as self._service_tabs:
-                    ui.tab("local", label="本机实例")
-                    ui.tab("peers", label="对端实例")
-                with ui.element("div").classes("firewall-btn-group"):
-                    self._refresh_button = ui.button("刷新", icon="refresh", on_click=self._refresh_current_tab).props(
-                        "outline dense no-caps no-ripple"
-                    ).classes("mgmt-toolbar-btn is-outline")
-
-            with ui.tab_panels(self._service_tabs, value=self._active_tab, keep_alive=False).classes(
-                "w-full min-h-0 flex-1 firewall-tabpanels"
-            ):
+            with ui.tab_panels(
+                self._service_tabs,
+                value=self._active_tab,
+                keep_alive=False,
+            ).classes("w-full min-h-0 flex-1 services-tabpanels"):
                 with ui.tab_panel("local"):
-                    with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                        with ui.element("div").classes("mgmt-list-head"):
-                            with ui.element("div").classes("service-list-meta"):
-                                ui.label("本机实例").classes("mgmt-kicker")
-                                self._running_chip = ui.label("0 Running").classes("service-running-chip")
-
-                        self._list_container = ui.column().classes("mgmt-record-list")
+                    with ui.element("section").classes("mgmt-panel mgmt-panel-list services-list-panel"):
+                        with ui.element("div").classes("mgmt-list-head services-list-head"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label("本机实例").classes("mgmt-kicker services-list-kicker")
+                                self._running_chip = ui.label("0 运行").classes("services-running-chip")
+                        self._list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_list()
-                with ui.tab_panel("peers"):
-                    with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
-                        with ui.element("div").classes("mgmt-list-head"):
-                            with ui.element("div").classes("service-list-meta"):
-                                ui.label("对端实例").classes("mgmt-kicker")
-                                self._peer_total_chip = ui.label("0 PEERS").classes("service-running-chip")
 
-                        self._peer_list_container = ui.column().classes("mgmt-record-list")
+                with ui.tab_panel("peers"):
+                    with ui.element("section").classes("mgmt-panel mgmt-panel-list services-list-panel"):
+                        with ui.element("div").classes("mgmt-list-head services-list-head"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label("对端实例").classes("mgmt-kicker services-list-kicker")
+                                self._peer_total_chip = ui.label("0 个").classes("services-running-chip")
+                        self._peer_list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_peer_client_list()
 
     def _on_service_tab_change(self, e) -> None:
@@ -166,7 +162,6 @@ class ServicesPage:
             self._peer_refresh_generation += 1
             self._peer_status_refreshers = []
             self._peer_refresh_running = False
-            self._set_refresh_button_busy(False)
         self._refresh_current_tab()
 
     def _refresh_current_tab(self) -> None:
@@ -178,39 +173,55 @@ class ServicesPage:
         else:
             self._refresh_list()
 
-    def _set_refresh_button_busy(self, busy: bool) -> None:
-        if self._refresh_button is None:
-            return
-        if busy:
-            self._refresh_button.disable()
-            self._refresh_button.set_text("刷新中")
-        else:
-            self._refresh_button.enable()
-            self._refresh_button.set_text("刷新")
-
     def _refresh_list(self):
-        """刷新实例列表。
+        """刷新本机实例列表，并把单个监控失败隔离为页面错误状态。"""
 
-        先使用 config.instances 中注册的名称；
-        再扫描 /etc/openvpn/server/*.conf 文件发现未注册但已安装的实例（实例可见性优化）。
-        """
         if self._list_container is None:
             return
 
         self._list_container.clear()
-        instance_names = self._collect_instance_names()
+        try:
+            instance_names = self._collect_instance_names()
+        except Exception as exc:
+            logger.exception("扫描本机 OpenVPN 实例失败")
+            if self._running_chip is not None:
+                self._running_chip.text = "加载失败"
+            with self._list_container:
+                error_state(
+                    str(exc),
+                    title="实例扫描失败",
+                    on_retry=self._refresh_list,
+                )
+            return
 
         if not instance_names:
             if self._running_chip is not None:
-                self._running_chip.text = "0 Running"
+                self._running_chip.text = "0 运行"
             with self._list_container:
-                ui.label("暂无本机实例。").classes("service-empty")
+                empty_state(
+                    "暂无本机实例",
+                    description="完成 OpenVPN 初始化后，实例会显示在这里。",
+                    icon="dns",
+                )
             return
 
-        statuses = self._monitor.check_all_instances(instance_names)
+        try:
+            statuses = self._monitor.check_all_instances(instance_names)
+        except Exception as exc:
+            logger.exception("读取本机 OpenVPN 实例状态失败")
+            if self._running_chip is not None:
+                self._running_chip.text = "状态失败"
+            with self._list_container:
+                error_state(
+                    str(exc),
+                    title="实例状态加载失败",
+                    on_retry=self._refresh_list,
+                )
+            return
+
         running_count = sum(1 for item in statuses if item.active)
         if self._running_chip is not None:
-            self._running_chip.text = f"{running_count} Running"
+            self._running_chip.text = f"{running_count} / {len(statuses)} 运行"
 
         with self._list_container:
             for status in statuses:
@@ -265,49 +276,6 @@ class ServicesPage:
         tail = parts[-max_lines:] if len(parts) > max_lines else parts
         return "\n".join(p.decode("utf-8", errors="replace") for p in tail)
 
-    @staticmethod
-    def _install_log_viewport_tail_follow_binding() -> None:
-        """在 document 上监听日志视口滚动，维护 window.__vpn_log_follow_tail（贴底才在实时刷新时跟新行）。"""
-        vid = json.dumps(_LOG_VIEWPORT_ID)
-        thresh = _LOG_TAIL_STICK_PX
-        ui.run_javascript(
-            f"""
-            (function() {{
-              if (window.__vpn_log_tail_follow_installed) return;
-              window.__vpn_log_tail_follow_installed = true;
-              window.__vpn_log_follow_tail = true;
-              document.addEventListener(
-                "scroll",
-                function(ev) {{
-                  const t = ev.target;
-                  if (!t || t.id !== {vid}) return;
-                  window.__vpn_log_follow_tail =
-                    t.scrollHeight - t.clientHeight - t.scrollTop <= {thresh};
-                }},
-                true
-              );
-            }})();
-            """
-        )
-
-    @staticmethod
-    def _scroll_log_viewport_if_follow_tail() -> None:
-        """正文更新后若用户仍在底部，则滚到最新（等布局完成再设 scrollTop）。"""
-        vid = json.dumps(_LOG_VIEWPORT_ID)
-        ui.run_javascript(
-            f"""
-            requestAnimationFrame(function() {{
-              requestAnimationFrame(function() {{
-                setTimeout(function() {{
-                  if (!window.__vpn_log_follow_tail) return;
-                  const el = document.getElementById({vid});
-                  if (el) el.scrollTop = el.scrollHeight;
-                }}, 0);
-              }});
-            }});
-            """
-        )
-
     def _open_log_tail_dialog(
         self,
         title: str,
@@ -343,32 +311,36 @@ class ServicesPage:
             else:
                 initial = load()
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl"):
-            ui.label(title).classes("text-h6")
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+            ui.label(title).classes("text-h6 services-view-dialog__title")
             header_ctrl = header_widget() if header_widget else None
-            path_caption = ui.label(initial[0] if initial else "").classes("section-caption")
-            log_container = ui.column().classes("w-full log-frame")
-            log_label_ref: dict[str, Any] = {"lbl": None}
+            path_caption = ui.label(initial[0] if initial else "").classes("section-caption services-view-dialog__caption")
+            follow_tail = True
+
+            def on_log_scroll(event) -> None:
+                """用户离开底部时暂停自动跟随，回到底部后恢复。"""
+
+                nonlocal follow_tail
+                remaining = (
+                    event.vertical_size
+                    - event.vertical_container_size
+                    - event.vertical_position
+                )
+                follow_tail = remaining <= _LOG_TAIL_STICK_PX
+
+            with ui.scroll_area(on_scroll=on_log_scroll).classes(
+                "w-full log-frame vpn-log-tail-viewport services-log-frame"
+            ).style(_LOG_TAIL_CODE_STYLE) as log_viewport:
+                log_label = ui.label(initial[1] if initial else "").classes(
+                    "w-full whitespace-pre-wrap break-words font-mono text-left"
+                ).style("font-size: 12px;")
 
             def set_log_body(text: str, *, follow_tail_after: bool) -> None:
-                """固定外层滚动 div，只改 label 正文，避免 clear 掉视口导致滚动与贴底判断失效。"""
-                if log_label_ref["lbl"] is None:
-                    log_container.clear()
-                    with log_container:
-                        with ui.element("div").props(f"id={_LOG_VIEWPORT_ID}").classes(
-                            "w-full vpn-log-tail-viewport"
-                        ).style(_LOG_TAIL_CODE_STYLE):
-                            log_label_ref["lbl"] = ui.label(text).classes(
-                                "w-full whitespace-pre-wrap break-words font-mono text-left"
-                            ).style("font-size: 12px;")
-                    ServicesPage._install_log_viewport_tail_follow_binding()
-                else:
-                    cast(Any, log_label_ref["lbl"]).text = text
-                if follow_tail_after:
-                    ServicesPage._scroll_log_viewport_if_follow_tail()
+                """更新日志正文，并仅在用户仍贴底时滚到最新内容。"""
 
-            if initial:
-                set_log_body(initial[1], follow_tail_after=False)
+                log_label.text = text
+                if follow_tail_after and follow_tail:
+                    log_viewport.scroll_to(percent=1.0)
 
             def do_refresh() -> None:
                 if precheck_file:
@@ -443,14 +415,19 @@ class ServicesPage:
                 header_ctrl.on_value_change(lambda _: do_manual_refresh())
                 do_refresh()
 
-            def close_log_dialog() -> None:
+            def cleanup_log_dialog() -> None:
                 if poll_timer is not None:
                     poll_timer.deactivate()
+
+            def close_log_dialog() -> None:
+                cleanup_log_dialog()
                 dialog.close()
 
+            dialog.on("hide", lambda _event: cleanup_log_dialog())
+
             with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
-                ui.button("刷新", icon="refresh", on_click=do_manual_refresh).props("outline")
-                ui.button("关闭", on_click=close_log_dialog).props("flat")
+                secondary_action("刷新", icon="refresh", on_click=do_manual_refresh)
+                secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
 
     def _resolve_instance_daemon_log_path(self, name: str) -> Path:
@@ -516,26 +493,54 @@ class ServicesPage:
         )
 
     def _refresh_peer_client_list(self) -> None:
-        """刷新对端客户端实例列表（不主动 SSH 扫描，避免打开页面阻塞）。"""
+        """刷新对端客户端实例列表，并保持并发限制与代次保护。"""
+
         if self._peer_list_container is None:
             return
         self._peer_refresh_running = True
-        self._set_refresh_button_busy(True)
-        peers = self._peer_service.list_all()
+
+        try:
+            peers = self._peer_service.list_all()
+        except Exception as exc:
+            logger.exception("读取对端服务列表失败")
+            self._peer_refresh_running = False
+            if self._peer_total_chip is not None:
+                self._peer_total_chip.text = "加载失败"
+            self._peer_list_container.clear()
+            with self._peer_list_container:
+                error_state(
+                    str(exc),
+                    title="对端服务列表加载失败",
+                    on_retry=self._refresh_peer_client_list,
+                )
+            return
+
         if self._peer_total_chip is not None:
-            self._peer_total_chip.text = f"{len(peers)} PEERS"
+            self._peer_total_chip.text = f"{len(peers)} 个"
+
         self._peer_list_container.clear()
         self._peer_refresh_generation += 1
         refresh_generation = self._peer_refresh_generation
         self._peer_status_refreshers = []
+
         if not peers:
             self._peer_refresh_running = False
-            self._set_refresh_button_busy(False)
             with self._peer_list_container:
-                ui.label("无对端，请先在「对端站点」添加。").classes("service-empty")
+                empty_state(
+                    "暂无对端服务",
+                    description="请先在“对端站点”创建对端并配置 SSH。",
+                    icon="hub",
+                )
             return
+
         focus = self._focus_peer_id
-        rows = sorted(peers, key=lambda p: (0 if str(p.get("id") or "") == focus else 1, p.get("name") or ""))
+        rows = sorted(
+            peers,
+            key=lambda peer: (
+                0 if str(peer.get("id") or "") == focus else 1,
+                str(peer.get("name") or ""),
+            ),
+        )
         with self._peer_list_container:
             for peer in rows:
                 self._peer_status_refreshers.append(self._render_peer_client_row(peer))
@@ -544,178 +549,248 @@ class ServicesPage:
             semaphore = asyncio.Semaphore(self._peer_refresh_concurrency)
 
             async def refresh_one(ref: Callable[[], Any]) -> None:
-                if self._active_tab != "peers" or refresh_generation != self._peer_refresh_generation:
+                if (
+                    self._active_tab != "peers"
+                    or refresh_generation != self._peer_refresh_generation
+                ):
                     return
                 async with semaphore:
-                    if self._active_tab != "peers" or refresh_generation != self._peer_refresh_generation:
+                    if (
+                        self._active_tab != "peers"
+                        or refresh_generation != self._peer_refresh_generation
+                    ):
                         return
                     await ref()
 
             try:
-                await asyncio.gather(*(refresh_one(ref) for ref in self._peer_status_refreshers), return_exceptions=True)
+                await asyncio.gather(
+                    *(refresh_one(ref) for ref in self._peer_status_refreshers),
+                    return_exceptions=True,
+                )
             finally:
                 if refresh_generation == self._peer_refresh_generation:
                     self._peer_refresh_running = False
-                    self._set_refresh_button_busy(False)
 
         ui.timer(0.1, refresh_all_peer_rows, once=True)
 
     def _render_peer_client_row(self, peer: dict) -> Callable[[], Any]:
-        """渲染一个对端客户端 systemd 实例卡片。"""
-        pid = str(peer.get("id") or "").strip()
-        name = str(peer.get("name") or pid)
-        host = str(peer.get("ssh_host") or "未配 SSH")
-        user = str(peer.get("ssh_username") or "—")
-        bound = str(peer.get("bound_username") or "—")
-        status_ref: dict[str, Any] = {"active": "unknown", "enabled": "unknown"}
-        controls_ref: dict[str, Any] = {"power": None, "boot": None}
+        """渲染对端客户端服务，并按远端状态动态更新操作能力。"""
 
-        with ui.element("div").classes("mgmt-record-card"):
-            with ui.element("div").classes("mgmt-record-main"):
-                with ui.element("div").classes("service-status-shell"):
-                    status_ref["dot"] = ui.element("span").classes("service-status-dot is-offline")
-                with ui.element("div").classes("mgmt-record-copy"):
-                    with ui.element("div").classes("service-name-row"):
-                        ui.label(name).classes("service-name")
-                        ui.label("PEER").classes("service-proto")
-                    with ui.element("div").classes("mgmt-record-meta"):
+        peer_id = str(peer.get("id") or "").strip()
+        initial_view = adapt_peer_service_view(
+            peer,
+            busy=peer_id in self._peer_action_busy,
+        )
+        refs: dict[str, Any] = {}
+
+        with ui.element("article").classes("mgmt-record-card services-record-card"):
+            with ui.element("div").classes("mgmt-record-main services-record-main"):
+                with ui.element("div").classes("services-record-icon"):
+                    ui.icon("cloud", size="22px").classes("services-record-icon__glyph")
+
+                with ui.element("div").classes("mgmt-record-copy services-record-copy"):
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        ui.label(str(initial_view["name"])).classes("services-record-name")
+                        ui.label("PEER").classes("services-record-proto")
+                        refs["status_box"] = ui.row().classes("items-center")
+
+                    with ui.element("div").classes("mgmt-record-meta services-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("dns", size="12px")
-                            ui.label(f"{user}@{host}")
+                            refs["endpoint"] = ui.label(
+                                f"{initial_view['ssh_username']}@{initial_view['host']}"
+                            )
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="12px")
-                            ui.label(f"绑 {bound}")
-                        with ui.element("span").classes("mgmt-meta-item"):
-                            status_ref["service"] = ui.label("服务: …")
-                        with ui.element("span").classes("mgmt-meta-item"):
-                            status_ref["state"] = ui.label("状态: …")
+                            ui.label(f"绑 {initial_view['bound_username']}")
+                        refs["service"] = ui.label("服务: 待查询").classes("mgmt-meta-item")
+                        refs["detail"] = ui.label("状态: 待查询").classes("mgmt-meta-item")
 
-            def update_action_buttons() -> None:
-                power_btn = controls_ref.get("power")
-                boot_btn = controls_ref.get("boot")
-                active = str(status_ref.get("active") or "unknown")
-                enabled = str(status_ref.get("enabled") or "unknown")
-                if power_btn is not None:
-                    if active == "active":
-                        power_btn.props("flat round dense no-caps no-ripple icon=stop")
-                        power_btn.classes(replace="mgmt-icon-btn is-stop")
-                    else:
-                        power_btn.props("flat round dense no-caps no-ripple icon=play_arrow")
-                        power_btn.classes(replace="mgmt-icon-btn is-start")
-                if boot_btn is not None:
-                    if enabled.startswith("enabled"):
-                        boot_btn.props("flat round dense no-caps no-ripple icon=block")
-                        boot_btn.classes(replace="mgmt-icon-btn is-neutral")
-                    else:
-                        boot_btn.props("flat round dense no-caps no-ripple icon=done_all")
-                        boot_btn.classes(replace="mgmt-icon-btn is-start")
-
-            async def refresh_status() -> None:
-                if not pid:
-                    status_ref["service"].text = "服务: 失败"
-                    status_ref["state"].text = "状态: 无 ID"
-                    status_ref["active"] = "unknown"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                if self._active_tab != "peers":
-                    return
-                status_ref["state"].text = "状态: 查询…"
-                try:
-                    data = await run.io_bound(self._peer_service.fetch_peer_client_service_status_via_ssh, pid)
-                except Exception as exc:
-                    if self._active_tab != "peers":
-                        return
-                    logger.error("查询对端客户端实例失败 peer=%s: %s", pid, exc)
-                    status_ref["service"].text = "服务: 失败"
-                    status_ref["state"].text = f"状态: {exc}"
-                    status_ref["dot"].classes(replace="service-status-dot is-offline")
-                    status_ref["active"] = "unknown"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                if self._active_tab != "peers":
-                    return
-                if not data.get("exists"):
-                    status_ref["service"].text = "服务: 未装"
-                    status_ref["state"].text = "状态: not-found"
-                    status_ref["dot"].classes(replace="service-status-dot is-offline")
-                    status_ref["active"] = "not-found"
-                    status_ref["enabled"] = "unknown"
-                    update_action_buttons()
-                    return
-                service = str(data.get("service") or "—")
-                active = str(data.get("active_state") or data.get("is_active") or "unknown")
-                enabled = str(data.get("unit_file_state") or data.get("is_enabled") or "unknown")
-                config = "config ok" if data.get("config_exists") else "config missing"
-                status_ref["service"].text = f"服务: {service}"
-                status_ref["state"].text = f"状态: {active} / {enabled} / {config}"
-                status_ref["active"] = active
-                status_ref["enabled"] = enabled
-                dot_class = "service-status-dot is-online" if active == "active" else "service-status-dot is-offline"
-                status_ref["dot"].classes(replace=dot_class)
-                update_action_buttons()
-
-            async def do_action(action: str) -> None:
-                if not pid:
-                    ui.notify("缺少对端 ID", type="negative")
-                    return
-                try:
-                    await run.io_bound(lambda: self._peer_service.control_peer_client_service_via_ssh(pid, action))
-                except Exception as exc:
-                    logger.error("对端客户端实例操作失败 peer=%s action=%s: %s", pid, action, exc)
-                    ui.notify(f"{action} 失败: {exc}", type="negative")
-                    return
-                ui.notify(f"已执行 {action}", type="positive")
-                await refresh_status()
-
-            async def do_toggle_power() -> None:
-                action = "stop" if str(status_ref.get("active") or "") == "active" else "start"
-                await do_action(action)
-
-            async def do_restart() -> None:
-                await do_action("restart")
-
-            async def do_toggle_boot() -> None:
-                enabled = str(status_ref.get("enabled") or "")
-                action = "disable" if enabled.startswith("enabled") else "enable"
-                await do_action(action)
-
-            with ui.element("div").classes("mgmt-actions"):
-                ui.button(
-                    icon="article",
-                    on_click=lambda p=pid, n=name: self._show_peer_client_file_log_viewer(p, n),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip(
-                    "客户端日志"
-                )
-                controls_ref["power"] = ui.button(
+            with ui.element("div").classes("mgmt-actions services-record-actions"):
+                refs["power"] = secondary_action(
+                    "启动",
                     icon="play_arrow",
-                    on_click=do_toggle_power,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-start").tooltip("启停")
-                ui.button(
+                    on_click=lambda: do_toggle_power(),
+                    disabled=True,
+                )
+                refs["restart"] = secondary_action(
+                    "重启",
                     icon="restart_alt",
-                    on_click=do_restart,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-restart").tooltip("重启")
-                controls_ref["boot"] = ui.button(
+                    on_click=lambda: do_action("restart"),
+                    disabled=True,
+                )
+                refs["boot"] = secondary_action(
+                    "启用自启",
                     icon="done_all",
-                    on_click=do_toggle_boot,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-start").tooltip("自启开关")
-            update_action_buttons()
-            return refresh_status
+                    on_click=lambda: do_toggle_boot(),
+                    disabled=True,
+                )
+                refs["log"] = secondary_action(
+                    "日志",
+                    icon="article",
+                    on_click=lambda p=peer_id, n=str(initial_view["name"]): self._show_peer_client_file_log_viewer(p, n),
+                    disabled=True,
+                )
+
+        state: dict[str, Any] = {"view": initial_view}
+
+        def render_status(view: dict[str, Any]) -> None:
+            state["view"] = view
+            refs["status_box"].clear()
+            with refs["status_box"]:
+                status_badge(
+                    str(view["status_tone"]),
+                    label=str(view["status_label"]),
+                    tooltip=str(view["detail"] or view["error"] or ""),
+                )
+            refs["service"].text = f"服务: {view['service']}"
+            refs["detail"].text = f"状态: {view['detail'] or view['status_label']}"
+
+            power = refs["power"]
+            if view["can_stop"]:
+                power.set_text("停止")
+                power.props("icon=stop")
+                power.enable()
+            elif view["can_start"]:
+                power.set_text("启动")
+                power.props("icon=play_arrow")
+                power.enable()
+            else:
+                power.disable()
+
+            restart = refs["restart"]
+            if view["can_restart"]:
+                restart.enable()
+            else:
+                restart.disable()
+
+            boot = refs["boot"]
+            if view["can_disable"]:
+                boot.set_text("禁用自启")
+                boot.props("icon=block")
+                boot.enable()
+            elif view["can_enable"]:
+                boot.set_text("启用自启")
+                boot.props("icon=done_all")
+                boot.enable()
+            else:
+                boot.disable()
+
+            if view["can_view_logs"]:
+                refs["log"].enable()
+            else:
+                refs["log"].disable()
+
+        render_status(initial_view)
+
+        async def refresh_status() -> None:
+            if not peer_id or self._active_tab != "peers":
+                return
+            render_status(
+                adapt_peer_service_view(
+                    peer,
+                    busy=peer_id in self._peer_action_busy,
+                )
+            )
+            try:
+                data = await run.io_bound(
+                    self._peer_service.fetch_peer_client_service_status_via_ssh,
+                    peer_id,
+                )
+            except Exception as exc:
+                if self._active_tab != "peers":
+                    return
+                logger.error("查询对端客户端实例失败 peer=%s: %s", peer_id, exc)
+                render_status(adapt_peer_service_view(peer, error=str(exc)))
+                return
+            if self._active_tab != "peers":
+                return
+            render_status(adapt_peer_service_view(peer, data))
+
+        async def do_action(action: str) -> None:
+            render_status(
+                adapt_peer_service_view(
+                    peer,
+                    {
+                        "exists": state["view"]["exists"],
+                        "active_state": state["view"]["active_state"],
+                        "unit_file_state": state["view"]["enabled_state"],
+                        "config_exists": state["view"]["config_exists"],
+                        "service": state["view"]["service"],
+                    },
+                    busy=True,
+                )
+            )
+            await self._run_peer_service_action(peer_id, action)
+            await refresh_status()
+
+        async def do_toggle_power() -> None:
+            action = "stop" if bool(state["view"].get("can_stop")) else "start"
+            await do_action(action)
+
+        async def do_toggle_boot() -> None:
+            action = "disable" if bool(state["view"].get("can_disable")) else "enable"
+            await do_action(action)
+
+        return refresh_status
+
+    async def _run_peer_service_action(self, peer_id: str, action: str) -> bool:
+        """执行对端 systemd 动作，并按 peer_id 互斥。"""
+
+        peer_id = str(peer_id or "").strip()
+        if not peer_id:
+            ui.notify("缺少对端 ID", type="negative")
+            return False
+        if action not in {"start", "stop", "restart", "enable", "disable"}:
+            raise ValueError(f"不支持的对端服务操作: {action}")
+        if peer_id in self._peer_action_busy:
+            ui.notify("该对端已有服务操作执行中，请稍候", type="info")
+            return False
+
+        self._peer_action_busy.add(peer_id)
+        try:
+            await run.io_bound(
+                lambda: self._peer_service.control_peer_client_service_via_ssh(
+                    peer_id,
+                    action,
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "对端客户端实例操作失败 peer=%s action=%s: %s",
+                peer_id,
+                action,
+                exc,
+            )
+            ui.notify(f"{action} 失败: {exc}", type="negative")
+            return False
+        finally:
+            self._peer_action_busy.discard(peer_id)
+
+        ui.notify(f"已执行 {action}", type="positive")
+        return True
 
     def _show_peer_client_file_log_viewer(self, peer_id: str, peer_name: str) -> None:
-        """查看对端 openvpn-client 文件日志。"""
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl"):
-            ui.label(f"对端日志 — {peer_name}").classes("text-h6")
-            path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption")
-            log_container = ui.column().classes("w-full log-frame")
+        """查看对端 openvpn-client 文件日志；关闭后不再写入失效元素。"""
+
+        state = {"open": True, "generation": 0}
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+            dialog.on("hide", lambda _event: state.update(open=False, generation=state["generation"] + 1))
+            ui.label(f"对端日志 — {peer_name}").classes("text-h6 services-view-dialog__title")
+            path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption services-view-dialog__caption")
+            log_container = ui.column().classes("w-full log-frame services-log-frame")
             log_ref: dict[str, Any] = {"label": None}
 
             def set_body(text: str) -> None:
+                if not state["open"]:
+                    return
                 if log_ref["label"] is None:
                     log_container.clear()
                     with log_container:
-                        with ui.element("div").classes("w-full vpn-log-tail-viewport").style(_LOG_TAIL_CODE_STYLE):
+                        with ui.element("div").classes("w-full vpn-log-tail-viewport").style(
+                            _LOG_TAIL_CODE_STYLE
+                        ):
                             log_ref["label"] = ui.label(text).classes(
                                 "w-full whitespace-pre-wrap break-words font-mono text-left"
                             ).style("font-size: 12px;")
@@ -723,6 +798,10 @@ class ServicesPage:
                     cast(Any, log_ref["label"]).text = text
 
             async def refresh_log() -> None:
+                if not state["open"]:
+                    return
+                state["generation"] += 1
+                generation = state["generation"]
                 set_body("读取…")
                 try:
                     data = await run.io_bound(
@@ -732,92 +811,119 @@ class ServicesPage:
                         )
                     )
                 except Exception as exc:
+                    if not state["open"] or generation != state["generation"]:
+                        return
                     logger.error("读取对端客户端日志失败 peer=%s: %s", peer_id, exc)
                     set_body(f"读取失败: {exc}")
                     ui.notify(f"读日志失败: {exc}", type="negative")
                     return
-                path_caption.text = f"日志: {data.get('log_path') or '/etc/openvpn/log/client.log'}"
+
+                if not state["open"] or generation != state["generation"]:
+                    return
+                path_caption.text = (
+                    f"日志: {data.get('log_path') or '/etc/openvpn/log/client.log'}"
+                )
                 set_body(str(data.get("log") or "(空)"))
 
             ui.timer(0.1, refresh_log, once=True)
             with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
-                ui.button("刷新", icon="refresh", on_click=refresh_log).props("outline no-caps")
-                ui.button("关闭", on_click=dialog.close).props("flat no-caps")
+                secondary_action("刷新", icon="refresh", on_click=refresh_log)
+                secondary_action("关闭", on_click=dialog.close)
+
         dialog.open()
 
     def _render_instance_row(self, status: InstanceStatus, instance_config: dict):
-        """渲染实例卡片。"""
-        proto = str(instance_config.get("proto", "udp")).upper()
-        port = instance_config.get("port", 1194)
-        subnet = instance_config.get("subnet") or instance_config.get("server") or "子网未配"
+        """使用统一状态和操作层级渲染本机实例卡片。"""
 
-        with ui.element("div").classes("mgmt-record-card"):
-            with ui.element("div").classes("mgmt-record-main"):
-                with ui.element("div").classes("service-status-shell"):
-                    ui.element("span").classes(
-                        "service-status-dot is-online" if status.active else "service-status-dot is-offline"
-                    )
+        view = adapt_local_service_view(
+            status,
+            instance_config,
+            busy=status.name in self._local_instance_busy,
+        )
 
-                with ui.element("div").classes("mgmt-record-copy"):
-                    with ui.element("div").classes("service-name-row"):
-                        ui.label(status.name).classes("service-name")
-                        ui.label(proto).classes("service-proto")
+        with ui.element("article").classes("mgmt-record-card services-record-card"):
+            with ui.element("div").classes("mgmt-record-main services-record-main"):
+                with ui.element("div").classes("services-record-icon"):
+                    ui.icon(
+                        "dns",
+                        size="22px",
+                    ).classes("text-primary")
 
-                    with ui.element("div").classes("mgmt-record-meta"):
+                with ui.element("div").classes("mgmt-record-copy services-record-copy"):
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        ui.label(str(view["name"])).classes("services-record-name")
+                        ui.label(str(view["proto"])).classes("services-record-proto")
+                        status_badge(
+                            str(view["status_tone"]),
+                            label=str(view["status_label"]),
+                        )
+
+                    with ui.element("div").classes("mgmt-record-meta services-record-meta"):
+                        structured_value(view["port"], kind="port")
                         with ui.element("span").classes("mgmt-meta-item"):
-                            ui.label(f"Port: {port}")
+                            ui.icon("people", size="12px")
+                            ui.label(f"在线 {view['client_count']}")
                         with ui.element("span").classes("mgmt-meta-item"):
-                            ui.label(f"在线 {status.client_count}")
-                        with ui.element("span").classes("mgmt-meta-item"):
+                            ui.icon("swap_vert", size="12px")
                             ui.label(
-                                f"↓{self._format_traffic(status.bytes_received)} "
-                                f"↑{self._format_traffic(status.bytes_sent)}"
+                                f"↓{view['traffic_received']} ↑{view['traffic_sent']}"
                             )
-                        with ui.element("span").classes("mgmt-meta-item"):
-                            ui.label("运行中" if status.active else "已停止")
-                        with ui.element("span").classes("mgmt-meta-item is-network"):
-                            ui.icon("router", size="12px")
-                            ui.label(str(subnet))
+                        structured_value(view["subnet"], kind="cidr")
 
-            with ui.element("div").classes("mgmt-actions"):
-                ui.button(
-                    icon="article",
-                    on_click=lambda name=status.name: self._show_log_viewer(name),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip("守护进程日志")
-                ui.button(
-                    icon="fingerprint",
-                    on_click=self._show_device_bind_log_viewer,
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip(
-                    "设备绑定"
-                )
-                ui.button(
-                    icon="poll",
-                    on_click=lambda name=status.name: self._show_status_log_viewer(name),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip("状态文件")
-                ui.button(
-                    icon="edit_note",
-                    on_click=lambda name=status.name: self._open_config_editor(name),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-neutral").tooltip("编辑 .conf")
-
-                if status.active:
-                    ui.button(
-                        icon="restart_alt",
-                        on_click=lambda name=status.name: self._confirm_restart(name),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-restart").tooltip("重启")
-                    ui.button(
-                        icon="stop",
-                        on_click=lambda name=status.name: self._confirm_stop(name),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-stop").tooltip("停止")
-                else:
+            with ui.element("div").classes("mgmt-actions services-record-actions"):
+                if view["can_start"]:
                     ui.button(
                         icon="play_arrow",
                         on_click=lambda name=status.name: self._confirm_start(name),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-start").tooltip("启动")
-                    restart_btn = ui.button(
-                        icon="restart_alt",
-                        on_click=lambda name=status.name: self._confirm_restart(name),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-restart").tooltip("重启")
-                    restart_btn.disable()
+                    ).props("flat round dense").classes(
+                        "services-icon-action services-icon-action--primary"
+                    ).tooltip("启动")
+                elif view["can_stop"]:
+                    ui.button(
+                        icon="stop",
+                        on_click=lambda name=status.name: self._confirm_stop(name),
+                    ).props("flat round dense").classes(
+                        "services-icon-action"
+                    ).tooltip("停止")
+
+                restart_button = ui.button(
+                    icon="restart_alt",
+                    on_click=lambda name=status.name: self._confirm_restart(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("重启")
+                if not bool(view["can_restart"]) or bool(view["busy"]):
+                    restart_button.disable()
+
+                ui.button(
+                    icon="article",
+                    on_click=lambda name=status.name: self._show_log_viewer(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("守护进程日志")
+
+                ui.button(
+                    icon="fingerprint",
+                    on_click=self._show_device_bind_log_viewer,
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("设备绑定日志")
+
+                ui.button(
+                    icon="poll",
+                    on_click=lambda name=status.name: self._show_status_log_viewer(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("OpenVPN 状态文件")
+
+                config_button = ui.button(
+                    icon="edit_note",
+                    on_click=lambda name=status.name: self._open_config_editor(name),
+                ).props("flat round dense").classes(
+                    "services-icon-action"
+                ).tooltip("编辑配置")
+                if not bool(view["can_edit_config"]):
+                    config_button.disable()
 
     @staticmethod
     def _format_traffic(n: int) -> str:
@@ -846,78 +952,106 @@ class ServicesPage:
         )
 
     def _confirm_start(self, name: str):
-        """启动前二次确认。"""
+        """启动前确认。"""
+
         confirm_dialog.show(
             f"启动 {name}？",
-            on_confirm=lambda: self._do_start(name),
-            title="启动",
-            confirm_color="primary",
+            on_confirm=lambda: self._queue_local_action(name, "start"),
+            title="启动实例",
+            impact="将启动本机 OpenVPN systemd 实例。",
+            danger_level="normal",
         )
 
     def _confirm_stop(self, name: str):
-        """停止前二次确认。"""
+        """停止前确认，明确在线会话影响。"""
+
         confirm_dialog.show(
-            f"停止 {name}？在线用户将断开。",
-            on_confirm=lambda: self._do_stop(name),
-            title="停止",
+            f"停止 {name}？",
+            on_confirm=lambda: self._queue_local_action(name, "stop"),
+            title="停止实例",
+            impact="当前在线用户会立即断开，需要客户端重新连接。",
+            danger_level="danger",
         )
 
     def _confirm_restart(self, name: str):
-        """重启前二次确认。"""
+        """重启前确认。"""
+
         confirm_dialog.show(
-            f"重启 {name}？在线会话将短暂中断。",
-            on_confirm=lambda: self._do_restart(name),
-            title="重启",
-            confirm_color="primary",
+            f"重启 {name}？",
+            on_confirm=lambda: self._queue_local_action(name, "restart"),
+            title="重启实例",
+            impact="在线会话会短暂中断，并重新加载当前配置。",
+            danger_level="warning",
         )
 
     def _do_start(self, name: str):
-        """执行启动：systemctl 在线程池执行，避免阻塞 UI。"""
-        try:
-            background_tasks.create(
-                self._async_systemctl_action(name, "start"),
-                name=f"ovpn-local-{name}-start",
-            )
-        except RuntimeError as exc:
-            logger.error("调度本机启动任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 启动任务未能排队", type="negative")
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "start")
 
     def _do_stop(self, name: str):
-        """执行停止：同上。"""
-        try:
-            background_tasks.create(
-                self._async_systemctl_action(name, "stop"),
-                name=f"ovpn-local-{name}-stop",
-            )
-        except RuntimeError as exc:
-            logger.error("调度本机停止任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 停止任务未能排队", type="negative")
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "stop")
 
     def _do_restart(self, name: str):
-        """执行重启：同上。"""
+        """兼容旧调用入口。"""
+
+        self._queue_local_action(name, "restart")
+
+    def _queue_local_action(self, name: str, action: str) -> bool:
+        """在创建后台任务前占用实例，消除重复点击竞态。"""
+
+        if name in self._local_instance_busy:
+            ui.notify(f"{name} 尚有本机操作进行中，请稍候", type="warning")
+            return False
+        if action not in {"start", "stop", "restart"}:
+            raise ValueError(f"不支持的本机服务操作: {action}")
+
+        self._local_instance_busy.add(name)
         try:
             background_tasks.create(
-                self._async_systemctl_action(name, "restart"),
-                name=f"ovpn-local-{name}-restart",
+                self._async_systemctl_action(name, action, reserved=True),
+                name=f"ovpn-local-{name}-{action}",
             )
         except RuntimeError as exc:
-            logger.error("调度本机重启任务失败 instance=%s: %s", name, exc)
-            ui.notify(f"{name} 重启任务未能排队", type="negative")
+            self._local_instance_busy.discard(name)
+            logger.error(
+                "调度本机服务任务失败 instance=%s action=%s: %s",
+                name,
+                action,
+                exc,
+            )
+            ui.notify(f"{name} {action} 任务未能排队", type="negative")
+            return False
+        return True
 
-    async def _async_systemctl_action(self, name: str, action: str) -> None:
-        """在线程池执行 start_instance / stop_instance / restart_instance，结束后再刷新列表。"""
-        if name in self._local_instance_busy:
-            self._notify_for_page(f"{name} 尚有本机操作进行中，请稍候", type="warning")
-            return
-        self._local_instance_busy.add(name)
+    async def _async_systemctl_action(
+        self,
+        name: str,
+        action: str,
+        *,
+        reserved: bool = False,
+    ) -> None:
+        """在线程池执行 systemctl；结束后释放互斥并刷新。"""
+
+        if not reserved:
+            if name in self._local_instance_busy:
+                self._notify_for_page(f"{name} 尚有本机操作进行中，请稍候", type="warning")
+                return
+            self._local_instance_busy.add(name)
+
         labels = {
             "start": ("正在启动", "已启动", "启动失败"),
             "stop": ("正在停止", "已停止", "停止失败"),
             "restart": ("正在重启", "已重启", "重启失败"),
         }
-        prog, ok_msg, fail_msg = labels[action]
+        progress_message, success_message, failure_message = labels[action]
         try:
-            self._notify_for_page(f"{prog} {name}…（后台执行 systemctl）", type="info")
+            self._notify_for_page(
+                f"{progress_message} {name}…（后台执行 systemctl）",
+                type="info",
+            )
             if action == "start":
                 ok = await run.io_bound(start_instance, name)
             elif action == "stop":
@@ -925,58 +1059,87 @@ class ServicesPage:
             else:
                 ok = await run.io_bound(restart_instance, name)
         except Exception as exc:
-            logger.exception("本机实例 systemctl 异常 instance=%s action=%s", name, action)
-            self._notify_for_page(f"{name} {fail_msg}: {exc}", type="negative")
+            logger.exception(
+                "本机实例 systemctl 异常 instance=%s action=%s",
+                name,
+                action,
+            )
+            self._notify_for_page(
+                f"{name} {failure_message}: {exc}",
+                type="negative",
+            )
             self._refresh_list_with_client()
             return
         finally:
             self._local_instance_busy.discard(name)
 
         if ok:
-            self._notify_for_page(f"{name} {ok_msg}", type="positive")
+            self._notify_for_page(f"{name} {success_message}", type="positive")
         else:
-            self._notify_for_page(f"{name} {fail_msg}", type="negative")
+            self._notify_for_page(f"{name} {failure_message}", type="negative")
         self._refresh_list_with_client()
 
     def _open_config_editor(self, name: str):
-        """打开配置编辑弹窗。"""
+        """使用统一表单编辑实例配置；保存失败时保留输入。"""
+
         conf_file = resolve_server_conf_dir(self._conf_dir) / f"{name}.conf"
         conf_path = str(conf_file)
-
         if not conf_file.exists():
             ui.notify(f"配置文件不存在: {conf_path}", type="negative")
             return
 
         try:
             backup_path = backup_before_edit(conf_path)
-            ui.notify(f"已备份: {backup_path}", type="info")
+            content = conf_file.read_text(encoding="utf-8")
         except Exception as exc:
-            ui.notify(f"备份失败: {exc}", type="negative")
+            logger.exception("打开实例配置失败 instance=%s", name)
+            ui.notify(f"读取或备份配置失败: {exc}", type="negative")
             return
 
-        content = conf_file.read_text(encoding="utf-8")
+        fields: dict[str, Any] = {}
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl"):
-            ui.label(f"编辑配置 - {name}.conf").classes("text-h6")
-            ui.label("保存后需重启实例生效。").classes("section-caption")
+        def body() -> None:
+            ui.label(f"已备份：{backup_path}").classes("section-caption")
+            ui.label("保存成功后需要重启实例才能生效。").classes("section-caption")
+            fields["content"] = (
+                ui.textarea(value=content)
+                .classes("w-full font-mono")
+                .props("outlined rows=20")
+            )
 
-            textarea = ui.textarea(value=content).classes("w-full font-mono q-mt-md").props("outlined rows=20")
+        def submit() -> bool:
+            return self._save_config_content(
+                conf_path,
+                str(fields["content"].value or ""),
+            )
 
-            with ui.row().classes("justify-end q-mt-md gap-sm"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "保存",
-                    icon="save",
-                    on_click=lambda: self._do_save_config(dialog, conf_path, textarea.value),
-                ).props("color=primary")
+        form = create_form_dialog(
+            f"编辑配置 — {name}.conf",
+            body=body,
+            on_submit=submit,
+            submit_label="保存",
+            close_on_success=True,
+        )
+        form.card.classes("w-full max-w-4xl")
+        form.open()
 
-        dialog.open()
+    def _save_config_content(self, conf_path: str, new_content: str) -> bool:
+        """保存实例配置；失败返回 False 以保留统一表单。"""
 
-    def _do_save_config(self, dialog, conf_path: str, new_content: str):
-        """保存配置。"""
         try:
             save_with_backup(conf_path, new_content)
-            dialog.close()
-            ui.notify("已保存，请重启实例", type="warning")
         except Exception as exc:
+            logger.exception("保存实例配置失败 path=%s", conf_path)
             ui.notify(f"保存失败: {exc}", type="negative")
+            return False
+        ui.notify("已保存配置；请重启实例使新配置生效", type="warning")
+        return True
+
+    def _do_save_config(self, dialog, conf_path: str, new_content: str):
+        """兼容旧调用入口。"""
+
+        success = self._save_config_content(conf_path, new_content)
+        if success and dialog is not None:
+            dialog.close()
+        return success
+

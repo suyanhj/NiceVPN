@@ -10,10 +10,31 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
 
 
+_ARGON2ID_HASH_PATTERN = re.compile(
+    r"^\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$"
+)
+
+
 class SystemConfig(BaseModel):
     """系统全局配置"""
 
     initialized: bool = Field(default=False, description="系统是否已初始化")
+    admin_username: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="管理后台单管理员用户名；与密码哈希同时配置时启用登录保护",
+    )
+    admin_password_hash: Optional[str] = Field(
+        default=None,
+        max_length=512,
+        description="使用 Argon2id PHC 格式保存的管理员密码哈希",
+    )
+    admin_session_lifetime_minutes: int = Field(
+        default=480,
+        ge=5,
+        le=10080,
+        description="管理后台登录会话有效期，单位为分钟",
+    )
     global_subnet: Optional[str] = Field(default=None, description="全局子网 CIDR")
     openvpn_bin: Optional[str] = Field(default=None, description="OpenVPN 可执行文件路径")
     easyrsa_dir: Optional[str] = Field(default=None, description="EasyRSA 目录路径")
@@ -40,9 +61,9 @@ class SystemConfig(BaseModel):
         default=False,
         description="是否启用「推送下载链接」到已选通知通道",
     )
-    notify_provider: Literal["none", "dingtalk", "wework"] = Field(
+    notify_provider: Literal["none", "dingtalk", "wework", "rocketchat"] = Field(
         default="none",
-        description="通知通道：none 未选；dingtalk 钉钉；wework 企业微信群机器人",
+        description="通知通道：none 未选；dingtalk 钉钉；wework 企业微信群机器人；rocketchat Rocket.Chat",
     )
     dingtalk_webhook: Optional[str] = Field(default=None, description="钉钉机器人 Webhook 地址")
     dingtalk_secret: Optional[str] = Field(
@@ -55,6 +76,26 @@ class SystemConfig(BaseModel):
     wework_webhook: Optional[str] = Field(
         default=None,
         description="企业微信群机器人 Webhook（https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…）",
+    )
+    rocketchat_webhook: Optional[str] = Field(
+        default=None,
+        description="Rocket.Chat Incoming Webhook 地址",
+    )
+    rocketchat_channel: Optional[str | list[str]] = Field(
+        default=None,
+        description="Rocket.Chat 频道，单个字符串或多个字符串列表",
+    )
+    rocketchat_username: Optional[str] = Field(
+        default="VPN管理",
+        description="Rocket.Chat 消息显示用户名",
+    )
+    rocketchat_icon_emoji: Optional[str] = Field(
+        default=":lock:",
+        description="Rocket.Chat 消息图标",
+    )
+    rocketchat_title: Optional[str] = Field(
+        default="OpenVPN",
+        description="Rocket.Chat attachment 标题",
     )
     download_base_url: Optional[str] = Field(
         default=None,
@@ -120,6 +161,41 @@ class SystemConfig(BaseModel):
             d["notify_enabled"] = True
             d["notify_provider"] = "dingtalk"
         return d
+
+    @field_validator("admin_username", "admin_password_hash", mode="before")
+    @classmethod
+    def normalize_admin_credentials(cls, value):
+        """将未配置或仅含空白的管理员凭据统一为 None。"""
+
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_admin_credentials(self):
+        """凭据必须同时缺失或同时有效，禁止认证配置静默降级。"""
+
+        has_username = self.admin_username is not None
+        has_password_hash = self.admin_password_hash is not None
+        if has_username != has_password_hash:
+            raise ValueError("管理员用户名和密码哈希必须同时配置或同时留空")
+        if not has_username:
+            return self
+
+        assert self.admin_username is not None
+        assert self.admin_password_hash is not None
+        if any(character.isspace() or ord(character) < 32 for character in self.admin_username):
+            raise ValueError("管理员用户名不能包含空白或控制字符")
+        if not _ARGON2ID_HASH_PATTERN.fullmatch(self.admin_password_hash):
+            raise ValueError("管理员密码哈希必须是有效的 Argon2id PHC 格式")
+        return self
+
+    @property
+    def admin_auth_enabled(self) -> bool:
+        """完整管理员凭据存在时才启用后台登录保护。"""
+
+        return self.admin_username is not None and self.admin_password_hash is not None
 
     @field_validator("device_bind_mode", mode="before")
     @classmethod

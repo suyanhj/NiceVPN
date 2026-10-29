@@ -1,0 +1,616 @@
+/*
+ * NiceVPN AG Grid Theme
+ *
+ * Faithful CSS translation of the AG Grid Theme Builder preset supplied
+ * for this project. NiceGUI currently accepts built-in theme names rather
+ * than arbitrary themeQuartz.withParams(...) objects, so Quartz remains the
+ * runtime base and these rules mirror the exported Theme API parameters.
+ *
+ * Theme Builder source:
+ * accentColor: #15BDE8
+ * backgroundColor: #0C0C0D
+ * borderColor: transparent
+ * borderRadius: 20
+ * browserColorScheme: dark
+ * cellHorizontalPaddingScale: 1
+ * chromeBackgroundColor: backgroundColor
+ * columnBorder: false
+ * fontFamily: Roboto
+ * fontSize: 16
+ * foregroundColor: #BBBEC9
+ * headerBackgroundColor: #182226
+ * headerFontWeight: 500
+ * headerTextColor: #FFFFFF
+ * headerVerticalPaddingScale: .9
+ * iconSize: 20
+ * rowBorder: false
+ * rowVerticalPaddingScale: 1.2
+ * sidePanelBorder: false
+ * spacing: 8
+ * wrapperBorder: false
+ * wrapperBorderRadius: 0
+ */
+
+.vpn-data-grid {
+  min-width: 0;
+  gap: var(--vpn-space-2);
+}
+
+.vpn-data-grid__grid {
+  min-height: 360px;
+
+  --ag-accent-color: #15bde8;
+  --ag-background-color: #0c0c0d;
+  --ag-foreground-color: #bbbec9;
+  --ag-data-color: #bbbec9;
+  --ag-secondary-foreground-color: #8d929f;
+
+  /* Theme Builder parameters mapped directly to AG Grid CSS properties. */
+  --ag-spacing: 8px;
+  --ag-border-color: transparent;
+  --ag-border-radius: 20px;
+  --ag-browser-color-scheme: dark;
+  --ag-cell-horizontal-padding-scale: 1;
+  --ag-chrome-background-color: #0c0c0d;
+  --ag-column-border: none;
+  --ag-font-family: "Roboto", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --ag-font-size: 16px;
+  --ag-header-background-color: #182226;
+  --ag-header-font-weight: 500;
+  --ag-header-text-color: #ffffff;
+  --ag-header-foreground-color: #ffffff;
+  --ag-header-vertical-padding-scale: 0.9;
+  --ag-icon-size: 20px;
+  --ag-row-border: none;
+  --ag-row-border-color: transparent;
+  --ag-row-vertical-padding-scale: 1.2;
+  --ag-side-panel-border: none;
+  --ag-wrapper-border: none;
+  --ag-wrapper-border-radius: 0;
+
+  --ag-header-column-separator-color: transparent;
+  --ag-input-focus-border-color: #15bde8;
+  --ag-checkbox-checked-color: #15bde8;
+  --ag-checkbox-indeterminate-color: #15bde8;
+  --ag-checkbox-unchecked-color: #68717d;
+  --ag-range-selection-border-color: #15bde8;
+  --ag-row-hover-color: rgba(21, 189, 232, 0.075);
+  --ag-selected-row-background-color: rgba(21, 189, 232, 0.13);
+}
+
+/* wrapperBorder=false / wrapperBorderRadius=0 */
+.vpn-data-grid__grid .ag-root-wrapper {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+}
+
+/* chromeBackgroundColor -> backgroundColor, header keeps its explicit colour */
+.vpn-data-grid__grid .ag-header,
+.vpn-data-grid__grid .ag-header-viewport,
+.vpn-data-grid__grid .ag-header-container {
+  background: #182226 !important;
+}
+
+.vpn-data-grid__grid .ag-header {
+  border: 0 !important;
+}
+
+.vpn-data-grid__grid .ag-header-cell {
+  border: 0 !important;
+  padding-block: 0;
+}
+
+.vpn-data-grid__grid .ag-header-cell-text {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.vpn-data-grid__grid .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-icon,
+.vpn-data-grid__grid .ag-sort-indicator-icon,
+.vpn-data-grid__grid .ag-icon {
+  color: #8f98a5;
+  font-size: 20px;
+  opacity: 0.78;
+  transition:
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-cell-menu-button,
+.vpn-data-grid__grid .ag-header-cell:hover .ag-header-icon,
+.vpn-data-grid__grid .ag-header-cell:hover .ag-sort-indicator-icon {
+  color: #15bde8;
+  opacity: 1;
+}
+
+/* backgroundColor + columnBorder=false + rowBorder=false */
+.vpn-data-grid__grid .ag-center-cols-viewport,
+.vpn-data-grid__grid .ag-center-cols-container,
+.vpn-data-grid__grid .ag-body-viewport,
+.vpn-data-grid__grid .ag-body,
+.vpn-data-grid__grid .ag-row,
+.vpn-data-grid__grid .ag-row-odd {
+  background: #0c0c0d !important;
+}
+
+.vpn-data-grid__grid .ag-row {
+  border: 0 !important;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-cell,
+.vpn-data-grid__grid .ag-header-cell {
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+
+.vpn-data-grid__grid .ag-cell {
+  color: #bbbec9;
+  font-size: 16px;
+}
+
+/* Theme Builder derives interaction states from the accent colour. */
+.vpn-data-grid__grid .ag-row-hover {
+  background: rgba(21, 189, 232, 0.075) !important;
+}
+
+.vpn-data-grid__grid .ag-row-selected {
+  background: rgba(21, 189, 232, 0.13) !important;
+  box-shadow: inset 3px 0 0 #15bde8;
+}
+
+.vpn-data-grid__grid .ag-cell-focus,
+.vpn-data-grid__grid .ag-cell-range-selected:not(.ag-cell-focus) {
+  border-color: rgba(21, 189, 232, 0.5) !important;
+}
+
+/* Pinned areas stay visually continuous with the body. */
+.vpn-data-grid__grid .ag-pinned-left-header,
+.vpn-data-grid__grid .ag-pinned-right-header {
+  background: #182226 !important;
+  border: 0 !important;
+}
+
+.vpn-data-grid__grid .ag-pinned-left-cols-container,
+.vpn-data-grid__grid .ag-pinned-right-cols-container,
+.vpn-data-grid__grid .ag-pinned-left-cols-container .ag-row,
+.vpn-data-grid__grid .ag-pinned-right-cols-container .ag-row {
+  background: #0c0c0d !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* borderRadius=20 is applied to interactive controls rather than the wrapper. */
+.vpn-data-grid__grid .ag-checkbox-input-wrapper,
+.vpn-data-grid__grid .ag-input-field-input,
+.vpn-data-grid__grid .ag-picker-field-wrapper,
+.vpn-data-grid__grid .ag-filter-select,
+.vpn-data-grid__grid .ag-menu-option {
+  border-radius: 20px;
+}
+
+.vpn-data-grid__grid .ag-checkbox-input-wrapper::after {
+  color: #15bde8;
+}
+
+/* Footer is part of the chrome and uses the background colour. */
+.vpn-data-grid__grid .ag-paging-panel {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 12px;
+  border: 0 !important;
+  background: #0c0c0d !important;
+  color: #8f929c;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vpn-data-grid__grid .ag-paging-page-size,
+.vpn-data-grid__grid .ag-paging-row-summary-panel,
+.vpn-data-grid__grid .ag-paging-page-summary-panel {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+}
+
+.vpn-data-grid__grid .ag-paging-page-size .ag-picker-field-wrapper {
+  display: inline-flex;
+  min-width: 54px;
+  height: 30px;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 8px;
+  border: 0 !important;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.vpn-data-grid__grid .ag-paging-page-size .ag-picker-field-display {
+  display: inline-flex;
+  align-items: center;
+  line-height: 28px;
+}
+
+.vpn-data-grid__grid .ag-paging-description,
+.vpn-data-grid__grid .ag-paging-row-summary-panel > span,
+.vpn-data-grid__grid .ag-paging-page-summary-panel > span {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  line-height: 1;
+}
+
+.vpn-data-grid__grid .ag-paging-page-summary-panel {
+  gap: 2px;
+}
+
+.vpn-data-grid__grid .ag-paging-button {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  place-items: center;
+  border-radius: 20px;
+  color: #8f929c;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.vpn-data-grid__grid .ag-paging-button:not(.ag-disabled):hover {
+  background: rgba(21, 189, 232, 0.10);
+  color: #15bde8;
+}
+
+.vpn-data-grid__grid .ag-paging-button.ag-disabled {
+  opacity: 0.28;
+}
+
+/* Menus / filters use the same generated palette. */
+.vpn-data-grid__grid .ag-menu,
+.vpn-data-grid__grid .ag-popup-child {
+  border: 0;
+  border-radius: 20px;
+  background: #182226;
+  color: #bbbec9;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.42);
+}
+
+.vpn-data-grid__grid .ag-input-field-input,
+.vpn-data-grid__grid .ag-picker-field-wrapper {
+  border-color: transparent;
+  background: #0c0c0d;
+  color: #bbbec9;
+}
+
+/* Shared display renderer vocabulary */
+.vpn-grid-primary-cell {
+  color: #f7f9fb;
+  font-weight: 500;
+}
+
+.vpn-grid-mono {
+  color: #bbbec9;
+  font-family: var(--vpn-font-mono);
+  font-size: 13px;
+}
+
+.vpn-grid-renderer-cell {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.vpn-grid-status-pill {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(187, 190, 201, 0.09);
+  color: #bbbec9;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vpn-grid-status-pill__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.vpn-grid-status-pill--success {
+  background: rgba(45, 212, 191, 0.12);
+  color: #61dcc7;
+}
+
+.vpn-grid-status-pill--warning {
+  background: rgba(245, 158, 11, 0.13);
+  color: #f5b84c;
+}
+
+.vpn-grid-status-pill--failed {
+  background: rgba(251, 113, 133, 0.12);
+  color: #fb8fa2;
+}
+
+.vpn-grid-stacked-value {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.vpn-grid-stacked-value__primary {
+  color: #f2f4f7;
+  font-family: var(--vpn-font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+.vpn-grid-stacked-value__secondary {
+  color: #777c87;
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.vpn-grid-stacked-value__secondary--warning {
+  color: #f5b84c;
+}
+
+.vpn-grid-stacked-value__secondary--danger {
+  color: #fb8fa2;
+}
+
+.vpn-grid-inline-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(21, 189, 232, 0.22);
+  border-radius: 20px;
+  background: rgba(21, 189, 232, 0.07);
+  color: #49ccec;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 30px;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.vpn-grid-inline-action:hover {
+  border-color: rgba(21, 189, 232, 0.44);
+  background: rgba(21, 189, 232, 0.13);
+  color: #7ddcf3;
+}
+
+.vpn-grid-action-cell {
+  justify-content: center;
+  cursor: default;
+}
+
+/* Community Set Filter: mirrors AG Grid's Set Filter UX without Enterprise modules. */
+.vpn-grid-set-filter {
+  width: 268px;
+  padding: 8px;
+  background: #111214;
+  color: #bbbec9;
+}
+
+.vpn-grid-set-filter__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  margin-bottom: 7px;
+  border: 2px solid #15bde8;
+  border-radius: 20px;
+  background: #0c0c0d;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.vpn-grid-set-filter__search:focus-within {
+  border-color: #27cef5;
+  box-shadow: 0 0 0 3px rgba(21, 189, 232, 0.10);
+}
+
+.vpn-grid-set-filter__search-icon {
+  width: 36px;
+  flex: 0 0 36px;
+  color: #74808c;
+  font-size: 20px;
+  text-align: center;
+}
+
+.vpn-grid-set-filter__search input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 12px 0 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #e3e6eb;
+  font: inherit;
+  font-size: 14px;
+}
+
+.vpn-grid-set-filter__search input::placeholder {
+  color: #6f747e;
+}
+
+.vpn-grid-set-filter__search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.vpn-grid-set-filter__list {
+  max-height: 268px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #777b82 #26272a;
+  scrollbar-width: thin;
+}
+
+.vpn-grid-set-filter__list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.vpn-grid-set-filter__list::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: #26272a;
+}
+
+.vpn-grid-set-filter__list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #777b82;
+}
+
+.vpn-grid-set-filter__option {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  gap: 9px;
+  padding: 3px 4px;
+  border-radius: 7px;
+  color: #bbbfc9;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.2;
+  user-select: none;
+  transition:
+    background 100ms ease,
+    color 100ms ease;
+}
+
+.vpn-grid-set-filter__option:hover {
+  background: rgba(21, 189, 232, 0.07);
+  color: #edf1f5;
+}
+
+.vpn-grid-set-filter__option--all {
+  color: #aeb3bc;
+}
+
+.vpn-grid-set-filter__option-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-grid-set-filter__checkbox {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid #565b63;
+  border-radius: 50%;
+  background: #27292c;
+  cursor: pointer;
+  transition:
+    border-color 100ms ease,
+    background 100ms ease,
+    box-shadow 100ms ease;
+}
+
+.vpn-grid-set-filter__checkbox:hover {
+  border-color: rgba(21, 189, 232, 0.70);
+}
+
+.vpn-grid-set-filter__checkbox:checked {
+  border-color: #15bde8;
+  background: #15bde8;
+}
+
+.vpn-grid-set-filter__checkbox:checked::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  width: 5px;
+  height: 9px;
+  border: solid #071014;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.vpn-grid-set-filter__checkbox:indeterminate {
+  border-color: #3f4247;
+  background: #3f4247;
+}
+
+.vpn-grid-set-filter__checkbox:indeterminate::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 8px;
+  width: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: #111214;
+}
+
+.vpn-grid-set-filter__empty {
+  padding: 16px 8px;
+  color: #707680;
+  font-size: 12px;
+  text-align: center;
+}
+
+.vpn-data-grid__summary {
+  align-self: flex-end;
+  color: #777c87;
+  font-size: 12px;
+}
+
+/* Managed row dragging: make the whole draggable row feel draggable. */
+.vpn-data-grid__grid .ag-row:has(.ag-row-drag) {
+  cursor: grab;
+}
+
+.vpn-data-grid__grid .ag-row:has(.ag-row-drag):active {
+  cursor: grabbing;
+}
+
+@media (max-width: 767px) {
+  .vpn-data-grid__grid {
+    min-height: 320px;
+    --ag-font-size: 14px;
+    --ag-spacing: 6px;
+    --ag-cell-horizontal-padding-scale: 1;
+  }
+
+  .vpn-data-grid__grid .ag-cell,
+  .vpn-data-grid__grid .ag-header-cell-text {
+    font-size: 14px;
+  }
+}

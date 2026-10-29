@@ -1,0 +1,141 @@
+/* First-run wizard: preserve the onboarding layout while matching the V2 console palette. */
+.page-shell--setup {
+  color: #bbbec9;
+  background: #08090b;
+}
+
+.page-shell--setup .setup-shell {
+  border: 1px solid rgba(21, 189, 232, 0.14);
+  background: #0c0c0d;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+}
+
+.page-shell--setup .setup-brand {
+  background:
+    radial-gradient(circle at 16% 18%, rgba(21, 189, 232, 0.14), transparent 29%),
+    radial-gradient(circle at 82% 78%, rgba(45, 212, 191, 0.10), transparent 31%),
+    linear-gradient(135deg, #0c0c0d 0%, #111214 56%, #142025 100%);
+  color: #f5f7f9;
+}
+
+.page-shell--setup .setup-brand::after {
+  background: radial-gradient(circle, rgba(21, 189, 232, 0.12), transparent 68%);
+}
+
+.page-shell--setup .setup-brand::before {
+  background-image:
+    linear-gradient(rgba(21, 189, 232, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(21, 189, 232, 0.035) 1px, transparent 1px);
+}
+
+.page-shell--setup .setup-brand-badge {
+  border-color: rgba(21, 189, 232, 0.22);
+  background: rgba(21, 189, 232, 0.075);
+  color: #8be8ff;
+}
+
+.page-shell--setup .setup-brand-title,
+.page-shell--setup .setup-status-title,
+.page-shell--setup .setup-point-title,
+.page-shell--setup .setup-title,
+.page-shell--setup .step-chip-title {
+  color: #f5f7f9;
+}
+
+.page-shell--setup .setup-brand-copy {
+  color: rgba(187, 190, 201, 0.84);
+}
+
+.page-shell--setup .setup-status-card {
+  border-color: rgba(21, 189, 232, 0.15);
+  background: linear-gradient(135deg, rgba(17, 18, 20, 0.92), rgba(20, 32, 37, 0.78));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+}
+
+.page-shell--setup .setup-status-kicker {
+  color: #49ccec;
+}
+
+.page-shell--setup .setup-status-copy,
+.page-shell--setup .setup-point-copy {
+  color: rgba(187, 190, 201, 0.72);
+}
+
+.page-shell--setup .setup-point {
+  border-color: rgba(21, 189, 232, 0.10);
+  background: rgba(17, 18, 20, 0.76);
+}
+
+.page-shell--setup .setup-panel {
+  border-left-color: rgba(21, 189, 232, 0.13) !important;
+  background: #0c0c0d !important;
+}
+
+.page-shell--setup .step-chip {
+  border-color: rgba(187, 190, 201, 0.10);
+  background: #111214;
+}
+
+.page-shell--setup .step-chip.is-current {
+  border-color: rgba(21, 189, 232, 0.35);
+  background: rgba(21, 189, 232, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(21, 189, 232, 0.035);
+}
+
+.page-shell--setup .step-chip.is-done {
+  border-color: rgba(34, 197, 94, 0.20);
+  background: rgba(34, 197, 94, 0.075);
+}
+
+.page-shell--setup .step-chip-index {
+  color: #8f98a5;
+}
+
+.page-shell--setup .log-frame {
+  border-color: rgba(21, 189, 232, 0.12);
+  background: #08090b;
+}
+
+.page-shell--setup .log-frame .q-log {
+  color: #bbbec9 !important;
+}
+
+.page-shell--setup .q-field__control,
+.page-shell--setup .q-field--outlined .q-field__control {
+  border-radius: 10px !important;
+  background: #111214;
+  color: #f5f7f9;
+}
+
+.page-shell--setup .q-field__native,
+.page-shell--setup .q-field__input {
+  color: #f5f7f9 !important;
+}
+
+.page-shell--setup .q-field__label,
+.page-shell--setup .q-placeholder {
+  color: #8f929c !important;
+}
+
+.page-shell--setup .q-field--outlined .q-field__control:before {
+  border-color: rgba(187, 190, 201, 0.15) !important;
+}
+
+.page-shell--setup .q-field--focused .q-field__control:after {
+  border-color: #15bde8 !important;
+}
+
+.page-shell--setup .q-separator {
+  background: rgba(187, 190, 201, 0.10) !important;
+}
+
+@media (max-width: 768px) {
+  .page-shell--setup .setup-brand,
+  .page-shell--setup .setup-panel {
+    padding: 22px !important;
+  }
+
+  .page-shell--setup .setup-brand-title {
+    font-size: clamp(28px, 8vw, 40px);
+  }
+}

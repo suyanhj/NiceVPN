@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-vpn-bg: #070a0f;
+  --color-vpn-panel: #10151e;
+  --color-vpn-border: rgba(255, 255, 255, 0.075);
+  --color-vpn-brand: #6ea8ff;
+  --color-vpn-accent: #58dbc7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vpn-motion-safe {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

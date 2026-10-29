@@ -49,3 +49,37 @@ def test_legacy_webhook_only_enables_dingtalk() -> None:
     )
     assert cfg.notify_enabled is True
     assert cfg.notify_provider == "dingtalk"
+
+
+@patch("app.core.config.load_config")
+@patch(
+    "app.services.notify.plugins.rocketchat_notify.send_rocketchat_text"
+)
+def test_send_download_link_dispatches_rocketchat(
+    mock_send: MagicMock,
+    mock_load: MagicMock,
+) -> None:
+    """启用 Rocket.Chat 时 registry 能分发到已注册内置插件。"""
+
+    mock_load.return_value = {
+        "notify_enabled": True,
+        "notify_provider": "rocketchat",
+        "rocketchat_webhook": "https://chat.example/hooks/abc",
+        "rocketchat_channel": ["#vpn", "#security"],
+        "rocketchat_username": "VPN Bot",
+        "rocketchat_icon_emoji": ":shield:",
+        "rocketchat_title": "VPN Alert",
+    }
+    mock_send.return_value = {"status_code": 200}
+
+    assert send_download_link(
+        "alice",
+        "https://vpn.example/download/token",
+    ) is True
+    mock_send.assert_called_once()
+    args = mock_send.call_args
+    assert args.args[0] == "https://chat.example/hooks/abc"
+    assert args.args[1] == ["#vpn", "#security"]
+    assert args.kwargs["username"] == "VPN Bot"
+    assert args.kwargs["icon_emoji"] == ":shield:"
+    assert args.kwargs["title"] == "VPN Alert"

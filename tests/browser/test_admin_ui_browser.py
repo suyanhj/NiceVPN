@@ -1,0 +1,378 @@
+# -*- coding: utf-8 -*-
+"""真实 Chrome：桌面/窄屏、ECharts、菜单和表单 smoke。"""
+
+from __future__ import annotations
+
+import pytest
+from nicegui.testing import Screen
+from selenium.webdriver import ActionChains
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+
+
+pytestmark = pytest.mark.nondestructive
+
+
+ROUTES = (
+    ("/", "仪表盘"),
+    ("/users", "用户管理"),
+    ("/groups", "组管理"),
+    ("/peers", "对端站点"),
+    ("/peers/manual", "对端部署说明"),
+    ("/firewall", "防火墙规则"),
+    ("/certs", "证书管理"),
+    ("/services", "服务管理"),
+    ("/settings", "系统设置"),
+    ("/init", "安全接入平台初始化"),
+)
+
+
+def _click_q_tab(screen: Screen, label: str) -> None:
+    """精确点击 Quasar Tab，避免 Screen.click 的子串匹配命中说明文字。"""
+
+    tabs = screen.selenium.find_elements(By.CSS_SELECTOR, ".q-tab")
+    target = next(
+        (
+            tab for tab in tabs
+            if tab.is_displayed() and tab.text.strip() == label
+        ),
+        None,
+    )
+    assert target is not None, f"missing visible q-tab: {label}"
+    target.click()
+    screen.wait(0.2)
+
+
+def _click_aria_button(screen: Screen, label: str) -> None:
+    """点击仅图标按钮，使用 aria-label 保持无障碍语义与测试稳定性。"""
+
+    button = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        f'button[aria-label="{label}"]',
+    )
+    assert button.is_displayed(), f"hidden aria button: {label}"
+    screen.selenium.execute_script("arguments[0].click()", button)
+    screen.wait(0.2)
+
+
+def _assert_no_outer_horizontal_overflow(screen: Screen) -> None:
+    result = screen.selenium.execute_script(
+        """
+        const root = document.documentElement;
+        const body = document.body;
+        return {
+          inner: window.innerWidth,
+          root: root.scrollWidth,
+          body: body ? body.scrollWidth : 0,
+        };
+        """
+    )
+    widest = max(int(result["root"]), int(result["body"]))
+    assert widest <= int(result["inner"]) + 2, result
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_all_primary_routes_have_no_outer_horizontal_overflow(
+    screen: Screen,
+    width: int,
+    height: int,
+) -> None:
+    screen.selenium.set_window_size(width, height)
+
+    for route, title in ROUTES:
+        screen.open(route)
+        screen.should_contain(title)
+        screen.wait(0.2)
+        duplicate_headers = screen.selenium.execute_script(
+            "return document.querySelectorAll('.vpn-page-header').length"
+        )
+        assert int(duplicate_headers) == 0
+        _assert_no_outer_horizontal_overflow(screen)
+
+
+def test_certificate_status_set_filter_opens_and_searches_values(
+    screen: Screen,
+) -> None:
+    """Community 自定义 Set Filter 能从状态列表中搜索并多选。"""
+
+    screen.selenium.set_window_size(1280, 900)
+    screen.open("/certs")
+    screen.should_contain("证书管理")
+    screen.wait(0.4)
+
+    grid_geometry = screen.selenium.execute_script(
+        """
+        const describe = (selector) => {
+          const el = document.querySelector(selector);
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return {
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            paddingTop: style.paddingTop,
+            paddingBottom: style.paddingBottom,
+            boxSizing: style.boxSizing,
+            overflow: style.overflow,
+          };
+        };
+        const grid = describe('.certs-page--v2 .vpn-data-grid__grid');
+        if (!grid) return null;
+        return {
+          height: grid.height,
+          bottomGap: window.innerHeight - grid.bottom,
+          innerHeight: window.innerHeight,
+          qPage: describe('.q-page'),
+          niceguiContent: describe('.nicegui-content'),
+          vpnShell: describe('.vpn-shell'),
+          certsPage: describe('.certs-page--v2'),
+          dataRegion: describe('.certs-data-region'),
+          grid,
+        };
+        """
+    )
+    assert grid_geometry is not None
+    # 回归目标不是某个固定像素高度，而是 Grid 真正吃满 data region，
+    # 同时分页栏保持在视口底部安全区内。
+    grid_height = float(grid_geometry["height"])
+    region_height = float(grid_geometry["dataRegion"]["height"])
+    assert grid_height >= 300, grid_geometry
+    assert abs(grid_height - region_height) <= 2, grid_geometry
+    assert 0 <= float(grid_geometry["bottomGap"]) <= 48, grid_geometry
+
+    header = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.ag-header-cell[col-id="status_label"]',
+    )
+    filter_button = header.find_element(
+        By.CSS_SELECTOR,
+        ".ag-header-cell-filter-button",
+    )
+    screen.selenium.execute_script("arguments[0].click()", filter_button)
+    screen.wait(0.2)
+
+    popup = screen.selenium.find_element(By.CSS_SELECTOR, ".vpn-grid-set-filter")
+    assert popup.is_displayed()
+    assert "(全选)" in popup.text
+    assert "有效" in popup.text
+    assert "即将到期" in popup.text
+
+    search = popup.find_element(By.CSS_SELECTOR, 'input[type="search"]')
+    search.send_keys("即将")
+    screen.wait(0.1)
+
+    assert "即将到期" in popup.text
+    assert "有效" not in popup.text
+
+
+def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
+    screen.selenium.set_window_size(1440, 900)
+    screen.open("/")
+    screen.should_contain("服务健康度")
+    screen.should_contain("当前累计流量分布")
+    canvas_count = screen.selenium.execute_script(
+        "return document.querySelectorAll('canvas').length"
+    )
+    assert int(canvas_count) >= 2
+
+    v2_cards = screen.selenium.execute_script(
+        "return document.querySelectorAll('.vpn-metric-card--v2').length"
+    )
+    spotlight_hosts = screen.selenium.execute_script(
+        "return document.querySelectorAll('.vpn-v2-spotlight-host').length"
+    )
+    assert int(v2_cards) == 3
+    assert int(spotlight_hosts) == 3
+
+
+
+def test_firewall_priority_drag_reorders_and_saves_in_chrome(
+    screen: Screen,
+) -> None:
+    """真实 Chrome 拖动后必须将目标索引传回服务端并保存。"""
+
+    screen.selenium.set_window_size(1440, 900)
+    screen.open("/firewall")
+    screen.wait(0.5)
+
+    def center_rule_ids():
+        return screen.selenium.execute_script(
+            """
+            return Array.from(document.querySelectorAll(
+              ".firewall-center-panel .ag-center-cols-container .ag-row:not(.ag-row-pinned)"
+            ))
+              .map((row) => row.getAttribute("row-id") || "")
+              .filter((row_id) => row_id.startsWith("rule-"));
+            """
+        )
+
+    WebDriverWait(screen.selenium, 5).until(lambda _driver: len(center_rule_ids()) >= 2)
+    before = center_rule_ids()
+    assert before[:2] == ["rule-001", "rule-002"], before
+    duplicate_counts = screen.selenium.execute_script(
+        """
+        return {
+          gridSummaries: document.querySelectorAll('.firewall-center-panel .vpn-data-grid__summary').length,
+          footerCounts: document.querySelectorAll('.firewall-center-panel .firewall-footer-count').length,
+          footerHints: document.querySelectorAll('.firewall-center-panel .firewall-footer-hint').length,
+        };
+        """
+    )
+    assert duplicate_counts == {
+        "gridSummaries": 0,
+        "footerCounts": 0,
+        "footerHints": 0,
+    }, duplicate_counts
+
+    _click_aria_button(screen, "调整优先级")
+    screen.wait(0.5)
+
+    handle = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.firewall-center-panel .ag-row[row-index="0"] .ag-row-drag',
+    )
+    target = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.firewall-center-panel .ag-row[row-index="1"] .ag-cell[col-id="priority"]',
+    )
+    assert handle.is_displayed()
+
+    actions = ActionChains(screen.selenium)
+    actions.move_to_element(handle).click_and_hold(handle)
+    actions.pause(0.2).move_to_element(target).pause(0.2).release().perform()
+    screen.wait(0.3)
+    WebDriverWait(screen.selenium, 5).until(
+        lambda _driver: center_rule_ids()[:2] == ["rule-002", "rule-001"]
+    )
+    assert center_rule_ids()[:2] == ["rule-002", "rule-001"], "drag did not change visible row order"
+
+    _click_aria_button(screen, "保存排序")
+
+    WebDriverWait(screen.selenium, 5).until(
+        lambda _driver: center_rule_ids()[:2] == ["rule-002", "rule-001"]
+    )
+    assert center_rule_ids()[:2] == ["rule-002", "rule-001"]
+
+
+
+def test_init_wizard_uses_v2_palette_and_keeps_setup_steps(
+    screen: Screen,
+) -> None:
+    """初始化向导沿用新版黑灰青蓝主题，步骤流程仍可正常渲染。"""
+
+    screen.selenium.set_window_size(1440, 900)
+    screen.open("/init")
+    screen.should_contain("安全接入平台初始化")
+
+    appearance = screen.selenium.execute_script(
+        """
+        const brand = document.querySelector('.page-shell--setup .setup-brand');
+        const panel = document.querySelector('.page-shell--setup .setup-panel');
+        return {
+          brandBackground: brand ? getComputedStyle(brand).backgroundImage : "",
+          panelBackground: panel ? getComputedStyle(panel).backgroundColor : "",
+          stepCount: document.querySelectorAll('.page-shell--setup .step-chip').length,
+        };
+        """
+    )
+    assert "21, 189, 232" in appearance["brandBackground"], appearance
+    assert appearance["panelBackground"] == "rgb(12, 12, 13)", appearance
+    assert int(appearance["stepCount"]) >= 1, appearance
+
+
+def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
+    screen: Screen,
+) -> None:
+    screen.selenium.set_window_size(1280, 900)
+
+    screen.open("/users")
+    _click_aria_button(screen, "新建用户")
+    screen.should_contain("创建数量")
+    screen.should_contain("所属组")
+
+    screen.open("/peers")
+    screen.click("新建对端")
+    screen.should_contain("新建对端站点")
+    screen.should_contain("SSH 认证")
+
+    screen.open("/firewall")
+    screen.wait(0.3)
+    selection_counts = screen.selenium.execute_script(
+        """
+        return Array.from(
+          document.querySelectorAll(
+            ".firewall-center-panel .ag-row:not(.ag-row-pinned)"
+          )
+        )
+          .filter((row) => row.querySelector('.ag-cell[col-id="id"]')?.textContent.trim())
+          .map((row) => row.querySelectorAll('input.ag-checkbox-input[type="checkbox"]').length);
+        """
+    )
+    assert all(count == 1 for count in selection_counts), selection_counts
+    for label in (
+        "新建规则",
+        "导入",
+        "导出",
+        "批量启用",
+        "批量停用",
+        "批量删除",
+    ):
+        button = screen.selenium.find_element(
+            By.CSS_SELECTOR,
+            f'button[aria-label="{label}"]',
+        )
+        assert button.is_displayed(), label
+    screen.click("对端远端")
+    screen.should_contain("从对端拉取")
+
+    screen.open("/certs")
+    screen.click("高级操作")
+    screen.should_contain("更新 CRL")
+    screen.should_contain("重建 CA")
+
+    screen.open("/services")
+    screen.click("对端实例")
+    screen.should_contain("对端实例")
+
+    screen.open("/settings")
+    settings_geometry = screen.selenium.execute_script(
+        """
+        const page = document.querySelector(".settings-page--v2");
+        const section = document.querySelector(".settings-page--v2 .vpn-form-section");
+        const actions = Array.from(
+          document.querySelectorAll(
+            ".settings-page--v2 .vpn-action:not(.vpn-action--icon-only)"
+          )
+        ).filter((button) => {
+          const style = getComputedStyle(button);
+          return style.display !== "none" && style.visibility !== "hidden";
+        });
+        const pageWidth = page?.getBoundingClientRect().width ?? 0;
+        const sectionWidth = section?.getBoundingClientRect().width ?? 0;
+        const radii = actions.map((button) =>
+          Number.parseFloat(getComputedStyle(button).borderTopLeftRadius) || 0
+        );
+        return { pageWidth, sectionWidth, radii };
+        """
+    )
+    assert settings_geometry["pageWidth"] > 0, settings_geometry
+    assert settings_geometry["sectionWidth"] >= settings_geometry["pageWidth"] * 0.9, settings_geometry
+    assert settings_geometry["radii"], settings_geometry
+    assert min(settings_geometry["radii"]) >= 9.5, settings_geometry
+
+    for tab, expected in (
+        ("服务端", "服务端连接配置"),
+        ("设备绑定", "设备绑定策略"),
+        ("SSH", "全局默认私钥"),
+        ("下载配置", "GitHub 下载代理"),
+        ("通知", "通知推送"),
+    ):
+        _click_q_tab(screen, tab)
+        screen.should_contain(expected)
+
+    screen.open("/init")
+    screen.click("指定已安装路径")
+    screen.should_contain("校验自定义执行路径")
+    screen.click("返回上一步")
+    screen.should_contain("自动安装 OpenVPN")

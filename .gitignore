@@ -162,21 +162,19 @@ logs
 # CRT 及其他子项目中的证书目录
 **/certs/**
 # ansible 运行产物
-iac/ansible/roles/cadvisor/cadvisor_targets.yml
-iac/ansible/roles/*/files/*
 # SSH keys for crt
-script/py/**/ssh/**
+**/ssh/**
 
 # ---------- script/py/vpn：原子目录 .gitignore 合并 ----------
 # 仅缩写到该子树，避免把仓库其它位置的 .crt/.ovpn 等一并忽略。
 # （子目录 .gitignore 规则相对本仓库「无子前缀」，维护时易与全局重复遗漏；统一写根文件更清晰。）
-script/py/vpn/backups/
-script/py/vpn/**/*.ovpn
-script/py/vpn/**/*.key
-script/py/vpn/**/*.pem
-script/py/vpn/**/*.crt
-script/py/vpn/**/*.csr
-script/py/vpn/.env.*
+backups/
+**/*.ovpn
+**/*.key
+**/*.pem
+**/*.crt
+**/*.csr
+.env.*
 
 # OS / 编辑器临时文件
 .DS_Store
@@ -185,3 +183,4 @@ Thumbs.db
 *.swp
 
 password
+

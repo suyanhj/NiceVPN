@@ -1,166 +1,303 @@
 # -*- coding: utf-8 -*-
-"""组管理页面。"""
+"""用户组管理页面。"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
 
 from nicegui import ui
 from nicegui.elements.checkbox import Checkbox
-
-from app.ui.copy_clipboard import copy_text_to_clipboard
 
 from app.core.config import load_config
 from app.services.group.crud import GroupService
 from app.services.group.subnet import check_subnet_conflict
 from app.ui.components import confirm_dialog
+from app.ui.components.actions import create_action, danger_action, secondary_action
+from app.ui.components.cards import metric_card
+from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
     update_visible_selection,
 )
+from app.ui.components.states import empty_state, error_state
+from app.ui.components.status import status_badge, structured_value
+from app.ui.components.toolbars import render_bulk_action_bar
+from app.ui.copy_clipboard import copy_text_to_clipboard
+
+logger = logging.getLogger(__name__)
 
 
 class GroupsPage:
-    """组管理页面。"""
+    """用户组管理页面。"""
 
     def __init__(self):
         self.group_service = GroupService()
         self.selected_ids: set[str] = set()
-        self.select_all_checkbox = None
+        self.select_all_checkbox: Checkbox | None = None
         self.visible_group_ids: list[str] = []
         self.group_checkboxes: dict[str, Checkbox] = {}
+        self.bulk_bar = None
+        self.bulk_enable_button = None
+        self.bulk_disable_button = None
+        self.bulk_delete_button = None
 
     def render(self):
-        """渲染组管理页面。"""
-        groups = self.group_service.list_all()
+        """渲染用户组管理页面。"""
 
-        with ui.column().classes("page-shell mgmt-page"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.element("div").classes("mgmt-header-row"):
-                    with ui.element("div").classes("mgmt-header-copy"):
-                        ui.label("组管理").classes("mgmt-title")
-                        ui.label("子网划分、成员归属与组启停。").classes("mgmt-desc")
+        try:
+            groups = self.group_service.list_all()
+            load_error: Exception | None = None
+        except Exception as exc:
+            logger.exception("加载用户组列表失败")
+            groups = []
+            load_error = exc
 
-                    with ui.element("div").classes("mgmt-toolbar"):
-                        ui.button("新建组", icon="group_add", on_click=self._show_create_dialog).props(
-                            "unelevated no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-primary")
-                        ui.button("批量启用", icon="check_circle", on_click=self._batch_enable).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline is-enable")
-                        ui.button("批量禁用", icon="block", on_click=self._batch_disable).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline is-disable")
-                        ui.button("批量删除", icon="delete_sweep", on_click=self._batch_delete_confirm).props(
-                            "outline no-caps no-ripple"
-                        ).classes("mgmt-toolbar-btn is-outline is-danger")
+        def bulk_actions() -> None:
+            create_action(
+                "新建用户组",
+                icon="add",
+                on_click=self._show_create_dialog,
+            )
+            disabled = not self.selected_ids
+            self.bulk_enable_button = secondary_action(
+                "批量启用",
+                icon="check_circle",
+                on_click=self._batch_enable,
+                disabled=disabled,
+                tooltip="请先选择用户组" if disabled else None,
+            )
+            self.bulk_disable_button = secondary_action(
+                "批量停用",
+                icon="block",
+                on_click=self._batch_disable_confirm,
+                disabled=disabled,
+                tooltip="请先选择用户组" if disabled else None,
+            )
+            self.bulk_delete_button = danger_action(
+                "批量删除",
+                icon="delete_sweep",
+                on_click=self._batch_delete_confirm,
+                disabled=disabled,
+                tooltip="请先选择用户组" if disabled else None,
+            )
+
+        with ui.column().classes("page-shell mgmt-page groups-page--v2"):
+            self._render_summary_metrics(groups)
+
+            self.bulk_bar = render_bulk_action_bar(
+                len(self.selected_ids),
+                actions=bulk_actions,
+            )
 
             with ui.element("section").classes("mgmt-panel mgmt-panel-list"):
                 with ui.element("div").classes("mgmt-list-head"):
                     with ui.row().classes("items-center gap-2"):
                         self.select_all_checkbox = ui.checkbox(
                             value=False,
-                            on_change=lambda e: self._toggle_select_all(e.value),
-                        ).classes("mgmt-checkbox").tooltip("选择全部组")
-                        ui.label("分组列表").classes("mgmt-kicker")
-                    ui.label(f"共 {len(groups)} 个组").classes("group-list-count")
+                            on_change=lambda e: self._toggle_select_all(bool(e.value)),
+                        ).classes("mgmt-checkbox").tooltip("选择当前全部用户组")
+                        ui.label("用户组列表").classes("mgmt-kicker")
+                    ui.label(
+                        "加载失败" if load_error else f"共 {len(groups)} 个用户组"
+                    ).classes("group-list-count")
 
                 with ui.column().classes("w-full"):
-                    self._render_group_list(groups)
+                    if load_error is not None:
+                        error_state(
+                            str(load_error),
+                            title="用户组列表加载失败",
+                            on_retry=lambda: ui.navigate.to("/groups"),
+                        )
+                    else:
+                        self._render_group_list(groups)
+
+        self._sync_bulk_state()
+
+    @staticmethod
+    def _render_summary_metrics(groups: list[dict]) -> None:
+        """基于当前列表快照渲染分组摘要，不增加额外业务请求。"""
+
+        active_count = sum(str(group.get("status") or "active") == "active" for group in groups)
+        disabled_count = len(groups) - active_count
+        user_count = sum(int(group.get("user_count") or 0) for group in groups)
+
+        with ui.element("div").classes("vpn-v2-overview-grid"):
+            metric_card(
+                "用户组总数",
+                len(groups),
+                helper_tooltip="包含根组和所有业务子组",
+                icon="folder_shared",
+                tone="info",
+                compact=True,
+            )
+            metric_card(
+                "启用分组",
+                active_count,
+                helper_tooltip="当前处于启用状态、可继续参与管理操作的用户组",
+                icon="check_circle",
+                tone="success" if active_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "停用分组",
+                disabled_count,
+                helper_tooltip="当前已停用、暂停参与后续管理操作的用户组",
+                icon="block",
+                tone="warning" if disabled_count else "default",
+                compact=True,
+            )
+            metric_card(
+                "组内用户",
+                user_count,
+                helper_tooltip="按当前用户组列表快照汇总的组内用户数量",
+                icon="people",
+                tone="default",
+                compact=True,
+            )
 
     def _render_group_list(self, groups: list[dict]):
-        """渲染分组列表。"""
+        """少量流程对象使用卡片列表，不强制表格化。"""
+
         self.visible_group_ids = [group["id"] for group in groups]
         self.group_checkboxes.clear()
         if not groups:
             self._sync_select_all()
-            ui.label("暂无分组，点「新建组」添加。").classes("empty-state")
+            empty_state(
+                "暂无用户组",
+                description="完成初始化后会创建根组，也可以在这里新建子组。",
+                action_label="新建用户组",
+                on_action=self._show_create_dialog,
+                icon="group_off",
+            )
             return
 
-        root_id = groups[0]["id"] if groups else ""
+        root_id = str(groups[0]["id"])
         with ui.element("div").classes("mgmt-record-list"):
             for group in groups:
-                self._render_group_card(group, is_root=(group["id"] == root_id))
+                view = self._build_group_view_model(group, root_id=root_id)
+                self._render_group_card(view, is_root=view["is_root"])
         self._sync_select_all()
 
-    def _render_group_card(self, group: dict, is_root: bool = False):
-        """渲染单个分组卡片。"""
-        group_id = group["id"]
-        group_short = group_id[:8] if group_id else ""
-        status = group.get("status", "active")
-        is_active = status == "active"
-        user_count = group.get("user_count", 0)
+    @staticmethod
+    def _build_group_view_model(group: dict, *, root_id: str) -> dict:
+        """标准化分组展示数据，容忍缺失字段并明确根组/状态语义。"""
 
-        with ui.element("div").classes("mgmt-record-card"):
+        group_id = str(group.get("id") or "")
+        status = str(group.get("status") or "active")
+        return {
+            **group,
+            "id": group_id,
+            "name": str(group.get("name") or "未命名用户组"),
+            "subnet": str(group.get("subnet") or "未配置子网"),
+            "status": status if status in {"active", "disabled"} else "disabled",
+            "user_count": int(group.get("user_count") or 0),
+            "is_root": bool(group_id and group_id == root_id),
+        }
+
+    def _render_group_card(self, group: dict, is_root: bool = False):
+        """渲染单个用户组卡片。"""
+
+        group_id = str(group["id"])
+        status = str(group.get("status") or "active")
+        is_active = status == "active"
+        user_count = int(group.get("user_count") or 0)
+
+        card_classes = "mgmt-record-card groups-record-card"
+        if is_root:
+            card_classes += " groups-record-card--root"
+        if not is_active:
+            card_classes += " groups-record-card--disabled"
+
+        with ui.element("div").classes(card_classes):
             with ui.element("div").classes("mgmt-record-main"):
                 self.group_checkboxes[group_id] = ui.checkbox(
                     value=group_id in self.selected_ids,
-                    on_change=lambda e, gid=group_id: self._toggle_select(gid, e.value),
+                    on_change=lambda e, gid=group_id: self._toggle_select(gid, bool(e.value)),
                 ).classes("mgmt-checkbox")
 
                 with ui.element("div").classes("mgmt-record-copy"):
-                    ui.label(group["name"]).classes("mgmt-record-title")
+                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                        ui.label(str(group["name"])).classes("mgmt-record-title")
+                        if is_root:
+                            ui.badge("根组").props("outline").classes("groups-root-badge")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
-                            ui.label(group.get("subnet", "未配置子网"))
+                            ui.label(str(group["subnet"]))
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("person", size="14px")
                             ui.label(f"用户数 {user_count}")
-                        if group_id:
-                            ui.button(
-                                f"GID {group_short}",
-                                icon="content_copy",
-                                on_click=lambda value=group_id: self._copy_group_id(value),
-                            ).props("flat dense no-caps no-ripple").classes("user-copy-chip")
 
-            with ui.element("div").classes("group-record-side hidden md:flex"):
-                ui.label("ACTIVE" if is_active else "DISABLED").classes(
-                    "group-status-badge" if is_active else "group-status-badge is-disabled"
+            with ui.column().classes("group-record-side hidden md:flex gap-2"):
+                status_badge(
+                    "running" if is_active else "disabled",
+                    label="启用" if is_active else "停用",
                 )
-                with ui.row().classes("items-center gap-1 flex-wrap"):
-                    ui.label(f"组 ID: {group_id}").classes("group-uuid-badge group-uuid-full")
-                    ui.button(
-                        icon="content_copy",
-                        on_click=lambda value=group_id: self._copy_group_id(value),
-                    ).props("flat dense round").tooltip("复制组 ID")
+                structured_value(
+                    group_id,
+                    kind="serial",
+                    copyable=True,
+                    copy_message="组 ID 已复制",
+                    tooltip="完整用户组 ID",
+                )
 
             with ui.element("div").classes("mgmt-actions"):
-                ui.button(
+                secondary_action(
+                    "编辑",
                     icon="edit",
                     on_click=lambda current=group: self._show_edit_dialog(current),
-                ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-edit").tooltip("编辑")
+                ).props("dense")
 
                 if is_active:
-                    ui.button(
+                    secondary_action(
+                        "停用",
                         icon="block",
-                        on_click=lambda gid=group_id: self._do_disable(gid),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-toggle").tooltip("禁用")
+                        on_click=lambda current=group: self._confirm_disable(current),
+                    ).props("dense")
                 else:
-                    ui.button(
+                    secondary_action(
+                        "启用",
                         icon="check_circle",
                         on_click=lambda gid=group_id: self._do_enable(gid),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-toggle").tooltip("启用")
+                    ).props("dense")
 
-                if not is_root:
-                    ui.button(
+                if is_root:
+                    danger_action(
+                        "删除",
+                        icon="delete",
+                        disabled=True,
+                        tooltip="根组定义全局 VPN 子网，不允许删除",
+                    ).props("dense")
+                else:
+                    danger_action(
+                        "删除",
                         icon="delete",
                         on_click=lambda current=group: self._confirm_delete(current),
-                    ).props("flat round dense no-caps no-ripple").classes("mgmt-icon-btn is-delete").tooltip("删除")
+                    ).props("dense")
 
     def _toggle_select(self, group_id: str, selected: bool):
-        """切换分组选中状态。"""
+        """切换用户组选中状态。"""
+
         if selected:
             self.selected_ids.add(group_id)
         else:
             self.selected_ids.discard(group_id)
         self._sync_select_all()
+        self._sync_bulk_state()
 
     def _toggle_select_all(self, selected: bool):
-        """选择或取消选择全部可见组。"""
+        """选择或取消选择全部可见用户组。"""
+
         update_visible_selection(self.selected_ids, self.visible_group_ids, selected)
         apply_row_checkboxes(self.group_checkboxes, self.selected_ids)
         self._sync_select_all()
+        self._sync_bulk_state()
 
     def _sync_select_all(self):
-        """同步组列表全选复选框。"""
+        """同步列表全选复选框。"""
+
         if self.select_all_checkbox is not None:
             sync_select_all_checkbox(
                 self.select_all_checkbox,
@@ -168,39 +305,63 @@ class GroupsPage:
                 self.selected_ids,
             )
 
-    def _copy_group_id(self, group_id: str):
-        """复制完整组 ID。"""
-        copy_text_to_clipboard(group_id)
-        ui.notify("组 ID 已复制", type="positive")
+    def _sync_bulk_state(self) -> None:
+        """同步批量操作数量与可用状态。"""
+
+        if self.bulk_bar is not None:
+            self.bulk_bar.set_selected_count(len(self.selected_ids))
+        enabled = bool(self.selected_ids)
+        for button in (
+            self.bulk_enable_button,
+            self.bulk_disable_button,
+            self.bulk_delete_button,
+        ):
+            if button is None:
+                continue
+            if enabled:
+                button.enable()
+            else:
+                button.disable()
+
+    async def _copy_group_id(self, group_id: str):
+        """兼容旧入口：复制完整用户组 ID。"""
+
+        if await copy_text_to_clipboard(group_id):
+            ui.notify("组 ID 已复制", type="positive")
 
     def _show_create_dialog(self):
-        """显示新建分组弹窗。"""
+        """显示新建用户组表单。"""
+
         existing_groups = self.group_service.list_all()
         root_group = existing_groups[0] if existing_groups else None
+        fields: dict[str, Any] = {}
 
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label("新建组").classes("text-h6")
-
+        def render_body() -> None:
             if root_group:
                 ui.label(
-                    f"子网须在根组「{root_group['name']}」"
+                    f"子网须位于根组「{root_group['name']}」"
                     f"（{root_group.get('subnet', '')}）内，例如 10.224.1.0/24。"
                 ).classes("text-caption text-grey")
             else:
-                ui.label(
-                    "请先完成初始化（创建根组），再建子组。"
-                ).classes("text-caption text-warning")
+                ui.label("请先完成初始化（创建根组），再建子组。").classes(
+                    "text-caption text-warning"
+                )
 
-            name_input = ui.input("组名称", placeholder="例如: 开发组").classes("w-full")
-            subnet_input = ui.input("子网 CIDR", placeholder="例如: 10.224.1.0/24").classes("w-full")
+            fields["name"] = ui.input(
+                "组名称",
+                placeholder="例如：开发组",
+            ).classes("w-full")
+            fields["subnet"] = ui.input(
+                "子网 CIDR",
+                placeholder="例如：10.224.1.0/24",
+            ).classes("w-full")
+            fields["conflict"] = ui.label("").classes("text-caption text-negative")
+            fields["conflict"].set_visibility(False)
 
-            conflict_label = ui.label("").classes("text-caption text-negative")
-            conflict_label.set_visibility(False)
-
-            def on_subnet_change():
-                subnet_val = subnet_input.value.strip()
+            def on_subnet_change() -> None:
+                subnet_val = str(fields["subnet"].value or "").strip()
                 if not subnet_val:
-                    conflict_label.set_visibility(False)
+                    fields["conflict"].set_visibility(False)
                     return
                 config = load_config()
                 conflicts = check_subnet_conflict(
@@ -208,79 +369,95 @@ class GroupsPage:
                     config.global_subnet or "",
                     self.group_service.list_all(),
                 )
-                if conflicts:
-                    conflict_label.text = "; ".join(conflicts)
-                    conflict_label.set_visibility(True)
-                else:
-                    conflict_label.text = ""
-                    conflict_label.set_visibility(False)
+                fields["conflict"].text = "; ".join(conflicts)
+                fields["conflict"].set_visibility(bool(conflicts))
 
-            subnet_input.on("blur", on_subnet_change)
+            fields["subnet"].on("blur", on_subnet_change)
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "创建",
-                    on_click=lambda: self._do_create(dialog, name_input.value.strip(), subnet_input.value.strip()),
-                ).props("color=primary")
+        form = create_form_dialog(
+            "新建用户组",
+            body=render_body,
+            on_submit=lambda: self._create_group(
+                str(fields["name"].value or "").strip(),
+                str(fields["subnet"].value or "").strip(),
+            ),
+            submit_label="创建",
+        )
+        form.open()
 
-        dialog.open()
+    def _create_group(self, name: str, subnet: str) -> bool:
+        """执行用户组创建并返回表单是否可关闭。"""
 
-    def _do_create(self, dialog, name: str, subnet: str):
-        """执行分组创建。"""
         if not name or not subnet:
             ui.notify("请填写完整信息", type="negative")
-            return
+            return False
         try:
             self.group_service.create(name, subnet)
-            dialog.close()
-            ui.notify(f"组 {name} 已创建", type="positive")
+            ui.notify(f"用户组 {name} 已创建", type="positive")
             ui.navigate.to("/groups")
+            return True
         except ValueError as exc:
             ui.notify(f"创建失败: {exc}", type="negative")
+            return False
+
+    def _do_create(self, dialog, name: str, subnet: str):
+        """兼容旧调用：执行用户组创建。"""
+
+        success = self._create_group(name, subnet)
+        if success:
+            dialog.close()
+        return success
 
     def _show_edit_dialog(self, group: dict):
-        """显示编辑弹窗。"""
-        group_id = group["id"]
-        has_users = group.get("user_count", 0) > 0
+        """显示可同时修改名称与子网的编辑表单。"""
+
+        group_id = str(group["id"])
+        has_users = int(group.get("user_count") or 0) > 0
         all_groups = self.group_service.list_all()
-        is_root = len(all_groups) > 0 and all_groups[0]["id"] == group_id
+        is_root = bool(all_groups and all_groups[0]["id"] == group_id)
         has_sub_groups = is_root and len(all_groups) > 1
+        can_edit_subnet = not has_users and not has_sub_groups
+        fields: dict[str, Any] = {}
 
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label("编辑组").classes("text-h6")
-            ui.input("组名称", value=group["name"]).classes("w-full").props("readonly")
+        def render_body() -> None:
+            fields["name"] = ui.input(
+                "组名称",
+                value=str(group.get("name") or ""),
+            ).classes("w-full")
+            fields["subnet"] = ui.input(
+                "子网 CIDR",
+                value=str(group.get("subnet") or ""),
+            ).classes("w-full")
 
-            subnet_input = ui.input("子网 CIDR", value=group.get("subnet", "")).classes("w-full")
-            can_edit = not has_users and not has_sub_groups
-            if not can_edit:
-                subnet_input.props("disable")
+            if not can_edit_subnet:
+                fields["subnet"].props("disable")
             if has_users:
-                ui.label("组内有用户，不能改子网。").classes("text-caption text-warning")
+                ui.label("组内有用户：可修改名称，但不能修改子网。").classes(
+                    "text-caption text-warning"
+                )
             if has_sub_groups:
-                ui.label("存在子组：请先删子组，再改根组子网。").classes("text-caption text-warning")
-            if is_root and can_edit:
-                ui.label(
-                    "改根组子网会同步全局配置与默认防火墙规则。"
-                ).classes("text-caption text-grey")
+                ui.label("根组存在子组：可修改名称，但需先删除子组才能修改根组子网。").classes(
+                    "text-caption text-warning"
+                )
+            if is_root and can_edit_subnet:
+                ui.label("修改根组子网会同步全局配置、实例配置与默认防火墙规则。").classes(
+                    "text-caption text-grey"
+                )
 
-            conflict_label = ui.label("").classes("text-caption text-negative")
-            conflict_label.set_visibility(False)
+            fields["conflict"] = ui.label("").classes("text-caption text-negative")
+            fields["conflict"].set_visibility(False)
 
-            def on_subnet_change():
-                subnet_val = subnet_input.value.strip()
-                if not subnet_val or subnet_val == group.get("subnet", ""):
-                    conflict_label.set_visibility(False)
+            def on_subnet_change() -> None:
+                subnet_val = str(fields["subnet"].value or "").strip()
+                if not subnet_val or subnet_val == str(group.get("subnet") or ""):
+                    fields["conflict"].set_visibility(False)
                     return
-                # 根组修改时不检测"是否在全局子网范围内"，因为根组本身就定义全局子网
                 if is_root:
                     from app.utils.cidr import validate_cidr
-                    if not validate_cidr(subnet_val):
-                        conflict_label.text = f"子网格式不合法: {subnet_val}"
-                        conflict_label.set_visibility(True)
-                    else:
-                        conflict_label.text = ""
-                        conflict_label.set_visibility(False)
+
+                    valid = validate_cidr(subnet_val)
+                    fields["conflict"].text = "" if valid else f"子网格式不合法: {subnet_val}"
+                    fields["conflict"].set_visibility(not valid)
                     return
                 config = load_config()
                 conflicts = check_subnet_conflict(
@@ -289,124 +466,191 @@ class GroupsPage:
                     self.group_service.list_all(),
                     exclude_group_id=group_id,
                 )
-                if conflicts:
-                    conflict_label.text = "; ".join(conflicts)
-                    conflict_label.set_visibility(True)
-                else:
-                    conflict_label.text = ""
-                    conflict_label.set_visibility(False)
+                fields["conflict"].text = "; ".join(conflicts)
+                fields["conflict"].set_visibility(bool(conflicts))
 
-            subnet_input.on("blur", on_subnet_change)
+            if can_edit_subnet:
+                fields["subnet"].on("blur", on_subnet_change)
 
-            with ui.row().classes("justify-end q-mt-md"):
-                ui.button("取消", on_click=dialog.close).props("flat")
-                ui.button(
-                    "保存",
-                    on_click=lambda: self._do_update_subnet(
-                        dialog,
-                        group_id,
-                        subnet_input.value.strip(),
-                        group.get("subnet", ""),
-                    ),
-                ).props("color=primary")
+        form = create_form_dialog(
+            "编辑用户组",
+            body=render_body,
+            on_submit=lambda: self._update_group_details(
+                group_id,
+                str(fields["name"].value or "").strip(),
+                (
+                    str(fields["subnet"].value or "").strip()
+                    if can_edit_subnet
+                    else str(group.get("subnet") or "")
+                ),
+            ),
+        )
+        form.open()
 
-        dialog.open()
+    def _update_group_details(self, group_id: str, name: str, subnet: str) -> bool:
+        """保存用户组名称和子网。"""
 
-    def _do_update_subnet(self, dialog, group_id: str, new_subnet: str, old_subnet: str):
-        """执行子网修改。"""
-        if new_subnet == old_subnet:
-            dialog.close()
-            return
-        if not new_subnet:
+        if not name:
+            ui.notify("组名称不能为空", type="negative")
+            return False
+        if not subnet:
             ui.notify("子网不能为空", type="negative")
-            return
+            return False
         try:
-            self.group_service.update_subnet(group_id, new_subnet)
-            dialog.close()
-            ui.notify("子网修改成功", type="positive")
+            self.group_service.update_details(group_id, name=name, subnet=subnet)
+            ui.notify("用户组已更新", type="positive")
             ui.navigate.to("/groups")
+            return True
         except ValueError as exc:
             ui.notify(f"修改失败: {exc}", type="negative")
+            return False
+
+    def _do_update_subnet(self, dialog, group_id: str, new_subnet: str, old_subnet: str):
+        """兼容旧调用：仅修改子网。"""
+
+        current = self.group_service.get(group_id)
+        if not current:
+            ui.notify("用户组不存在", type="negative")
+            return False
+        if new_subnet == old_subnet:
+            dialog.close()
+            return True
+        success = self._update_group_details(
+            group_id,
+            str(current.get("name") or ""),
+            new_subnet,
+        )
+        if success:
+            dialog.close()
+        return success
+
+    def _confirm_disable(self, group: dict) -> None:
+        """停用单个用户组前明确影响范围。"""
+
+        name = str(group.get("name") or group.get("id") or "")
+        confirm_dialog.show(
+            f"确定停用用户组「{name}」？",
+            impact="停用后该组不再作为可用分组提供给后续管理操作。",
+            object_count=1,
+            danger_level="warning",
+            on_confirm=lambda: self._do_disable(str(group["id"])),
+        )
 
     def _confirm_delete(self, group: dict):
-        """删除分组前的二次确认。"""
-        name = group.get("name", group["id"])
-        user_count = group.get("user_count", 0)
+        """删除用户组前的二次确认。"""
+
+        name = str(group.get("name") or group["id"])
+        user_count = int(group.get("user_count") or 0)
         if user_count > 0:
             ui.notify(f"「{name}」内有 {user_count} 个用户，无法删除", type="warning")
             return
         confirm_dialog.show(
-            f"删除「{name}」不可恢复，确定？",
-            on_confirm=lambda: self._do_delete(group["id"]),
+            f"确定删除用户组「{name}」？",
+            impact="删除后不可恢复；仅允许删除没有用户的非根组。",
+            object_count=1,
+            danger_level="danger",
+            on_confirm=lambda: self._do_delete(str(group["id"])),
         )
 
     def _do_delete(self, group_id: str):
-        """执行分组删除。"""
+        """执行用户组删除。"""
+
         try:
             self.group_service.delete(group_id)
-            ui.notify("组已删除", type="positive")
+            ui.notify("用户组已删除", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
             ui.notify(f"删除失败: {exc}", type="negative")
 
     def _batch_delete_confirm(self):
-        """批量删除前的确认。"""
+        """批量删除前显示数量和影响范围。"""
+
         if not self.selected_ids:
-            ui.notify("请先勾选组", type="warning")
+            ui.notify("请先选择用户组", type="warning")
             return
         confirm_dialog.show(
-            f"删除已选 {len(self.selected_ids)} 个组，不可恢复。确定？",
+            "确定删除所选用户组？",
+            impact="根组或仍有用户的分组会被安全跳过并在结果中报告失败原因。",
+            object_count=len(self.selected_ids),
+            danger_level="danger",
             on_confirm=self._do_batch_delete,
         )
 
     def _do_batch_delete(self):
-        """执行批量删除。"""
+        """执行批量删除并汇总结果。"""
+
         results = self.group_service.bulk_delete(list(self.selected_ids))
         success = sum(1 for item in results if item["success"])
-        for item in results:
-            if not item["success"]:
-                ui.notify(f"组 {item['id'][:8]}... 删除失败: {item['error']}", type="warning")
-        if success:
-            ui.notify(f"成功删除 {success} 个组", type="positive")
+        failed = len(results) - success
+        if failed:
+            ui.notify(f"批量删除完成：成功 {success}，失败 {failed}", type="warning")
+        else:
+            ui.notify(f"成功删除 {success} 个用户组", type="positive")
         self.selected_ids.clear()
         ui.navigate.to("/groups")
 
     def _do_enable(self, group_id: str):
-        """启用单个分组。"""
+        """启用单个用户组。"""
+
         try:
             self.group_service.enable(group_id)
-            ui.notify("组已启用", type="positive")
+            ui.notify("用户组已启用", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
             ui.notify(f"操作失败: {exc}", type="negative")
 
     def _do_disable(self, group_id: str):
-        """禁用单个分组。"""
+        """停用单个用户组。"""
+
         try:
             self.group_service.disable(group_id)
-            ui.notify("组已禁用", type="positive")
+            ui.notify("用户组已停用", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
             ui.notify(f"操作失败: {exc}", type="negative")
 
     def _batch_enable(self):
-        """批量启用选中的分组。"""
+        """批量启用所选用户组。"""
+
         if not self.selected_ids:
-            ui.notify("请先勾选组", type="warning")
+            ui.notify("请先选择用户组", type="warning")
             return
         results = self.group_service.bulk_enable(list(self.selected_ids))
         success = sum(1 for item in results if item["success"])
-        ui.notify(f"成功启用 {success} 个组", type="positive")
+        failed = len(results) - success
+        ui.notify(
+            f"批量启用完成：成功 {success}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
         self.selected_ids.clear()
         ui.navigate.to("/groups")
 
-    def _batch_disable(self):
-        """批量禁用选中的分组。"""
+    def _batch_disable_confirm(self):
+        """批量停用前确认影响范围。"""
+
         if not self.selected_ids:
-            ui.notify("请先勾选组", type="warning")
+            ui.notify("请先选择用户组", type="warning")
+            return
+        confirm_dialog.show(
+            "确定停用所选用户组？",
+            impact="停用后这些分组将不再作为可用分组提供给后续管理操作。",
+            object_count=len(self.selected_ids),
+            danger_level="warning",
+            on_confirm=self._batch_disable,
+        )
+
+    def _batch_disable(self):
+        """批量停用所选用户组。"""
+
+        if not self.selected_ids:
+            ui.notify("请先选择用户组", type="warning")
             return
         results = self.group_service.bulk_disable(list(self.selected_ids))
         success = sum(1 for item in results if item["success"])
-        ui.notify(f"成功禁用 {success} 个组", type="positive")
+        failed = len(results) - success
+        ui.notify(
+            f"批量停用完成：成功 {success}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
         self.selected_ids.clear()
         ui.navigate.to("/groups")
