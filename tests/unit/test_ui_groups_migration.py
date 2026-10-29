@@ -190,6 +190,8 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert "self.group_service.list_page(" not in source
     assert "page_method(" in source
     assert "render_server_pager(" in source
+    assert "on_page_size_change=self._on_group_page_size_change" in source
+    assert "page_after_size_change(" in source
     assert ".vpn-v2-overview-grid" in shell_css
     assert ".vpn-metric-card--compact" in shell_css
     assert "fetch(" not in source

@@ -49,6 +49,18 @@ class FakeGroupService:
         return [{"id": "group-dev", "name": "开发组"}]
 
 
+def test_peers_server_pager_supports_page_size_changes() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "peers.py").read_text(
+        encoding="utf-8"
+    )
+    assert "render_server_pager(" in source
+    assert "on_page_size_change=self._on_peer_page_size_change" in source
+    assert "page_after_size_change(" in source
+
+
 def test_peers_page_uses_shared_header_toolbar_status_and_cards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

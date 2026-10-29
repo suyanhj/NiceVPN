@@ -1160,6 +1160,18 @@ def test_center_import_dialog_uses_shared_form_and_precheck_copy(
     asyncio.run(verify())
 
 
+def test_center_server_pager_supports_page_size_changes() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "firewall_center.py").read_text(
+        encoding="utf-8"
+    )
+    assert "on_server_page_size_change=(" in source
+    assert "self._on_center_page_size_change" in source
+    assert "page_after_size_change(" in source
+
+
 def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> None:
     from pathlib import Path
 

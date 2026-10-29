@@ -436,6 +436,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "show_summary=False" in source
     assert "server_total=self.total_rows" in source
     assert "on_server_page_change=self._on_user_page_change" in source
+    assert "on_server_page_size_change=self._on_user_page_size_change" in source
+    assert "page_after_size_change(" in source
     assert 'self.grid_view.summary.text = f"共 {len(rows)} 个用户"' not in source
     assert "background_tasks.create(" in source
     assert "if created:\n            self._copy_download_link(created[0])" not in source
