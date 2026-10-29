@@ -370,6 +370,42 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid._event_listeners
 
 
+def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
+    """服务端分页时 AG Grid 不再持有全量数据，也不启用客户端分页。"""
+
+    state: dict[str, object] = {}
+    page_changes: list[int] = []
+
+    def page() -> None:
+        state["view"] = render_data_grid(
+            ({"field": "name", "headerName": "名称"},),
+            (
+                {"id": "51", "name": "User 51"},
+                {"id": "52", "name": "User 52"},
+            ),
+            page_size=50,
+            show_summary=False,
+            server_total=123,
+            server_page=2,
+            on_server_page_change=page_changes.append,
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            await user.should_see("第 2 / 3 页 · 共 123 条")
+
+    asyncio.run(verify_page())
+
+    view = state["view"]
+    assert view.grid.options["pagination"] is False
+    assert "paginationPageSize" not in view.grid.options
+    assert len(view.grid.options["rowData"]) == 2
+    assert view.summary is None
+    assert page_changes == []
+
+
 def test_data_grid_external_filter_targets_search_text_only() -> None:
     state: dict[str, object] = {}
 
