@@ -190,7 +190,7 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
             assert response.status_code == 200
             await user.should_see("中心策略")
             await user.should_see("对端远端")
-            await user.should_see("点击“调整优先级”进入拖动排序模式")
+            await user.should_not_see("点击“调整优先级”进入拖动排序模式")
 
     asyncio.run(verify())
 
