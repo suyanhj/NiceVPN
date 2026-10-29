@@ -6,8 +6,8 @@
 
 - V2 继续采用 **Python/NiceGUI 负责业务与交互，Vue 只做视觉增强** 的路线。
 - 不引入 Vue Bits 与 TresJS；后续只有出现明确、不可由现有栈低成本完成的需求时再按组件级评估。
-- 页面迁移顺序固定为 Dashboard → Certs → Groups → Services → Peers → Users → Settings → Firewall；当前 Dashboard、Certs、Groups、Services 已进入 V2。
-- Firewall 继续放最后，并在迁移时同步拆分页面模块，不做整页 Vue 重写。
+- 页面迁移已按 Dashboard → Certs → Groups → Services → Peers → Users → Settings → Firewall 顺序全部完成，初始化页也已同步 V2 视觉。
+- Firewall 已完成 V2 迁移；超大页面模块拆分从本次视觉 PR 解耦，作为合并后的独立重构任务处理，不做整页 Vue 重写。
 
 ## 当前页面规模
 
@@ -45,9 +45,9 @@ CI 单元测试新增两条架构契约：
 - systemd / 本地启动统一复用 `build-ui.sh` 与 `start.sh`；
 - GitHub Actions push 范围扩展到 `feature/**`，V2 功能分支可直接获得完整验证。
 
-## 待完成
+## 构建链收口
 
-前端依赖锁文件仍未提交，因此 Docker 构建当前仍使用 `npm install --package-lock=false`。后续生成并提交 `package-lock.json` 后，再统一切换为 `npm ci`，完成 OpenSpec 2.8。
+前端已提交 `package-lock.json`，GitHub Actions 与 Docker frontend-builder 均切换为 `npm ci`。lockfile 固定完整依赖树并使用官方 `registry.npmjs.org` URL；构建阶段仍通过 `NPM_REGISTRY` 配置国内镜像，兼顾可复现性与镜像可切换性。
 
 
 ## 页面迁移进展
@@ -56,8 +56,12 @@ CI 单元测试新增两条架构契约：
 - Certs：4 项证书状态摘要，内容区无重复页标题，证书业务路径未改；
 - Groups：复用同一 `vpn-v2-overview-grid`，内容区无重复页标题，保留现有列表、表单和批量操作实现。
 - Services：复用共享 V2 Surface，内容区无重复页标题；本机 systemd、对端 SSH、实时日志状态仍由 Python/NiceGUI 管理，不创建虚假的汇总状态。
+- Peers：站点/远端运维、日志与快捷操作统一 V2 视觉，SSH/安装状态仍由 Python 管理。
+- Users：高密度用户/会话表格切到统一 AG Grid，批量动作、筛选与弹窗视觉完成收口。
+- Settings：按设置域拆分 Tabs 与共享表单 Section，并增加宽度/按钮圆角的 Chrome 几何回归断言。
+- Firewall：中心/远端规则完成 V2 迁移，Community AG Grid 支持优先级拖动；重复页脚和旧 Sortable 路径已清理。
 
-后续 Peers 继续优先复用现有视觉原语，不新增新的前端框架或页面专用视觉依赖。
+后续结构重构以独立 PR 进行，优先拆分 `firewall.py`，不再扩大本次视觉迁移 PR。
 
 
 ## 内容区页标题规则
