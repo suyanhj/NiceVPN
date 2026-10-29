@@ -16,6 +16,11 @@ from app.ui.components.confirm_dialog import build as build_confirm_dialog
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.feedback import AsyncOperationGuard, run_guarded, safe_notify
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.server_pager import (
+    SERVER_PAGE_SIZE_OPTIONS,
+    page_after_size_change,
+    render_server_pager,
+)
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
 
@@ -375,6 +380,7 @@ def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
 
     state: dict[str, object] = {}
     page_changes: list[int] = []
+    size_changes: list[int] = []
 
     def page() -> None:
         state["view"] = render_data_grid(
@@ -388,12 +394,14 @@ def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
             server_total=123,
             server_page=2,
             on_server_page_change=page_changes.append,
+            on_server_page_size_change=size_changes.append,
         )
 
     async def verify_page() -> None:
         async with user_simulation(page) as user:
             response = await user.open("/")
             assert response.status_code == 200
+            await user.should_see("每页")
             await user.should_see("第 2 / 3 页 · 共 123 条")
 
     asyncio.run(verify_page())
@@ -404,6 +412,39 @@ def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
     assert len(view.grid.options["rowData"]) == 2
     assert view.summary is None
     assert page_changes == []
+    assert size_changes == []
+
+
+def test_server_pager_page_size_contract_and_position_mapping() -> None:
+    assert SERVER_PAGE_SIZE_OPTIONS == (20, 50, 100, 200)
+    assert page_after_size_change(page=3, old_size=50, new_size=100) == 2
+    assert page_after_size_change(page=2, old_size=100, new_size=20) == 6
+
+    state: dict[str, object] = {}
+    page_changes: list[int] = []
+    size_changes: list[int] = []
+
+    def page() -> None:
+        render_server_pager(
+            total=123,
+            page=2,
+            page_size=50,
+            on_change=page_changes.append,
+            on_page_size_change=size_changes.append,
+        )
+        state["built"] = True
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            await user.should_see("每页")
+            await user.should_see("第 2 / 3 页 · 共 123 条")
+
+    asyncio.run(verify_page())
+    assert state["built"] is True
+    assert page_changes == []
+    assert size_changes == []
 
 
 def test_data_grid_external_filter_targets_search_text_only() -> None:
