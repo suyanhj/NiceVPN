@@ -317,7 +317,14 @@ def ensure_storage_ready(
             store.set_meta("legacy_json_migrated_at", datetime.now(timezone.utc).isoformat())
             store.set_meta("storage_backend", "sqlite")
             _checkpoint(temp_path)
+            for sidecar in (
+                Path(str(temp_path) + "-wal"),
+                Path(str(temp_path) + "-shm"),
+            ):
+                sidecar.unlink(missing_ok=True)
             os.replace(temp_path, db_path)
+            if os.name != "nt":
+                os.chmod(db_path, 0o600)
         except Exception:
             for stale in (
                 temp_path,
