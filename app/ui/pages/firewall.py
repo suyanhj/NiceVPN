@@ -23,7 +23,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from nicegui import background_tasks, context, run, ui
+from nicegui import context, run, ui
 from pydantic import ValidationError
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
@@ -42,27 +42,13 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
-from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
 from app.ui.adapters.firewall import (
-    adapt_center_rule_rows,
-    adapt_remote_cache_status,
-    adapt_remote_peer_capability,
-    adapt_remote_rule_rows,
     format_remote_cache_timestamp,
     parse_remote_rule_hints,
 )
-from app.ui.firewall_helpers import (
-    center_grid_columns,
-    move_order,
-    remote_grid_columns,
-    rows_from_iptables_paste,
-    rows_from_remote_import_payload,
-    rows_from_remote_import_text_mixed,
-    second_line_comment_text,
-    short_peer_id,
-)
+from app.ui.firewall_helpers import second_line_comment_text
 from app.ui.pages.firewall_center import FirewallCenterGridMixin
 from app.ui.pages.firewall_remote import FirewallRemoteMixin
 from app.ui.components import confirm_dialog
@@ -72,11 +58,8 @@ from app.ui.components.actions import (
     primary_action,
     secondary_action,
 )
-from app.ui.components.data_grid import render_data_grid
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.firewall_rule_form import render_firewall_rule_create_fields
-from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
-from app.ui.components.status import status_badge
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.utils.cidr import validate_cidr
