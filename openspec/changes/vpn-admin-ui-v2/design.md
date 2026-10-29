@@ -16,7 +16,11 @@ V1 已具备稳定的 NiceGUI/Quasar 功能 UI、89 个单元测试文件、Chro
 
 ### 3. 分两步接入正式前端构建链
 
-PoC 使用 NiceGUI 官方支持的原生 Vue SFC，保证拉取分支后无需 npm 即可运行。视觉方向确认后，再建立 Vite 子模块并引入 Tailwind CSS、motion-v 与选定 Inspira UI 组件；运行镜像使用预构建产物，不在生产容器安装 Node。
+PoC 使用 NiceGUI 官方支持的原生 Vue SFC，保证拉取分支后无需 npm 即可运行。视觉方向确认后，再建立 Vite 子模块并引入 Tailwind CSS、motion-v 与选定 Inspira UI 组件；运行镜像使用预构建产物，不在生产容器安装 Node。正式构建提交 `package-lock.json`，CI 与 Docker 使用 `npm ci`，确保依赖树可复现。
+
+### 4. Firewall 结构重构与视觉迁移解耦
+
+Firewall 已完成 V2 视觉、AG Grid Community 拖动排序与旧交互清理，但单文件仍超过 4,500 行。为降低一次性回归风险，本次 PR 不继续做大规模模块拆分；V2 合并后使用独立重构 PR 拆分中心规则、远端规则、对话框与排序逻辑，并要求业务行为保持不变。
 
 ### 4. 保持业务和测试边界
 
