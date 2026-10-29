@@ -20,7 +20,7 @@ class PeerInstance(BaseModel):
     center_forward_priority: int = Field(
         default=500_000,
         ge=1,
-        description="仅用于中心本机 VPN_FORWARD 与 JSON 规则混排时的 priority；对端主机上策略由 SSH 下发，独立于此字段",
+        description="仅用于中心本机 VPN_FORWARD 与中心规则混排时的 priority；对端主机上策略由 SSH 下发，独立于此字段",
     )
     center_forward_enabled: bool = Field(
         default=True,
@@ -28,7 +28,7 @@ class PeerInstance(BaseModel):
     )
     center_forward_dest_ip: str = Field(
         default="",
-        description="中心侧 VPN_FORWARD 匹配目标地址，逗号分隔，空表示不限；与 JSON 中心规则 dest_ip 语义一致",
+        description="中心侧 VPN_FORWARD 匹配目标地址，逗号分隔，空表示不限；与中心规则 dest_ip 语义一致",
     )
     center_forward_dest_port: str = Field(
         default="",
@@ -36,7 +36,7 @@ class PeerInstance(BaseModel):
     )
     center_forward_protocol: str = Field(
         default="all",
-        description="中心侧匹配协议：all/tcp/udp/icmp 等，与 JSON 规则 protocol 一致",
+        description="中心侧匹配协议：all/tcp/udp/icmp 等，与中心规则 protocol 一致",
     )
     center_forward_rule_description: str = Field(
         default="",
@@ -52,15 +52,15 @@ class PeerInstance(BaseModel):
     ssh_auth: Literal["password", "key", "none"] = Field(default="none", description="SSH 认证方式占位")
     ssh_password: str = Field(
         default="",
-        description="SSH 密码（落库于对端 JSON，请限制 data 目录权限并做好备份策略）",
+        description="SSH 密码（持久化于受限权限的 SQLite，请保护 data 目录与备份）",
     )
     ssh_private_key: str = Field(
         default="",
-        description="SSH 私钥 PEM 全文（落库；可来自粘贴或上传文件）",
+        description="SSH 私钥 PEM 全文（持久化于受限权限的 SQLite；可来自粘贴或上传文件）",
     )
     ssh_private_key_passphrase: str = Field(
         default="",
-        description="私钥加密口令（落库；无私钥加密可留空）",
+        description="私钥加密口令（持久化于受限权限的 SQLite；无私钥加密可留空）",
     )
     masquerade_on_peer: bool = Field(
         default=False,

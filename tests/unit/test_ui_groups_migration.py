@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -34,13 +33,13 @@ def test_group_update_details_can_rename_without_changing_subnet(
 
     from app.services.group import crud
 
-    groups_dir = tmp_path / "groups"
-    groups_dir.mkdir()
-    original = _group("root", "默认组", "10.224.0.0/16")
-    (groups_dir / "root.json").write_text(json.dumps(original), encoding="utf-8")
+    from app.storage.sqlite_store import SqliteStore
 
-    monkeypatch.setattr(crud, "GROUPS_DIR", groups_dir)
-    service = crud.GroupService()
+    store = SqliteStore(tmp_path / "db.sqlite")
+    original = _group("root", "默认组", "10.224.0.0/16")
+    store.upsert_group(original)
+
+    service = crud.GroupService(store)
     monkeypatch.setattr(service.audit, "log", lambda *_args, **_kwargs: None)
 
     updated = service.update_details(
@@ -51,7 +50,8 @@ def test_group_update_details_can_rename_without_changing_subnet(
 
     assert updated["name"] == "全局 VPN"
     assert updated["subnet"] == "10.224.0.0/16"
-    saved = json.loads((groups_dir / "root.json").read_text(encoding="utf-8"))
+    saved = store.get_group("root")
+    assert saved is not None
     assert saved["name"] == "全局 VPN"
 
 
@@ -63,16 +63,16 @@ def test_group_update_details_rejects_duplicate_name(
 
     from app.services.group import crud
 
-    groups_dir = tmp_path / "groups"
-    groups_dir.mkdir()
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "db.sqlite")
     for group in (
         _group("root", "默认组", "10.224.0.0/16"),
         _group("dev", "开发组", "10.224.1.0/24"),
     ):
-        (groups_dir / f"{group['id']}.json").write_text(json.dumps(group), encoding="utf-8")
+        store.upsert_group(group)
 
-    monkeypatch.setattr(crud, "GROUPS_DIR", groups_dir)
-    service = crud.GroupService()
+    service = crud.GroupService(store)
     monkeypatch.setattr(service.audit, "log", lambda *_args, **_kwargs: None)
 
     with pytest.raises(ValueError, match="组名已存在"):

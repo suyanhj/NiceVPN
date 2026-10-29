@@ -12,8 +12,6 @@ def test_write_ccd_ifconfig_uses_global_netmask(monkeypatch, tmp_path: Path):
     from app.services.user import crud as mod
 
     monkeypatch.setattr(mod, "CCD_DIR", tmp_path)
-    monkeypatch.setattr(mod, "USERS_DIR", tmp_path / "users")
-    (tmp_path / "users").mkdir()
     monkeypatch.setattr(
         "app.services.user.crud.load_config",
         lambda: Box({"global_subnet": "10.224.0.0/16"}),

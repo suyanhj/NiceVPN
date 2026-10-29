@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from app.core.constants import CCD_DIR, OVPN_PROFILES_DIR, PEERS_DIR
+from app.core.constants import CCD_DIR, OVPN_PROFILES_DIR
 from app.models.peer_instance import PeerInstance
 from app.services.firewall.iptables_mgr import IptablesManager
 from app.services.peer_instance.ccd_merge import (
@@ -17,7 +17,7 @@ from app.services.peer_instance.ccd_merge import (
     sorted_unique_ipv4_cidrs,
     strip_peer_block_from_ccd,
 )
-from app.utils.file_lock import read_json, write_json_atomic
+from app.storage.sqlite_store import SqliteStore, get_default_store
 from app.utils.posix_data_perms import fix_path_for_openvpn_shared_data
 
 logger = logging.getLogger(__name__)
@@ -78,8 +78,8 @@ def mesh_lan_cidrs_for_user_group(peers_rows: list[dict], user_group_id: str) ->
 class PeerService:
     """对端实例 CRUD；绑定用户须已存在且已有 CCD。"""
 
-    def __init__(self) -> None:
-        PEERS_DIR.mkdir(parents=True, exist_ok=True)
+    def __init__(self, store: SqliteStore | None = None) -> None:
+        self.store = store or get_default_store()
 
     def list_peer_lan_firewall_presets_for_center_form(self) -> list[dict]:
         """供中心规则表单下拉选择对端内网 CIDR，列出所有已配置 LAN 的对端。"""
@@ -449,19 +449,11 @@ class PeerService:
             "peer_firewall": peer_firewall,
         }
 
-    def _path(self, peer_id: str) -> Path:
-        return PEERS_DIR / f"{peer_id}.json"
-
     def list_all(self) -> list[dict]:
-        rows: list[dict] = []
-        for p in sorted(PEERS_DIR.glob("*.json")):
-            data = read_json(p)
-            if data:
-                rows.append(data)
-        return rows
+        return self.store.list_peers()
 
     def get(self, peer_id: str) -> dict | None:
-        return read_json(self._path(peer_id))
+        return self.store.get_peer(peer_id)
 
     def list_bound_usernames(self, *, exclude_peer_id: str | None = None) -> set[str]:
         """列出已被某一「对端实例」占用的绑定用户名。
@@ -472,41 +464,28 @@ class PeerService:
         Returns:
             已从 ``bound_username`` 归一化（strip）的用户名集合。
         """
-        ex = str(exclude_peer_id or "").strip()
-        out: set[str] = set()
-        for p in self.list_all():
-            pid = str(p.get("id") or "").strip()
-            if ex and pid == ex:
-                continue
-            u = str(p.get("bound_username") or "").strip()
-            if u:
-                out.add(u)
-        return out
+        return self.store.list_bound_usernames(
+            exclude_peer_id=str(exclude_peer_id or "").strip() or None
+        )
 
     def _ensure_bound_username_unique(self, username: str, *, exclude_peer_id: str | None) -> None:
         """同一 VPN 用户名（CN/CCD）仅允许被一个对端实例绑定；冲突时抛出 ``ValueError``。"""
         u = str(username or "").strip()
         if not u:
             return
-        ex = str(exclude_peer_id or "").strip()
-        for p in self.list_all():
-            pid = str(p.get("id") or "").strip()
-            if ex and pid == ex:
-                continue
-            if str(p.get("bound_username") or "").strip() == u:
-                logger.info(
-                    "拒绝绑定：用户已被其它对端占用 user=%s other_peer=%s",
-                    u,
-                    pid[:8] if pid else "?",
-                )
-                raise ValueError(f"用户「{u}」已被其它对端实例绑定，一个用户只能绑定一个对端实例")
+        ex = str(exclude_peer_id or "").strip() or None
+        if u in self.store.list_bound_usernames(exclude_peer_id=ex):
+            logger.info("拒绝绑定：用户已被其它对端占用 user=%s", u)
+            raise ValueError(
+                f"用户「{u}」已被其它对端实例绑定，一个用户只能绑定一个对端实例"
+            )
 
     def create(self, data: dict) -> dict:
         if "id" not in data or not str(data.get("id", "")).strip():
             data["id"] = str(uuid.uuid4())
         peer = PeerInstance(**data)
         self._ensure_bound_username_unique(peer.bound_username, exclude_peer_id=None)
-        write_json_atomic(self._path(peer.id), peer.model_dump())
+        self.store.upsert_peer(peer.model_dump())
         self._apply_ccd_and_vpn_forward(peer)
         self.sync_all_mesh_push_routes_in_ccd()
         logger.info("已创建对端实例 %s 绑定用户 %s", peer.id, peer.bound_username)
@@ -523,7 +502,7 @@ class PeerService:
             "updated_at": datetime.now().isoformat(),
         }
         peer = PeerInstance(**merged)
-        write_json_atomic(self._path(peer.id), peer.model_dump())
+        self.store.upsert_peer(peer.model_dump())
 
     def patch_center_forward_enabled(self, peer_id: str, enabled: bool) -> None:
         """仅更新 ``center_forward_enabled`` 并刷新中心 ``VPN_FORWARD``；不改 CCD/对端 SSH。"""
@@ -536,7 +515,7 @@ class PeerService:
             "updated_at": datetime.now().isoformat(),
         }
         peer = PeerInstance(**merged)
-        write_json_atomic(self._path(peer.id), peer.model_dump())
+        self.store.upsert_peer(peer.model_dump())
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
 
@@ -554,7 +533,7 @@ class PeerService:
         need_mesh = _mesh_push_wire_snapshot(cur) != _mesh_push_wire_snapshot(dumped)
         need_ccd = _ccd_iroute_wire_snapshot(cur) != _ccd_iroute_wire_snapshot(dumped)
 
-        write_json_atomic(self._path(peer.id), dumped)
+        self.store.upsert_peer(dumped)
 
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
@@ -611,7 +590,7 @@ class PeerService:
                     peer_id,
                     exc,
                 )
-        self._path(peer_id).unlink(missing_ok=True)
+        self.store.delete_peer(peer_id)
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
 

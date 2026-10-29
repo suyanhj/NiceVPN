@@ -6,14 +6,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
 
-from app.core.constants import (
-    CERT_EXPIRY_WARN_DAYS,
-    GROUPS_DIR,
-    USERS_DIR,
-)
+from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.monitor.service_monitor import InstanceStatus, ServiceMonitor
 
 logger = logging.getLogger(__name__)
@@ -68,12 +63,6 @@ class DashboardSnapshot:
         return max(0, min(100, base - penalty))
 
 
-def _count_json_files(directory: Path) -> int:
-    if not directory.exists():
-        return 0
-    return sum(1 for _ in directory.glob("*.json"))
-
-
 def _cert_min_expiry_days(cert_service: Any) -> int | None:
     now = datetime.now(timezone.utc)
     minimum: int | None = None
@@ -98,8 +87,8 @@ def collect_dashboard_snapshot(
     instance_names: list[str],
     *,
     monitor: ServiceMonitor | None = None,
-    users_dir: Path = USERS_DIR,
-    groups_dir: Path = GROUPS_DIR,
+    user_service_factory: Callable[[], Any] | None = None,
+    group_service_factory: Callable[[], Any] | None = None,
     cert_service_factory: Callable[[], Any] | None = None,
     rule_service_factory: Callable[[], Any] | None = None,
     now: Callable[[], datetime] | None = None,
@@ -123,14 +112,22 @@ def collect_dashboard_snapshot(
             snapshot.instance_errors[name] = str(exc)
 
 
+    if user_service_factory is None:
+        from app.services.user.crud import UserService
+
+        user_service_factory = UserService
     try:
-        snapshot.user_count = _count_json_files(users_dir)
+        snapshot.user_count = int(user_service_factory().count())
     except Exception as exc:
         logger.error("统计用户失败: %s", exc)
         snapshot.source_errors["users"] = str(exc)
 
+    if group_service_factory is None:
+        from app.services.group.crud import GroupService
+
+        group_service_factory = GroupService
     try:
-        snapshot.group_count = _count_json_files(groups_dir)
+        snapshot.group_count = int(group_service_factory().count())
     except Exception as exc:
         logger.error("统计用户组失败: %s", exc)
         snapshot.source_errors["groups"] = str(exc)

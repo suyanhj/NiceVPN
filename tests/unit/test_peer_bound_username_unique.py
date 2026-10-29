@@ -5,16 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.peer_instance import service as peer_mod
 from app.services.peer_instance.service import PeerService
 
 
 @pytest.fixture()
-def isolated_peers_dir(monkeypatch, tmp_path):
-    d = tmp_path / "peers"
-    d.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(peer_mod, "PEERS_DIR", d)
-    yield d
+def isolated_peers_dir():
+    """SQLite 由全局 pytest fixture 按测试隔离。"""
+    yield
 
 
 def test_create_second_peer_same_user_raises(isolated_peers_dir):

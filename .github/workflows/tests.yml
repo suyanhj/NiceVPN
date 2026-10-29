@@ -6,6 +6,7 @@ on:
       - admin-ui
       - main
       - "feature/**"
+      - "feat/**"
       - "fix/**"
       - "hotfix/**"
   pull_request:
@@ -85,7 +86,7 @@ jobs:
           browser=false
           for file in "${changed_files[@]}"; do
             case "${file}" in
-              .dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*)
+              .dockerignore|deploy/docker/*|build-ui.sh|requirements.txt|app/ui/vue/frontend/*|app/storage/*|app/core/constants.py|main.py)
                 docker=true
                 ;;
             esac
@@ -257,6 +258,7 @@ jobs:
               Path("tests/browser"),
               Path("openspec/changes/vpn-admin-ui"),
               Path("openspec/changes/vpn-admin-ui-v2"),
+              Path("openspec/changes/vpn-sqlite-storage-v1"),
           )
           failures = []
           for root in roots:
@@ -288,6 +290,7 @@ jobs:
         run: |
           npx --yes @fission-ai/openspec@1.14.2 validate vpn-admin-ui --strict --no-interactive
           npx --yes @fission-ai/openspec@1.14.2 validate vpn-admin-ui-v2 --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.14.2 validate vpn-sqlite-storage-v1 --strict --no-interactive
 
       - name: Verify clean repository after validation
         run: |
