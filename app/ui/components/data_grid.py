@@ -123,10 +123,13 @@ def render_data_grid(
     }
     if row_drag_managed:
         options["rowDragManaged"] = True
-        options["rowDragEntireRow"] = True
+        if not selectable:
+            # 中心优先级调整模式不使用行选择；此时允许直接按住整行拖动，
+            # 行为与旧版排序交互一致，也避免用户必须命中很小的拖拽手柄。
+            options["rowDragEntireRow"] = True
         options["suppressMoveWhenRowDragging"] = False
         # Keep the compatibility bridge for NiceGUI's Python-side rowDragEnd
-        # handler; the whole-row interaction itself is handled by AG Grid.
+        # handler; the drag interaction itself is handled by AG Grid.
         options[":onRowDragEnd"] = (
             "(event) => { "
             "if (Number.isInteger(event.overIndex)) event.toIndex = event.overIndex; "
