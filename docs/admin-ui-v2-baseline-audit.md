@@ -7,21 +7,19 @@
 - V2 继续采用 **Python/NiceGUI 负责业务与交互，Vue 只做视觉增强** 的路线。
 - 不引入 Vue Bits 与 TresJS；后续只有出现明确、不可由现有栈低成本完成的需求时再按组件级评估。
 - 页面迁移已按 Dashboard → Certs → Groups → Services → Peers → Users → Settings → Firewall 顺序全部完成，初始化页也已同步 V2 视觉。
-- Firewall 已完成 V2 迁移；超大页面模块拆分从本次视觉 PR 解耦，作为合并后的独立重构任务处理，不做整页 Vue 重写。
+- Firewall 已完成 V2 迁移与后续结构拆分；保持单一 `FirewallPage` 入口，通过 remote/import/batch mixin 与纯 helper 分离职责，不做整页 Vue 重写。
 
 ## 当前页面规模
 
-按当前分支 Git tree 文件大小观察：
+Firewall 从最初约 4,500 行的单文件拆为清晰边界：
 
-- `app/ui/pages/firewall.py`：约 171 KB；
-- `app/ui/pages/peers.py`：约 70 KB；
-- `app/ui/pages/users.py`：约 61 KB；
-- `app/ui/pages/services.py`：约 48 KB；
-- `app/ui/pages/settings.py`：约 47 KB；
-- `app/ui/pages/certs.py`：约 21 KB；
-- `app/ui/pages/dashboard.py`：约 9 KB。
+- `app/ui/pages/firewall.py`：约 1,779 行，保留页面初始化、Tabs、公共状态与中心规则主逻辑；
+- `app/ui/pages/firewall_remote.py`：约 1,446 行，对端远端交互；
+- `app/ui/pages/firewall_imports.py`：约 813 行，中心/远端导入与进度流程；
+- `app/ui/pages/firewall_batch.py`：约 267 行，批量启停与删除；
+- `app/ui/firewall_helpers.py`：约 571 行，纯解析、排序与 AG Grid 列定义。
 
-因此 V2 迁移优先复用共享组件和视觉原语；Firewall 的目标是降低单文件复杂度，而不是追求总 LOC 机械下降。
+拆分保持 `FirewallPage` 唯一入口与原方法调用方式，不改变 SSH、iptables、RuleService、PeerService 或缓存语义；目标是降低单文件复杂度，而不是追求总 LOC 机械下降。
 
 ## 本轮新增的自动约束
 
@@ -61,7 +59,7 @@ CI 单元测试新增两条架构契约：
 - Settings：按设置域拆分 Tabs 与共享表单 Section，并增加宽度/按钮圆角的 Chrome 几何回归断言。
 - Firewall：中心/远端规则完成 V2 迁移，Community AG Grid 支持优先级拖动；重复页脚和旧 Sortable 路径已清理。
 
-后续结构重构以独立 PR 进行，优先拆分 `firewall.py`，不再扩大本次视觉迁移 PR。
+V2 合并后已通过独立 PR 完成 Firewall 结构拆分，并以 Unit + Chrome smoke 锁定业务与视觉回归。
 
 
 ## 内容区页标题规则
