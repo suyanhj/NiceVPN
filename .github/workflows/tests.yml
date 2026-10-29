@@ -6,10 +6,13 @@ on:
       - admin-ui
       - main
       - "feature/**"
+      - "fix/**"
+      - "hotfix/**"
   pull_request:
     branches:
       - main
       - admin-ui
+      - "feature/**"
   workflow_dispatch:
 
 permissions:
@@ -38,14 +41,16 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
           BEFORE_SHA: ${{ github.event.before }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
-          # 手动执行用于完整验证，不做路径裁剪。
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+          # main 提交和手动执行走完整验证；开发分支与 PR 按变更范围运行昂贵任务。
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]] || \
+             { [[ "${EVENT_NAME}" == "push" ]] && [[ "${REF_NAME}" == "main" ]]; }; then
             echo "docker=true" >> "${GITHUB_OUTPUT}"
             echo "browser=true" >> "${GITHUB_OUTPUT}"
             printf '### Expensive test scope\n- Docker build: true (manual run)\n- Browser smoke: true (manual run)\n' >> "${GITHUB_STEP_SUMMARY}"
@@ -228,7 +233,18 @@ jobs:
           node-version: "22"
 
       - name: Validate Git diff whitespace
-        run: git diff --check origin/admin-ui...HEAD
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            git diff --check "${PR_BASE_SHA}" "${PR_HEAD_SHA}"
+          else
+            git diff --check HEAD^ HEAD
+          fi
 
       - name: Validate UTF-8 and replacement characters
         run: |
