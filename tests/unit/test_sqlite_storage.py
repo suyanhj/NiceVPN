@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,14 @@ def _legacy_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str,
     monkeypatch.setattr(migration, "BACKUPS_DIR", paths["backups"])
     migration.reset_storage_ready_for_tests()
     return paths
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions only")
+def test_sqlite_database_permissions_are_private(tmp_path: Path) -> None:
+    path = tmp_path / "db.sqlite"
+    store = SqliteStore(path)
+    store.initialize()
+    assert (path.stat().st_mode & 0o777) == 0o600
 
 
 def test_repository_query_and_pagination(tmp_path: Path) -> None:
