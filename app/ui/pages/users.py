@@ -31,7 +31,7 @@ from app.ui.grid_query import (
     sort_rows,
     text_filter_spec,
 )
-from app.ui.components.states import empty_state, error_state, loading_state
+from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
@@ -647,10 +647,10 @@ class UsersPage:
         ui.timer(0.01, self._refresh_user_list_async, once=True)
 
     async def _refresh_user_list_async(self) -> None:
-        """在线程池并行加载用户页数据，完成后再更新 AG Grid。"""
+        """在线程池加载当前 SQL 页，完成后再更新 AG Grid。"""
 
         try:
-            rows, warnings = await self._load_user_grid_rows_async()
+            rows, warnings, total = await self._load_user_grid_rows_async()
         except Exception as exc:
             logger.exception("加载用户列表失败")
             if self.data_container is not None:
@@ -668,8 +668,7 @@ class UsersPage:
         if self.data_container is None:
             return
 
-        existing = {str(row.get("username") or "") for row in rows}
-        self.selected_users.intersection_update(existing)
+        self.total_rows = int(total)
         self.all_grid_rows = rows
 
         self.data_container.clear()
@@ -677,48 +676,150 @@ class UsersPage:
             self._render_user_grid(rows, warnings)
         self._sync_bulk_state()
 
+    def _user_columns_for_query(self) -> list[dict]:
+        """给当前服务端查询状态补充完整筛选值与排序标记。"""
+
+        columns: list[dict] = []
+        for raw in self._user_grid_columns():
+            column = dict(raw)
+            field = str(column.get("field") or "")
+            if isinstance(column.get("filterParams"), dict):
+                column["filterParams"] = dict(column["filterParams"])
+            values = self._user_filter_values.get(field)
+            if values is not None and isinstance(column.get("filterParams"), dict):
+                column["filterParams"]["values"] = list(values)
+            if field == self._user_sort_field:
+                column["sort"] = "desc" if self._user_sort_desc else "asc"
+            columns.append(column)
+        return columns
+
     def _render_user_grid(self, rows: list[dict], warnings: list[str]) -> None:
-        """构建用户数据区及局部状态。"""
+        """构建仅包含当前 SQL 页的数据区。"""
 
         if warnings:
             with ui.row().classes("w-full items-start gap-2 vpn-data-warning"):
                 ui.icon("warning_amber", color="warning")
                 ui.label("；".join(warnings)).classes("section-caption")
 
-        if not rows:
+        if self.total_rows <= 0:
             self.grid_view = None
-            empty_state(
-                "暂无用户",
-                description="创建用户或批量导入后会显示在这里。",
-                action_label="新建用户",
-                on_action=self._show_create_dialog,
-                icon="person_off",
-            )
+            if self._user_filter_model:
+                no_match_state(
+                    description="当前列筛选没有匹配用户。",
+                    on_clear=self._clear_user_filters,
+                )
+            else:
+                empty_state(
+                    "暂无用户",
+                    description="创建用户或批量导入后会显示在这里。",
+                    action_label="新建用户",
+                    on_action=self._show_create_dialog,
+                    icon="person_off",
+                )
             return
 
         self.grid_view = render_data_grid(
-            self._user_grid_columns(),
+            self._user_columns_for_query(),
             rows,
             page_size=self.page_size,
             selected_ids=self.selected_users,
             on_cell_click=self._on_grid_cell_clicked,
             suppress_horizontal_scroll=True,
+            show_summary=False,
+            server_total=self.total_rows,
+            server_page=self.page,
+            on_server_page_change=self._on_user_page_change,
         )
-        self.grid_view.summary.set_visibility(False)
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
+        self.grid_view.grid.on("filterChanged", self._on_user_grid_query_changed)
+        self.grid_view.grid.on("sortChanged", self._on_user_grid_query_changed)
+        self._restore_user_filter_model()
 
+    def _restore_user_filter_model(self) -> None:
+        if self.grid_view is None or not self._user_filter_model:
+            return
+
+        async def apply_model() -> None:
+            try:
+                if self.grid_view is not None:
+                    await self.grid_view.grid.run_grid_method(
+                        "setFilterModel",
+                        self._user_filter_model,
+                    )
+            except Exception as exc:
+                logger.debug("恢复用户 Grid 筛选模型失败: %s", exc)
+
+        try:
+            background_tasks.create(
+                apply_model(),
+                name="users-filter-model-restore",
+            )
+        except RuntimeError:
+            logger.debug("当前无后台任务上下文，跳过用户筛选模型恢复")
+
+    def _on_user_page_change(self, page: int) -> None:
+        target = max(1, int(page))
+        pages = max(1, (self.total_rows + self.page_size - 1) // self.page_size)
+        target = min(target, pages)
+        if target == self.page:
+            return
+        self.page = target
+        self._refresh_user_list()
+
+    def _clear_user_filters(self) -> None:
+        self._user_filter_model = {}
+        self.page = 1
+        self._refresh_user_list()
+
+    async def _on_user_grid_query_changed(self, *_args) -> None:
+        """读取 AG Grid 过滤/排序模型并重新执行数据库查询。"""
+
+        view = self.grid_view
+        if view is None:
+            return
+        try:
+            model = await view.grid.run_grid_method("getFilterModel")
+            column_state = await view.grid.run_grid_method("getColumnState")
+        except Exception as exc:
+            logger.debug("读取用户 Grid 查询状态失败: %s", exc)
+            return
+
+        normalized_model = model if isinstance(model, dict) else {}
+        sort_field, sort_desc = first_sort_spec(
+            column_state if isinstance(column_state, list) else [],
+            default_field="username",
+        )
+        if (
+            normalized_model == self._user_filter_model
+            and sort_field == self._user_sort_field
+            and sort_desc == self._user_sort_desc
+        ):
+            return
+
+        self._user_filter_model = normalized_model
+        self._user_sort_field = sort_field
+        self._user_sort_desc = sort_desc
+        self.page = 1
+        self._refresh_user_list()
 
     async def _on_grid_selection_changed(self, _event=None) -> None:
-        """把 AG Grid 当前选择同步到批量操作状态。"""
+        """把当前页选择合并到跨页批量操作状态。"""
 
         if self.grid_view is None:
             return
         rows = await self.grid_view.get_selected_rows()
-        self.selected_users = {
+        current_page_ids = {
+            str(row.get("username") or "")
+            for row in self.all_grid_rows
+            if row.get("username")
+        }
+        selected_on_page = {
             str(row.get("username") or "")
             for row in rows
             if row.get("username")
         }
+        self.selected_users.difference_update(current_page_ids)
+        self.selected_users.update(selected_on_page)
         self._sync_bulk_state()
 
     def _sync_bulk_state(self) -> None:
