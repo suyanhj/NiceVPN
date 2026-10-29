@@ -881,7 +881,7 @@ def test_center_import_prepare_simplified_requires_owner_and_builds_payloads(
     page._is_unified_list = False
     page.current_owner_id = "group-dev"
     monkeypatch.setattr(
-        "app.ui.pages.firewall_center_actions.resolve_center_owner_type",
+        "app.ui.pages.firewall_center_imports.resolve_center_owner_type",
         lambda _oid: "group",
     )
     monkeypatch.setattr(
@@ -944,7 +944,7 @@ def test_execute_center_import_success_closes_form_and_refreshes(
     async def fake_io_bound(func, *args):
         return func(*args)
 
-    monkeypatch.setattr("app.ui.pages.firewall_center_actions.run.io_bound", fake_io_bound)
+    monkeypatch.setattr("app.ui.pages.firewall_center_imports.run.io_bound", fake_io_bound)
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
     monkeypatch.setattr(
         page,
@@ -1006,7 +1006,7 @@ def test_execute_center_import_failure_keeps_form_open_and_input_context(
     async def fake_io_bound(func, *args):
         return func(*args)
 
-    monkeypatch.setattr("app.ui.pages.firewall_center_actions.run.io_bound", fake_io_bound)
+    monkeypatch.setattr("app.ui.pages.firewall_center_imports.run.io_bound", fake_io_bound)
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
     monkeypatch.setattr(
         page,
@@ -1062,6 +1062,9 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     center_actions_source = (
         root / "app" / "ui" / "pages" / "firewall_center_actions.py"
     ).read_text(encoding="utf-8")
+    center_import_source = (
+        root / "app" / "ui" / "pages" / "firewall_center_imports.py"
+    ).read_text(encoding="utf-8")
     helper_source = (root / "app" / "ui" / "firewall_helpers.py").read_text(
         encoding="utf-8"
     )
@@ -1087,6 +1090,11 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     assert "STATUS_PILL_RENDERER" in helper_source
     assert "firewall-action-dialog" in center_source
     assert "firewall-rule-drawer" in center_actions_source
+    assert "FirewallCenterImportMixin" in source
+    assert "def _prepare_center_import(" in center_import_source
+    assert "def _show_center_import_dialog(" in center_import_source
+    assert "def _prepare_center_import(" not in center_actions_source
+    assert "def _show_center_import_dialog(" not in center_actions_source
     assert "firewall-rule-card" not in source
 
     assert ".firewall-page--v2 .firewall-tab-shell" in shell_css
