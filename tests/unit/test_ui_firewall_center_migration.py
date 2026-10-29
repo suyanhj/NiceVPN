@@ -1073,7 +1073,7 @@ def test_firewall_v2_visual_contract_uses_compact_action_and_grid_system() -> No
     ).read_text(encoding="utf-8")
 
     assert "firewall-page--v2" in source
-    assert "from app.ui.firewall_helpers import second_line_comment_text" in source
+    assert "second_line_comment_text," in source
     assert "firewall-tab-shell" in source
     assert "firewall-bulk-bar" in source
     assert "firewall-filter-bar" in source
