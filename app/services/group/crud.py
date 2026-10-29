@@ -9,11 +9,11 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.config import load_config, save_config
-from app.core.constants import GROUPS_DIR, MGMT_PORT_START, OPENVPN_DEFAULT_MAX_CLIENTS
+from app.core.constants import MGMT_PORT_START, OPENVPN_DEFAULT_MAX_CLIENTS
 from app.models.group import Group
 from app.services.group.subnet import check_subnet_conflict
 from app.utils.audit_log import AuditLogger
-from app.utils.file_lock import read_json, write_json_atomic
+from app.storage.sqlite_store import SqliteStore, get_default_store
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 class GroupService:
     """用户组全生命周期管理服务"""
 
-    def __init__(self):
+    def __init__(self, store: SqliteStore | None = None):
         self.audit = AuditLogger()
+        self.store = store or get_default_store()
 
     # ---- 创建 ----
 
@@ -84,8 +85,7 @@ class GroupService:
         data = group.model_dump()
 
         # 持久化
-        GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(GROUPS_DIR / f"{data['id']}.json", data)
+        self.store.upsert_group(data)
 
         self.audit.log(
             "create_group", "group", data["id"],
@@ -169,7 +169,7 @@ class GroupService:
         old_subnet = data["subnet"]
         data["subnet"] = new_subnet
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(GROUPS_DIR / f"{group_id}.json", data)
+        self.store.upsert_group(data)
 
         # 根组修改后同步全局配置和默认防火墙规则
         if is_root:
@@ -206,7 +206,7 @@ class GroupService:
             current["name"] = new_name
             current["updated_at"] = datetime.now(timezone.utc).isoformat()
             current = Group(**current).model_dump()
-            write_json_atomic(GROUPS_DIR / f"{group_id}.json", current)
+            self.store.upsert_group(current)
             self.audit.log(
                 "update_group_name",
                 "group",
@@ -304,8 +304,7 @@ class GroupService:
                 f"根组「{data.get('name', '')}」是全局组，不允许删除，只允许修改子网"
             )
 
-        group_file = GROUPS_DIR / f"{group_id}.json"
-        group_file.unlink(missing_ok=True)
+        self.store.delete_group(group_id)
 
         self.audit.log(
             "delete_group", "group", group_id,
@@ -358,24 +357,16 @@ class GroupService:
     # ---- 查询 ----
 
     def list_all(self) -> list[dict]:
-        """列出所有组"""
-        groups: list[dict] = []
-        if not GROUPS_DIR.exists():
-            return groups
-        for f in GROUPS_DIR.glob("*.json"):
-            data = read_json(f)
-            if data:
-                groups.append(data)
-        # 按创建时间排序
-        groups.sort(key=lambda g: g.get("created_at", ""))
-        return groups
+        """列出所有组，按创建时间排序。"""
+        return self.store.list_groups()
+
+    def count(self) -> int:
+        """返回用户组数量。"""
+        return self.store.count_groups()
 
     def get(self, group_id: str) -> dict | None:
-        """获取单个组"""
-        group_file = GROUPS_DIR / f"{group_id}.json"
-        if not group_file.exists():
-            return None
-        return read_json(group_file)
+        """获取单个组。"""
+        return self.store.get_group(group_id)
 
     # ---- 内部辅助方法 ----
 
@@ -387,11 +378,8 @@ class GroupService:
         return data
 
     def _name_exists(self, name: str) -> bool:
-        """检查组名是否已存在"""
-        for group in self.list_all():
-            if group.get("name") == name:
-                return True
-        return False
+        """检查组名是否已存在。"""
+        return self.store.group_name_exists(name)
 
     def _set_status(self, group_id: str, status: str) -> dict:
         """设置组状态"""
@@ -399,7 +387,7 @@ class GroupService:
         old_status = data.get("status")
         data["status"] = status
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_atomic(GROUPS_DIR / f"{group_id}.json", data)
+        self.store.upsert_group(data)
 
         self.audit.log(
             f"{'enable' if status == 'active' else 'disable'}_group",
