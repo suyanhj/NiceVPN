@@ -18,7 +18,7 @@ from typing import Any, Iterator, Sequence
 
 from app.core.constants import SQLITE_DB_FILE
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -106,6 +106,54 @@ def _load_payload(raw: str) -> dict[str, Any]:
     return value
 
 
+def _like_pattern(value: object, *, mode: str = "contains") -> str:
+    """生成带 ESCAPE '\\' 的 LIKE 参数。"""
+
+    text = str(value or "")
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if mode == "equals":
+        return escaped
+    if mode == "startsWith":
+        return f"{escaped}%"
+    if mode == "endsWith":
+        return f"%{escaped}"
+    return f"%{escaped}%"
+
+
+def _peer_index_values(data: dict[str, Any]) -> tuple[Any, ...]:
+    lan_cidrs = [
+        str(value).strip()
+        for value in (data.get("lan_cidrs") or [])
+        if str(value).strip()
+    ]
+    return (
+        str(data.get("name") or ""),
+        1 if lan_cidrs else 0,
+        ",".join(lan_cidrs),
+        str(data.get("center_forward_protocol") or "all").strip().lower() or "all",
+        str(data.get("center_forward_dest_ip") or "").strip(),
+        str(data.get("center_forward_dest_port") or "").strip(),
+    )
+
+
+def _firewall_index_values(data: dict[str, Any]) -> tuple[Any, ...]:
+    source_subnet = str(data.get("source_subnet") or "").strip()
+    source_ips = [
+        str(value).strip()
+        for value in (data.get("source_ips") or [])
+        if str(value).strip()
+    ]
+    source_text = source_subnet or ",".join(source_ips)
+    return (
+        str(data.get("protocol") or "all").strip().lower() or "all",
+        str(data.get("action") or "accept").strip().lower() or "accept",
+        str(data.get("deployment_target") or "center").strip().lower() or "center",
+        source_text,
+        str(data.get("dest_ip") or "").strip(),
+        str(data.get("dest_port") or "").strip(),
+    )
+
+
 class SqliteStore:
     """单机 SQLite repository；每次操作使用短连接，写操作使用 BEGIN IMMEDIATE。"""
 
@@ -170,8 +218,83 @@ class SqliteStore:
                         "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                         (1, "initial-structured-metadata", _now_iso()),
                     )
+                    current = 1
+                if current < 2:
+                    self._migrate_v2_query_indexes(conn)
+                    current = 2
                 conn.commit()
             self._initialized = True
+
+    @staticmethod
+    def _migrate_v2_query_indexes(conn: sqlite3.Connection) -> None:
+        """补充分页、筛选所需的反规范化索引列，并回填现有 payload。"""
+
+        peer_columns = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(peers)").fetchall()
+        }
+        for name, ddl in (
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("has_lan_cidrs", "INTEGER NOT NULL DEFAULT 0"),
+            ("lan_cidrs_text", "TEXT NOT NULL DEFAULT ''"),
+            ("center_forward_protocol", "TEXT NOT NULL DEFAULT 'all'"),
+            ("center_forward_dest_ip", "TEXT NOT NULL DEFAULT ''"),
+            ("center_forward_dest_port", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in peer_columns:
+                conn.execute(f"ALTER TABLE peers ADD COLUMN {name} {ddl}")
+
+        firewall_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(firewall_rules)").fetchall()
+        }
+        for name, ddl in (
+            ("protocol", "TEXT NOT NULL DEFAULT 'all'"),
+            ("action", "TEXT NOT NULL DEFAULT 'accept'"),
+            ("deployment_target", "TEXT NOT NULL DEFAULT 'center'"),
+            ("source_text", "TEXT NOT NULL DEFAULT ''"),
+            ("dest_ip", "TEXT NOT NULL DEFAULT ''"),
+            ("dest_port", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in firewall_columns:
+                conn.execute(f"ALTER TABLE firewall_rules ADD COLUMN {name} {ddl}")
+
+        for row in conn.execute("SELECT id, payload FROM peers").fetchall():
+            data = _load_payload(str(row["payload"]))
+            conn.execute(
+                """
+                UPDATE peers
+                SET name = ?, has_lan_cidrs = ?, lan_cidrs_text = ?,
+                    center_forward_protocol = ?, center_forward_dest_ip = ?,
+                    center_forward_dest_port = ?
+                WHERE id = ?
+                """,
+                (*_peer_index_values(data), str(row["id"])),
+            )
+
+        for row in conn.execute("SELECT id, payload FROM firewall_rules").fetchall():
+            data = _load_payload(str(row["payload"]))
+            conn.execute(
+                """
+                UPDATE firewall_rules
+                SET protocol = ?, action = ?, deployment_target = ?,
+                    source_text = ?, dest_ip = ?, dest_port = ?
+                WHERE id = ?
+                """,
+                (*_firewall_index_values(data), str(row["id"])),
+            )
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_peers_center_enabled_priority "
+            "ON peers(has_lan_cidrs, center_forward_enabled, center_forward_priority, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_firewall_filter "
+            "ON firewall_rules(enabled, protocol, action, owner_type, owner_id)"
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            (2, "query-pagination-indexes", _now_iso()),
+        )
 
     @contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
