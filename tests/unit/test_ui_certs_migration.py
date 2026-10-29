@@ -50,8 +50,9 @@ def test_certs_page_uses_shared_grid_bulk_state_and_native_filters(monkeypatch: 
         _cert("bob", "valid", days=3),
         _cert("revoked-user", "revoked", days=90),
     ]
-    monkeypatch.setattr(page.cert_service, "list_all", lambda: sample)
-    monkeypatch.setattr(page.cert_service, "get_expiring", lambda: [sample[1]])
+    now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    rows = [page._adapt_cert_row(cert, now=now) for cert in sample]
+    monkeypatch.setattr(page, "_load_rows", lambda: rows)
 
     async def verify_page() -> None:
         async with user_simulation(page.render) as user:
