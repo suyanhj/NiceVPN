@@ -230,7 +230,8 @@ def ensure_storage_ready(
 ) -> StorageMigrationResult:
     """确保 SQLite 可用；首次升级时执行 legacy JSON 一次性迁移。"""
 
-    db_path = Path(database) if database is not None else Path(SQLITE_DB_FILE)
+    configured = database or os.environ.get("NICEVPN_DB_PATH") or SQLITE_DB_FILE
+    db_path = Path(configured)
     key = str(db_path.resolve())
 
     with _MIGRATION_LOCK:
