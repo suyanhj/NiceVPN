@@ -881,7 +881,7 @@ def test_center_import_prepare_simplified_requires_owner_and_builds_payloads(
     page._is_unified_list = False
     page.current_owner_id = "group-dev"
     monkeypatch.setattr(
-        "app.ui.pages.firewall.resolve_center_owner_type",
+        "app.ui.pages.firewall_imports.resolve_center_owner_type",
         lambda _oid: "group",
     )
     monkeypatch.setattr(
@@ -944,7 +944,7 @@ def test_execute_center_import_success_closes_form_and_refreshes(
     async def fake_io_bound(func, *args):
         return func(*args)
 
-    monkeypatch.setattr("app.ui.pages.firewall.run.io_bound", fake_io_bound)
+    monkeypatch.setattr("app.ui.pages.firewall_imports.run.io_bound", fake_io_bound)
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
     monkeypatch.setattr(
         page,
@@ -1006,7 +1006,7 @@ def test_execute_center_import_failure_keeps_form_open_and_input_context(
     async def fake_io_bound(func, *args):
         return func(*args)
 
-    monkeypatch.setattr("app.ui.pages.firewall.run.io_bound", fake_io_bound)
+    monkeypatch.setattr("app.ui.pages.firewall_imports.run.io_bound", fake_io_bound)
     monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
     monkeypatch.setattr(
         page,
