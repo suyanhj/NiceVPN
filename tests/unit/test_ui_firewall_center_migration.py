@@ -190,6 +190,7 @@ def test_center_firewall_page_uses_shared_shell_filters_and_aggrid(
             assert response.status_code == 200
             await user.should_see("中心策略")
             await user.should_see("对端远端")
+            await user.should_not_see("正在加载中心规则…")
             await user.should_not_see("点击“调整优先级”进入拖动排序模式")
 
     asyncio.run(verify())
@@ -234,8 +235,9 @@ def test_center_firewall_keyword_search_and_no_match_state(
     async def verify() -> None:
         async with user_simulation(page.render) as user:
             await user.open("/")
+            await user.should_not_see("正在加载中心规则…")
             page._center_search_input.set_value("172.16.0.10")
-            page._refresh_rules()
+            page._render_center_rules()
 
             assert page._center_grid_view is not None
             assert len(page._center_display_rows) == 1
@@ -245,16 +247,16 @@ def test_center_firewall_keyword_search_and_no_match_state(
             assert page._center_grid_view.summary is None
 
             page._center_search_input.set_value("443")
-            page._refresh_rules()
+            page._render_center_rules()
             assert len(page._center_display_rows) == 1
             assert page._center_display_rows[0]["id"] == "rule-accept"
 
             page._center_search_input.set_value("开发访问")
-            page._refresh_rules()
+            page._render_center_rules()
             assert len(page._center_display_rows) == 0
 
             page._center_search_input.set_value("definitely-not-found")
-            page._refresh_rules()
+            page._render_center_rules()
             await user.should_see("没有匹配结果")
             await user.should_see("当前关键词没有匹配规则")
 
@@ -300,6 +302,7 @@ def test_center_firewall_true_empty_state(
     async def verify() -> None:
         async with user_simulation(page.render) as user:
             await user.open("/")
+            await user.should_not_see("正在加载中心规则…")
             await user.should_see("暂无中心规则")
             await user.should_see("新建规则")
 
@@ -349,6 +352,7 @@ def test_center_priority_reorder_mode_shows_full_order_without_pagination(
         async with user_simulation(page.render) as user:
             response = await user.open("/")
             assert response.status_code == 200
+            await user.should_not_see("正在加载中心规则…")
             assert page._center_grid_view is not None
             options = page._center_grid_view.grid.options
             assert options["pagination"] is False
@@ -467,7 +471,7 @@ def test_center_grid_drag_is_blocked_while_filtered(
         "_notify_for_page",
         lambda message, **_kwargs: messages.append(str(message)),
     )
-    monkeypatch.setattr(page, "_refresh_rules", lambda: refreshed.append(True))
+    monkeypatch.setattr(page, "_render_center_rules", lambda: refreshed.append(True))
 
     class Event:
         args = {"rowId": "rule-accept", "rowIndex": 0, "toIndex": 1}
