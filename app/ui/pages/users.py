@@ -648,7 +648,7 @@ class UsersPage:
                 "正在刷新用户…" if self.all_grid_rows else "正在加载用户…",
                 refreshing=bool(self.all_grid_rows),
             )
-        ui.timer(0.01, self._refresh_user_list_async, once=True)
+            ui.timer(0.01, self._refresh_user_list_async, once=True)
 
     async def _refresh_user_list_async(self) -> None:
         """在线程池加载当前 SQL 页，完成后再更新 AG Grid。"""
