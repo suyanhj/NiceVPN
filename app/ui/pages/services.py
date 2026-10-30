@@ -231,6 +231,7 @@ class ServicesPage:
                     log_box.value = "\n".join(log_lines[-300:])
 
             poll_timer = ui.timer(0.5, refresh_log)
+            dialog.on("hide", lambda: poll_timer.deactivate())
 
             async def run_check() -> None:
                 if self._openvpn_upgrade_busy:
