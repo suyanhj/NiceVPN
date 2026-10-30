@@ -697,7 +697,6 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     override_dir = Path("/etc/systemd/system/openvpn-server@.service.d")
     cli_link = Path("/usr/local/sbin/openvpn")
     snapshots = [
-        _snapshot_path(prefix, rollback_root, "openvpn-prefix"),
         _snapshot_path(unit, rollback_root, "openvpn-server.service"),
         _snapshot_path(override_dir, rollback_root, "openvpn-server.service.d"),
         _snapshot_path(cli_link, rollback_root, "openvpn-cli-link"),
@@ -705,12 +704,17 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
 
     new_tree = prefix.parent / f"{prefix.name}.nicevpn-new-{uuid.uuid4().hex[:8]}"
     old_tree = prefix.parent / f"{prefix.name}.nicevpn-old-{uuid.uuid4().hex[:8]}"
+    prefix_existed = prefix.exists() or prefix.is_symlink()
+    prefix_moved = False
+    candidate_installed = False
     try:
         _emit(on_output, f"[升级] 安装 OpenVPN {stage['version']} 到 {prefix}")
         shutil.copytree(Path(str(stage["prefix"])), new_tree, symlinks=True)
-        if prefix.exists() or prefix.is_symlink():
+        if prefix_existed:
             os.replace(prefix, old_tree)
+            prefix_moved = True
         os.replace(new_tree, prefix)
+        candidate_installed = True
 
         cli_link.parent.mkdir(parents=True, exist_ok=True)
         _remove_path(cli_link)
@@ -749,10 +753,13 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     except Exception:
         _emit(on_output, "[回滚] OpenVPN 升级失败，恢复升级前 binary/systemd")
         _remove_path(new_tree)
-        _remove_path(prefix)
-        if old_tree.exists():
+        if candidate_installed:
+            _remove_path(prefix)
+        if prefix_moved and old_tree.exists():
             os.replace(old_tree, prefix)
-        for record in snapshots[1:]:
+        elif not prefix_existed:
+            _remove_path(prefix)
+        for record in snapshots:
             _restore_path(record)
         subprocess.run(["systemctl", "daemon-reload"], check=False)
         for name in active_instances:
