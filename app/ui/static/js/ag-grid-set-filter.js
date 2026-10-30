@@ -261,5 +261,215 @@
     }
   }
 
+
+  class NiceVpnMultiTextFilter {
+    init(params) {
+      this.params = params;
+      this.values = [];
+      this.mode = 'containsAny';
+
+      this.gui = document.createElement('div');
+      this.gui.className = 'vpn-grid-multi-text-filter';
+
+      this.modeSelect = document.createElement('select');
+      this.modeSelect.className = 'vpn-grid-multi-text-filter__mode';
+      [
+        ['containsAny', '包含任一'],
+        ['containsAll', '包含全部'],
+        ['notContainsAny', '不包含'],
+        ['equalsAny', '等于任一'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        this.modeSelect.append(option);
+      });
+
+      this.inputWrap = document.createElement('div');
+      this.inputWrap.className = 'vpn-grid-multi-text-filter__input-wrap';
+
+      this.tags = document.createElement('div');
+      this.tags.className = 'vpn-grid-multi-text-filter__tags';
+
+      this.input = document.createElement('input');
+      this.input.type = 'text';
+      this.input.autocomplete = 'off';
+      this.input.spellcheck = false;
+      this.input.placeholder = String(params.inputPlaceholder || '输入后按 Enter');
+
+      this.inputWrap.append(this.tags, this.input);
+      this.gui.append(this.modeSelect, this.inputWrap);
+
+      this.modeSelect.addEventListener('change', () => {
+        this.mode = this.modeSelect.value || 'containsAny';
+        this.notifyFilterChanged();
+      });
+
+      this.input.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ',') {
+          event.preventDefault();
+          this.commitInput();
+          return;
+        }
+        if (event.key === 'Backspace' && !this.input.value && this.values.length) {
+          this.values.pop();
+          this.renderTags();
+          this.notifyFilterChanged();
+        }
+      });
+
+      this.input.addEventListener('paste', event => {
+        const text = event.clipboardData?.getData('text') || '';
+        if (!/[\n,]/.test(text)) {
+          return;
+        }
+        event.preventDefault();
+        this.addValues(text.split(/[\n,]+/));
+      });
+    }
+
+    getGui() {
+      return this.gui;
+    }
+
+    afterGuiAttached() {
+      window.setTimeout(() => this.input?.focus(), 0);
+    }
+
+    isFilterActive() {
+      return this.values.length > 0;
+    }
+
+    normalizeValue(value) {
+      return String(value ?? '').trim();
+    }
+
+    addValues(rawValues) {
+      const next = [...this.values];
+      const seen = new Set(next.map(value => value.toLocaleLowerCase()));
+      rawValues.forEach(raw => {
+        const value = this.normalizeValue(raw);
+        const key = value.toLocaleLowerCase();
+        if (!value || seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        next.push(value);
+      });
+      if (next.length === this.values.length) {
+        return;
+      }
+      this.values = next;
+      this.input.value = '';
+      this.renderTags();
+      this.notifyFilterChanged();
+    }
+
+    commitInput() {
+      this.addValues([this.input.value]);
+    }
+
+    removeValue(index) {
+      if (index < 0 || index >= this.values.length) {
+        return;
+      }
+      this.values.splice(index, 1);
+      this.renderTags();
+      this.notifyFilterChanged();
+    }
+
+    renderTags() {
+      this.tags.replaceChildren();
+      this.values.forEach((value, index) => {
+        const tag = document.createElement('span');
+        tag.className = 'vpn-grid-multi-text-filter__tag';
+
+        const text = document.createElement('span');
+        text.className = 'vpn-grid-multi-text-filter__tag-text';
+        text.textContent = value;
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'vpn-grid-multi-text-filter__tag-remove';
+        remove.setAttribute('aria-label', '删除 ' + value);
+        remove.textContent = '×';
+        remove.addEventListener('click', () => this.removeValue(index));
+
+        tag.append(text, remove);
+        this.tags.append(tag);
+      });
+    }
+
+    textValue(node) {
+      const field = String(this.params.filterValueField || '').trim();
+      const value = field ? node?.data?.[field] : this.params.getValue(node);
+      return String(value ?? '').toLocaleLowerCase();
+    }
+
+    doesFilterPass(params) {
+      if (!this.isFilterActive()) {
+        return true;
+      }
+      const actual = this.textValue(params.node);
+      const needles = this.values.map(value => value.toLocaleLowerCase());
+
+      if (this.mode === 'containsAll') {
+        return needles.every(value => actual.includes(value));
+      }
+      if (this.mode === 'notContainsAny') {
+        return needles.every(value => !actual.includes(value));
+      }
+      if (this.mode === 'equalsAny') {
+        return needles.some(value => actual === value);
+      }
+      return needles.some(value => actual.includes(value));
+    }
+
+    getModel() {
+      if (!this.isFilterActive()) {
+        return null;
+      }
+      return {
+        filterType: 'niceVpnMultiText',
+        type: this.mode,
+        values: [...this.values],
+      };
+    }
+
+    setModel(model) {
+      if (!model || !Array.isArray(model.values)) {
+        this.values = [];
+        this.mode = 'containsAny';
+      } else {
+        this.values = model.values
+          .map(value => this.normalizeValue(value))
+          .filter(Boolean);
+        this.mode = String(model.type || 'containsAny');
+      }
+      this.modeSelect.value = this.mode;
+      this.input.value = '';
+      this.renderTags();
+    }
+
+    getModelAsString() {
+      if (!this.isFilterActive()) {
+        return '';
+      }
+      const labels = {
+        containsAny: '包含任一',
+        containsAll: '包含全部',
+        notContainsAny: '不包含',
+        equalsAny: '等于任一',
+      };
+      return (labels[this.mode] || '包含任一') + ': ' + this.values.join(', ');
+    }
+
+    notifyFilterChanged() {
+      this.params.filterModifiedCallback?.();
+      this.params.filterChangedCallback?.();
+    }
+  }
+
   window.NiceVpnSetFilter = NiceVpnSetFilter;
+  window.NiceVpnMultiTextFilter = NiceVpnMultiTextFilter;
 })();
