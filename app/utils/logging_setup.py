@@ -2,14 +2,18 @@
 """项目运行日志配置工具。
 
 与 OpenVPN 相关文件日志的布局见 ``app.core.constants``：
-``LOGS_DIR``（data/logs）下含 app.log、openvpn-install.log、peer-remote.log（按天轮转，默认保留 LOG_RETENTION_DAYS 天）；
+``LOGS_DIR``（data/logs）下含 app.log、openvpn-install.log、openvpn-upgrade.log、peer-remote.log（按天轮转，默认保留 LOG_RETENTION_DAYS 天）；
 设备绑定日志与守护进程 log-append/status 在 ``/etc/openvpn/log/`` 下，由定时任务按保留期清理。
 审计 JSONL 在 ``AUDIT_DIR``，与运行日志分离。
 """
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
-from app.core.constants import LOG_RETENTION_DAYS, LOGS_DIR
+from app.core.constants import (
+    LOG_RETENTION_DAYS,
+    LOGS_DIR,
+    OPENVPN_UPGRADE_LOG_FILE,
+)
 
 
 class _DropNiceguiEventListenersRerenderWarning(logging.Filter):
@@ -75,6 +79,24 @@ def setup_logging() -> None:
     for handler in list(install_logger.handlers):
         install_logger.removeHandler(handler)
     install_logger.addHandler(install_file_handler)
+
+    # 升级日志与安装日志同样独立落盘；编译/preflight/切换输出不刷 app.log/控制台。
+    upgrade_logger = logging.getLogger("app.services.openvpn.upgrade")
+    upgrade_logger.setLevel(logging.INFO)
+    upgrade_logger.propagate = False
+
+    upgrade_file_handler = TimedRotatingFileHandler(
+        OPENVPN_UPGRADE_LOG_FILE,
+        when="midnight",
+        interval=1,
+        backupCount=LOG_RETENTION_DAYS,
+        encoding="utf-8",
+        utc=True,
+    )
+    upgrade_file_handler.setFormatter(formatter)
+    for handler in list(upgrade_logger.handlers):
+        upgrade_logger.removeHandler(handler)
+    upgrade_logger.addHandler(upgrade_file_handler)
 
     # 对端 SSH（探测、安装 OpenVPN、SFTP .ovpn 等）：只写文件，不刷屏控制台
     peer_remote_logger = logging.getLogger("peer.remote")
