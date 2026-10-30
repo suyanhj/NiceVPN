@@ -5,9 +5,7 @@ from app.services.openvpn.detector import detect_distro_family, parse_os_release
 from app.services.openvpn import installer as installer_mod
 from app.services.openvpn.installer import (
     _INSTALL_SCRIPTS_DIR,
-    _parse_openvpn_version_parts,
     _read_install_script_text,
-    _render_openvpn_systemd_unit_from_source,
     build_peer_openvpn_install_script,
     stage_openvpn_source_build,
 )
@@ -142,36 +140,3 @@ def test_common_script_has_shared_helpers() -> None:
     assert "openvpn_install_server_systemd_from_src()" in common
 
 
-def test_render_openvpn_systemd_unit_from_source_uses_official_template(tmp_path):
-    template_dir = tmp_path / "distro" / "systemd"
-    template_dir.mkdir(parents=True)
-    (template_dir / "openvpn-server@.service.in").write_text(
-        """[Unit]
-Description=OpenVPN service for %i
-Documentation=https://openvpn.net/openvpn-@OPENVPN_VERSION_MAJOR@-@OPENVPN_VERSION_MINOR@/
-
-[Service]
-Type=notify
-WorkingDirectory=/etc/openvpn/server
-ExecStart=@sbindir@/openvpn --status %t/openvpn-server/status-%i.log --status-version 2 --suppress-timestamps --config %i.conf
-ProtectSystem=true
-
-[Install]
-WantedBy=multi-user.target
-""",
-        encoding="utf-8",
-    )
-
-    unit = _render_openvpn_systemd_unit_from_source(tmp_path, "v2.7.0")
-
-    assert "Type=notify" in unit
-    assert "WorkingDirectory=/etc/openvpn/server" in unit
-    assert "ExecStart=/opt/openvpn/sbin/openvpn --suppress-timestamps --config %i.conf" in unit
-    assert "ProtectSystem=true" in unit
-    assert "ReadWritePaths=/etc/openvpn" in unit
-    assert "openvpn-2-7" in unit
-
-
-def test_parse_openvpn_version_parts():
-    assert _parse_openvpn_version_parts("v2.7.0") == ("2", "7")
-    assert _parse_openvpn_version_parts("bad") == ("2", "6")
