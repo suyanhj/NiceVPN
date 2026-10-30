@@ -130,14 +130,17 @@ class SettingsPage:
                         self._render_notify_panel()
                 with ui.tab_panel("diagnostics"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
-                        self._render_diagnostics_panel()
+                        self._render_diagnostics_panel(
+                            auto_run=active_tab == "diagnostics"
+                        )
 
-    @staticmethod
-    def _on_settings_tab_change(e) -> None:
+    def _on_settings_tab_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "")
         logger.debug("系统设置页签切换: %s", v)
+        if v == "diagnostics":
+            self._start_diagnostics()
 
-    def _render_diagnostics_panel(self) -> None:
+    def _render_diagnostics_panel(self, *, auto_run: bool = False) -> None:
         """渲染只读系统自检与安全修复入口。"""
 
         def body() -> None:
@@ -147,7 +150,8 @@ class SettingsPage:
             self.diagnostics_container = ui.column().classes(
                 "w-full gap-2 settings-diagnostics-list"
             )
-            ui.timer(0.01, self._start_diagnostics, once=True)
+            if auto_run:
+                ui.timer(0.01, self._start_diagnostics, once=True)
 
         def actions() -> None:
             secondary_action(
