@@ -186,9 +186,25 @@ class EasyRSAWrapper:
         self._run(["gen-dh"])
         return True
 
-    def gen_req(self, cn: str) -> bool:
-        """为指定 CN 生成证书请求（无密码保护私钥）"""
-        self._run(["gen-req", cn, "nopass"])
+    def gen_req(self, cn: str, passphrase: str | None = None) -> bool:
+        """为指定 CN 生成证书请求，并按需用口令加密客户端私钥。
+
+        EasyRSA 的 gen-req 默认生成加密私钥；无口令时显式使用
+        nopass。有口令时通过 EASYRSA_PASSOUT=env:... 传给 OpenSSL，
+        不把口令写入命令行、日志或 NiceVPN 持久化存储。
+        """
+        secret = str(passphrase or "")
+        if not secret:
+            self._run(["gen-req", cn, "nopass"])
+            return True
+
+        self._run(
+            ["gen-req", cn],
+            env_extra={
+                "EASYRSA_PASSOUT": "env:NICEVPN_EASYRSA_PASSOUT",
+                "NICEVPN_EASYRSA_PASSOUT": secret,
+            },
+        )
         return True
 
     def sign_req(self, req_type: str, cn: str) -> bool:
