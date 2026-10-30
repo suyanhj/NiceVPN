@@ -16,7 +16,10 @@ def test_upgrade_module_has_no_distribution_package_install_logic() -> None:
     assert '["apt", "install"' not in source
     assert 'shutil.which("dnf")' not in source
     assert "openvpn-install-common.sh" not in source
+    assert "/etc/systemd/system/openvpn-server@.service" not in source
+    assert "ReadWritePaths=/etc/openvpn" not in source
     assert "stage_openvpn_source_build" in source
+    assert "install_openvpn_server_systemd_from_staged_source" in source
 
 
 def test_upgrade_installer_output_is_mirrored_to_upgrade_logger(
