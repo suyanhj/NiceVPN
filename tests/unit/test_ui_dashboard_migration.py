@@ -10,6 +10,7 @@ import pytest
 from nicegui.testing import user_simulation
 
 from app.services.monitor.service_monitor import InstanceStatus
+from app.services.monitor.traffic_history import TrafficSample
 from app.ui.adapters.dashboard import DashboardSnapshot
 from app.ui.pages.dashboard import DashboardPage, _format_bytes
 
@@ -68,7 +69,7 @@ def test_dashboard_uses_shared_metrics_charts_and_summary(
             await user.should_see("累计流量")
             await user.should_see("↑ 5.0 KB")
             await user.should_see("服务健康度与状态分布")
-            await user.should_see("当前累计流量分布")
+            await user.should_see("最近 5 分钟流量")
             await user.should_see("6/8 启用")
             await user.should_see("15 天后到期")
 
@@ -125,6 +126,58 @@ def test_dashboard_partial_errors_do_not_hide_other_metrics(
             await user.should_see("部分数据不可用")
             await user.should_see("实例 broken: status read failed")
             await user.should_see("certs: cert index broken")
+
+    asyncio.run(verify())
+
+
+def test_dashboard_traffic_timer_refreshes_chart_without_recollecting_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = DashboardPage()
+    snap = _snapshot()
+    collect_calls = 0
+
+    def collect() -> DashboardSnapshot:
+        nonlocal collect_calls
+        collect_calls += 1
+        return snap
+
+    monkeypatch.setattr(page, "_collect_snapshot", collect)
+    monkeypatch.setattr(
+        "app.ui.pages.dashboard.get_recent_traffic_samples",
+        lambda: [],
+    )
+
+    async def verify() -> None:
+        async with user_simulation(page.render) as user:
+            await user.open("/")
+            assert collect_calls == 1
+            assert page._traffic_chart is not None
+            assert page._traffic_chart.chart is not None
+
+            samples = [
+                TrafficSample(
+                    datetime(2026, 10, 20, 10, 31, tzinfo=timezone.utc),
+                    111,
+                    222,
+                ),
+                TrafficSample(
+                    datetime(2026, 10, 20, 10, 32, tzinfo=timezone.utc),
+                    333,
+                    444,
+                ),
+            ]
+            monkeypatch.setattr(
+                "app.ui.pages.dashboard.get_recent_traffic_samples",
+                lambda: samples,
+            )
+            page._refresh_traffic_chart()
+
+            assert collect_calls == 1
+            options = page._traffic_chart.chart.options
+            assert options["xAxis"]["data"] == ["10:31", "10:32"]
+            assert options["series"][0]["data"] == [111, 333]
+            assert options["series"][1]["data"] == [222, 444]
 
     asyncio.run(verify())
 
