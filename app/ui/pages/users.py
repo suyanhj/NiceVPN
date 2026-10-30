@@ -1491,8 +1491,12 @@ class UsersPage:
             ).classes("w-full").props(
                 'behavior=menu popup-content-class="vpn-group-select-menu"'
             )
-            fields["password_enabled"] = ui.checkbox("启用账号密码")
-            fields["password"] = ui.input("密码", password=True).classes("w-full")
+            fields["password_enabled"] = ui.checkbox("使用密码保护客户端私钥")
+            fields["password"] = ui.input(
+                "客户端私钥密码",
+                password=True,
+                password_toggle_button=True,
+            ).classes("w-full")
             fields["password"].bind_visibility_from(fields["password_enabled"], "value")
 
         form = create_form_dialog(

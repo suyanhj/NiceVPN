@@ -85,8 +85,8 @@ active ↔ disabled
 |---|---|---|---|
 | `username` | string | 1~64 字符，字母数字+下划线，全局唯一 | 用户名（同时作为证书 CN） |
 | `group_id` | string | 必填，引用 Group.id | 所属组 ID |
-| `password_enabled` | bool | 默认 false | 是否启用账号密码认证 |
-| `password_hash` | string \| null | bcrypt 哈希，password_enabled=true 时必填 | 密码哈希 |
+| `password_enabled` | bool | 默认 false | 兼容旧字段名；表示客户端私钥是否由 EasyRSA 使用口令加密 |
+| `password_hash` | string \| null | 兼容旧数据 | 新版本不再写入；客户端私钥口令仅在创建时传给 EasyRSA，不由 NiceVPN 持久化 |
 | `status` | enum | `active` \| `disabled` \| `deleted` | 用户状态 |
 | `ovpn_file_path` | string \| null | 有效文件路径 | 生成的 `.ovpn` 配置文件绝对路径 |
 | `device_binding_id` | string \| null | 引用 DeviceBinding.id | 当前绑定设备的 ID（null 表示未绑定） |

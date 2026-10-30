@@ -75,6 +75,9 @@ class UserService:
         if not group:
             raise ValueError(f"用户组不存在: {group_id}")
 
+        if password_enabled and not str(password or ""):
+            raise ValueError("启用客户端私钥密码时必须填写密码")
+
         config = load_config()
         now = datetime.now(timezone.utc).isoformat()
 
@@ -85,8 +88,11 @@ class UserService:
             from app.services.easyrsa.wrapper import EasyRSAWrapper
             wrapper = EasyRSAWrapper(config.easyrsa_dir, config.pki_dir)
 
-            # 生成证书请求并签署
-            wrapper.gen_req(username)
+            # 生成证书请求并签署；可选密码仅用于加密客户端私钥。
+            wrapper.gen_req(
+                username,
+                passphrase=password if password_enabled else None,
+            )
             wrapper.sign_req("client", username)
 
             # 生成 tls-crypt-v2 客户端密钥
@@ -128,11 +134,9 @@ class UserService:
         # 写入 CCD 文件（固定 IP 分配）
         self._write_ccd(username, group)
 
-        # 处理密码
+        # 客户端私钥密码只在 EasyRSA gen-req 时使用，不由 NiceVPN 保存。
+        # password_hash 字段仅为旧数据兼容保留，新用户始终写空。
         password_hash = None
-        if password_enabled and password:
-            import hashlib
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
 
         # 构造用户对象
         user = User(
