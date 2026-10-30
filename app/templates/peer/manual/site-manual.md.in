@@ -1,6 +1,6 @@
 # 对端站点部署说明 — {{PEER_NAME}}
 
-> 对端 ID：`{{PEER_ID}}`  
+> 对端 ID：`{{PEER_ID}}`\
 > 绑定 VPN 用户（CN）：`{{BOUND_USERNAME}}`
 > 全局 VPN 地址池：`{{GLOBAL_SUBNET}}`
 
