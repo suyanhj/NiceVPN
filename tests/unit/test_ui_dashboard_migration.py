@@ -175,7 +175,11 @@ def test_dashboard_traffic_timer_refreshes_chart_without_recollecting_page(
 
             assert collect_calls == 1
             options = page._traffic_chart.chart.options
-            assert options["xAxis"]["data"] == ["10:31", "10:32"]
+            expected_labels = [
+                sample.timestamp.astimezone().strftime("%H:%M")
+                for sample in samples
+            ]
+            assert options["xAxis"]["data"] == expected_labels
             assert options["series"][0]["data"] == [111, 333]
             assert options["series"][1]["data"] == [222, 444]
 
