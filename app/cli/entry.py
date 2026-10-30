@@ -385,7 +385,11 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--username", required=True, help="用户名")
     u.add_argument("--group-id", default=None, help="组 UUID")
     u.add_argument("--group-name", default=None, help="组名（与 --group-id 二选一）")
-    u.add_argument("--password", default=None, help="若设置则启用账号密码认证")
+    u.add_argument(
+        "--password",
+        default=None,
+        help="客户端私钥加密密码；仅传给 EasyRSA，不由 NiceVPN 保存",
+    )
     u.add_argument(
         "--dry-run",
         action="store_true",
