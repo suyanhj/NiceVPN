@@ -20,7 +20,7 @@ from app.ui.components.actions import (
     secondary_action,
 )
 from app.ui.components.cards import metric_card
-from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid import multi_text_filter_column, render_data_grid
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     EXPIRY_WITH_DETAIL_RENDERER,
@@ -152,6 +152,7 @@ class CertsPage:
                 "minWidth": 118,
                 "maxWidth": 176,
                 "cellClass": "vpn-grid-primary-cell",
+                **multi_text_filter_column("输入 CN 后按 Enter"),
             },
             {
                 "field": "status_label",
@@ -175,6 +176,7 @@ class CertsPage:
                 "flex": 1.45,
                 "minWidth": 178,
                 "cellClass": "vpn-grid-mono",
+                **multi_text_filter_column("输入序列号后按 Enter"),
             },
             {
                 "field": "expires_display",
@@ -184,6 +186,7 @@ class CertsPage:
                 "maxWidth": 190,
                 ":cellRenderer": EXPIRY_WITH_DETAIL_RENDERER,
                 "cellClass": "vpn-grid-renderer-cell",
+                "filter": False,
             },
             {
                 "field": "actions",
