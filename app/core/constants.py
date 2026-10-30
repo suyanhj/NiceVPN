@@ -45,6 +45,7 @@ DOWNLOAD_LINKS_DIR = DATA_DIR / "download_links"
 DOWNLOAD_BUNDLES_DIR = DATA_DIR / "download_bundles"
 AUDIT_DIR = DATA_DIR / "audit"
 LOGS_DIR = DATA_DIR / "logs"
+OPENVPN_UPGRADE_LOG_FILE = LOGS_DIR / "openvpn-upgrade.log"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 # 管理后台登录会话签名密钥，与管理员密码哈希分离并仅由服务进程读取
