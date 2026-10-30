@@ -255,9 +255,9 @@ class PeerService:
         replace_peer_filter_chain_rests_via_ssh(row, rests)
 
     def deploy_peer_ovpn_via_ssh(self, peer_id: str, *, remote_path: str | None = None) -> dict:
-        """经 SSH 将本地 ``OVPN_PROFILES_DIR/<绑定用户>.ovpn`` 上传到对端（须无密码 sudo 完成 install）。
+        """经 SSH 将本地 ``OVPN_PROFILES_DIR/<绑定用户>.ovpn`` 上传到对端。
 
-        完整「自动部署」（安装 openvpn 包、systemd 等）仍未实现，见 ``tasks.md``。
+        远端可直接使用 root，非 root 时须支持 ``sudo -n``。
 
         Raises:
             ValueError: 对端不存在或本地无 .ovpn
@@ -334,111 +334,146 @@ class PeerService:
         return deploy_openvpn_client_systemd_via_ssh(row, config_path=config_path)
 
     def ensure_openvpn_on_peer_via_ssh(self, peer_id: str) -> dict:
-        """先经 SSH 探测 OpenVPN；已达标则直接返回，未达标才安装并做首次配置。
+        """幂等确保对端 OpenVPN 客户端完整装配并通过最终状态校验。
 
-        配置覆盖由“配置推送”入口负责；安装入口不覆盖已安装对端的配置。
+        流程：
+        1. SSH 探测 OpenVPN，版本不满足时才安装；
+        2. 无论是否安装过，都覆盖下发绑定用户的当前 OVPN；
+        3. 确保 systemd client unit 已启用并重启；
+        4. 下发对端站点 iptables；
+        5. 再读取 systemd/config 状态，确认装配闭环。
 
-        Raises:
-            ValueError: 对端不存在或 SSH 配置不全（与 ``probe_openvpn_via_ssh`` 一致）
-            RuntimeError: SSH 连接/认证失败或安装失败
+        已安装 OpenVPN 只会跳过“软件安装”，不会再跳过配置装配。
         """
-        from app.services.peer_instance.remote_peer_install import install_openvpn_on_peer_via_ssh
+
+        from app.services.peer_instance.remote_peer_install import (
+            install_openvpn_on_peer_via_ssh,
+        )
+        from app.services.peer_instance.remote_peer_ovpn import (
+            deploy_openvpn_client_systemd_via_ssh,
+            fetch_openvpn_client_service_status_via_ssh,
+            upload_bound_user_ovpn_via_ssh,
+        )
 
         row = self.get(peer_id)
         if not row:
             raise ValueError(f"对端实例不存在: {peer_id}")
-        from app.services.peer_instance.remote_peer_ovpn import (
-            deploy_openvpn_client_systemd_via_ssh,
-            upload_bound_user_ovpn_via_ssh,
-        )
 
         probe = self.probe_openvpn_via_ssh(peer_id)
         if not probe.get("connected"):
             err = str(probe.get("ssh_error") or "SSH 连接失败")
-            peer_remote_log.error("对端 OpenVPN 探测失败 peer_id=%s: %s", peer_id, err)
+            peer_remote_log.error(
+                "对端 OpenVPN 探测失败 peer_id=%s: %s",
+                peer_id,
+                err,
+            )
             raise RuntimeError(err)
-        skipped_install = bool(probe.get("installed")) and bool(probe.get("meets_requirement"))
-        install_result = None
+
+        skipped_install = bool(probe.get("installed")) and bool(
+            probe.get("meets_requirement")
+        )
+        install_result: dict | None = None
         if skipped_install:
             peer_remote_log.info(
-                "对端 OpenVPN 已满足要求，跳过安装 peer_id=%s path=%s version=%s",
+                "对端 OpenVPN 已满足要求，仅跳过软件安装 peer_id=%s path=%s version=%s",
                 peer_id,
                 probe.get("path"),
                 probe.get("version"),
             )
-            return {
-                "ok": True,
-                "skipped_install": True,
-                "probe": probe,
-                "install": None,
-                "ovpn_push": None,
-                "systemd_client": None,
-                "peer_firewall": None,
-            }
-        peer_remote_log.info(
-            "对端将执行 OpenVPN 安装 peer_id=%s installed=%s meets_requirement=%s",
-            peer_id,
-            probe.get("installed"),
-            probe.get("meets_requirement"),
-        )
-        install_result = install_openvpn_on_peer_via_ssh(row)
-        after_probe = self.probe_openvpn_via_ssh(peer_id)
-        if not (after_probe.get("installed") and after_probe.get("meets_requirement")):
-            version = after_probe.get("version") or "unknown"
-            path = after_probe.get("path") or "unknown"
-            raise RuntimeError(
-                f"对端 OpenVPN 安装后版本仍不满足要求: version={version} path={path}，"
-                "当前客户端配置使用 tls-crypt-v2，请安装支持该能力的 OpenVPN 版本。"
-            )
-        probe = after_probe
-        ovpn_push: dict | None = None
-        systemd_client: dict | None = None
-        uname = str(row.get("bound_username") or "").strip()
-        if uname:
-            local_ovpn = OVPN_PROFILES_DIR / f"{uname}.ovpn"
-            if local_ovpn.is_file():
-                try:
-                    ovpn_push = upload_bound_user_ovpn_via_ssh(row, remote_path=None)
-                    peer_remote_log.info(
-                        "安装后已从中心推送 .ovpn peer_id=%s remote=%s",
-                        peer_id,
-                        ovpn_push.get("remote_path"),
-                    )
-                except (ValueError, RuntimeError) as exc:
-                    peer_remote_log.warning(
-                        "安装后自动推送 .ovpn 失败 peer_id=%s: %s",
-                        peer_id,
-                        exc,
-                    )
-                    ovpn_push = {"ok": False, "error": str(exc)}
-            else:
-                peer_remote_log.info(
-                    "安装完成但中心无该用户 .ovpn，跳过自动推送 peer_id=%s path=%s",
-                    peer_id,
-                    local_ovpn,
-                )
-        if isinstance(ovpn_push, dict) and ovpn_push.get("ok"):
-            try:
-                systemd_client = deploy_openvpn_client_systemd_via_ssh(row, config_path=None)
-            except Exception as exc:
-                peer_remote_log.warning(
-                    "安装后启用 OpenVPN client systemd 服务失败 peer_id=%s: %s",
-                    peer_id,
-                    exc,
-                )
-                systemd_client = {"ok": False, "error": str(exc)}
-
-        peer_firewall: dict | None = None
-        try:
-            peer_firewall = self.deploy_peer_site_firewall_via_ssh(peer_id)
+        else:
             peer_remote_log.info(
-                "安装后已自动下发对端 iptables（global_subnet 入站放行）peer_id=%s",
+                "对端将执行 OpenVPN 安装 peer_id=%s installed=%s meets_requirement=%s",
+                peer_id,
+                probe.get("installed"),
+                probe.get("meets_requirement"),
+            )
+            install_result = install_openvpn_on_peer_via_ssh(row)
+            probe = self.probe_openvpn_via_ssh(peer_id)
+            if not (probe.get("installed") and probe.get("meets_requirement")):
+                version = probe.get("version") or "unknown"
+                path = probe.get("path") or "unknown"
+                raise RuntimeError(
+                    "对端 OpenVPN 安装后版本仍不满足要求: "
+                    f"version={version} path={path}，"
+                    "当前客户端配置使用 tls-crypt-v2，请安装支持该能力的 OpenVPN 版本。"
+                )
+
+        try:
+            ovpn_push = upload_bound_user_ovpn_via_ssh(row, remote_path=None)
+        except Exception as exc:
+            peer_remote_log.exception(
+                "对端 OVPN 自动下发失败 peer_id=%s",
                 peer_id,
             )
-        except Exception as exc:
-            peer_remote_log.warning("安装后自动下发对端 iptables 失败 peer_id=%s: %s", peer_id, exc)
-            peer_firewall = {"ok": False, "error": str(exc)}
+            raise RuntimeError(f"OpenVPN 已就绪，但 OVPN 下发失败: {exc}") from exc
 
+        try:
+            systemd_client = deploy_openvpn_client_systemd_via_ssh(
+                row,
+                config_path=str(ovpn_push.get("remote_path") or "").strip() or None,
+            )
+        except Exception as exc:
+            peer_remote_log.exception(
+                "对端 OpenVPN client systemd 装配失败 peer_id=%s",
+                peer_id,
+            )
+            raise RuntimeError(
+                f"OVPN 已下发，但 OpenVPN client systemd 装配失败: {exc}"
+            ) from exc
+
+        try:
+            peer_firewall = self.deploy_peer_site_firewall_via_ssh(peer_id)
+        except Exception as exc:
+            peer_remote_log.exception(
+                "对端 iptables 自动下发失败 peer_id=%s",
+                peer_id,
+            )
+            raise RuntimeError(
+                f"OpenVPN client 已装配，但对端 iptables 下发失败: {exc}"
+            ) from exc
+        if not isinstance(peer_firewall, dict) or not peer_firewall.get("ok"):
+            raise RuntimeError(
+                "OpenVPN client 已装配，但对端 iptables 未返回成功状态"
+            )
+
+        try:
+            verification = fetch_openvpn_client_service_status_via_ssh(row)
+        except Exception as exc:
+            peer_remote_log.exception(
+                "对端 OpenVPN client 最终状态校验失败 peer_id=%s",
+                peer_id,
+            )
+            raise RuntimeError(f"装配完成但最终状态校验失败: {exc}") from exc
+
+        service_name = str(verification.get("service") or "openvpn-client")
+        active = str(
+            verification.get("is_active")
+            or verification.get("active_state")
+            or ""
+        ).strip()
+        config_exists = bool(verification.get("config_exists"))
+        if not verification.get("exists"):
+            raise RuntimeError(
+                f"装配后未发现 OpenVPN client systemd service: {service_name}"
+            )
+        if not config_exists:
+            raise RuntimeError(
+                f"装配后 OpenVPN client 配置不存在: "
+                f"{verification.get('config_path') or 'unknown'}"
+            )
+        if active != "active":
+            raise RuntimeError(
+                f"装配后 OpenVPN client 未处于 active: "
+                f"service={service_name} state={active or 'unknown'}"
+            )
+
+        peer_remote_log.info(
+            "对端一键装配完成 peer_id=%s install_skipped=%s service=%s active=%s",
+            peer_id,
+            skipped_install,
+            service_name,
+            active,
+        )
         return {
             "ok": True,
             "skipped_install": skipped_install,
@@ -447,6 +482,7 @@ class PeerService:
             "ovpn_push": ovpn_push,
             "systemd_client": systemd_client,
             "peer_firewall": peer_firewall,
+            "verification": verification,
         }
 
     def list_all(self) -> list[dict]:
