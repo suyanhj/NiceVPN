@@ -176,7 +176,10 @@ class CertsPage:
                 "flex": 1.45,
                 "minWidth": 178,
                 "cellClass": "vpn-grid-mono",
-                **multi_text_filter_column("输入序列号后按 Enter"),
+                **multi_text_filter_column(
+                    "输入序列号后按 Enter",
+                    filter_value_field="serial",
+                ),
             },
             {
                 "field": "expires_display",
