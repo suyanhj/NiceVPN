@@ -272,6 +272,13 @@ def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
     assert '"/static/js/ag-grid-set-filter.js"' in theme_source
     assert "class NiceVpnSetFilter" in source
     assert "window.NiceVpnSetFilter" in source
+    assert "class NiceVpnMultiTextFilter" in source
+    assert "window.NiceVpnMultiTextFilter" in source
+    assert "containsAny" in source
+    assert "containsAll" in source
+    assert "notContainsAny" in source
+    assert "equalsAny" in source
+    assert "vpn-grid-multi-text-filter__tag" in source
     assert "forEachLeafNode" in source
     assert "filterChangedCallback" in source
     assert "vpn-grid-set-filter__search" in source
