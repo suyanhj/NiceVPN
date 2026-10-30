@@ -58,6 +58,13 @@ openvpn_compile_install() {
     rm -rf "${OPENVPN_SRC_ROOT}"
     mkdir -p "${OPENVPN_SRC_ROOT}"
     tar -xzf "${OPENVPN_CACHE}" -C "${OPENVPN_SRC_ROOT}"
+    if [ ! -d "${OPENVPN_SRC_DIR}" ]; then
+        OPENVPN_SRC_DIR="$(find "${OPENVPN_SRC_ROOT}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+    fi
+    [ -n "${OPENVPN_SRC_DIR}" ] && [ -d "${OPENVPN_SRC_DIR}" ] || {
+        echo "无法识别 OpenVPN 源码目录: ${OPENVPN_SRC_ROOT}" >&2
+        exit 1
+    }
     cd "${OPENVPN_SRC_DIR}"
     ./configure --prefix="${OPENVPN_PREFIX}" --enable-async-push --enable-systemd
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
