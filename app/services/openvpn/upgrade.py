@@ -744,8 +744,8 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
         if failed_instances:
             raise RuntimeError("升级后实例未恢复运行: " + ", ".join(failed_instances))
 
-        if old_tree.exists():
-            shutil.rmtree(old_tree, ignore_errors=True)
+        if old_tree.exists() or old_tree.is_symlink():
+            _remove_path(old_tree)
         shutil.rmtree(rollback_root, ignore_errors=True)
         return {
             "ok": True,
@@ -775,6 +775,6 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
         raise
     finally:
         _remove_path(new_tree)
-        if old_tree.exists():
-            shutil.rmtree(old_tree, ignore_errors=True)
+        if old_tree.exists() or old_tree.is_symlink():
+            _remove_path(old_tree)
         shutil.rmtree(rollback_root, ignore_errors=True)
