@@ -306,8 +306,9 @@ def test_users_groups_and_peers_support_database_pages(tmp_path: Path) -> None:
         search_operator="AND",
         sort_by="username",
     )
-    assert total == 5
+    assert total == 6
     assert [row["username"] for row in rows] == [
+        "user-007",
         "user-070",
         "user-071",
         "user-072",
