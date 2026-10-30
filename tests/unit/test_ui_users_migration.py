@@ -28,26 +28,32 @@ class FakeUserService:
         limit=50,
         search="",
         search_mode="contains",
+        search_values=None,
+        search_operator="AND",
         group_ids=None,
         statuses=None,
         sort_by="username",
         sort_desc=False,
     ):
         rows = [dict(item) for item in self.users.values()]
-        text = str(search or "").casefold()
-        if text:
-            if search_mode == "equals":
-                rows = [row for row in rows if str(row["username"]).casefold() == text]
-            elif search_mode == "notEqual":
-                rows = [row for row in rows if str(row["username"]).casefold() != text]
-            elif search_mode == "startsWith":
-                rows = [row for row in rows if str(row["username"]).casefold().startswith(text)]
-            elif search_mode == "endsWith":
-                rows = [row for row in rows if str(row["username"]).casefold().endswith(text)]
-            elif search_mode == "notContains":
-                rows = [row for row in rows if text not in str(row["username"]).casefold()]
-            else:
-                rows = [row for row in rows if text in str(row["username"]).casefold()]
+        needles = [str(value).casefold() for value in (search_values or []) if str(value)]
+        if not needles and str(search or ""):
+            needles = [str(search).casefold()]
+        if needles:
+            def matches(row):
+                actual = str(row["username"]).casefold()
+                if search_mode == "equals":
+                    checks = [actual == needle for needle in needles]
+                elif search_mode == "notContains":
+                    checks = [needle not in actual for needle in needles]
+                elif search_mode == "startsWith":
+                    checks = [actual.startswith(needle) for needle in needles]
+                elif search_mode == "endsWith":
+                    checks = [actual.endswith(needle) for needle in needles]
+                else:
+                    checks = [needle in actual for needle in needles]
+                return any(checks) if str(search_operator).upper() == "OR" else all(checks)
+            rows = [row for row in rows if matches(row)]
         if group_ids:
             allowed = {str(value) for value in group_ids}
             rows = [row for row in rows if str(row.get("group_id") or "") in allowed]
@@ -191,6 +197,8 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     assert username["pinned"] == "left"
     assert username["lockPinned"] is True
     assert username["cellClass"] == "vpn-grid-primary-cell"
+    assert username[":filter"] == "window.NiceVpnMultiTextFilter"
+    assert username["filterParams"]["inputPlaceholder"] == "输入用户名后按 Enter"
 
     account = columns["account_status"]
     session = columns["session_status"]
@@ -201,6 +209,9 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
 
     group = columns["group"]
     device = columns["device_source"]
+    assert columns["virtual_ip"][":filter"] == "window.NiceVpnMultiTextFilter"
+    assert columns["traffic"]["filter"] is False
+    assert columns["connection"]["filter"] is False
     assert group[":filter"] == "window.NiceVpnSetFilter"
     assert group["filterParams"]["selectAllLabel"] == "(全选)"
     assert group["filterParams"]["searchPlaceholder"] == "搜索用户组..."

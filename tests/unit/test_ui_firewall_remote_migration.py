@@ -356,6 +356,9 @@ def test_remote_grid_columns_preserve_raw_rest_and_operations() -> None:
     for field in ("status_label", "protocol", "action_label"):
         assert columns[field][":filter"] == "window.NiceVpnSetFilter"
         assert columns[field]["filterParams"]["selectAllLabel"] == "(全选)"
+    for field in ("source", "dest", "dest_port", "description", "raw_rest"):
+        assert columns[field][":filter"] == "window.NiceVpnMultiTextFilter"
+    assert columns["priority"]["filter"] is False
 
 
 def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(

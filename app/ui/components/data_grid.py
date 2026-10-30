@@ -12,6 +12,25 @@ from nicegui import ui
 from app.ui.components.server_pager import SERVER_PAGE_SIZE_OPTIONS
 
 
+MULTI_TEXT_FILTER_JS = "window.NiceVpnMultiTextFilter"
+
+
+def multi_text_filter_column(
+    placeholder: str = "输入后按 Enter",
+    *,
+    filter_value_field: str | None = None,
+) -> dict[str, Any]:
+    """自由文本列统一使用可追加标签的多值过滤器。"""
+
+    params: dict[str, Any] = {"inputPlaceholder": str(placeholder)}
+    if filter_value_field:
+        params["filterValueField"] = str(filter_value_field)
+    return {
+        ":filter": MULTI_TEXT_FILTER_JS,
+        "filterParams": params,
+    }
+
+
 AG_GRID_LOCALE_ZH_CN: dict[str, str] = {
     # Text / simple filter
     "filterOoo": "筛选...",

@@ -7,6 +7,7 @@ import pytest
 from nicegui.testing import Screen
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -164,6 +165,76 @@ def test_certificate_status_set_filter_opens_and_searches_values(
 
     assert "即将到期" in popup.text
     assert "有效" not in popup.text
+
+
+def test_certificate_cn_multi_text_filter_accepts_multiple_tags(
+    screen: Screen,
+) -> None:
+    """自由文本列可连续输入多个标签，并按“包含任一”实时过滤。"""
+
+    screen.selenium.set_window_size(1280, 900)
+    screen.open("/certs")
+    screen.should_contain("证书管理")
+    screen.wait(0.4)
+
+    header = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        '.ag-header-cell[col-id="common_name"]',
+    )
+    filter_button = header.find_element(
+        By.CSS_SELECTOR,
+        ".ag-header-cell-filter-button",
+    )
+    screen.selenium.execute_script("arguments[0].click()", filter_button)
+    screen.wait(0.2)
+
+    popup = screen.selenium.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-multi-text-filter",
+    )
+    assert popup.is_displayed()
+    mode = popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-multi-text-filter__mode",
+    )
+    assert mode.get_attribute("value") == "containsAny"
+
+    field = popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-multi-text-filter__input-wrap > input",
+    )
+    field.send_keys("alice")
+    field.send_keys(Keys.ENTER)
+    field.send_keys("charlie")
+    field.send_keys(Keys.ENTER)
+
+    tags = popup.find_elements(
+        By.CSS_SELECTOR,
+        ".vpn-grid-multi-text-filter__tag-text",
+    )
+    assert [tag.text for tag in tags] == ["alice", "charlie"]
+
+    def visible_names(_driver):
+        return [
+            cell.text.strip()
+            for cell in screen.selenium.find_elements(
+                By.CSS_SELECTOR,
+                '.ag-center-cols-container .ag-row [col-id="common_name"], '
+                '.ag-pinned-left-cols-container .ag-row [col-id="common_name"]',
+            )
+            if cell.is_displayed() and cell.text.strip()
+        ]
+
+    names = WebDriverWait(screen.selenium, 5).until(
+        lambda driver: (
+            values
+            if (values := visible_names(driver))
+            and "bob" not in values
+            else False
+        )
+    )
+    assert "alice" in names
+    assert "bob" not in names
 
 
 def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:

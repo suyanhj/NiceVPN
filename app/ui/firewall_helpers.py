@@ -21,6 +21,7 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.ui.adapters.firewall import parse_remote_rule_hints
 from app.utils.cidr import validate_cidr
+from app.ui.components.data_grid import multi_text_filter_column
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     STATUS_PILL_RENDERER,
@@ -356,6 +357,7 @@ def remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
             "field": "priority",
             "headerName": "优先级",
             "width": 105,
+            "filter": False,
         },
         {
             "field": "protocol",
@@ -390,29 +392,34 @@ def remote_grid_columns(*, can_reorder: bool = False) -> list[dict[str, Any]]:
             "headerName": "来源",
             "minWidth": 170,
             "flex": 1,
+            **multi_text_filter_column("输入来源后按 Enter"),
         },
         {
             "field": "dest",
             "headerName": "目标",
             "minWidth": 160,
             "flex": 1,
+            **multi_text_filter_column("输入目标后按 Enter"),
         },
         {
             "field": "dest_port",
             "headerName": "端口",
             "minWidth": 105,
+            **multi_text_filter_column("输入端口后按 Enter"),
         },
         {
             "field": "description",
             "headerName": "说明",
             "minWidth": 200,
             "flex": 1,
+            **multi_text_filter_column("输入说明后按 Enter"),
         },
         {
             "field": "raw_rest",
             "headerName": "原始规则",
             "minWidth": 320,
             "flex": 2,
+            **multi_text_filter_column("输入规则片段后按 Enter"),
         },
         {
             "field": "actions",
@@ -532,33 +539,33 @@ def center_grid_columns(
             "headerName": "来源",
             "minWidth": 180,
             "flex": 1,
-            "filter": False,
+            **multi_text_filter_column("输入来源后按 Enter"),
         },
         {
             "field": "dest",
             "headerName": "目标",
             "minWidth": 160,
             "flex": 1,
-            "filter": False,
+            **multi_text_filter_column("输入目标后按 Enter"),
         },
         {
             "field": "dest_port",
             "headerName": "端口",
             "minWidth": 110,
-            "filter": False,
+            **multi_text_filter_column("输入端口后按 Enter"),
         },
         {
             "field": "description",
             "headerName": "说明",
             "minWidth": 220,
             "flex": 1,
-            "filter": False,
+            **multi_text_filter_column("输入说明后按 Enter"),
         },
         {
             "field": "id",
             "headerName": "规则 ID",
             "minWidth": 210,
-            "filter": False,
+            **multi_text_filter_column("输入规则 ID 后按 Enter"),
         },
         {
             "field": "actions",

@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 from app.core.constants import SQLITE_DB_FILE
 
@@ -118,6 +118,41 @@ def _like_pattern(value: object, *, mode: str = "contains") -> str:
     if mode == "endsWith":
         return f"%{escaped}"
     return f"%{escaped}%"
+
+
+def _append_multi_text_clause(
+    clauses: list[str],
+    params: list[Any],
+    expression: str,
+    values: Sequence[str] | None,
+    *,
+    match_type: str = "contains",
+    operator: str = "AND",
+) -> None:
+    """把标签式多文本条件安全追加到 SQL WHERE。"""
+
+    normalized = [str(value).strip() for value in (values or []) if str(value).strip()]
+    if not normalized:
+        return
+
+    mode = str(match_type or "contains")
+    joiner = " OR " if str(operator or "AND").upper() == "OR" else " AND "
+    fragments: list[str] = []
+    for value in normalized:
+        if mode in {"equals", "notEqual"}:
+            sql_operator = "=" if mode == "equals" else "<>"
+            fragments.append(f"{expression} {sql_operator} ? COLLATE NOCASE")
+            params.append(value)
+            continue
+        sql_operator = "NOT LIKE" if mode == "notContains" else "LIKE"
+        fragments.append(f"{expression} {sql_operator} ? ESCAPE '\\'")
+        params.append(
+            _like_pattern(
+                value,
+                mode="contains" if mode == "notContains" else mode,
+            )
+        )
+    clauses.append("(" + joiner.join(fragments) + ")")
 
 
 def _peer_index_values(data: dict[str, Any]) -> tuple[Any, ...]:
@@ -402,6 +437,8 @@ class SqliteStore:
         limit: int = 50,
         search: str = "",
         search_mode: str = "contains",
+        search_values: Sequence[str] | None = None,
+        search_operator: str = "AND",
         group_ids: Sequence[str] | None = None,
         statuses: Sequence[str] | None = None,
         sort_by: str = "username",
@@ -411,22 +448,19 @@ class SqliteStore:
 
         clauses = ["u.status <> 'deleted'"]
         params: list[Any] = []
-        text = str(search or "").strip()
-        if text:
-            mode = str(search_mode or "contains")
-            if mode in {"equals", "notEqual"}:
-                operator = "=" if mode == "equals" else "<>"
-                clauses.append(f"u.username {operator} ? COLLATE NOCASE")
-                params.append(text)
-            else:
-                operator = "NOT LIKE" if mode == "notContains" else "LIKE"
-                clauses.append(f"u.username {operator} ? ESCAPE '\\'")
-                params.append(
-                    _like_pattern(
-                        text,
-                        mode="contains" if mode == "notContains" else mode,
-                    )
-                )
+        username_values = (
+            [str(value) for value in search_values]
+            if search_values is not None
+            else ([str(search)] if str(search or "").strip() else [])
+        )
+        _append_multi_text_clause(
+            clauses,
+            params,
+            "u.username",
+            username_values,
+            match_type=search_mode,
+            operator=search_operator,
+        )
         gids = [str(v) for v in (group_ids or []) if str(v)]
         if gids:
             clauses.append("u.group_id IN (" + ",".join("?" for _ in gids) + ")")
@@ -857,6 +891,7 @@ class SqliteStore:
                     source_text,
                     dest_ip,
                     dest_port,
+                    COALESCE(json_extract(payload, '$.description'), '') AS description_text,
                     payload,
                     CASE
                         WHEN deployment_target = 'peer' THEN 'peer_marker'
@@ -880,6 +915,7 @@ class SqliteStore:
                     lan_cidrs_text AS source_text,
                     center_forward_dest_ip AS dest_ip,
                     center_forward_dest_port AS dest_port,
+                    COALESCE(json_extract(payload, '$.center_forward_rule_description'), '') AS description_text,
                     payload,
                     'center_peer' AS kind_key
                 FROM peers
@@ -899,6 +935,7 @@ class SqliteStore:
         protocols: Sequence[str] | None = None,
         actions: Sequence[str] | None = None,
         kind_keys: Sequence[str] | None = None,
+        text_filters: Mapping[str, tuple[Sequence[str], str, str]] | None = None,
         sort_by: str = "priority",
         sort_desc: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -919,6 +956,27 @@ class SqliteStore:
                 ")"
             )
             params.extend([pattern, pattern, pattern, pattern])
+
+        text_filter_columns = {
+            "id": "row_id",
+            "source": "source_text",
+            "dest": "dest_ip",
+            "dest_port": "dest_port",
+            "description": "description_text",
+        }
+        for field, spec in (text_filters or {}).items():
+            expression = text_filter_columns.get(str(field))
+            if expression is None or len(spec) != 3:
+                continue
+            values, match_type, operator = spec
+            _append_multi_text_clause(
+                clauses,
+                params,
+                expression,
+                values,
+                match_type=str(match_type),
+                operator=str(operator),
+            )
 
         def add_in(column: str, values: Sequence[Any] | None) -> None:
             normalized = [value for value in (values or []) if str(value) != ""]
@@ -957,6 +1015,7 @@ class SqliteStore:
             "source": "source_text COLLATE NOCASE",
             "dest": "dest_ip COLLATE NOCASE",
             "dest_port": "dest_port COLLATE NOCASE",
+            "description": "description_text COLLATE NOCASE",
             "action_label": "action COLLATE NOCASE",
             "action": "action COLLATE NOCASE",
             "priority": "priority",
@@ -978,7 +1037,7 @@ class SqliteStore:
                 SELECT
                     row_kind, source_id, row_id, owner_id, owner_type,
                     priority, enabled, protocol, action, deployment_target,
-                    source_text, dest_ip, dest_port, kind_key, payload
+                    source_text, dest_ip, dest_port, description_text, kind_key, payload
                 FROM unified
                 WHERE {where}
                 ORDER BY {sort_sql} {direction}, priority ASC, row_id ASC
@@ -1004,6 +1063,7 @@ class SqliteStore:
                     "source_text": str(row["source_text"]),
                     "dest_ip": str(row["dest_ip"]),
                     "dest_port": str(row["dest_port"]),
+                    "description_text": str(row["description_text"]),
                     "kind_key": str(row["kind_key"]),
                     "payload": _load_payload(str(row["payload"])),
                 }

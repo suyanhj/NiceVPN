@@ -289,6 +289,33 @@ def test_users_groups_and_peers_support_database_pages(tmp_path: Path) -> None:
     assert len(rows) == 10
     assert all(row["group_id"] == "g-a" for row in rows)
 
+    rows, total = store.list_users_page(
+        limit=50,
+        search_values=["user-001", "user-074"],
+        search_mode="equals",
+        search_operator="OR",
+        sort_by="username",
+    )
+    assert total == 2
+    assert [row["username"] for row in rows] == ["user-001", "user-074"]
+
+    rows, total = store.list_users_page(
+        limit=50,
+        search_values=["user-", "07"],
+        search_mode="contains",
+        search_operator="AND",
+        sort_by="username",
+    )
+    assert total == 6
+    assert [row["username"] for row in rows] == [
+        "user-007",
+        "user-070",
+        "user-071",
+        "user-072",
+        "user-073",
+        "user-074",
+    ]
+
     group_rows, group_total = store.list_groups_page(
         limit=1,
         search="a",
@@ -346,6 +373,7 @@ def test_firewall_unified_query_pages_filter_without_loading_all_payloads(
                 "source_subnet": "10.8.0.0/24",
                 "dest_ip": "172.16.0.10",
                 "dest_port": "443",
+                "description": "allow web admin",
             },
             {
                 "id": "rule-2",
@@ -359,6 +387,7 @@ def test_firewall_unified_query_pages_filter_without_loading_all_payloads(
                 "source_ips": ["10.8.0.20"],
                 "dest_ip": "",
                 "dest_port": "",
+                "description": "legacy blocked path",
             },
         ],
     )
@@ -373,6 +402,33 @@ def test_firewall_unified_query_pages_filter_without_loading_all_payloads(
     )
     assert searched_total == 1
     assert searched[0]["row_id"] == "rule-1"
+
+    multi_dest, multi_dest_total = store.list_firewall_unified_page(
+        text_filters={
+            "dest": (["172.16.", "10.0."], "contains", "OR"),
+        },
+        limit=50,
+    )
+    assert multi_dest_total == 2
+    assert {row["row_id"] for row in multi_dest} == {"rule-1", "__center_peer__peer-1"}
+
+    description_rows, description_total = store.list_firewall_unified_page(
+        text_filters={
+            "description": (["web", "admin"], "contains", "AND"),
+        },
+        limit=50,
+    )
+    assert description_total == 1
+    assert description_rows[0]["row_id"] == "rule-1"
+
+    excluded, excluded_total = store.list_firewall_unified_page(
+        text_filters={
+            "id": (["rule-1", "peer-1"], "notContains", "AND"),
+        },
+        limit=50,
+    )
+    assert excluded_total == 1
+    assert excluded[0]["row_id"] == "rule-2"
 
     peer_rows, peer_total = store.list_firewall_unified_page(
         protocols=["udp"],

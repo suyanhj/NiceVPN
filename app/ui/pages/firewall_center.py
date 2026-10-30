@@ -27,7 +27,7 @@ from app.ui.components.states import (
     no_match_state,
 )
 from app.ui.firewall_helpers import center_grid_columns, move_order
-from app.ui.grid_query import first_sort_spec, set_filter_values
+from app.ui.grid_query import first_sort_spec, multi_text_filter_spec, set_filter_values
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +211,12 @@ class FirewallCenterGridMixin:
             if not actions:
                 owner_ids = ["__no_owner_match__"]
 
+        text_filters: dict[str, tuple[list[str], str, str]] = {}
+        for field in ("source", "dest", "dest_port", "description", "id"):
+            spec = multi_text_filter_spec(filter_model, field)
+            if spec is not None:
+                text_filters[field] = spec
+
         query = (
             str(self._center_search_input.value or "").strip()
             if self._center_search_input is not None
@@ -228,6 +234,7 @@ class FirewallCenterGridMixin:
                 protocols=protocols,
                 actions=actions,
                 kind_keys=kind_keys,
+                text_filters=text_filters,
                 sort_by=self._center_sort_field,
                 sort_desc=self._center_sort_desc,
             )
@@ -245,6 +252,7 @@ class FirewallCenterGridMixin:
                     protocols=protocols,
                     actions=actions,
                     kind_keys=kind_keys,
+                    text_filters=text_filters,
                     sort_by=self._center_sort_field,
                     sort_desc=self._center_sort_desc,
                 )
