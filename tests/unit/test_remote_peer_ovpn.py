@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """remote_peer_ovpn 路径与校验单测（无真实 SSH）。"""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from app.services.peer_instance.remote_peer_ovpn import (
     _PEER_SCRIPTS_DIR,
     _bundle_peer_script,
+    _put_local_ovpn_to_remote,
     _render_fallback_unit_template,
     control_openvpn_client_service_via_ssh,
     deploy_openvpn_client_systemd_via_ssh,
@@ -228,3 +230,35 @@ def test_render_remote_peer_client_config_injects_file_logs() -> None:
     assert "log-append /etc/openvpn/log/client.log" in text
     assert "status /etc/openvpn/log/client-status.log 30" in text
     assert text.index("log-append /etc/openvpn/log/client.log") < text.index("<ca>")
+
+
+
+def test_upload_ovpn_supports_root_without_sudo(tmp_path: Path) -> None:
+    local = tmp_path / "alice.ovpn"
+    local.write_text("client\n<ca>\nCA\n</ca>\n", encoding="utf-8")
+    client = _FakeClient(
+        [
+            ("", "sudo: not found", 127),  # sudo -n 不可用
+            ("0\n", "", 0),              # 当前 SSH 用户就是 root
+            ("", "", 0),                  # mkdir/install/rm
+        ]
+    )
+    with patch(
+        "app.services.peer_instance.remote_peer_ovpn."
+        "connect_peer_ssh_client_from_row",
+        return_value=client,
+    ):
+        ret = _put_local_ovpn_to_remote(
+            {"id": "p1", "bound_username": "alice"},
+            local,
+            "/etc/openvpn/client/client.conf",
+            tmp_slug="alice",
+        )
+
+    assert ret["ok"] is True
+    install_commands = [
+        cmd for cmd in client.commands if "install -m 0600" in cmd
+    ]
+    assert len(install_commands) == 1
+    assert "sudo -n install" not in install_commands[0]
+    assert client.closed is True
