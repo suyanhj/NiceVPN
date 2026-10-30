@@ -89,7 +89,7 @@ def test_peers_page_uses_shared_header_toolbar_status_and_cards(
         for element in page.list_container.client.elements.values()
         if getattr(element, "_props", {}).get("aria-label")
         in {
-            "探测/安装",
+            "一键装配",
             "推送配置",
             "服务管理",
             "远程日志",
@@ -120,7 +120,7 @@ def test_peers_page_disables_remote_actions_when_credentials_missing(
         element
         for element in page.list_container.client.elements.values()
         if getattr(element, "_props", {}).get("aria-label")
-        in {"探测/安装", "推送配置"}
+        in {"一键装配", "推送配置"}
     ]
     assert len(buttons) == 2
     assert all(button._props.get("disable") is True for button in buttons)
@@ -273,8 +273,8 @@ def test_peer_remote_dialogs_validate_credentials_and_build_when_available(
     async def verify_install() -> None:
         async with user_simulation(lambda: page._show_peer_openvpn_setup_dialog(available)) as user:
             await user.open("/")
-            await user.should_see("OpenVPN 客户端安装")
-            await user.should_see("安装")
+            await user.should_see("OpenVPN 客户端一键装配")
+            await user.should_see("开始装配")
             await user.should_see("详单见 data/logs/peer-remote.log")
 
     asyncio.run(verify_install())
@@ -425,7 +425,7 @@ def test_peers_v2_visual_contract_uses_object_rows_and_icon_actions() -> None:
     assert 'classes("mgmt-peer-meta-tag")' not in source
 
     for label in (
-        "探测/安装",
+        "一键装配",
         "推送配置",
         "服务管理",
         "远程日志",

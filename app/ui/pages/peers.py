@@ -544,11 +544,11 @@ class PeersPage:
         ):
             dialog_state = {"open": True}
             dialog.on("hide", lambda _: dialog_state.update(open=False))
-            ui.label("OpenVPN 客户端安装").classes(
+            ui.label("OpenVPN 客户端一键装配").classes(
                 "text-h6 peers-operation-dialog__title"
             )
             ui.label(
-                "已安装则跳过；否则首次安装。详单见 data/logs/peer-remote.log。"
+                "已安装只跳过软件安装；仍会同步 OVPN、systemd、iptables 并做最终状态校验。详单见 data/logs/peer-remote.log。"
             ).classes("text-caption text-grey q-mb-sm")
             result_box = ui.column().classes("w-full min-h-[60px] q-mt-sm")
 
@@ -589,23 +589,18 @@ class PeersPage:
                     self._set_peer_row_busy(pid, False)
 
                 if not dialog_state["open"]:
-                    self._notify_for_page("对端安装流程已结束", type="positive")
+                    self._notify_for_page("对端一键装配已完成", type="positive")
                     return
                 result_box.clear()
                 probe = data.get("probe") or {}
                 inst = data.get("install") or {}
                 push = data.get("ovpn_push")
                 push_md = ""
-                if data.get("skipped_install"):
-                    with result_box:
-                        ui.markdown(
-                            "**已安装，跳过部署**\n\n"
-                            f"- 路径：`{probe.get('path') or '—'}`\n"
-                            f"- 版本：`{probe.get('version') or '—'}`\n\n"
-                            "如需覆盖配置，用 **配置推送**。"
-                        )
-                    self._notify_for_page("远端已安装 OpenVPN", type="positive")
-                    return
+                install_md = (
+                    "**软件安装**：已存在且版本满足，跳过安装"
+                    if data.get("skipped_install")
+                    else "**软件安装**：已完成"
+                )
                 if isinstance(push, dict):
                     if push.get("ok"):
                         push_md = f"\n\n**已自动推送 .ovpn** → `{push.get('remote_path')}`（{push.get('bytes')} 字节）"
@@ -613,6 +608,7 @@ class PeersPage:
                         push_md = f"\n\n**自动推 .ovpn 失败**：{push.get('error')}（可用 **配置推送**）"
                 sd = data.get("systemd_client") or {}
                 fw = data.get("peer_firewall") or {}
+                verification = data.get("verification") or {}
                 post_md = ""
                 if isinstance(sd, dict) and sd.get("ok"):
                     source_label = "官方模板" if sd.get("unit_source") == "official" else "兜底 unit"
@@ -625,10 +621,18 @@ class PeersPage:
                 if isinstance(fw, dict) and fw.get("ok"):
                     post_md += "\n\n**对端 iptables**：已下发（global_subnet → VPN_PEER）"
                 elif isinstance(fw, dict) and fw.get("error"):
-                    post_md += f"\n\n**对端 iptables**：失败 — {fw.get('error')}（**配置推送** 可重试）"
+                    post_md += f"\n\n**对端 iptables**：失败 — {fw.get('error')}"
+                if isinstance(verification, dict):
+                    service_name = verification.get("service") or "openvpn-client"
+                    active = verification.get("is_active") or verification.get("active_state") or "—"
+                    post_md += (
+                        f"\n\n**最终校验**：`{service_name}` = **{active}**，"
+                        f"配置文件={'存在' if verification.get('config_exists') else '缺失'}"
+                    )
                 with result_box:
                     ui.markdown(
-                        "**已执行首次部署**"
+                        "**一键装配完成**\n\n"
+                        f"{install_md}"
                         f"{push_md}{post_md}\n\n"
                         f"- 路径：`{probe.get('path') or '—'}`\n"
                         f"- 版本：`{probe.get('version') or '—'}`\n"
@@ -643,7 +647,7 @@ class PeersPage:
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
                 secondary_action("关闭", on_click=close_dialog)
-                primary_action("安装", icon="build", on_click=do_run)
+                primary_action("开始装配", icon="build", on_click=do_run)
         dialog.open()
 
     def _show_peer_remote_log_dialog(self, row: dict) -> None:
@@ -978,12 +982,12 @@ class PeersPage:
                 install_tip = (
                     str(view["connection_reason"])
                     if not view["can_install"] and not view["busy"]
-                    else ("远程操作进行中" if view["busy"] else "探测/安装")
+                    else ("远程操作进行中" if view["busy"] else "一键装配")
                 )
                 install_button = ui.button(
                     icon="build",
                     on_click=lambda current=row: self._show_peer_openvpn_setup_dialog(current),
-                ).props("flat round dense aria-label='探测/安装'").classes(
+                ).props("flat round dense aria-label='一键装配'").classes(
                     "peers-icon-action peers-icon-action--primary"
                 )
                 install_button.tooltip(install_tip)
@@ -1156,7 +1160,7 @@ class PeersPage:
                 "远端 openvpn 路径（可选）",
                 placeholder="例 /opt/openvpn/sbin/openvpn；留空则 PATH 探测",
             ).classes("w-full")
-            fields["auto_install"] = ui.checkbox("创建后自动安装", value=False)
+            fields["auto_install"] = ui.checkbox("创建后自动装配", value=False)
 
         async def submit() -> bool:
             name = str(fields["name"].value or "").strip()
@@ -1234,7 +1238,7 @@ class PeersPage:
                     )
                 else:
                     if isinstance(data, dict) and data.get("skipped_install"):
-                        suffix = "，已安装未覆盖配置"
+                        suffix = "，软件安装已跳过"
                     else:
                         firewall = data.get("peer_firewall") if isinstance(data, dict) else None
                         suffix = (
@@ -1415,7 +1419,7 @@ class PeersPage:
                 placeholder="留空则 PATH 探测",
             ).classes("w-full")
             fields["auto_install"] = ui.checkbox(
-                "保存后自动安装",
+                "保存后自动装配",
                 value=bool(row.get("auto_install_on_peer")),
             )
 
@@ -1505,7 +1509,7 @@ class PeersPage:
                     )
                 else:
                     if isinstance(data, dict) and data.get("skipped_install"):
-                        suffix = "，已安装未覆盖配置"
+                        suffix = "，软件安装已跳过"
                     else:
                         firewall = data.get("peer_firewall") if isinstance(data, dict) else None
                         suffix = (

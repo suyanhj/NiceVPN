@@ -499,10 +499,13 @@ def _put_local_ovpn_to_remote(
             sftp.close()
         logger.info("已 SFTP 上传至远端临时文件 %s local=%s", tmp_remote, local)
 
+        sp = _detect_sudo_prefix_ovpn(client, timeout=15)
         prep = (
-            f"sudo -n mkdir -p {shlex.quote(parent)} {shlex.quote(PEER_REMOTE_CLIENT_LOG_DIR)} && "
-            f"sudo -n install -m 0600 -T {shlex.quote(tmp_remote)} {shlex.quote(rpath)} && "
-            f"sudo -n rm -f {shlex.quote(tmp_remote)}"
+            f"{sp}mkdir -p {shlex.quote(parent)} "
+            f"{shlex.quote(PEER_REMOTE_CLIENT_LOG_DIR)} && "
+            f"{sp}install -m 0600 -T {shlex.quote(tmp_remote)} "
+            f"{shlex.quote(rpath)} && "
+            f"{sp}rm -f {shlex.quote(tmp_remote)}"
         )
         _, err, code = _exec_ssh(client, prep, timeout=exec_timeout)
         if code != 0:
@@ -534,7 +537,7 @@ def upload_bound_user_ovpn_via_ssh(
 
     Raises:
         ValueError: 对端或本地文件无效
-        RuntimeError: SSH/SFTP/sudo 失败
+        RuntimeError: SSH/SFTP/root 或 sudo -n 权限失败
     """
     uname = str(row.get("bound_username") or "").strip()
     if not uname:
