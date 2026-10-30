@@ -50,6 +50,9 @@ class SettingsPage:
             self._config_load_error = exc
         self._proxy_test_running = False
         self._notify_test_running = False
+        self._diagnostics_running = False
+        self.diagnostics_container = None
+        self.diagnostics_status = None
 
     def render(self, *, initial_tab: str = "openvpn") -> None:
         """渲染系统设置页；支持调用方指定初始页签。"""
@@ -78,6 +81,7 @@ class SettingsPage:
             "ssh",
             "download",
             "notify",
+            "diagnostics",
         }
         active_tab = (
             str(initial_tab or "openvpn")
@@ -101,6 +105,7 @@ class SettingsPage:
                     ui.tab("ssh", label="SSH")
                     ui.tab("download", label="下载配置")
                     ui.tab("notify", label="通知")
+                    ui.tab("diagnostics", label="诊断")
             with ui.tab_panels(
                 st, value=active_tab, keep_alive=False
             ).classes("w-full min-h-0 flex-1 settings-tabpanels"):
@@ -123,11 +128,167 @@ class SettingsPage:
                 with ui.tab_panel("notify"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_notify_panel()
+                with ui.tab_panel("diagnostics"):
+                    with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
+                        self._render_diagnostics_panel(
+                            auto_run=active_tab == "diagnostics"
+                        )
 
-    @staticmethod
-    def _on_settings_tab_change(e) -> None:
+    def _on_settings_tab_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "")
         logger.debug("系统设置页签切换: %s", v)
+        if v == "diagnostics":
+            self._start_diagnostics()
+
+    def _render_diagnostics_panel(self, *, auto_run: bool = False) -> None:
+        """渲染只读系统自检与安全修复入口。"""
+
+        def body() -> None:
+            self.diagnostics_status = ui.label(
+                "正在检查 NiceVPN 与 OpenVPN 状态…"
+            ).classes("section-caption")
+            self.diagnostics_container = ui.column().classes(
+                "w-full gap-2 settings-diagnostics-list"
+            )
+            if auto_run:
+                ui.timer(0.01, self._start_diagnostics, once=True)
+
+        def actions() -> None:
+            secondary_action(
+                "重新检查",
+                icon="refresh",
+                on_click=self._start_diagnostics,
+            )
+            primary_action(
+                "修复安全项",
+                icon="build_circle",
+                on_click=self._start_safe_repair,
+            )
+
+        render_form_section(
+            "系统一致性诊断",
+            description=(
+                "检查 OpenVPN、EasyRSA、PKI、CRL、SQLite、实例、IP Forward、"
+                "托管脚本及用户证书/OVPN/CCD 一致性。自动修复不会重建 CA、"
+                "修改网络策略或重启实例。"
+            ),
+            body=body,
+            actions=actions,
+        )
+
+    def _start_diagnostics(self) -> None:
+        if self._diagnostics_running or self.diagnostics_container is None:
+            return
+        self._diagnostics_running = True
+        self.diagnostics_container.clear()
+        with self.diagnostics_container:
+            ui.spinner(size="sm")
+            ui.label("正在执行系统检查…").classes("section-caption")
+        ui.timer(0.01, self._run_diagnostics_async, once=True)
+
+    async def _run_diagnostics_async(self) -> None:
+        try:
+            from app.services.diagnostics.system_diagnostics import (
+                SystemDiagnosticsService,
+            )
+
+            checks = await run.io_bound(lambda: SystemDiagnosticsService().run())
+            self._render_diagnostics_results(checks)
+        except Exception as exc:
+            logger.exception("系统诊断失败")
+            if self.diagnostics_container is not None:
+                self.diagnostics_container.clear()
+                with self.diagnostics_container:
+                    error_state(
+                        str(exc),
+                        title="系统诊断失败",
+                        on_retry=self._start_diagnostics,
+                    )
+            if self.diagnostics_status is not None:
+                self.diagnostics_status.text = "检查失败"
+        finally:
+            self._diagnostics_running = False
+
+    def _render_diagnostics_results(self, checks: list[dict]) -> None:
+        if self.diagnostics_container is None:
+            return
+
+        error_count = sum(item.get("status") == "error" for item in checks)
+        warning_count = sum(item.get("status") == "warning" for item in checks)
+        ok_count = sum(item.get("status") == "ok" for item in checks)
+        if self.diagnostics_status is not None:
+            self.diagnostics_status.text = (
+                f"正常 {ok_count} · 警告 {warning_count} · 异常 {error_count}"
+            )
+
+        styles = {
+            "ok": ("check_circle", "text-positive"),
+            "warning": ("warning", "text-warning"),
+            "error": ("error", "text-negative"),
+        }
+        self.diagnostics_container.clear()
+        with self.diagnostics_container:
+            for item in checks:
+                status = str(item.get("status") or "warning")
+                icon, tone = styles.get(status, styles["warning"])
+                with ui.row().classes(
+                    "w-full items-start no-wrap gap-3 q-pa-sm rounded-borders "
+                    "settings-diagnostic-item"
+                ):
+                    ui.icon(icon, size="22px").classes(tone)
+                    with ui.column().classes("gap-0 min-w-0 flex-1"):
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.label(str(item.get("title") or "检查项")).classes(
+                                "text-body2 text-weight-medium"
+                            )
+                            if item.get("repairable"):
+                                ui.badge("可安全同步").props("outline").classes(
+                                    "text-caption"
+                                )
+                        ui.label(str(item.get("detail") or "—")).classes(
+                            "section-caption break-all"
+                        )
+
+    def _start_safe_repair(self) -> None:
+        if self._diagnostics_running or self.diagnostics_container is None:
+            safe_notify("诊断或修复正在执行，请稍候", type="info")
+            return
+        self._diagnostics_running = True
+        self.diagnostics_container.clear()
+        with self.diagnostics_container:
+            ui.spinner(size="sm")
+            ui.label("正在同步可安全修复项…").classes("section-caption")
+        ui.timer(0.01, self._run_safe_repair_async, once=True)
+
+    async def _run_safe_repair_async(self) -> None:
+        try:
+            from app.services.diagnostics.system_diagnostics import (
+                SystemDiagnosticsService,
+            )
+
+            service = SystemDiagnosticsService()
+            actions = await run.io_bound(service.safe_repair)
+            checks = await run.io_bound(service.run)
+            self._render_diagnostics_results(checks)
+            safe_notify(
+                "；".join(actions) if actions else "没有需要自动修复的项目",
+                type="positive",
+            )
+        except Exception as exc:
+            logger.exception("系统安全修复失败")
+            safe_notify(f"安全修复失败: {exc}", type="negative")
+            if self.diagnostics_status is not None:
+                self.diagnostics_status.text = "修复失败"
+            if self.diagnostics_container is not None:
+                self.diagnostics_container.clear()
+                with self.diagnostics_container:
+                    error_state(
+                        str(exc),
+                        title="系统安全修复失败",
+                        on_retry=self._start_safe_repair,
+                    )
+        finally:
+            self._diagnostics_running = False
 
     def _render_openvpn_panel(self):
         """渲染 OpenVPN / EasyRSA 路径配置。"""

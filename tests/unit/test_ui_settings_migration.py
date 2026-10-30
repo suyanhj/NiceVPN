@@ -62,6 +62,7 @@ def test_settings_page_uses_shared_header_tabs_and_form_section(
             await user.should_see("SSH")
             await user.should_see("下载配置")
             await user.should_see("通知")
+            await user.should_see("诊断")
             await user.should_see("OpenVPN 配置")
             await user.should_see("OpenVPN 可执行文件路径")
             await user.should_see("EasyRSA 可执行脚本路径")
@@ -778,3 +779,29 @@ def test_settings_v2_uses_dedicated_tabs_and_current_palette() -> None:
         in shell_css
     )
     assert "background: rgba(21, 189, 232, 0.12) !important;" in shell_css
+
+
+def test_diagnostics_tab_and_safe_repair_contract() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    settings_source = (root / "app" / "ui" / "pages" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    diagnostics_source = (
+        root / "app" / "services" / "diagnostics" / "system_diagnostics.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'ui.tab("diagnostics", label="诊断")' in settings_source
+    assert "SystemDiagnosticsService" in settings_source
+    assert "safe_repair" in diagnostics_source
+    assert "sync_packaged_openvpn_scripts" in diagnostics_source
+    assert "sync_openvpn_runtime_permissions_from_config" in diagnostics_source
+    assert "regenerate_ovpn" in diagnostics_source
+
+    # 自动修复只允许同步托管材料，不自动执行危险系统变更。
+    assert "build_ca(" not in diagnostics_source
+    assert "regenerate_all_server_confs(" not in diagnostics_source
+    assert "restart_instance(" not in diagnostics_source
+    assert "iptables-restore" not in diagnostics_source
+    assert "sysctl -w" not in diagnostics_source
