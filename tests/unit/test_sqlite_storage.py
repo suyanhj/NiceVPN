@@ -89,7 +89,7 @@ def test_repository_query_and_pagination(tmp_path: Path) -> None:
     assert store.count_users(include_deleted=True) == 3
 
     assert store.list_usernames() == ["alice", "bob"]
-    assert store.list_usernames(include_deleted=True) == ["alice", "bob", "deleted-user"]
+    assert store.list_usernames(include_deleted=True) == ["alice", "bob", "deleted"]
 
 
 def test_legacy_json_migrates_once_and_is_archived(
