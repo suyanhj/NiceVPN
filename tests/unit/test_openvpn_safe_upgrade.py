@@ -10,6 +10,15 @@ import pytest
 from app.services.openvpn import upgrade as mod
 
 
+def test_upgrade_module_has_no_distribution_package_install_logic() -> None:
+    source = Path(mod.__file__).read_text(encoding="utf-8")
+    assert "_install_build_dependencies" not in source
+    assert '["apt", "install"' not in source
+    assert 'shutil.which("dnf")' not in source
+    assert "openvpn-install-common.sh" not in source
+    assert "stage_openvpn_source_build" in source
+
+
 def test_upgrade_installer_output_is_mirrored_to_upgrade_logger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
