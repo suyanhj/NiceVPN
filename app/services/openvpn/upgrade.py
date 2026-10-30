@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 _OUTPUT = Callable[[str], None]
 _PREFLIGHT_SECONDS = 3.0
-_COMMON_SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "install" / "openvpn-install-common.sh"
 
 _SERVER_SIDE_EFFECT_DIRECTIVES = {
     "auth-user-pass-verify",
@@ -154,83 +153,6 @@ def _openvpn_version(binary: str | Path) -> str:
     raise RuntimeError(f"无法识别候选 OpenVPN 版本: {first or proc.stderr.strip()}")
 
 
-def _install_build_dependencies(distro: str, on_output: _OUTPUT | None = None) -> None:
-    """只安装编译依赖，不安装/替换正在使用的 OpenVPN。"""
-
-    distro = str(distro or "").strip().lower()
-    if distro == "debian":
-        commands = [
-            ["apt", "update", "-y"],
-            [
-                "apt",
-                "install",
-                "-y",
-                "build-essential",
-                "curl",
-                "ca-certificates",
-                "pkg-config",
-                "autoconf",
-                "automake",
-                "libtool",
-                "libssl-dev",
-                "libnl-3-dev",
-                "libnl-genl-3-dev",
-                "libpam0g-dev",
-                "libcap-ng-dev",
-                "liblzo2-dev",
-                "liblz4-dev",
-                "libpkcs11-helper1-dev",
-                "libsystemd-dev",
-            ],
-        ]
-    elif distro == "rhel":
-        pm = shutil.which("dnf") or shutil.which("yum")
-        if not pm:
-            raise RuntimeError("未找到 dnf/yum，无法准备 OpenVPN 编译依赖")
-        commands = [[
-            pm,
-            "install",
-            "-y",
-            "gcc",
-            "gcc-c++",
-            "make",
-            "tar",
-            "gzip",
-            "curl",
-            "ca-certificates",
-            "pkgconfig",
-            "autoconf",
-            "automake",
-            "libtool",
-            "openssl-devel",
-            "libnl3-devel",
-            "pam-devel",
-            "libcap-ng-devel",
-            "lzo-devel",
-            "lz4-devel",
-            "pkcs11-helper-devel",
-            "systemd-devel",
-            "which",
-        ]]
-    else:
-        raise RuntimeError(f"暂不支持该发行版族的安全升级: {distro or 'unknown'}")
-
-    for cmd in commands:
-        _emit(on_output, "[准备] " + " ".join(cmd))
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            _emit(on_output, line.rstrip())
-        if proc.wait() != 0:
-            raise RuntimeError(f"安装 OpenVPN 编译依赖失败: {' '.join(cmd)}")
-
-
 def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
     """检测当前 OpenVPN 与 GitHub 最新候选 release。"""
 
@@ -260,80 +182,40 @@ def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
 
 
 def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
-    """把最新 OpenVPN 编译到临时目录，不修改当前 binary/systemd。"""
+    """通过正式 install shell 入口把候选 OpenVPN 构建到隔离目录。"""
 
-    from app.services.openvpn.installer import (
-        _build_install_env,
-        _run_command,
-    )
+    from app.services.openvpn.installer import stage_openvpn_source_build
 
     info = get_distro_info()
     distro = detect_distro_family(info)
     if not distro:
         raise RuntimeError("无法识别系统发行版族，不能自动升级 OpenVPN")
 
-    _install_build_dependencies(distro, on_output)
-
     version_id = str(info.get("version_id") or "")
-    installer_output = _mirror_installer_output(on_output)
-    env = _build_install_env(
-        distro,
-        version_id,
-        install_easyrsa=False,
-        install_server_systemd=False,
-        install_client_systemd=False,
-        install_server_override=False,
-        on_output=installer_output,
-    )
     stage_root = Path(tempfile.mkdtemp(prefix="nicevpn-openvpn-upgrade-"))
     prefix = stage_root / "prefix"
     src_root = stage_root / "src"
-    cache = stage_root / str(env["OPENVPN_ASSET"])
-    env.update({
-        "OPENVPN_PREFIX": str(prefix),
-        "OPENVPN_CACHE": str(cache),
-        "OPENVPN_SRC_ROOT": str(src_root),
-        "OPENVPN_CREATE_SYMLINK": "0",
-    })
+    cache = stage_root / "openvpn-source.tar.gz"
 
-    shell = f"source {shlex_quote(str(_COMMON_SCRIPT))}; openvpn_compile_install"
-    _emit(on_output, f"[Stage] 编译候选 OpenVPN {env['OPENVPN_TAG']} 到 {prefix}")
-    _run_command(
-        ["bash", "-lc", shell],
-        installer_output,
-        env={**os.environ, **env},
-    )
+    try:
+        staged = stage_openvpn_source_build(
+            distro,
+            version_id,
+            prefix=prefix,
+            cache=cache,
+            src_root=src_root,
+            on_output=_mirror_installer_output(on_output),
+        )
+        version = _openvpn_version(staged["binary"])
+    except Exception:
+        shutil.rmtree(stage_root, ignore_errors=True)
+        raise
 
-    binary = prefix / "sbin" / "openvpn"
-    if not binary.is_file():
-        raise RuntimeError(f"候选 OpenVPN 编译完成但 binary 不存在: {binary}")
-
-    version = _openvpn_version(binary)
-    asset = str(env["OPENVPN_ASSET"])
-    source_name = asset[:-7] if asset.endswith(".tar.gz") else asset[:-4] if asset.endswith(".tgz") else asset
-    source_dir = src_root / source_name
-    if not source_dir.is_dir():
-        candidates = sorted(path for path in src_root.iterdir() if path.is_dir())
-        if len(candidates) != 1:
-            raise RuntimeError(f"无法识别 OpenVPN 源码目录: {src_root}")
-        source_dir = candidates[0]
     return {
         "stage_root": str(stage_root),
-        "prefix": str(prefix),
-        "source_dir": str(source_dir),
-        "binary": str(binary),
+        **staged,
         "version": version,
-        "tag": str(env["OPENVPN_TAG"]),
-        "asset": asset,
-        "distro": distro,
-        "distro_version": version_id,
     }
-
-
-def shlex_quote(value: str) -> str:
-    import shlex
-
-    return shlex.quote(value)
 
 
 def _rewrite_config(
