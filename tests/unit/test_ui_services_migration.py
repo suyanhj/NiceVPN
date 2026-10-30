@@ -409,6 +409,11 @@ def test_services_page_exposes_safe_openvpn_upgrade_flow() -> None:
     assert "客户端配置" in source
     assert "一次性生成" in source
     assert "自动回滚" in source
+    assert "升级日志" in source
+    assert "OPENVPN_UPGRADE_LOG_FILE" in source
+    assert "_show_openvpn_upgrade_log_viewer" in source
+    assert 'label="升级 / Preflight 日志"' not in source
+    assert "log_lines" not in source
 
 
 def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
