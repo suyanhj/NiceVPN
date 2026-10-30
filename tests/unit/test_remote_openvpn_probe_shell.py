@@ -17,8 +17,12 @@ def test_probe_shell_no_preferred_only_standard():
 def test_probe_shell_preferred_before_standard_list():
     s = _build_openvpn_probe_shell(preferred_binary="/opt/custom/openvpn")
     assert s.startswith("set -e\n")
-    first_if = [ln for ln in s.split("\n") if ln.startswith("if ")][0]
-    assert "/opt/custom/openvpn" in first_if
+    assert "export PREFERRED_BINARY=/opt/custom/openvpn" in s
+    preferred_check = 'if [ -n "${PREFERRED_BINARY}" ]; then'
+    standard_loop = "while IFS= read -r candidate; do"
+    assert preferred_check in s
+    assert standard_loop in s
+    assert s.index(preferred_check) < s.index(standard_loop)
     assert "command -v openvpn" in s
 
 
