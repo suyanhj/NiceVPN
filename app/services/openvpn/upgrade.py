@@ -86,11 +86,14 @@ _FATAL_CONFIG_MARKERS = (
     "openssl: error",
     "error: private key password verification failed",
 )
-_CLIENT_READY_MARKERS = (
-    "udp link remote:",
-    "tcp/udp: preserving recently used remote address:",
-    "attempting to establish tcp connection",
+_SERVER_PREFLIGHT_SUCCESS_MARKERS = (
     "initialization sequence completed",
+)
+_CLIENT_PREFLIGHT_SUCCESS_MARKERS = (
+    "udp link remote:",
+    "udpv4 link remote:",
+    "udpv6 link remote:",
+    "attempting to establish tcp connection",
 )
 
 
@@ -385,11 +388,15 @@ def _run_foreground_preflight(
     binary: str,
     config_path: Path,
     *,
+    success_markers: tuple[str, ...],
     seconds: float = _PREFLIGHT_SECONDS,
 ) -> tuple[bool, str, bool]:
-    """运行到初始化阶段；进程能稳定存活到阈值即认为解析/初始化通过。"""
+    """运行到明确成功阶段；必须命中 success marker，不能仅凭进程存活判定。"""
 
     log_path = config_path.with_suffix(config_path.suffix + ".log")
+    reached_success = False
+    fatal_before_success = False
+
     with log_path.open("w", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             [binary, "--config", str(config_path)],
@@ -401,28 +408,42 @@ def _run_foreground_preflight(
         )
         deadline = time.monotonic() + max(0.5, float(seconds))
         while time.monotonic() < deadline:
-            rc = proc.poll()
-            if rc is not None:
+            try:
+                output = log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                output = ""
+            lowered = output.casefold()
+
+            fatal_before_success = any(
+                marker in lowered for marker in _FATAL_CONFIG_MARKERS
+            )
+            if fatal_before_success:
                 break
-            time.sleep(0.1)
-        survived = proc.poll() is None
-        if survived:
+
+            reached_success = any(
+                marker in lowered for marker in success_markers
+            )
+            if reached_success:
+                break
+
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        if proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=2)
-        rc = proc.returncode
 
     output = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
     lowered = output.casefold()
-    fatal = any(marker in lowered for marker in _FATAL_CONFIG_MARKERS)
-    if survived and not fatal:
-        return True, output, True
-    if rc == 0 and not fatal:
-        return True, output, False
-    return False, output, False
+    fatal = fatal_before_success or any(
+        marker in lowered for marker in _FATAL_CONFIG_MARKERS
+    )
+    return reached_success and not fatal, output, reached_success
 
 
 def preflight_server_config(binary: str, conf_path: str | Path) -> dict:
@@ -455,11 +476,15 @@ def preflight_server_config(binary: str, conf_path: str | Path) -> dict:
             ],
         )
         candidate.write_text(text, encoding="utf-8")
-        ok, output, survived = _run_foreground_preflight(binary, candidate)
+        ok, output, reached_success = _run_foreground_preflight(
+            binary,
+            candidate,
+            success_markers=_SERVER_PREFLIGHT_SUCCESS_MARKERS,
+        )
         return {
             "ok": ok,
             "path": str(source),
-            "survived_initialization": survived,
+            "reached_success_marker": reached_success,
             "log_tail": "\n".join(output.splitlines()[-30:]),
             "error": None if ok else "候选 OpenVPN 无法完成服务端配置初始化",
         }
@@ -565,19 +590,18 @@ def preflight_client_profile(binary: str) -> dict:
             ],
         )
         candidate.write_text(text, encoding="utf-8")
-        ok, output, survived = _run_foreground_preflight(binary, candidate)
-        lowered = output.casefold()
-        ready = survived or any(marker in lowered for marker in _CLIENT_READY_MARKERS)
-        fatal = any(marker in lowered for marker in _FATAL_CONFIG_MARKERS)
-        if not ok and ready and not fatal:
-            ok = True
+        ok, output, reached_success = _run_foreground_preflight(
+            binary,
+            candidate,
+            success_markers=_CLIENT_PREFLIGHT_SUCCESS_MARKERS,
+        )
 
         return {
             "ok": ok,
             "profile": str(source),
             "generated": True,
             "source": "temporary",
-            "survived_initialization": survived,
+            "reached_success_marker": reached_success,
             "log_tail": "\n".join(output.splitlines()[-30:]),
             "error": None if ok else "候选 OpenVPN 无法解析/初始化临时客户端配置",
         }
