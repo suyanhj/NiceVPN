@@ -394,6 +394,10 @@ def test_center_firewall_classification_filters_are_searchable_multiselects(
         assert column["filterParams"]["showValuesFromOtherFilters"] is False
         assert column["filterParams"]["searchPlaceholder"]
 
+    for field in ("source", "dest", "dest_port", "description", "id"):
+        assert columns[field][":filter"] == "window.NiceVpnMultiTextFilter"
+        assert columns[field]["filterParams"]["inputPlaceholder"]
+
     assert "checkboxSelection" not in columns["priority"]
     assert "headerCheckboxSelection" not in columns["priority"]
     assert page._center_filter_model == {}
