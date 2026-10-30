@@ -17,7 +17,7 @@ from typing import Callable, Iterable
 from packaging.version import Version
 
 from app.core.config import load_config
-from app.core.constants import OPENVPN_INSTALL_PREFIX, OVPN_PROFILES_DIR
+from app.core.constants import OPENVPN_INSTALL_PREFIX
 from app.services.openvpn.detector import (
     detect_distro_family,
     detect_openvpn,
@@ -465,30 +465,12 @@ def preflight_server_config(binary: str, conf_path: str | Path) -> dict:
         }
 
 
-def _profile_has_encrypted_private_key(text: str) -> bool:
-    upper = str(text or "").upper()
-    return "ENCRYPTED PRIVATE KEY" in upper or "PROC-TYPE: 4,ENCRYPTED" in upper
-
-
-def _find_existing_client_profile() -> Path | None:
-    if not OVPN_PROFILES_DIR.exists():
-        return None
-    for path in sorted(OVPN_PROFILES_DIR.glob("*.ovpn")):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if text.strip() and not _profile_has_encrypted_private_key(text):
-            return path
-    return None
-
-
 def _generate_ephemeral_client_profile(binary: str, root: Path) -> Path:
-    """无可用现有 profile 时生成一次性客户端文件，不写入 NiceVPN PKI/SQLite。"""
+    """生成一次性客户端配置，不读取现有用户 .ovpn，也不写入 PKI/SQLite。"""
 
     openssl = shutil.which("openssl")
     if not openssl:
-        raise RuntimeError("没有现有可测试 .ovpn，且系统缺少 openssl，无法生成一次性客户端配置")
+        raise RuntimeError("系统缺少 openssl，无法生成一次性客户端兼容性配置")
 
     cert = root / "client.crt"
     key = root / "client.key"
@@ -550,26 +532,16 @@ def _generate_ephemeral_client_profile(binary: str, root: Path) -> Path:
     return profile
 
 
-def preflight_client_profile(binary: str, profile_path: str | Path | None = None) -> dict:
-    """验证代表性客户端 .ovpn；没有可用现有配置时生成一次性 profile。"""
+def preflight_client_profile(binary: str) -> dict:
+    """始终生成一次性客户端 .ovpn，避免设备绑定/用户状态污染版本兼容性判断。"""
 
     with tempfile.TemporaryDirectory(prefix="nicevpn-client-preflight-") as td:
         root = Path(td)
-        source = Path(profile_path) if profile_path else _find_existing_client_profile()
-        generated = source is None
-        if source is None:
-            source = _generate_ephemeral_client_profile(binary, root)
+        source = _generate_ephemeral_client_profile(binary, root)
         if not source.is_file():
-            return {"ok": False, "error": f"客户端配置不存在: {source}"}
+            return {"ok": False, "error": f"临时客户端配置不存在: {source}"}
 
         original = source.read_text(encoding="utf-8")
-        if _profile_has_encrypted_private_key(original):
-            return {
-                "ok": False,
-                "profile": str(source),
-                "error": "客户端私钥带密码，无法在无人值守 preflight 中验证",
-            }
-
         port = _free_local_port()
         tun_name = "tunpc" + uuid.uuid4().hex[:8]
         candidate = root / "client.ovpn"
@@ -603,10 +575,11 @@ def preflight_client_profile(binary: str, profile_path: str | Path | None = None
         return {
             "ok": ok,
             "profile": str(source),
-            "generated": generated,
+            "generated": True,
+            "source": "temporary",
             "survived_initialization": survived,
             "log_tail": "\n".join(output.splitlines()[-30:]),
-            "error": None if ok else "候选 OpenVPN 无法解析/初始化客户端配置",
+            "error": None if ok else "候选 OpenVPN 无法解析/初始化临时客户端配置",
         }
 
 
@@ -642,15 +615,11 @@ def preflight_upgrade_candidate(stage: dict, on_output: _OUTPUT | None = None) -
                 "error": f"服务端配置不兼容: {path.name}",
             }
 
-    _emit(on_output, "[Preflight] 验证代表性客户端 .ovpn")
+    _emit(on_output, "[Preflight] 生成并验证一次性客户端 .ovpn")
     client_result = preflight_client_profile(binary)
     client_log_tail = str(client_result.get("log_tail") or "").strip()
     if client_log_tail:
-        source_label = (
-            "generated"
-            if client_result.get("generated")
-            else str(client_result.get("profile") or "existing")
-        )
+        source_label = "temporary"
         _emit(
             on_output,
             f"[Preflight][client:{source_label}] OpenVPN 输出尾部:\n{client_log_tail}",

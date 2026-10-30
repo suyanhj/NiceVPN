@@ -82,7 +82,7 @@ def test_preflight_upgrade_requires_every_server_and_client(
     assert client_called == []
 
 
-def test_preflight_upgrade_reports_existing_or_generated_client(
+def test_preflight_upgrade_reports_temporary_client(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -105,12 +105,14 @@ def test_preflight_upgrade_reports_existing_or_generated_client(
             "ok": True,
             "profile": "/tmp/test.ovpn",
             "generated": True,
+            "source": "temporary",
         },
     )
 
     result = mod.preflight_upgrade_candidate({"binary": str(binary)})
     assert result["ok"] is True
     assert result["client_result"]["generated"] is True
+    assert result["client_result"]["source"] == "temporary"
 
 
 def test_apply_staged_upgrade_stops_before_backup_when_preflight_fails(
@@ -132,32 +134,38 @@ def test_apply_staged_upgrade_stops_before_backup_when_preflight_fails(
         )
 
 
-def test_encrypted_existing_profile_is_not_selected(
+def test_client_preflight_always_generates_temporary_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(mod, "OVPN_PROFILES_DIR", tmp_path)
-    (tmp_path / "a.ovpn").write_text(
-        "<key>\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nxxx\n</key>\n",
-        encoding="utf-8",
-    )
-    usable = tmp_path / "b.ovpn"
-    usable.write_text(
-        "<key>\n-----BEGIN PRIVATE KEY-----\nxxx\n</key>\n",
-        encoding="utf-8",
+    generated = tmp_path / "generated.ovpn"
+    generated.write_text("client\n", encoding="utf-8")
+    calls: list[Path] = []
+
+    def fake_generate(_binary: str, root: Path) -> Path:
+        calls.append(root)
+        target = root / "generated.ovpn"
+        target.write_text("client\n", encoding="utf-8")
+        return target
+
+    monkeypatch.setattr(mod, "_generate_ephemeral_client_profile", fake_generate)
+    monkeypatch.setattr(mod, "_free_local_port", lambda: 12345)
+    monkeypatch.setattr(
+        mod,
+        "_run_foreground_preflight",
+        lambda _binary, _config: (True, "Initialization Sequence Completed", True),
     )
 
-    assert mod._find_existing_client_profile() == usable
+    result = mod.preflight_client_profile("/tmp/candidate-openvpn")
+
+    assert len(calls) == 1
+    assert result["ok"] is True
+    assert result["generated"] is True
+    assert result["source"] == "temporary"
 
 
-def test_client_preflight_rejects_explicit_encrypted_profile(
-    tmp_path: Path,
-) -> None:
-    profile = tmp_path / "locked.ovpn"
-    profile.write_text(
-        "<key>\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nxxx\n</key>\n",
-        encoding="utf-8",
-    )
-    result = mod.preflight_client_profile("/bin/false", profile)
-    assert result["ok"] is False
-    assert "私钥带密码" in result["error"]
+def test_upgrade_module_does_not_scan_existing_client_profiles() -> None:
+    source = Path(mod.__file__).read_text(encoding="utf-8")
+    assert "OVPN_PROFILES_DIR" not in source
+    assert "_find_existing_client_profile" not in source
+    assert "glob(\"*.ovpn\")" not in source
