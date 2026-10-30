@@ -275,6 +275,31 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
     assert disabled["session_status_tone"] == "unknown"
 
 
+def test_device_filter_values_only_expose_actual_device_types() -> None:
+    values = UsersPage._device_filter_values(
+        ["alice", "bob", "carol"],
+        {
+            "alice": {"device_label": "Mac"},
+            "bob": {"device_label": "安卓"},
+            "stale-user": {"device_label": "Windows"},
+        },
+    )
+
+    assert values == ["安卓", "Mac", "未知"]
+
+
+def test_device_filter_values_are_unknown_only_before_any_device_is_known() -> None:
+    assert UsersPage._device_filter_values(["alice", "bob"], {}) == ["未知"]
+    assert UsersPage._device_filter_values(
+        ["alice", "bob"],
+        {
+            "alice": {"device_label": "Linux"},
+            "bob": {"device_label": "Linux"},
+        },
+    ) == ["Linux"]
+    assert UsersPage._device_filter_values([], {"stale": {"device_label": "iOS"}}) == []
+
+
 def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion() -> None:
     """5,000 用户规模只生成轻量行字典，由 AG Grid 负责分页与虚拟化。"""
 
