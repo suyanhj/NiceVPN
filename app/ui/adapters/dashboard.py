@@ -6,10 +6,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.monitor.service_monitor import InstanceStatus, ServiceMonitor
+from app.services.monitor.traffic_history import TrafficSample
 
 logger = logging.getLogger(__name__)
 
@@ -206,36 +207,53 @@ def service_health_chart_options(snapshot: DashboardSnapshot) -> dict[str, Any]:
     }
 
 
-def traffic_snapshot_chart_options(snapshot: DashboardSnapshot) -> dict[str, Any]:
-    """当前累计上下行快照；不是历史趋势。"""
+def traffic_history_chart_options(
+    samples: Sequence[TrafficSample],
+) -> dict[str, Any]:
+    """最近 5 个一分钟累计流量快照。"""
 
-    if snapshot.configured_instance_count <= 0:
-        data: list[int] = []
-    else:
-        data = [snapshot.total_rx, snapshot.total_tx]
+    recent = list(samples)[-5:]
+    labels = [
+        sample.timestamp.astimezone().strftime("%H:%M")
+        for sample in recent
+    ]
+    rx = [max(0, int(sample.rx_bytes or 0)) for sample in recent]
+    tx = [max(0, int(sample.tx_bytes or 0)) for sample in recent]
+
     return {
         "tooltip": {"trigger": "axis"},
+        "legend": {"top": 0},
         "grid": {
             "left": 20,
             "right": 20,
-            "top": 38,
+            "top": 48,
             "bottom": 30,
             "containLabel": True,
         },
         "xAxis": {
             "type": "category",
-            "data": ["累计上行", "累计下行"] if data else [],
+            "boundaryGap": False,
+            "data": labels,
         },
         "yAxis": {
             "type": "value",
+            "name": "Bytes",
         },
         "series": [
             {
-                "name": "当前累计流量",
-                "type": "bar",
-                "data": data,
-                "barMaxWidth": 56,
-            }
+                "name": "累计上行",
+                "type": "line",
+                "smooth": True,
+                "showSymbol": True,
+                "data": rx,
+            },
+            {
+                "name": "累计下行",
+                "type": "line",
+                "smooth": True,
+                "showSymbol": True,
+                "data": tx,
+            },
         ],
     }
 

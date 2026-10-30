@@ -6,11 +6,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.services.monitor.service_monitor import InstanceStatus
+from app.services.monitor.traffic_history import TrafficSample
 from app.ui.adapters.dashboard import (
     cert_status,
     collect_dashboard_snapshot,
     service_health_chart_options,
-    traffic_snapshot_chart_options,
+    traffic_history_chart_options,
 )
 
 
@@ -164,21 +165,31 @@ def test_service_health_chart_normal_empty_and_single() -> None:
     ]
 
 
-def test_traffic_chart_is_snapshot_not_fake_time_series() -> None:
-    snap = collect_dashboard_snapshot(
-        ["server1"],
-        monitor=FakeMonitor(),
-        cert_service_factory=lambda: FakeCertService(),
-        rule_service_factory=FakeRuleService,
-    )
-    option = traffic_snapshot_chart_options(snap)
+def test_traffic_history_chart_uses_only_latest_five_samples() -> None:
+    start = datetime(2026, 10, 30, 1, 0, tzinfo=timezone.utc)
+    samples = [
+        TrafficSample(
+            timestamp=start + timedelta(minutes=index),
+            rx_bytes=1000 + index,
+            tx_bytes=2000 + index,
+        )
+        for index in range(6)
+    ]
 
-    assert option["series"][0]["type"] == "bar"
-    assert option["xAxis"]["data"] == ["累计上行", "累计下行"]
-    assert option["series"][0]["data"] == [1024, 2048]
-    assert option["grid"]["top"] == 38
-    assert "name" not in option["yAxis"]
-    assert "time" not in str(option).lower()
+    option = traffic_history_chart_options(samples)
+
+    assert len(option["xAxis"]["data"]) == 5
+    expected_labels = [
+        sample.timestamp.astimezone().strftime("%H:%M")
+        for sample in samples[-5:]
+    ]
+    assert option["xAxis"]["data"] == expected_labels
+    assert option["series"][0]["name"] == "累计上行"
+    assert option["series"][0]["type"] == "line"
+    assert option["series"][0]["data"] == [1001, 1002, 1003, 1004, 1005]
+    assert option["series"][1]["name"] == "累计下行"
+    assert option["series"][1]["data"] == [2001, 2002, 2003, 2004, 2005]
+    assert option["yAxis"]["name"] == "Bytes"
 
 
 def test_cert_status_tones() -> None:
