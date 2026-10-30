@@ -227,14 +227,41 @@ class CertService:
             return False
 
         info = wrapper.get_cert_info(username)
-        if info and info.get("serial"):
-            from app.services.user.crud import UserService
+        from app.services.user.crud import UserService
 
+        user_service = UserService()
+        user = user_service.get(username)
+        if user is not None:
+            if info and info.get("serial"):
+                user_service.update_cert_serial(username, str(info["serial"]))
+                logger.info(
+                    "已同步用户证书序列号: user=%s, serial=%s",
+                    username,
+                    info["serial"],
+                )
             try:
-                UserService().update_cert_serial(username, str(info["serial"]))
-                logger.info("已同步用户证书序列号: user=%s, serial=%s", username, info["serial"])
-            except ValueError:
-                logger.info("跳过用户序列号同步（无对应用户记录，可能为服务端证书）: %s", username)
+                ovpn_path = user_service.regenerate_ovpn(username)
+                logger.info(
+                    "证书续签后已重建用户 OVPN: user=%s path=%s",
+                    username,
+                    ovpn_path,
+                )
+            except Exception as exc:
+                logger.exception("证书已续签但重建 OVPN 失败: user=%s", username)
+                self._audit.log(
+                    action="renew_cert",
+                    target_type="cert",
+                    target_id=username,
+                    detail=f"证书已续签，但用户 {username} 的 OVPN 重建失败",
+                    result="failure",
+                    error_message=str(exc),
+                )
+                return False
+        else:
+            logger.info(
+                "续签对象无对应用户记录，跳过 OVPN 重建（可能为服务端证书）: %s",
+                username,
+            )
 
         sync_openvpn_runtime_permissions_from_config()
 
