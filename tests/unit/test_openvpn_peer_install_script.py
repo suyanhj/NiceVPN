@@ -32,6 +32,7 @@ def test_install_script_files_exist() -> None:
         "openvpn-install-common.sh",
         "openvpn-install-debian.sh",
         "openvpn-install-rhel.sh",
+        "openvpn-install-systemd.sh",
     ):
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
 
@@ -125,6 +126,13 @@ def test_stage_source_build_uses_distribution_install_entry(
     assert env["INSTALL_SERVER_OVERRIDE"] == "0"
     assert env["OPENVPN_PREFIX"] == str(prefix)
     assert result["binary"] == str(prefix / "sbin" / "openvpn")
+
+
+def test_systemd_install_entry_reuses_common_helpers() -> None:
+    script = _read_install_script_text("openvpn-install-systemd.sh")
+    assert "source " in script and "openvpn-install-common.sh" in script
+    assert "openvpn_install_server_systemd_from_src" in script
+    assert "openvpn_install_server_systemd_override" in script
 
 
 def test_common_script_has_shared_helpers() -> None:
