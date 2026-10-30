@@ -982,12 +982,12 @@ class PeersPage:
                 install_tip = (
                     str(view["connection_reason"])
                     if not view["can_install"] and not view["busy"]
-                    else ("远程操作进行中" if view["busy"] else "探测/安装")
+                    else ("远程操作进行中" if view["busy"] else "一键装配")
                 )
                 install_button = ui.button(
                     icon="build",
                     on_click=lambda current=row: self._show_peer_openvpn_setup_dialog(current),
-                ).props("flat round dense aria-label='探测/安装'").classes(
+                ).props("flat round dense aria-label='一键装配'").classes(
                     "peers-icon-action peers-icon-action--primary"
                 )
                 install_button.tooltip(install_tip)
@@ -1160,7 +1160,7 @@ class PeersPage:
                 "远端 openvpn 路径（可选）",
                 placeholder="例 /opt/openvpn/sbin/openvpn；留空则 PATH 探测",
             ).classes("w-full")
-            fields["auto_install"] = ui.checkbox("创建后自动安装", value=False)
+            fields["auto_install"] = ui.checkbox("创建后自动装配", value=False)
 
         async def submit() -> bool:
             name = str(fields["name"].value or "").strip()
@@ -1419,7 +1419,7 @@ class PeersPage:
                 placeholder="留空则 PATH 探测",
             ).classes("w-full")
             fields["auto_install"] = ui.checkbox(
-                "保存后自动安装",
+                "保存后自动装配",
                 value=bool(row.get("auto_install_on_peer")),
             )
 
