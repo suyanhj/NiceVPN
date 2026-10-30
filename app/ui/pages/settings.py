@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from uuid import uuid4
+
 import requests
 from nicegui import run, ui
 
 logger = logging.getLogger(__name__)
 
 from app.core.config import load_config, save_config
-from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
+from app.core.constants import BACKUPS_DIR, OPENVPN_DEFAULT_MAX_CLIENTS
 from app.models.config import SystemConfig
 from app.services.notify.dingtalk import send_dingtalk_text
 from app.services.notify.rocketchat import send_rocketchat_text
@@ -28,7 +31,8 @@ from app.ui.adapters.settings import (
     parse_rocketchat_channels,
     validate_easyrsa_script_path,
 )
-from app.ui.components.actions import primary_action, secondary_action
+from app.ui.components import confirm_dialog
+from app.ui.components.actions import danger_action, primary_action, secondary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
 from app.ui.components.help import help_hint
@@ -53,6 +57,10 @@ class SettingsPage:
         self._diagnostics_running = False
         self.diagnostics_container = None
         self.diagnostics_status = None
+        self._backup_running = False
+        self.backup_status = None
+        self.restore_button = None
+        self._restore_candidate_path: Path | None = None
 
     def render(self, *, initial_tab: str = "openvpn") -> None:
         """渲染系统设置页；支持调用方指定初始页签。"""
@@ -82,6 +90,7 @@ class SettingsPage:
             "download",
             "notify",
             "diagnostics",
+            "backup",
         }
         active_tab = (
             str(initial_tab or "openvpn")
@@ -106,6 +115,7 @@ class SettingsPage:
                     ui.tab("download", label="下载配置")
                     ui.tab("notify", label="通知")
                     ui.tab("diagnostics", label="诊断")
+                    ui.tab("backup", label="备份恢复")
             with ui.tab_panels(
                 st, value=active_tab, keep_alive=False
             ).classes("w-full min-h-0 flex-1 settings-tabpanels"):
@@ -133,12 +143,189 @@ class SettingsPage:
                         self._render_diagnostics_panel(
                             auto_run=active_tab == "diagnostics"
                         )
+                with ui.tab_panel("backup"):
+                    with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
+                        self._render_backup_panel()
 
     def _on_settings_tab_change(self, e) -> None:
         v = str(getattr(e, "value", None) or "")
         logger.debug("系统设置页签切换: %s", v)
         if v == "diagnostics":
             self._start_diagnostics()
+
+    def _render_backup_panel(self) -> None:
+        """渲染完整备份创建、校验和恢复入口。"""
+
+        def body() -> None:
+            ui.label(
+                "完整备份包含 SQLite、系统配置、PKI/CRL、CCD、OVPN、设备绑定、"
+                "tls-crypt-v2、OpenVPN 实例配置及运行凭据；不包含日志、审计历史"
+                "和一次性下载文件。"
+            ).classes("section-caption")
+            self.backup_status = ui.label("尚未选择恢复文件。").classes(
+                "section-caption"
+            )
+            ui.upload(
+                label="选择 NiceVPN 完整备份（.tar.gz）",
+                on_upload=self._handle_full_backup_upload,
+                auto_upload=True,
+            ).props("accept=.gz,.tgz,.tar.gz").classes("w-full")
+
+        def actions() -> None:
+            primary_action(
+                "创建并下载备份",
+                icon="archive",
+                on_click=self._start_create_full_backup,
+            )
+            self.restore_button = danger_action(
+                "恢复已校验备份",
+                icon="settings_backup_restore",
+                on_click=self._confirm_restore_full_backup,
+                disabled=True,
+            )
+
+        render_form_section(
+            "完整备份与恢复",
+            description=(
+                "恢复前会校验 manifest、SHA-256、配置模型和 SQLite，并自动创建"
+                " pre-restore 备份。恢复不会自动重启 OpenVPN 或 NiceVPN。"
+            ),
+            body=body,
+            actions=actions,
+        )
+
+    def _start_create_full_backup(self) -> None:
+        if self._backup_running:
+            safe_notify("备份或恢复正在执行，请稍候", type="info")
+            return
+        self._backup_running = True
+        if self.backup_status is not None:
+            self.backup_status.text = "正在创建一致性备份…"
+        ui.timer(0.01, self._create_full_backup_async, once=True)
+
+    async def _create_full_backup_async(self) -> None:
+        try:
+            from app.services.backup import create_full_backup
+
+            path = await run.io_bound(create_full_backup)
+            data = await run.io_bound(path.read_bytes)
+            ui.download(data, path.name)
+            if self.backup_status is not None:
+                self.backup_status.text = f"备份已创建: {path.name}"
+            safe_notify("完整备份已创建并开始下载", type="positive")
+        except Exception as exc:
+            logger.exception("创建完整备份失败")
+            if self.backup_status is not None:
+                self.backup_status.text = f"备份失败: {exc}"
+            safe_notify(f"创建完整备份失败: {exc}", type="negative")
+        finally:
+            self._backup_running = False
+
+    async def _handle_full_backup_upload(self, event) -> None:
+        if self._backup_running:
+            safe_notify("备份或恢复正在执行，请稍候", type="info")
+            return
+
+        from app.services.backup import inspect_full_backup
+
+        uploads_dir = Path(BACKUPS_DIR) / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        original_name = Path(
+            str(getattr(event.file, "name", "") or "nicevpn-backup.tar.gz")
+        ).name
+        suffix = ".tar.gz" if original_name.endswith(".tar.gz") else ".tgz"
+        candidate = uploads_dir / f"restore-{uuid4().hex}{suffix}"
+
+        try:
+            raw = await event.file.read()
+            await run.io_bound(candidate.write_bytes, raw)
+            summary = await run.io_bound(lambda: inspect_full_backup(candidate))
+        except Exception as exc:
+            logger.exception("校验上传备份失败")
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._restore_candidate_path = None
+            if self.restore_button is not None:
+                self.restore_button.disable()
+            if self.backup_status is not None:
+                self.backup_status.text = f"备份校验失败: {exc}"
+            safe_notify(f"备份校验失败: {exc}", type="negative")
+            return
+
+        self._restore_candidate_path = candidate
+        if self.restore_button is not None:
+            self.restore_button.enable()
+        created = str(summary.get("created_at") or "未知")
+        count = int(summary.get("file_count") or 0)
+        if self.backup_status is not None:
+            self.backup_status.text = (
+                f"备份校验通过 · 创建时间 {created} · {count} 个文件"
+            )
+        safe_notify("备份完整性校验通过，可以恢复", type="positive")
+
+    def _confirm_restore_full_backup(self) -> None:
+        if self._restore_candidate_path is None:
+            safe_notify("请先上传并通过校验的完整备份", type="warning")
+            return
+        confirm_dialog.show(
+            "确定恢复该 NiceVPN 完整备份？",
+            title="恢复完整备份",
+            impact=(
+                "将覆盖当前 SQLite、系统配置、PKI、CCD、OVPN、设备绑定和 OpenVPN"
+                " 实例配置。恢复前会自动备份当前状态；完成后需要重启 NiceVPN/OpenVPN。"
+            ),
+            confirm_text="RESTORE",
+            danger_level="danger",
+            on_confirm=self._start_restore_full_backup,
+        )
+
+    def _start_restore_full_backup(self) -> None:
+        if self._backup_running or self._restore_candidate_path is None:
+            return
+        self._backup_running = True
+        if self.restore_button is not None:
+            self.restore_button.disable()
+        if self.backup_status is not None:
+            self.backup_status.text = "正在恢复完整备份…"
+        ui.timer(0.01, self._restore_full_backup_async, once=True)
+
+    async def _restore_full_backup_async(self) -> None:
+        candidate = self._restore_candidate_path
+        if candidate is None:
+            self._backup_running = False
+            return
+        try:
+            from app.services.backup import restore_full_backup
+
+            result = await run.io_bound(lambda: restore_full_backup(candidate))
+            pre_restore = Path(
+                str(result.get("pre_restore_backup") or "")
+            ).name
+            if self.backup_status is not None:
+                self.backup_status.text = (
+                    "恢复完成；请重启 NiceVPN 和 OpenVPN。"
+                    + (f" 自动回退备份: {pre_restore}" if pre_restore else "")
+                )
+            safe_notify(
+                "完整备份已恢复；请重启 NiceVPN/OpenVPN 使全部配置生效",
+                type="warning",
+            )
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("删除已恢复的上传备份失败: %s", candidate)
+            self._restore_candidate_path = None
+        except Exception as exc:
+            logger.exception("恢复完整备份失败")
+            if self.backup_status is not None:
+                self.backup_status.text = f"恢复失败: {exc}"
+            safe_notify(f"恢复完整备份失败: {exc}", type="negative")
+            if self.restore_button is not None:
+                self.restore_button.enable()
+        finally:
+            self._backup_running = False
 
     def _render_diagnostics_panel(self, *, auto_run: bool = False) -> None:
         """渲染只读系统自检与安全修复入口。"""
