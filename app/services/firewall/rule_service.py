@@ -797,6 +797,7 @@ class FirewallRuleService:
         protocols: list[str] | None = None,
         actions: list[str] | None = None,
         kind_keys: list[str] | None = None,
+        text_filters: dict[str, tuple[list[str], str, str]] | None = None,
         sort_by: str = "priority",
         sort_desc: bool = False,
     ) -> tuple[list[dict], int]:
@@ -812,6 +813,7 @@ class FirewallRuleService:
             protocols=protocols,
             actions=actions,
             kind_keys=kind_keys,
+            text_filters=text_filters,
             sort_by=sort_by,
             sort_desc=sort_desc,
         )
