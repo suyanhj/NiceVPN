@@ -507,6 +507,16 @@ class SqliteStore:
             ).fetchall()
         return [_load_payload(row["payload"]) for row in rows], total
 
+    def list_usernames(self, *, include_deleted: bool = False) -> list[str]:
+        """轻量返回用户名列表，不加载 JSON payload。"""
+
+        where = "" if include_deleted else " WHERE status <> 'deleted'"
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"SELECT username FROM users{where} ORDER BY username COLLATE NOCASE"
+            ).fetchall()
+        return [str(row["username"]) for row in rows]
+
     def list_active_usernames_by_group(self, group_id: str) -> list[str]:
         with self.connection() as conn:
             rows = conn.execute(
