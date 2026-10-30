@@ -28,6 +28,7 @@ from app.core.constants import (
     SQLITE_DB_FILE,
 )
 from app.models.config import SystemConfig
+from app.services.easyrsa.wrapper import inspect_easyrsa_pki
 from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
 from app.storage.sqlite_store import SCHEMA_VERSION
 from app.utils.posix_data_perms import sync_openvpn_runtime_permissions_from_config
@@ -58,6 +59,9 @@ def _copy_file(src: Path, dst: Path) -> bool:
 
 
 def _copy_tree(src: Path, dst: Path) -> bool:
+    """复制目录状态；源不存在时仍创建空目标，便于恢复时清理旧残留。"""
+
+    dst.mkdir(parents=True, exist_ok=True)
     if not src.is_dir():
         return False
     shutil.copytree(src, dst, dirs_exist_ok=True)
@@ -276,8 +280,15 @@ def _validate_restore_payload(root: Path) -> dict:
         raise ValueError("备份缺少 app/config.json")
     if not db_path.is_file():
         raise ValueError("备份缺少 app/nicevpn.db")
-    if not (pki_dir / "ca.crt").is_file() or not (pki_dir / "private" / "ca.key").is_file():
-        raise ValueError("备份 PKI 不完整：缺少 CA 证书或私钥")
+    pki_state = inspect_easyrsa_pki(str(pki_dir))
+    if not pki_state.get("ready"):
+        missing = ", ".join(str(item) for item in pki_state.get("missing") or [])
+        raise ValueError(
+            "备份 PKI 不完整"
+            + (f"：缺少 {missing}" if missing else "")
+        )
+    if not (payload / "openvpn" / "tc2-server.key").is_file():
+        raise ValueError("备份缺少 openvpn/tc2-server.key")
 
     try:
         config_data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -306,6 +317,15 @@ def inspect_full_backup(archive_path: str | Path) -> dict:
             "file_count": len(manifest["files"]),
             "source": dict(manifest.get("source") or {}),
         }
+
+
+def _validate_restore_target(path: Path, label: str) -> Path:
+    """拒绝把备份中的路径指向根目录或过浅系统目录。"""
+
+    resolved = path.expanduser().resolve()
+    if not resolved.is_absolute() or len(resolved.parts) < 3:
+        raise ValueError(f"{label} 恢复路径不安全: {resolved}")
+    return resolved
 
 
 def _replace_file(src: Path, dst: Path) -> None:
@@ -377,11 +397,15 @@ def restore_full_backup(archive_path: str | Path) -> dict:
         config_data = json.loads(
             (payload / "app" / "config.json").read_text(encoding="utf-8")
         )
-        openvpn_base = Path(
-            str(config_data.get("openvpn_conf_dir") or "/etc/openvpn")
+        openvpn_base = _validate_restore_target(
+            Path(str(config_data.get("openvpn_conf_dir") or "/etc/openvpn")),
+            "OpenVPN",
         )
         pki_raw = str(config_data.get("pki_dir") or "").strip()
-        pki_target = Path(pki_raw) if pki_raw else openvpn_base / "pki"
+        pki_target = _validate_restore_target(
+            Path(pki_raw) if pki_raw else openvpn_base / "pki",
+            "PKI",
+        )
 
         _restore_sqlite(payload / "app" / "nicevpn.db")
         _replace_file(payload / "app" / "config.json", Path(CONFIG_FILE))
