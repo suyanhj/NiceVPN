@@ -1,0 +1,63 @@
+# OpenVPN 服务端配置 — 实例 {{INSTANCE_NAME}}
+# 由 OpenVPN 管理系统自动生成，请勿手动修改
+# 生成时间: {{GENERATED_AT}}
+
+# ======== 基础网络 ========
+port {{PORT}}
+proto {{PROTO}}
+dev tun
+server {{SERVER_NETWORK}} {{SERVER_MASK}}
+topology subnet{{PUSH_BLOCK}}
+# 允许已连客户端间互访对方隧道 IP；未加此项时两客户端虚拟地址互访会失败
+client-to-client
+# ======== TLS 安全 ========
+ca {{PKI_DIR}}/ca.crt
+cert {{PKI_DIR}}/issued/{{INSTANCE_NAME}}.crt
+key {{PKI_DIR}}/private/{{INSTANCE_NAME}}.key
+dh {{PKI_DIR}}/dh.pem
+
+tls-crypt-v2 {{BASE_DIR}}/tc2-server.key
+{{TLS_MAX_AGE_LINE}}tls-version-min 1.2
+data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
+cipher AES-256-GCM
+auth SHA512
+
+# ======== CRL 与证书验证 ========
+crl-verify {{PKI_DIR}}/crl.pem
+verify-client-cert require
+
+# ======== 客户端连接脚本 ========
+script-security 2
+setenv VPN_INSTANCE_NAME {{INSTANCE_NAME}}
+client-connect {{BASE_DIR}}/scripts/device-bind.sh
+client-disconnect {{BASE_DIR}}/scripts/vpn-session-disconnect.sh
+
+# ======== 客户端专属配置目录（CCD）========
+client-config-dir {{CCD_DIR}}
+
+# ======== IP 池持久化 ========
+ifconfig-pool-persist {{IPP_FILE}}
+
+# ======== 连接保活 ========
+keepalive 10 120
+
+# ======== 状态与日志（见 app.core.constants：/etc/openvpn/log/）========
+status {{DAEMON_STATUS}} 30
+status-version 2
+log-append {{DAEMON_LOG}}
+verb 3
+
+# ======== 管理接口 ========
+management 127.0.0.1 {{MGMT_PORT}}
+
+# ======== DoS 防护 ========
+connect-freq 10 60
+max-clients {{MAX_CLIENTS}}
+# ======== 运行权限（状态数据在 /etc/openvpn，安装后 chown -R nobody:nobody）========
+user nobody
+group nobody
+persist-key
+persist-tun
+
+# ======== UDP 优雅退出通知 ========
+explicit-exit-notify 1
