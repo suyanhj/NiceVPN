@@ -63,6 +63,8 @@ class ServicesPage:
         # 本机 systemctl 启停与事件循环解耦：同实例不并发重复点
         self._local_instance_busy: set[str] = set()
         self._peer_action_busy: set[str] = set()
+        self._openvpn_upgrade_stage: dict[str, Any] | None = None
+        self._openvpn_upgrade_busy = False
         # background_tasks / run.io_bound 无当前 slot 栈时不能直接用 ui.notify
         self._ng_client: Any = None
 
@@ -141,9 +143,15 @@ class ServicesPage:
                 with ui.tab_panel("local"):
                     with ui.element("section").classes("mgmt-panel mgmt-panel-list services-list-panel"):
                         with ui.element("div").classes("mgmt-list-head services-list-head"):
-                            with ui.row().classes("items-center gap-2"):
+                            with ui.row().classes("items-center gap-2 w-full"):
                                 ui.label("本机实例").classes("mgmt-kicker services-list-kicker")
                                 self._running_chip = ui.label("0 运行").classes("services-running-chip")
+                                ui.space()
+                                secondary_action(
+                                    "OpenVPN 升级",
+                                    icon="system_update_alt",
+                                    on_click=self._open_openvpn_upgrade_dialog,
+                                ).tooltip("检查最新版本、验证服务端和客户端配置后安全升级")
                         self._list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_list()
 
@@ -155,6 +163,244 @@ class ServicesPage:
                                 self._peer_total_chip = ui.label("0 个").classes("services-running-chip")
                         self._peer_list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_peer_client_list()
+
+    def _open_openvpn_upgrade_dialog(self) -> None:
+        """检查最新 OpenVPN，staging 后同时验证 server.conf 与客户端 .ovpn。"""
+
+        from app.services.openvpn.detector import detect_openvpn
+
+        if self._openvpn_upgrade_busy:
+            ui.notify("OpenVPN 升级检查正在执行，请稍候", type="info")
+            return
+
+        current = detect_openvpn()
+        current_version = str(current.get("version") or "未知")
+        log_lines: list[str] = []
+        state: dict[str, Any] = {
+            "preflight": None,
+            "stage": self._openvpn_upgrade_stage,
+        }
+
+        dialog = ui.dialog().props("persistent")
+        with dialog, ui.card().classes("w-full max-w-4xl"):
+            with ui.row().classes("w-full items-center gap-3"):
+                ui.icon("system_update_alt", size="24px").classes("text-primary")
+                with ui.column().classes("gap-0"):
+                    ui.label("OpenVPN 安全升级").classes("text-lg font-semibold")
+                    ui.label(
+                        "候选版本不会先覆盖生产 binary；服务端与客户端配置均通过后才允许升级。"
+                    ).classes("section-caption")
+
+            with ui.row().classes("w-full gap-3 flex-wrap"):
+                current_label = ui.label(f"当前版本：{current_version}").classes(
+                    "services-running-chip"
+                )
+                target_label = ui.label("目标版本：待检查").classes(
+                    "services-running-chip"
+                )
+                server_label = ui.label("服务端配置：待检查").classes(
+                    "services-running-chip"
+                )
+                client_label = ui.label("客户端配置：待检查").classes(
+                    "services-running-chip"
+                )
+
+            status_label = ui.label("尚未执行升级检查。").classes("section-caption")
+            log_box = ui.textarea(
+                label="升级 / Preflight 日志",
+                value="",
+            ).props("readonly autogrow").classes("w-full font-mono text-xs")
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                close_button = ui.button(
+                    "关闭",
+                    on_click=lambda: self._close_upgrade_dialog(dialog),
+                ).props("flat")
+                check_button = ui.button(
+                    "检查新版并预检",
+                    icon="fact_check",
+                )
+                upgrade_button = ui.button(
+                    "安全升级",
+                    icon="system_update_alt",
+                )
+                upgrade_button.disable()
+
+            def refresh_log() -> None:
+                if log_lines:
+                    log_box.value = "\n".join(log_lines[-300:])
+
+            poll_timer = ui.timer(0.5, refresh_log)
+
+            async def run_check() -> None:
+                if self._openvpn_upgrade_busy:
+                    return
+                from app.services.openvpn.upgrade import (
+                    cleanup_staged_candidate,
+                    inspect_upgrade,
+                    preflight_upgrade_candidate,
+                    stage_upgrade_candidate,
+                )
+
+                self._openvpn_upgrade_busy = True
+                check_button.disable()
+                upgrade_button.disable()
+                close_button.disable()
+                log_lines.clear()
+                status_label.text = "正在检查最新版本并准备隔离候选 binary…"
+                try:
+                    if self._openvpn_upgrade_stage:
+                        cleanup_staged_candidate(self._openvpn_upgrade_stage)
+                        self._openvpn_upgrade_stage = None
+
+                    info = await run.io_bound(inspect_upgrade, log_lines.append)
+                    target_version = str(info.get("target_version") or "未知")
+                    target_label.text = f"目标版本：{target_version}"
+                    if not bool(info.get("upgrade_available")):
+                        status_label.text = "当前已经是最新版本，无需升级。"
+                        server_label.text = "服务端配置：未执行"
+                        client_label.text = "客户端配置：未执行"
+                        return
+
+                    status_label.text = (
+                        f"发现 OpenVPN {target_version}，正在临时编译并执行兼容性预检…"
+                    )
+                    stage = await run.io_bound(stage_upgrade_candidate, log_lines.append)
+                    preflight = await run.io_bound(
+                        preflight_upgrade_candidate,
+                        stage,
+                        log_lines.append,
+                    )
+                    state["stage"] = stage
+                    state["preflight"] = preflight
+                    self._openvpn_upgrade_stage = stage
+
+                    server_results = list(preflight.get("server_results") or [])
+                    server_ok = bool(server_results) and all(
+                        bool(item.get("ok")) for item in server_results
+                    )
+                    server_label.text = (
+                        f"服务端配置：{'通过' if server_ok else '失败'} "
+                        f"({sum(1 for item in server_results if item.get('ok'))}/{len(server_results)})"
+                    )
+
+                    client_result = preflight.get("client_result") or {}
+                    client_ok = bool(client_result.get("ok"))
+                    source_kind = "一次性生成" if client_result.get("generated") else "现有配置"
+                    client_label.text = (
+                        f"客户端配置：{'通过' if client_ok else '失败'} ({source_kind})"
+                    )
+
+                    if bool(preflight.get("ok")):
+                        status_label.text = (
+                            f"候选 OpenVPN {stage.get('version')} 已通过全部兼容性检查，可以安全升级。"
+                        )
+                        upgrade_button.enable()
+                    else:
+                        status_label.text = (
+                            "候选版本兼容性检查失败，生产 OpenVPN 未被修改："
+                            + str(preflight.get("error") or "未知错误")
+                        )
+                except Exception as exc:
+                    logger.exception("OpenVPN 升级预检失败")
+                    status_label.text = f"升级检查失败：{exc}"
+                    server_label.text = "服务端配置：失败"
+                    client_label.text = "客户端配置：未通过"
+                    self._notify_for_page(f"OpenVPN 升级检查失败: {exc}", type="negative")
+                finally:
+                    refresh_log()
+                    self._openvpn_upgrade_busy = False
+                    check_button.enable()
+                    close_button.enable()
+
+            async def run_upgrade() -> None:
+                stage = self._openvpn_upgrade_stage
+                preflight = state.get("preflight")
+                if not stage or not isinstance(preflight, dict) or not preflight.get("ok"):
+                    ui.notify("请先完成候选版本兼容性预检", type="warning")
+                    return
+
+                from app.services.openvpn.upgrade import (
+                    apply_staged_upgrade,
+                    cleanup_staged_candidate,
+                )
+
+                self._openvpn_upgrade_busy = True
+                check_button.disable()
+                upgrade_button.disable()
+                close_button.disable()
+                status_label.text = (
+                    f"正在升级到 OpenVPN {stage.get('version')}；失败会自动恢复旧 binary/systemd…"
+                )
+                try:
+                    result = await run.io_bound(
+                        apply_staged_upgrade,
+                        stage,
+                        log_lines.append,
+                    )
+                    status_label.text = (
+                        f"OpenVPN {result.get('version')} 升级完成；"
+                        f"{len(result.get('active_instances') or [])} 个原运行实例已恢复。"
+                    )
+                    current_label.text = f"当前版本：{result.get('version')}"
+                    target_label.text = f"目标版本：{result.get('version')}（已安装）"
+                    self._notify_for_page(
+                        f"OpenVPN 已安全升级到 {result.get('version')}",
+                        type="positive",
+                    )
+                    cleanup_staged_candidate(stage)
+                    self._openvpn_upgrade_stage = None
+                    state["stage"] = None
+                    self._refresh_list_with_client()
+                except Exception as exc:
+                    logger.exception("OpenVPN 安全升级失败")
+                    status_label.text = f"升级失败，已执行自动回滚：{exc}"
+                    self._notify_for_page(
+                        f"OpenVPN 升级失败并已尝试回滚: {exc}",
+                        type="negative",
+                        multi_line=True,
+                    )
+                    upgrade_button.enable()
+                finally:
+                    refresh_log()
+                    self._openvpn_upgrade_busy = False
+                    check_button.enable()
+                    close_button.enable()
+
+            def confirm_upgrade() -> None:
+                stage = self._openvpn_upgrade_stage
+                if not stage:
+                    ui.notify("没有已通过预检的候选版本", type="warning")
+                    return
+                confirm_dialog.show(
+                    title=f"升级到 OpenVPN {stage.get('version')}？",
+                    message=(
+                        "升级会创建完整 NiceVPN 备份，替换本机 OpenVPN binary/systemd，"
+                        "并重启当前正在运行的实例。"
+                    ),
+                    confirm_label="开始安全升级",
+                    danger_level="warning",
+                    impact="在线 VPN 会话会短暂中断；任何实例或升级后 preflight 失败都会自动回滚。",
+                    on_confirm=lambda: ui.timer(0.01, run_upgrade, once=True),
+                )
+
+            check_button.on("click", run_check)
+            upgrade_button.on("click", confirm_upgrade)
+
+        dialog.open()
+
+    def _close_upgrade_dialog(self, dialog: Any) -> None:
+        """关闭升级对话框时清理未应用的 staging 目录。"""
+
+        if self._openvpn_upgrade_busy:
+            ui.notify("升级操作执行中，暂不能关闭", type="warning")
+            return
+        from app.services.openvpn.upgrade import cleanup_staged_candidate
+
+        if self._openvpn_upgrade_stage:
+            cleanup_staged_candidate(self._openvpn_upgrade_stage)
+            self._openvpn_upgrade_stage = None
+        dialog.close()
 
     def _on_service_tab_change(self, e) -> None:
         self._active_tab = str(getattr(e, "value", None) or "local")
