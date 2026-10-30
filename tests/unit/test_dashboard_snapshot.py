@@ -179,8 +179,11 @@ def test_traffic_history_chart_uses_only_latest_five_samples() -> None:
     option = traffic_history_chart_options(samples)
 
     assert len(option["xAxis"]["data"]) == 5
-    assert option["xAxis"]["data"][0] == "01:01"
-    assert option["xAxis"]["data"][-1] == "01:05"
+    expected_labels = [
+        sample.timestamp.astimezone().strftime("%H:%M")
+        for sample in samples[-5:]
+    ]
+    assert option["xAxis"]["data"] == expected_labels
     assert option["series"][0]["name"] == "累计上行"
     assert option["series"][0]["type"] == "line"
     assert option["series"][0]["data"] == [1001, 1002, 1003, 1004, 1005]
