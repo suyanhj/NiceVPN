@@ -23,7 +23,6 @@ source "${SCRIPT_DIR}/openvpn-install-common.sh"
 export DEBIAN_FRONTEND=noninteractive
 
 install_source_dependencies() {
-    apt update -y
     apt install -y \
         build-essential curl ca-certificates pkg-config autoconf automake libtool \
         libssl-dev libnl-3-dev libnl-genl-3-dev libpam0g-dev libcap-ng-dev \
@@ -34,6 +33,7 @@ _log "Debian 系安装：codename=${DEBIAN_CODENAME} min_version=${OPENVPN_MIN_V
 
 if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
     _log "强制源码构建模式：跳过 OpenVPN 系统包安装"
+    apt update -y
     install_source_dependencies
     openvpn_compile_install
     openvpn_post_compile_setup
