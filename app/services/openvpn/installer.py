@@ -356,40 +356,6 @@ def _resolve_latest_release_asset(
     }
 
 
-def _render_openvpn_systemd_unit_from_source(openvpn_src_dir: Path, tag_name: str) -> str:
-    """读取源码 ``distro/systemd/openvpn-server@.service.in`` 并适配项目运行时路径。
-
-    保留供单元测试；实际安装由 ``openvpn-install-common.sh`` 完成。
-    """
-    from app.core.constants import OPENVPN_INSTALL_PREFIX
-
-    template_path = openvpn_src_dir / "distro" / "systemd" / "openvpn-server@.service.in"
-    if not template_path.is_file():
-        raise RuntimeError(f"OpenVPN 源码缺少官方 systemd server 模板: {template_path}")
-    major, minor = _parse_openvpn_version_parts(tag_name)
-    text = template_path.read_text(encoding="utf-8")
-    text = text.replace("@sbindir@", f"{OPENVPN_INSTALL_PREFIX}/sbin")
-    text = text.replace("@OPENVPN_VERSION_MAJOR@", major)
-    text = text.replace("@OPENVPN_VERSION_MINOR@", minor)
-    text = text.replace(
-        f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn "
-        "--status %t/openvpn-server/status-%i.log --status-version 2 "
-        "--suppress-timestamps --config %i.conf",
-        f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn --suppress-timestamps --config %i.conf",
-    )
-    text = text.replace("ProtectSystem=true\n", "ProtectSystem=true\nReadWritePaths=/etc/openvpn\n")
-    return text
-
-
-def _parse_openvpn_version_parts(tag_name: str) -> tuple[str, str]:
-    """从 release tag 提取 major/minor，用于替换官方 unit 文档 URL 占位符。"""
-    raw = str(tag_name or "").strip().lstrip("v")
-    parts = raw.split(".")
-    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-        return parts[0], parts[1]
-    return "2", "6"
-
-
 def _get_codename(version_id: str) -> str:
     """将 Debian 系版本号映射为 apt 源代号。"""
     vid = str(version_id or "").strip().strip('"').strip("'")
