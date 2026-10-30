@@ -25,6 +25,21 @@ _EASYRSA_FALLBACK_TAG = "v3.2.4"
 _EASYRSA_FALLBACK_ASSET = "EasyRSA-3.2.4.tgz"
 
 
+def resolve_latest_openvpn_release(
+    on_output: Callable[[str], None] | None = None,
+) -> dict:
+    """返回当前安装器会使用的 OpenVPN 最新 release。"""
+
+    return _resolve_latest_release_asset(
+        repo="OpenVPN/openvpn",
+        asset_prefix="openvpn-",
+        asset_suffixes=(".tar.gz", ".tgz"),
+        fallback_tag=_OPENVPN_FALLBACK_TAG,
+        fallback_asset=_OPENVPN_FALLBACK_ASSET,
+        on_output=on_output,
+    )
+
+
 def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
     """生成在 **对端** 以 root/sudo 执行的 bash 脚本（内联 install/*.sh 内容）。
 
