@@ -75,10 +75,17 @@ def _sqlite_snapshot(src: Path, dst: Path) -> None:
     with sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=10) as source:
         with sqlite3.connect(dst, timeout=10) as target:
             source.backup(target)
+            # 备份文件是离线传输快照，不携带 WAL/SHM sidecar。
+            target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            target.execute("PRAGMA journal_mode=DELETE")
             check = target.execute("PRAGMA quick_check").fetchall()
             values = [str(row[0]) for row in check if row]
             if values != ["ok"]:
-                raise RuntimeError("SQLite 备份 quick_check 失败: " + "; ".join(values[:5]))
+                raise RuntimeError(
+                    "SQLite 备份 quick_check 失败: " + "; ".join(values[:5])
+                )
+    for suffix in ("-wal", "-shm"):
+        Path(str(dst) + suffix).unlink(missing_ok=True)
 
 
 def _payload_files(payload: Path) -> list[Path]:
@@ -219,7 +226,10 @@ def _load_verified_manifest(root: Path) -> dict:
         if not isinstance(meta, dict):
             raise ValueError(f"备份 manifest 条目无效: {rel}")
         path = actual_files[rel]
-        if int(meta.get("size") or -1) != path.stat().st_size:
+        expected_size = meta.get("size")
+        if not isinstance(expected_size, int) or expected_size < 0:
+            raise ValueError(f"备份 manifest 文件大小无效: {rel}")
+        if expected_size != path.stat().st_size:
             raise ValueError(f"备份文件大小校验失败: {rel}")
         if str(meta.get("sha256") or "") != _sha256(path):
             raise ValueError(f"备份 SHA-256 校验失败: {rel}")
