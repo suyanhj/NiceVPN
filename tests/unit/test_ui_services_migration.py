@@ -368,6 +368,19 @@ def test_config_editor_uses_shared_form_and_does_not_open_missing_file(
     asyncio.run(verify())
 
 
+def test_services_page_exposes_safe_openvpn_upgrade_flow() -> None:
+    source = inspect.getsource(ServicesPage)
+    assert "OpenVPN 升级" in source
+    assert "检查新版并预检" in source
+    assert "安全升级" in source
+    assert "preflight_upgrade_candidate" in source
+    assert "apply_staged_upgrade" in source
+    assert "服务端配置" in source
+    assert "客户端配置" in source
+    assert "一次性生成" in source
+    assert "自动回滚" in source
+
+
 def test_services_v2_visual_contract_keeps_operations_in_python() -> None:
     """Services 只迁移视觉层，不把服务控制或日志逻辑搬进 Vue。"""
 

@@ -54,6 +54,12 @@ def test_build_peer_script_rhel() -> None:
     assert "INSTALL_CLIENT_SYSTEMD" in _read_install_script_text("openvpn-install-common.sh")
 
 
+def test_common_script_supports_non_destructive_staging_builds() -> None:
+    common = _read_install_script_text("openvpn-install-common.sh")
+    assert 'OPENVPN_CREATE_SYMLINK:=1' in common
+    assert 'if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]' in common
+
+
 def test_common_script_has_shared_helpers() -> None:
     common = _read_install_script_text("openvpn-install-common.sh")
     assert "openvpn_download_source()" in common
