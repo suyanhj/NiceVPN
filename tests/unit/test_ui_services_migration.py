@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from nicegui.testing import user_simulation
 
 from app.services.monitor.service_monitor import InstanceStatus
+from app.ui.components import confirm_dialog
 from app.ui.pages.services import ServicesPage
 
 
@@ -366,6 +368,34 @@ def test_config_editor_uses_shared_form_and_does_not_open_missing_file(
             await user.should_see("保存")
 
     asyncio.run(verify())
+
+
+def test_services_confirm_dialog_calls_only_use_supported_keywords() -> None:
+    """避免页面调用 confirm_dialog.show 时传入组件不支持的关键字参数。"""
+
+    source = inspect.getsource(ServicesPage)
+    tree = ast.parse(source)
+    allowed = set(inspect.signature(confirm_dialog.show).parameters)
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "show"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "confirm_dialog"
+        ):
+            calls.append(node)
+            unsupported = {
+                keyword.arg
+                for keyword in node.keywords
+                if keyword.arg is not None and keyword.arg not in allowed
+            }
+            assert unsupported == set()
+
+    assert calls
 
 
 def test_services_page_exposes_safe_openvpn_upgrade_flow() -> None:

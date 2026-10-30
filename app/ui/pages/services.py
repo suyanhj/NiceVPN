@@ -379,7 +379,6 @@ class ServicesPage:
                         "升级会创建完整 NiceVPN 备份，替换本机 OpenVPN binary/systemd，"
                         "并重启当前正在运行的实例。"
                     ),
-                    confirm_label="开始安全升级",
                     danger_level="warning",
                     impact="在线 VPN 会话会短暂中断；任何实例或升级后 preflight 失败都会自动回滚。",
                     on_confirm=lambda: ui.timer(0.01, run_upgrade, once=True),
