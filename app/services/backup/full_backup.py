@@ -135,7 +135,7 @@ def _copy_backup_payload(payload: Path, config: dict) -> None:
         openvpn_base / "mgmt" / "device_bind_mode",
         vpn_dir / "mgmt" / "device_bind_mode",
     )
-    _copy_file(openvpn_base / "tc2-server.key", vpn_dir / "tc2-server.key")
+    _copy_file(pki_dir.parent / "tc2-server.key", vpn_dir / "tc2-server.key")
 
 
 def create_full_backup(*, label: str = "manual") -> Path:
@@ -337,6 +337,18 @@ def _replace_file(src: Path, dst: Path) -> None:
     os.replace(stage, dst)
 
 
+def _replace_optional_file(src: Path, dst: Path) -> None:
+    """恢复可选文件；备份中不存在时清理当前残留，保持快照语义。"""
+
+    if src.is_file():
+        _replace_file(src, dst)
+        return
+    try:
+        dst.unlink(missing_ok=True)
+    except IsADirectoryError as exc:
+        raise RuntimeError(f"恢复目标应为文件但实际为目录: {dst}") from exc
+
+
 def _replace_tree(src: Path, dst: Path) -> None:
     if not src.is_dir():
         return
@@ -409,11 +421,11 @@ def restore_full_backup(archive_path: str | Path) -> dict:
 
         _restore_sqlite(payload / "app" / "nicevpn.db")
         _replace_file(payload / "app" / "config.json", Path(CONFIG_FILE))
-        _replace_file(
+        _replace_optional_file(
             payload / "app" / "api_basic_credentials.json",
             Path(API_BASIC_CREDENTIALS_FILE),
         )
-        _replace_file(
+        _replace_optional_file(
             payload / "app" / "admin_session_secret",
             Path(ADMIN_SESSION_SECRET_FILE),
         )
@@ -432,11 +444,11 @@ def restore_full_backup(archive_path: str | Path) -> dict:
             openvpn_base / "mgmt" / "device_bindings",
         )
         _replace_tree(vpn / "mgmt" / "ovpn", openvpn_base / "mgmt" / "ovpn")
-        _replace_file(
+        _replace_optional_file(
             vpn / "mgmt" / "device_bind_mode",
             openvpn_base / "mgmt" / "device_bind_mode",
         )
-        _replace_file(vpn / "tc2-server.key", openvpn_base / "tc2-server.key")
+        _replace_file(vpn / "tc2-server.key", pki_target.parent / "tc2-server.key")
 
         # 脚本属于当前程序版本的托管代码，不从备份覆盖。
         sync_packaged_openvpn_scripts(openvpn_base)
