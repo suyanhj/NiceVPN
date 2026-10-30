@@ -21,7 +21,22 @@ else
     exit 1
 fi
 
+install_source_dependencies() {
+    ${PM} install -y \
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
+        openssl-devel libnl3-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
+        pkcs11-helper-devel systemd-devel which conntrack-tools
+}
+
 _log "RHEL 系安装：pm=${PM} min_version=${OPENVPN_MIN_VERSION}"
+
+if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
+    _log "强制源码构建模式：跳过 OpenVPN 系统包安装"
+    install_source_dependencies
+    openvpn_compile_install
+    openvpn_post_compile_setup
+    exit 0
+fi
 
 PKG_VERSION="$(${PM} -q info openvpn 2>/dev/null \
     | awk -F: '/^Version[[:space:]]*:/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' \
@@ -38,10 +53,7 @@ if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION
 fi
 
 _log "仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_VERSION}，改为源码编译安装"
-${PM} install -y \
-    gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
-    openssl-devel libnl3-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
-    pkcs11-helper-devel systemd-devel which conntrack-tools
+install_source_dependencies
 
 openvpn_compile_install
 openvpn_post_compile_setup

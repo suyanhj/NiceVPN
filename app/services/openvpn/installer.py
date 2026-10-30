@@ -64,6 +64,102 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
     return _render_remote_install_script(distro, env)
 
 
+def stage_openvpn_source_build(
+    distro: str,
+    version_id: str,
+    *,
+    prefix: Path,
+    cache: Path,
+    src_root: Path,
+    on_output: Callable[[str], None] | None = None,
+) -> dict[str, str]:
+    """使用正式发行版安装脚本把候选 OpenVPN 源码构建到隔离目录。
+
+    staging 强制走源码构建，禁止修改系统 OpenVPN symlink/systemd/EasyRSA。
+    Debian/RHEL 的依赖安装逻辑全部由对应 shell 入口维护。
+    """
+
+    distro = distro.lower().strip()
+    env = _build_install_env(
+        distro,
+        version_id,
+        install_easyrsa=False,
+        install_server_systemd=False,
+        install_client_systemd=False,
+        install_server_override=False,
+        on_output=on_output,
+    )
+    env.update(
+        {
+            "OPENVPN_PREFIX": str(prefix),
+            "OPENVPN_CACHE": str(cache),
+            "OPENVPN_SRC_ROOT": str(src_root),
+            "OPENVPN_CREATE_SYMLINK": "0",
+            "OPENVPN_FORCE_SOURCE": "1",
+        }
+    )
+    script_path = _install_script_path(distro)
+    _emit(
+        on_output,
+        f"[信息] staging 候选 OpenVPN {env['OPENVPN_TAG']} "
+        f"（{script_path.name} -> {prefix}）",
+    )
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env(env),
+    )
+
+    binary = prefix / "sbin" / "openvpn"
+    if not binary.is_file():
+        raise RuntimeError(f"候选 OpenVPN 构建完成但 binary 不存在: {binary}")
+
+    asset = str(env["OPENVPN_ASSET"])
+    source_name = (
+        asset[:-7]
+        if asset.endswith(".tar.gz")
+        else asset[:-4]
+        if asset.endswith(".tgz")
+        else asset
+    )
+    source_dir = src_root / source_name
+    if not source_dir.is_dir():
+        candidates = sorted(path for path in src_root.iterdir() if path.is_dir())
+        if len(candidates) != 1:
+            raise RuntimeError(f"无法识别 OpenVPN 源码目录: {src_root}")
+        source_dir = candidates[0]
+
+    return {
+        "prefix": str(prefix),
+        "source_dir": str(source_dir),
+        "binary": str(binary),
+        "tag": str(env["OPENVPN_TAG"]),
+        "asset": asset,
+        "distro": distro,
+        "distro_version": str(version_id or ""),
+    }
+
+
+def install_openvpn_server_systemd_from_staged_source(
+    *,
+    source_dir: Path,
+    tag: str,
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """用独立 shell 入口安装已构建候选版本的 server systemd unit/override。"""
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-install-systemd.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN systemd 安装脚本不存在: {script_path}")
+    env = _subprocess_env(
+        {
+            "OPENVPN_SRC_DIR": str(source_dir),
+            "OPENVPN_TAG": str(tag),
+        }
+    )
+    _run_command(["bash", str(script_path)], on_output, env=env)
+
+
 def install_openvpn(
     distro: str,
     version_id: str,
@@ -258,40 +354,6 @@ def _resolve_latest_release_asset(
         "asset_name": fallback_asset,
         "download_url": f"https://github.com/{repo}/releases/download/{fallback_tag}/{fallback_asset}",
     }
-
-
-def _render_openvpn_systemd_unit_from_source(openvpn_src_dir: Path, tag_name: str) -> str:
-    """读取源码 ``distro/systemd/openvpn-server@.service.in`` 并适配项目运行时路径。
-
-    保留供单元测试；实际安装由 ``openvpn-install-common.sh`` 完成。
-    """
-    from app.core.constants import OPENVPN_INSTALL_PREFIX
-
-    template_path = openvpn_src_dir / "distro" / "systemd" / "openvpn-server@.service.in"
-    if not template_path.is_file():
-        raise RuntimeError(f"OpenVPN 源码缺少官方 systemd server 模板: {template_path}")
-    major, minor = _parse_openvpn_version_parts(tag_name)
-    text = template_path.read_text(encoding="utf-8")
-    text = text.replace("@sbindir@", f"{OPENVPN_INSTALL_PREFIX}/sbin")
-    text = text.replace("@OPENVPN_VERSION_MAJOR@", major)
-    text = text.replace("@OPENVPN_VERSION_MINOR@", minor)
-    text = text.replace(
-        f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn "
-        "--status %t/openvpn-server/status-%i.log --status-version 2 "
-        "--suppress-timestamps --config %i.conf",
-        f"ExecStart={OPENVPN_INSTALL_PREFIX}/sbin/openvpn --suppress-timestamps --config %i.conf",
-    )
-    text = text.replace("ProtectSystem=true\n", "ProtectSystem=true\nReadWritePaths=/etc/openvpn\n")
-    return text
-
-
-def _parse_openvpn_version_parts(tag_name: str) -> tuple[str, str]:
-    """从 release tag 提取 major/minor，用于替换官方 unit 文档 URL 占位符。"""
-    raw = str(tag_name or "").strip().lstrip("v")
-    parts = raw.split(".")
-    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-        return parts[0], parts[1]
-    return "2", "6"
 
 
 def _get_codename(version_id: str) -> str:
