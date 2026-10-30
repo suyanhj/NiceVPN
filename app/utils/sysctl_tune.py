@@ -65,4 +65,3 @@ def install_vpn_sysctl_dropin() -> None:
             f"安装 sysctl 配置失败（退出码 {result.returncode}）: "
             f"{(result.stderr or result.stdout).strip()}"
         )
-
