@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 
 # 生成内容比对时忽略「生成时间」行，否则每次启动都会因时间戳不同而误判为变更
 _SERVER_CONF_GEN_TIME_LINE = re.compile(r"^# 生成时间:.*\r?\n", re.MULTILINE)
+_SERVER_CONF_TEMPLATE = (
+    Path(__file__).resolve().parents[2] / "templates" / "openvpn" / "server.conf.in"
+)
+
+
+def _render_server_conf_template(values: dict[str, object]) -> str:
+    """读取独立 server.conf 模板并替换占位符。"""
+
+    try:
+        text = _SERVER_CONF_TEMPLATE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"无法读取 OpenVPN server 模板: {_SERVER_CONF_TEMPLATE}") from exc
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", str(value))
+    unresolved = re.findall(r"\{\{[A-Z0-9_]+\}\}", text)
+    if unresolved:
+        raise RuntimeError(
+            "OpenVPN server 模板存在未填充占位符: " + ", ".join(sorted(set(unresolved)))
+        )
+    return text
 
 
 def resolve_server_conf_dir(openvpn_conf_dir: str | Path | None = None) -> Path:
@@ -115,71 +135,29 @@ def generate_server_conf(instance_name: str, config: dict) -> str:
             OPENVPN_MIN_VERSION,
         )
 
-    conf = f"""# OpenVPN 服务端配置 — 实例 {instance_name}
-# 由 OpenVPN 管理系统自动生成，请勿手动修改
-# 生成时间: {datetime.now(timezone.utc).isoformat()}
+    return _render_server_conf_template(
+        {
+            "INSTANCE_NAME": instance_name,
+            "GENERATED_AT": datetime.now(timezone.utc).isoformat(),
+            "PORT": config.get("port", 1194),
+            "PROTO": config.get("proto", "udp"),
+            "SERVER_NETWORK": sn,
+            "SERVER_MASK": sm,
+            "PUSH_BLOCK": push_block,
+            "PKI_DIR": pki_dir,
+            "BASE_DIR": base_dir,
+            "TLS_MAX_AGE_LINE": tls_max_age_line,
+            "CCD_DIR": ccd_dir,
+            "IPP_FILE": ipp_file,
+            "DAEMON_STATUS": daemon_status,
+            "DAEMON_LOG": daemon_log,
+            "MGMT_PORT": mgmt_port,
+            "MAX_CLIENTS": int(
+                config.get("max_clients", OPENVPN_DEFAULT_MAX_CLIENTS)
+            ),
+        }
+    )
 
-# ======== 基础网络 ========
-port {config.get('port', 1194)}
-proto {config.get('proto', 'udp')}
-dev tun
-server {sn} {sm}
-topology subnet{push_block}
-# 允许已连客户端间互访对方隧道 IP；未加此项时两客户端虚拟地址互访会失败
-client-to-client
-# ======== TLS 安全 ========
-ca {pki_dir}/ca.crt
-cert {pki_dir}/issued/{instance_name}.crt
-key {pki_dir}/private/{instance_name}.key
-dh {pki_dir}/dh.pem
-
-tls-crypt-v2 {base_dir}/tc2-server.key
-{tls_max_age_line}tls-version-min 1.2
-data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
-cipher AES-256-GCM
-auth SHA512
-
-# ======== CRL 与证书验证 ========
-crl-verify {pki_dir}/crl.pem
-verify-client-cert require
-
-# ======== 客户端连接脚本 ========
-script-security 2
-setenv VPN_INSTANCE_NAME {instance_name}
-client-connect {base_dir}/scripts/device-bind.sh
-client-disconnect {base_dir}/scripts/vpn-session-disconnect.sh
-
-# ======== 客户端专属配置目录（CCD）========
-client-config-dir {ccd_dir}
-
-# ======== IP 池持久化 ========
-ifconfig-pool-persist {ipp_file}
-
-# ======== 连接保活 ========
-keepalive 10 120
-
-# ======== 状态与日志（见 app.core.constants：/etc/openvpn/log/）========
-status {daemon_status} 30
-status-version 2
-log-append {daemon_log}
-verb 3
-
-# ======== 管理接口 ========
-management 127.0.0.1 {mgmt_port}
-
-# ======== DoS 防护 ========
-connect-freq 10 60
-max-clients {int(config.get("max_clients", OPENVPN_DEFAULT_MAX_CLIENTS))}
-# ======== 运行权限（状态数据在 /etc/openvpn，安装后 chown -R nobody:nobody）========
-user nobody
-group nobody
-persist-key
-persist-tun
-
-# ======== UDP 优雅退出通知 ========
-explicit-exit-notify 1
-"""
-    return conf
 
 
 def write_server_conf(instance_name: str, config: dict, conf_dir: str = "/etc/openvpn") -> Path:

@@ -1,0 +1,1 @@
+iptables -t nat -I POSTROUTING 1 -s {{GLOBAL_SUBNET}} -m comment --comment "{{MASQ_COMMENT}}" -j MASQUERADE

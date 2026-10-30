@@ -9,6 +9,37 @@ from pathlib import Path
 
 from app.core.constants import OVPN_PROFILES_DIR
 
+_CLIENT_OVPN_TEMPLATE = (
+    Path(__file__).resolve().parents[2] / "templates" / "openvpn" / "client.ovpn.in"
+)
+
+
+def _render_client_ovpn_template(values: dict[str, object]) -> str:
+    """读取独立客户端模板并替换占位符。"""
+
+    try:
+        text = _CLIENT_OVPN_TEMPLATE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"无法读取 OpenVPN client 模板: {_CLIENT_OVPN_TEMPLATE}") from exc
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", str(value))
+    unresolved = [token for token in (
+        "{{USERNAME}}",
+        "{{GROUP_SUBNET}}",
+        "{{PROTO}}",
+        "{{SERVER_IP}}",
+        "{{PORT}}",
+        "{{CA_CERT}}",
+        "{{USER_CERT}}",
+        "{{USER_KEY}}",
+        "{{TC2_CLIENT_KEY}}",
+    ) if token in text]
+    if unresolved:
+        raise RuntimeError(
+            "OpenVPN client 模板存在未填充占位符: " + ", ".join(unresolved)
+        )
+    return text
+
 
 def generate_ovpn(username: str, group_subnet: str, config: dict) -> str:
     """构造完整 .ovpn 配置内容。
@@ -38,65 +69,19 @@ def generate_ovpn(username: str, group_subnet: str, config: dict) -> str:
     user_key = config["user_key"].strip()
     tc2_client_key = config["tc2_client_key"].strip()
 
-    # 构造标准 OpenVPN 客户端配置
-    lines = [
-        "# OpenVPN 客户端配置文件",
-        f"# 用户: {username}",
-        f"# 组子网: {group_subnet}",
-        "#",
-        "# 此文件由系统自动生成，请勿手动修改",
-        "",
-        "client",
-        "dev tun",
-        f"proto {proto}",
-        f"remote {server_ip} {port}",
-        "",
-        "resolv-retry infinite",
-        "nobind",
-        "persist-key",
-        "persist-tun",
-        "",
-        "remote-cert-tls server",
-        "cipher AES-256-GCM",
-        "auth SHA256",
-        "verb 3",
-        "key-direction 1",
-        "",
-        "# MTU 优化",
-        "tun-mtu 1400",
-        "mssfix 1360",
-        "",
-        "# 密钥重协商周期（7天）",
-        "reneg-sec 604800",
-        "",
-        "# 推送客户端信息用于设备绑定检查",
-        "push-peer-info",
-        "",
-        "# ---- 内嵌证书与密钥 ----",
-        "",
-        "# CA 证书",
-        "<ca>",
-        ca_cert,
-        "</ca>",
-        "",
-        "# 用户证书",
-        "<cert>",
-        user_cert,
-        "</cert>",
-        "",
-        "# 用户私钥",
-        "<key>",
-        user_key,
-        "</key>",
-        "",
-        "# TLS-Crypt-V2 客户端密钥",
-        "<tls-crypt-v2>",
-        tc2_client_key,
-        "</tls-crypt-v2>",
-        "",
-    ]
-
-    return "\n".join(lines)
+    return _render_client_ovpn_template(
+        {
+            "USERNAME": username,
+            "GROUP_SUBNET": group_subnet,
+            "PROTO": proto,
+            "SERVER_IP": server_ip,
+            "PORT": port,
+            "CA_CERT": ca_cert,
+            "USER_CERT": user_cert,
+            "USER_KEY": user_key,
+            "TC2_CLIENT_KEY": tc2_client_key,
+        }
+    )
 
 
 def save_ovpn(username: str, content: str) -> Path:

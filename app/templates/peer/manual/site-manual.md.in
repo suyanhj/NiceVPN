@@ -1,0 +1,18 @@
+# 对端站点部署说明 — {{PEER_NAME}}
+
+> 对端 ID：`{{PEER_ID}}`\
+> 绑定 VPN 用户（CN）：`{{BOUND_USERNAME}}`
+> 全局 VPN 地址池：`{{GLOBAL_SUBNET}}`
+
+## 关键提醒
+
+{{HIGHLIGHTS}}
+
+## 对端内网
+
+{{CIDRS_LINES}}
+
+{{STEPS}}
+
+---
+*由 OpenVPN 管理端根据对端实例元数据自动生成。*

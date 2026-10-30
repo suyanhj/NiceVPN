@@ -18,27 +18,23 @@ from app.core.constants import OPENVPN_MIN_VERSION, OPENVPN_SEARCH_PATHS
 
 logger = logging.getLogger("peer.remote")
 
+_PEER_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "peer"
+_OPENVPN_PROBE_SCRIPT = _PEER_SCRIPTS_DIR / "openvpn-probe.sh"
+
 
 def _build_openvpn_probe_shell(*, preferred_binary: str | None = None) -> str:
-    """生成在远端 bash 执行的探测脚本。preferred_binary 非空时最先尝试该路径（须可执行），再与标准列表及 command -v 一致。"""
-    lines: list[str] = ["set -e"]
-    pref = str(preferred_binary or "").strip()
-    if pref:
-        q = shlex.quote(pref)
-        lines.append(
-            f"if [ -x {q} ]; then printf 'BIN:%s\\n' {q}; {q} --version 2>&1 | head -1; exit 0; fi"
-        )
-    for p in OPENVPN_SEARCH_PATHS:
-        q = shlex.quote(p)
-        lines.append(f"if [ -x {q} ]; then printf 'BIN:%s\\n' {q}; {q} --version 2>&1 | head -1; exit 0; fi")
-    lines.append("if command -v openvpn >/dev/null 2>&1; then")
-    lines.append("  p=$(command -v openvpn)")
-    lines.append('  echo "BIN:$p"')
-    lines.append('  "$p" --version 2>&1 | head -1')
-    lines.append("  exit 0")
-    lines.append("fi")
-    lines.append("exit 1")
-    return "\n".join(lines)
+    """读取独立 peer 探测脚本，并仅注入候选路径环境变量。"""
+
+    if not _OPENVPN_PROBE_SCRIPT.is_file():
+        raise FileNotFoundError(f"远端 OpenVPN 探测脚本不存在: {_OPENVPN_PROBE_SCRIPT}")
+    body = _OPENVPN_PROBE_SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    body_lines = [line for line in body.splitlines() if not line.startswith("#!")]
+    env_lines = [
+        "set -e",
+        f"export PREFERRED_BINARY={shlex.quote(str(preferred_binary or '').strip())}",
+        f"export OPENVPN_SEARCH_PATHS={shlex.quote(chr(10).join(OPENVPN_SEARCH_PATHS))}",
+    ]
+    return "\n".join(env_lines + body_lines).strip() + "\n"
 
 
 def _parse_probe_stdout(stdout: str) -> tuple[str | None, str | None]:

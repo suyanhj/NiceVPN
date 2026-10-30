@@ -1,0 +1,1 @@
+iptables -I FORWARD 1 -s {{GLOBAL_SUBNET}} -m comment --comment "{{FWD_COMMENT}}" -j ACCEPT
