@@ -24,6 +24,29 @@ def test_upgrade_installer_output_is_mirrored_to_upgrade_logger(
     assert forwarded == ["compile-line"]
 
 
+def test_preflight_output_state_requires_explicit_marker_and_fatal_wins() -> None:
+    client_ready = "UDPv4 link remote: [AF_INET]127.0.0.1:12345"
+    assert mod._preflight_output_state(
+        client_ready,
+        mod._CLIENT_PREFLIGHT_SUCCESS_MARKERS,
+    ) == (True, False)
+
+    assert mod._preflight_output_state(
+        "OpenVPN started and waiting",
+        mod._SERVER_PREFLIGHT_SUCCESS_MARKERS,
+    ) == (False, False)
+
+    assert mod._preflight_output_state(
+        client_ready + "\nExiting due to fatal error",
+        mod._CLIENT_PREFLIGHT_SUCCESS_MARKERS,
+    ) == (True, True)
+
+    assert mod._preflight_output_state(
+        "Initialization Sequence Completed",
+        mod._SERVER_PREFLIGHT_SUCCESS_MARKERS,
+    ) == (True, False)
+
+
 def test_rewrite_config_keeps_inline_material_and_disables_side_effects() -> None:
     source = """client
 remote vpn.example.com 1194
@@ -153,7 +176,11 @@ def test_client_preflight_always_generates_temporary_profile(
     monkeypatch.setattr(
         mod,
         "_run_foreground_preflight",
-        lambda _binary, _config: (True, "Initialization Sequence Completed", True),
+        lambda _binary, _config, **kwargs: (
+            kwargs.get("success_markers") == mod._CLIENT_PREFLIGHT_SUCCESS_MARKERS,
+            "UDPv4 link remote: [AF_INET]127.0.0.1:12345",
+            True,
+        ),
     )
 
     result = mod.preflight_client_profile("/tmp/candidate-openvpn")
