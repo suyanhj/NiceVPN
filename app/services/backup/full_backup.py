@@ -152,6 +152,8 @@ def create_full_backup(*, label: str = "manual") -> Path:
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # 创建阶段就按恢复规则自校验，拒绝产出不可恢复的“成功备份”。
+        _validate_restore_payload(root)
 
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(root / "manifest.json", arcname="manifest.json", recursive=False)
@@ -172,7 +174,7 @@ def _safe_extract(archive: Path, target: Path) -> None:
                 raise ValueError(f"备份不允许符号链接/硬链接: {member.name}")
             if not (member.isfile() or member.isdir()):
                 raise ValueError(f"备份包含不支持的成员类型: {member.name}")
-        tar.extractall(target, filter="data")
+        tar.extractall(target)
 
 
 def _load_verified_manifest(root: Path) -> dict:
