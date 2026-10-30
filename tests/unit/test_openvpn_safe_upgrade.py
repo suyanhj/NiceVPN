@@ -10,6 +10,20 @@ import pytest
 from app.services.openvpn import upgrade as mod
 
 
+def test_upgrade_installer_output_is_mirrored_to_upgrade_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged: list[str] = []
+    forwarded: list[str] = []
+
+    monkeypatch.setattr(mod.logger, "info", lambda message: logged.append(str(message)))
+    sink = mod._mirror_installer_output(forwarded.append)
+    sink("compile-line")
+
+    assert logged == ["compile-line"]
+    assert forwarded == ["compile-line"]
+
+
 def test_rewrite_config_keeps_inline_material_and_disables_side_effects() -> None:
     source = """client
 remote vpn.example.com 1194
