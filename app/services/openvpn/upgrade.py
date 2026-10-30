@@ -233,6 +233,11 @@ def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
     from app.services.openvpn.installer import resolve_latest_openvpn_release
 
     current = detect_openvpn()
+    _emit(
+        on_output,
+        f"[检测] 当前 OpenVPN: {current.get('version') or 'unknown'} "
+        f"({current.get('path') or 'not-found'})",
+    )
     release = resolve_latest_openvpn_release(
         on_output=_mirror_installer_output(on_output),
     )
@@ -623,6 +628,12 @@ def preflight_upgrade_candidate(stage: dict, on_output: _OUTPUT | None = None) -
         _emit(on_output, f"[Preflight] 服务端配置: {path.name}")
         result = preflight_server_config(binary, path)
         server_results.append(result)
+        log_tail = str(result.get("log_tail") or "").strip()
+        if log_tail:
+            _emit(
+                on_output,
+                f"[Preflight][server:{path.name}] OpenVPN 输出尾部:\n{log_tail}",
+            )
         if not result["ok"]:
             return {
                 "ok": False,
@@ -633,6 +644,17 @@ def preflight_upgrade_candidate(stage: dict, on_output: _OUTPUT | None = None) -
 
     _emit(on_output, "[Preflight] 验证代表性客户端 .ovpn")
     client_result = preflight_client_profile(binary)
+    client_log_tail = str(client_result.get("log_tail") or "").strip()
+    if client_log_tail:
+        source_label = (
+            "generated"
+            if client_result.get("generated")
+            else str(client_result.get("profile") or "existing")
+        )
+        _emit(
+            on_output,
+            f"[Preflight][client:{source_label}] OpenVPN 输出尾部:\n{client_log_tail}",
+        )
     ok = bool(client_result.get("ok"))
     return {
         "ok": ok,
