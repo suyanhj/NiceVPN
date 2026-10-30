@@ -13,6 +13,7 @@
 - **对端与 Mesh**：站点绑定用户 + 后方 LAN CIDR，`ifconfig-push` / `**iroute`**；按用户组下发 **mesh** `push route`，多站点经中心互访内网（变更后需重连等以界面为准）。对端管理借鉴了项目：**netmaker**
 - **防火墙**：iptables + ipset、SQLite 中心规则、简单导入、与对端规则协作。
 - **通知**：钉钉、企业微信等插件式通道。
+- **诊断与恢复**：系统一致性诊断；完整备份/恢复覆盖 SQLite、配置、PKI/CRL、CCD、OVPN、设备绑定与 OpenVPN 实例配置，恢复前自动生成回退备份。
 - **CLI**：`python main.py cli` 或 `cli.py`；bash 补全见 `deploy/shell/install-ovpn-cli-symlink.sh`。
 
 更完整的产品说明见 **[docs/overview.md](./docs/overview.md)**。
