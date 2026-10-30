@@ -66,9 +66,8 @@ class TrafficHistory:
         )
         with self._lock:
             if self._samples and self._samples[-1].timestamp == sample.timestamp:
-                self._samples[-1] = sample
-            else:
-                self._samples.append(sample)
+                self._samples.pop()
+            self._samples.append(sample)
         return sample
 
     def recent(self) -> list[TrafficSample]:
