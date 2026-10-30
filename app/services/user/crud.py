@@ -569,6 +569,10 @@ class UserService:
         """返回未删除用户数量。"""
         return self.store.count_users()
 
+    def list_usernames(self) -> list[str]:
+        """轻量返回未删除用户名，用于运行时筛选 facets。"""
+        return self.store.list_usernames()
+
     def list_usernames_by_group(self, group_id: str) -> list[str]:
         """返回指定组下 status==active 的用户名（升序）。"""
         gid = str(group_id or "").strip()
