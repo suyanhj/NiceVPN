@@ -586,6 +586,125 @@
   text-align: center;
 }
 
+
+/* Multi-value text filter: chips/tags for free-text columns. */
+.vpn-grid-multi-text-filter {
+  display: flex;
+  width: 360px;
+  max-width: min(420px, 80vw);
+  gap: 8px;
+  padding: 9px;
+  background: #111214;
+  color: #d5d9e0;
+}
+
+.vpn-grid-multi-text-filter__mode {
+  width: 108px;
+  min-width: 108px;
+  height: 40px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #34383f;
+  border-radius: 8px;
+  outline: 0;
+  background: #17191c;
+  color: #d8dce4;
+  font: inherit;
+  font-size: 13px;
+}
+
+.vpn-grid-multi-text-filter__mode:focus {
+  border-color: #15bde8;
+  box-shadow: 0 0 0 2px rgba(21, 189, 232, 0.10);
+}
+
+.vpn-grid-multi-text-filter__input-wrap {
+  display: flex;
+  min-height: 40px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid #34383f;
+  border-radius: 8px;
+  background: #0c0d0f;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.vpn-grid-multi-text-filter__input-wrap:focus-within {
+  border-color: #15bde8;
+  box-shadow: 0 0 0 2px rgba(21, 189, 232, 0.10);
+}
+
+.vpn-grid-multi-text-filter__tags {
+  display: contents;
+}
+
+.vpn-grid-multi-text-filter__tag {
+  display: inline-flex;
+  max-width: 180px;
+  height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px 0 8px;
+  border: 1px solid rgba(21, 189, 232, 0.28);
+  border-radius: 6px;
+  background: rgba(21, 189, 232, 0.12);
+  color: #dbeaf0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.vpn-grid-multi-text-filter__tag-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-grid-multi-text-filter__tag-remove {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  outline: 0;
+  background: transparent;
+  color: #8c96a2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.vpn-grid-multi-text-filter__tag-remove:hover,
+.vpn-grid-multi-text-filter__tag-remove:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.vpn-grid-multi-text-filter__input-wrap > input {
+  min-width: 110px;
+  height: 26px;
+  flex: 1 1 110px;
+  padding: 0 2px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #eef2f7;
+  font: inherit;
+  font-size: 13px;
+}
+
+.vpn-grid-multi-text-filter__input-wrap > input::placeholder {
+  color: #66707b;
+}
+
+
 .vpn-data-grid__summary {
   align-self: flex-end;
   color: #777c87;
