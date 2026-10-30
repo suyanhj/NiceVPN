@@ -138,5 +138,3 @@ def test_common_script_has_shared_helpers() -> None:
     assert "openvpn_download_source()" in common
     assert "easyrsa_download_and_install()" in common
     assert "openvpn_install_server_systemd_from_src()" in common
-
-
