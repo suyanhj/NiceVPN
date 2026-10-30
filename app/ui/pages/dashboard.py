@@ -10,12 +10,16 @@ from nicegui import ui
 from app.core.config import load_config
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.monitor.service_monitor import ServiceMonitor
+from app.services.monitor.traffic_history import (
+    TrafficSample,
+    get_recent_traffic_samples,
+)
 from app.ui.adapters.dashboard import (
     DashboardSnapshot,
     cert_status,
     collect_dashboard_snapshot,
     service_health_chart_options,
-    traffic_snapshot_chart_options,
+    traffic_history_chart_options,
 )
 from app.ui.components.cards import info_card, metric_card
 from app.ui.components.charts import render_chart_card
@@ -45,6 +49,7 @@ class DashboardPage:
         self._snapshot: DashboardSnapshot | None = None
         self._health_chart = None
         self._traffic_chart = None
+        self._traffic_timer = None
 
     def _collect_snapshot(self) -> DashboardSnapshot:
         """采集当前仪表盘快照；配置读取失败也返回可渲染对象。"""
@@ -72,6 +77,7 @@ class DashboardPage:
             self._content = ui.column().classes("w-full gap-4 dashboard-v2-layout")
 
         self._refresh_dashboard()
+        self._traffic_timer = ui.timer(60.0, self._refresh_traffic_chart)
 
     def _refresh_dashboard(self) -> None:
         """重新采集并局部重建首页。"""
@@ -149,14 +155,46 @@ class DashboardPage:
                 empty_message="尚未配置 OpenVPN 实例。",
             )
             self._traffic_chart = render_chart_card(
-                "当前累计流量分布",
-                traffic_snapshot_chart_options(snapshot),
-                description=(
-                    "仅展示本次 status 快照中的累计上/下行字节，"
-                    "不是历史趋势。"
+                "最近 5 分钟流量",
+                traffic_history_chart_options(
+                    self._recent_traffic_samples(snapshot)
                 ),
-                empty_message="尚未配置 OpenVPN 实例，暂无流量快照。",
+                description=(
+                    "后台每分钟采样一次 OpenVPN status 当前累计上/下行字节，"
+                    "最多保留 5 个点；仅保存在当前进程内，服务重启后重新开始。"
+                ),
+                empty_message="尚未采集到 OpenVPN 流量快照。",
             )
+
+    @staticmethod
+    def _recent_traffic_samples(
+        snapshot: DashboardSnapshot | None = None,
+    ) -> list[TrafficSample]:
+        """读取全局 5 分钟窗口；启动初期无样本时用当前快照临时显示 1 点。"""
+
+        samples = get_recent_traffic_samples()
+        if samples or snapshot is None or snapshot.configured_instance_count <= 0:
+            return samples
+        return [
+            TrafficSample(
+                timestamp=snapshot.updated_at,
+                rx_bytes=snapshot.total_rx,
+                tx_bytes=snapshot.total_tx,
+            )
+        ]
+
+    def _refresh_traffic_chart(self) -> None:
+        """仅刷新流量 ECharts，不重复采集证书、用户、规则等首页数据。"""
+
+        card = self._traffic_chart
+        if card is None or card.chart is None:
+            return
+        options = traffic_history_chart_options(
+            self._recent_traffic_samples(self._snapshot)
+        )
+        card.chart.options.clear()
+        card.chart.options.update(options)
+        card.chart.update()
 
     def _render_summary(self, snapshot: DashboardSnapshot) -> None:
         cert_label, cert_tone = cert_status(
