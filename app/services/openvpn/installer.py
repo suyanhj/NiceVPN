@@ -140,6 +140,26 @@ def stage_openvpn_source_build(
     }
 
 
+def install_openvpn_server_systemd_from_staged_source(
+    *,
+    source_dir: Path,
+    tag: str,
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """用独立 shell 入口安装已构建候选版本的 server systemd unit/override。"""
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-install-systemd.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN systemd 安装脚本不存在: {script_path}")
+    env = _subprocess_env(
+        {
+            "OPENVPN_SRC_DIR": str(source_dir),
+            "OPENVPN_TAG": str(tag),
+        }
+    )
+    _run_command(["bash", str(script_path)], on_output, env=env)
+
+
 def install_openvpn(
     distro: str,
     version_id: str,
