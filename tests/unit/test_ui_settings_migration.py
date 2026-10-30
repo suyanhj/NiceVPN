@@ -63,6 +63,7 @@ def test_settings_page_uses_shared_header_tabs_and_form_section(
             await user.should_see("下载配置")
             await user.should_see("通知")
             await user.should_see("诊断")
+            await user.should_see("备份恢复")
             await user.should_see("OpenVPN 配置")
             await user.should_see("OpenVPN 可执行文件路径")
             await user.should_see("EasyRSA 可执行脚本路径")
@@ -805,3 +806,29 @@ def test_diagnostics_tab_and_safe_repair_contract() -> None:
     assert "restart_instance(" not in diagnostics_source
     assert "iptables-restore" not in diagnostics_source
     assert "sysctl -w" not in diagnostics_source
+
+
+def test_full_backup_restore_tab_requires_verified_upload_and_typed_confirmation() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    backup_source = (
+        root / "app" / "services" / "backup" / "full_backup.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'ui.tab("backup", label="备份恢复")' in source
+    assert "create_full_backup" in source
+    assert "inspect_full_backup" in source
+    assert "restore_full_backup" in source
+    assert 'confirm_text="RESTORE"' in source
+    assert "disabled=True" in source
+
+    assert "source.backup(target)" in backup_source
+    assert "PRAGMA quick_check" in backup_source
+    assert "sha256" in backup_source
+    assert "pre-restore" in backup_source
+    assert "sync_packaged_openvpn_scripts" in backup_source
+    assert "restart_instance(" not in backup_source
