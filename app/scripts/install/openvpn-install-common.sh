@@ -16,6 +16,7 @@
 : "${INSTALL_SERVER_SYSTEMD:=0}"
 : "${INSTALL_CLIENT_SYSTEMD:=0}"
 : "${INSTALL_SERVER_OVERRIDE:=0}"
+: "${OPENVPN_CREATE_SYMLINK:=1}"
 
 OPENVPN_SRC_DIR="${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}"
 
@@ -61,7 +62,9 @@ openvpn_compile_install() {
     ./configure --prefix="${OPENVPN_PREFIX}" --enable-async-push --enable-systemd
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
     make install
-    ln -sfn "${OPENVPN_PREFIX}/sbin/openvpn" /usr/local/sbin/openvpn
+    if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
+        ln -sfn "${OPENVPN_PREFIX}/sbin/openvpn" /usr/local/sbin/openvpn
+    fi
     _log "OpenVPN 已编译安装到 ${OPENVPN_PREFIX}"
 }
 
