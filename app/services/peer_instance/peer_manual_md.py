@@ -2,11 +2,49 @@
 """对端站点手动部署说明：生成结构化执行手册与 Markdown 下载文本。"""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 CLIENT_CONFIG_PATH = "/etc/openvpn/client/client.conf"
 CLIENT_LOG_PATH = "/etc/openvpn/log/client.log"
 CLIENT_STATUS_PATH = "/etc/openvpn/log/client-status.log"
+
+_MANUAL_TEMPLATE_DIR = (
+    Path(__file__).resolve().parents[2] / "templates" / "peer" / "manual"
+)
+
+
+def _render_manual_template(name: str, values: dict[str, object]) -> str:
+    """读取独立手工部署模板并替换占位符。"""
+
+    path = _MANUAL_TEMPLATE_DIR / name
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"无法读取对端手工部署模板: {path}") from exc
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", str(value))
+    unresolved = [
+        token for token in (
+            "{{BOUND_USERNAME}}",
+            "{{CLIENT_CONFIG_PATH}}",
+            "{{GLOBAL_SUBNET}}",
+            "{{FWD_COMMENT}}",
+            "{{MASQ_COMMENT}}",
+            "{{PEER_ID}}",
+            "{{CLIENT_LOG_PATH}}",
+            "{{PEER_NAME}}",
+            "{{HIGHLIGHTS}}",
+            "{{CIDRS_LINES}}",
+            "{{STEPS}}",
+        )
+        if token in text
+    ]
+    if unresolved:
+        raise RuntimeError(
+            "对端手工部署模板存在未填充占位符: " + ", ".join(unresolved)
+        )
+    return text.rstrip("\n")
 
 
 def build_peer_site_manual_context(
@@ -36,20 +74,19 @@ def build_peer_site_manual_context(
     peer_label = (peer_name or peer_id).strip() or peer_id
     fwd_comment = f"ovpn-mgmt-peer peer={peer_id} role=fwd-global"
     masq_comment = f"ovpn-mgmt-peer peer={peer_id} role=masq idx=0"
-    prepare_cmd = f"""install -d -m 0755 /etc/openvpn/client /etc/openvpn/log
-# 将中心生成的 {bound_username}.ovpn 放到下面路径
-# {CLIENT_CONFIG_PATH}"""
-    service_cmd = f"""systemctl daemon-reload
-systemctl enable --now openvpn-client@client.service
-systemctl restart openvpn-client@client.service"""
-    firewall_cmd = (
-        f"iptables -I FORWARD 1 -s {gs} "
-        f'-m comment --comment "{fwd_comment}" -j ACCEPT'
-    )
-    verify_cmd = f"""systemctl status openvpn-client@client.service --no-pager
-tail -n 120 {CLIENT_LOG_PATH}
-iptables -S FORWARD | grep 'peer={peer_id}' || true
-iptables -t nat -S POSTROUTING | grep 'peer={peer_id}' || true"""
+    template_values = {
+        "BOUND_USERNAME": bound_username,
+        "CLIENT_CONFIG_PATH": CLIENT_CONFIG_PATH,
+        "GLOBAL_SUBNET": gs,
+        "FWD_COMMENT": fwd_comment,
+        "MASQ_COMMENT": masq_comment,
+        "PEER_ID": peer_id,
+        "CLIENT_LOG_PATH": CLIENT_LOG_PATH,
+    }
+    prepare_cmd = _render_manual_template("prepare-client.sh.in", template_values)
+    service_cmd = _render_manual_template("start-client.sh.in", template_values)
+    firewall_cmd = _render_manual_template("forward-rule.sh.in", template_values)
+    verify_cmd = _render_manual_template("verify.sh.in", template_values)
     steps: list[dict[str, Any]] = [
         {
             "title": "准备客户端配置",
@@ -72,9 +109,9 @@ iptables -t nat -S POSTROUTING | grep 'peer={peer_id}' || true"""
         {
             "title": "可选 SNAT 转换",
             "summary": "需要访问对端后方网络时，对端局域网内未配置静态路由时，必须配置 SNAT。",
-            "command": (
-                f"iptables -t nat -I POSTROUTING 1 -s {gs} "
-                f'-m comment --comment "{masq_comment}" -j MASQUERADE'
+            "command": _render_manual_template(
+                "masquerade.sh.in",
+                template_values,
             ),
         }
     )
@@ -144,22 +181,15 @@ def build_peer_site_manual_markdown(
         f"## {idx}. {step['title']}\n\n{step['summary']}\n\n```bash\n{step['command']}\n```"
         for idx, step in enumerate(ctx["steps"], start=1)
     )
-    return f"""# 对端站点部署说明 — {peer_name}
-
-> 对端 ID：`{peer_id}`  
-> 绑定 VPN 用户（CN）：`{bound_username}`
-> 全局 VPN 地址池：`{overview['global_subnet']}`
-
-## 关键提醒
-
-{highlights}
-
-## 对端内网
-
-{cidrs_lines}
-
-{steps}
-
----
-*由 OpenVPN 管理端根据对端实例元数据自动生成。*
-"""
+    return _render_manual_template(
+        "site-manual.md.in",
+        {
+            "PEER_NAME": peer_name,
+            "PEER_ID": peer_id,
+            "BOUND_USERNAME": bound_username,
+            "GLOBAL_SUBNET": overview["global_subnet"],
+            "HIGHLIGHTS": highlights,
+            "CIDRS_LINES": cidrs_lines,
+            "STEPS": steps,
+        },
+    ) + "\n"
