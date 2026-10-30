@@ -309,9 +309,8 @@ class ServicesPage:
 
                     client_result = preflight.get("client_result") or {}
                     client_ok = bool(client_result.get("ok"))
-                    source_kind = "一次性生成" if client_result.get("generated") else "现有配置"
                     client_label.text = (
-                        f"客户端配置：{'通过' if client_ok else '失败'} ({source_kind})"
+                        f"客户端配置：{'通过' if client_ok else '失败'} (临时配置)"
                     )
 
                     if bool(preflight.get("ok")):
