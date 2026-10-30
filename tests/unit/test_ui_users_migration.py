@@ -171,6 +171,12 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     assert ":getRowId" in page.grid_view.grid.options
     assert ":onFirstDataRendered" in page.grid_view.grid.options
     assert len(page.grid_view.grid.options["rowData"]) == 2
+    device_column = next(
+        column
+        for column in page.grid_view.grid.options["columnDefs"]
+        if column.get("field") == "device_source"
+    )
+    assert device_column["filterParams"]["values"] == ["未知"]
     assert page.bulk_download_button._props.get("disable") is not True
     assert len(page.bulk_icon_buttons) == 5
     assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
@@ -273,6 +279,31 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
     assert disabled["device_filter"] == "未知"
     assert disabled["account_status_tone"] == "warning"
     assert disabled["session_status_tone"] == "unknown"
+
+
+def test_device_filter_values_only_expose_actual_device_types() -> None:
+    values = UsersPage._device_filter_values(
+        ["alice", "bob", "carol"],
+        {
+            "alice": {"device_label": "Mac"},
+            "bob": {"device_label": "安卓"},
+            "stale-user": {"device_label": "Windows"},
+        },
+    )
+
+    assert values == ["安卓", "Mac", "未知"]
+
+
+def test_device_filter_values_are_unknown_only_before_any_device_is_known() -> None:
+    assert UsersPage._device_filter_values(["alice", "bob"], {}) == ["未知"]
+    assert UsersPage._device_filter_values(
+        ["alice", "bob"],
+        {
+            "alice": {"device_label": "Linux"},
+            "bob": {"device_label": "Linux"},
+        },
+    ) == ["Linux"]
+    assert UsersPage._device_filter_values([], {"stale": {"device_label": "iOS"}}) == []
 
 
 def test_user_grid_row_builder_handles_5000_records_without_page_card_expansion() -> None:

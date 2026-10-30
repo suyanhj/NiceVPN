@@ -290,7 +290,7 @@ class UsersPage:
                 {label or gid for gid, label in group_names.items()},
                 key=str.casefold,
             ),
-            "device_source": ["安卓", "iOS", "Mac", "Windows", "Linux", "未知"],
+            "device_source": [],
         }
 
         filter_model = dict(self._user_filter_model)
@@ -373,15 +373,27 @@ class UsersPage:
                 )
             return rows, total
 
+        async def load_usernames_for_facets() -> list[str]:
+            method = getattr(self.user_service, "list_usernames", None)
+            if callable(method):
+                return [str(value) for value in await run.io_bound(method)]
+            users_for_facets = await run.io_bound(self.user_service.list_all)
+            return [
+                str(user.get("username") or "")
+                for user in users_for_facets
+                if str(user.get("username") or "")
+            ]
+
         results = await asyncio.gather(
             load_user_source(),
             run.io_bound(self._load_live_sessions),
             run.io_bound(DeviceBindingService().build_user_binding_aux),
             run.io_bound(self.user_service.list_ccd_virtual_ipv4_by_username),
+            load_usernames_for_facets(),
             return_exceptions=True,
         )
 
-        users_result, live_result, binding_result, ccd_result = results
+        users_result, live_result, binding_result, ccd_result, usernames_result = results
         if isinstance(users_result, BaseException):
             raise users_result
         users, total = users_result
@@ -401,6 +413,22 @@ class UsersPage:
             warnings.append(f"设备绑定数据不可用: {binding_result}")
         else:
             binding_aux = binding_result
+
+        if isinstance(usernames_result, BaseException):
+            logger.error("加载用户名 facet 失败: %s", usernames_result)
+            facet_usernames = [
+                str(user.get("username") or "")
+                for user in users
+                if str(user.get("username") or "")
+            ]
+            warnings.append(f"设备筛选候选可能不完整: {usernames_result}")
+        else:
+            facet_usernames = usernames_result
+
+        self._user_filter_values["device_source"] = self._device_filter_values(
+            facet_usernames,
+            binding_aux,
+        )
 
         if isinstance(ccd_result, BaseException):
             logger.error("加载 CCD 虚拟 IP 失败: %s", ccd_result)
@@ -526,6 +554,39 @@ class UsersPage:
             "_online": is_online,
             "_live_available": live_available,
         }
+
+    @staticmethod
+    def _device_filter_values(
+        usernames: list[str],
+        binding_aux: dict[str, dict[str, str]],
+    ) -> list[str]:
+        """按真实用户/绑定数据生成设备类型 facet，不展示不存在的预设类型。"""
+
+        user_set = {str(username).strip() for username in usernames if str(username).strip()}
+        if not user_set:
+            return []
+
+        labels: set[str] = set()
+        has_unknown = False
+        for username in user_set:
+            item = binding_aux.get(username) or {}
+            label = str(item.get("device_label") or "").strip()
+            if label:
+                labels.add(label)
+            else:
+                has_unknown = True
+
+        preferred = ("安卓", "iOS", "Mac", "Windows", "Linux")
+        values = [label for label in preferred if label in labels]
+        values.extend(
+            sorted(
+                labels.difference(preferred),
+                key=str.casefold,
+            )
+        )
+        if has_unknown:
+            values.append("未知")
+        return values
 
     @staticmethod
     def _user_grid_columns() -> tuple[dict, ...]:
