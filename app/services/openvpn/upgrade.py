@@ -85,6 +85,7 @@ _FATAL_CONFIG_MARKERS = (
     "private key password verification failed",
     "openssl: error",
     "error: private key password verification failed",
+    "exiting due to fatal error",
 )
 _SERVER_PREFLIGHT_SUCCESS_MARKERS = (
     "initialization sequence completed",
@@ -384,6 +385,18 @@ def _rewrite_config(
     return "\n".join(output).rstrip() + "\n"
 
 
+def _preflight_output_state(
+    output: str,
+    success_markers: tuple[str, ...],
+) -> tuple[bool, bool]:
+    """返回 (命中成功阶段, 出现 fatal)；fatal 永远优先于成功。"""
+
+    lowered = str(output or "").casefold()
+    fatal = any(marker in lowered for marker in _FATAL_CONFIG_MARKERS)
+    success = any(marker in lowered for marker in success_markers)
+    return success, fatal
+
+
 def _run_foreground_preflight(
     binary: str,
     config_path: Path,
@@ -412,17 +425,13 @@ def _run_foreground_preflight(
                 output = log_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 output = ""
-            lowered = output.casefold()
-
-            fatal_before_success = any(
-                marker in lowered for marker in _FATAL_CONFIG_MARKERS
+            reached_success, fatal_before_success = _preflight_output_state(
+                output,
+                success_markers,
             )
             if fatal_before_success:
                 break
 
-            reached_success = any(
-                marker in lowered for marker in success_markers
-            )
             if reached_success:
                 break
 
@@ -439,10 +448,8 @@ def _run_foreground_preflight(
                 proc.wait(timeout=2)
 
     output = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
-    lowered = output.casefold()
-    fatal = fatal_before_success or any(
-        marker in lowered for marker in _FATAL_CONFIG_MARKERS
-    )
+    _, fatal_after_stop = _preflight_output_state(output, success_markers)
+    fatal = fatal_before_success or fatal_after_stop
     return reached_success and not fatal, output, reached_success
 
 
