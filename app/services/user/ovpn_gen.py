@@ -81,7 +81,7 @@ def generate_ovpn(username: str, group_subnet: str, config: dict) -> str:
             "USER_KEY": user_key,
             "TC2_CLIENT_KEY": tc2_client_key,
         }
-    ).rstrip("\n")
+    )
 
 
 def save_ovpn(username: str, content: str) -> Path:
