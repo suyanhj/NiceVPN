@@ -1,0 +1,4 @@
+systemctl status openvpn-client@client.service --no-pager
+tail -n 120 {{CLIENT_LOG_PATH}}
+iptables -S FORWARD | grep 'peer={{PEER_ID}}' || true
+iptables -t nat -S POSTROUTING | grep 'peer={{PEER_ID}}' || true
