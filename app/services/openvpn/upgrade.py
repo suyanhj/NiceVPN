@@ -51,6 +51,7 @@ _SERVER_SIDE_EFFECT_DIRECTIVES = {
     "management",
     "plugin",
     "route-up",
+    "script-security",
     "status",
     "tls-crypt-v2-verify",
     "up",
@@ -58,6 +59,9 @@ _SERVER_SIDE_EFFECT_DIRECTIVES = {
     "writepid",
 }
 _CLIENT_SIDE_EFFECT_DIRECTIVES = {
+    "connect-retry",
+    "connect-retry-max",
+    "connect-timeout",
     "daemon",
     "dev",
     "down",
