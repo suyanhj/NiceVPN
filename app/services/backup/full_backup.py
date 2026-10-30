@@ -29,6 +29,7 @@ from app.core.constants import (
 )
 from app.models.config import SystemConfig
 from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
+from app.storage.sqlite_store import SCHEMA_VERSION
 from app.utils.posix_data_perms import sync_openvpn_runtime_permissions_from_config
 
 
@@ -222,6 +223,48 @@ def _load_verified_manifest(root: Path) -> dict:
     return manifest
 
 
+def _validate_nicevpn_sqlite(path: Path) -> None:
+    required_tables = {
+        "schema_migrations",
+        "storage_meta",
+        "users",
+        "groups",
+        "peers",
+        "firewall_rules",
+    }
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10) as conn:
+        values = [
+            str(row[0])
+            for row in conn.execute("PRAGMA quick_check").fetchall()
+            if row
+        ]
+        if values != ["ok"]:
+            raise ValueError(
+                "备份 SQLite quick_check 失败: " + "; ".join(values[:5])
+            )
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        missing = sorted(required_tables - tables)
+        if missing:
+            raise ValueError(
+                "备份不是完整的 NiceVPN SQLite，缺少表: " + ", ".join(missing)
+            )
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+        ).fetchone()
+        version = int((row or [0])[0] or 0)
+        if version <= 0:
+            raise ValueError("备份 SQLite 缺少 schema 版本")
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"备份 SQLite schema v{version} 高于当前支持的 v{SCHEMA_VERSION}"
+            )
+
+
 def _validate_restore_payload(root: Path) -> dict:
     manifest = _load_verified_manifest(root)
     payload = root / "payload"
@@ -242,10 +285,7 @@ def _validate_restore_payload(root: Path) -> dict:
     except Exception as exc:
         raise ValueError(f"备份 config.json 校验失败: {exc}") from exc
 
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10) as conn:
-        values = [str(row[0]) for row in conn.execute("PRAGMA quick_check").fetchall() if row]
-    if values != ["ok"]:
-        raise ValueError("备份 SQLite quick_check 失败: " + "; ".join(values[:5]))
+    _validate_nicevpn_sqlite(db_path)
 
     return manifest
 
