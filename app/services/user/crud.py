@@ -103,25 +103,12 @@ class UserService:
             cert_info = wrapper.get_cert_info(username)
             cert_serial = cert_info["serial"] if cert_info else None
 
-            # 读取证书和密钥内容用于生成 .ovpn
-            pki = Path(config.pki_dir)
-            ca_cert = (pki / "ca.crt").read_text()
-            user_cert = (pki / "issued" / f"{username}.crt").read_text()
-            user_key = (pki / "private" / f"{username}.key").read_text()
-            tc2_key_content = Path(tc2_client_key).read_text()
-
-            # 生成 .ovpn 配置文件
-            from app.services.user.ovpn_gen import generate_ovpn, save_ovpn
-            ovpn_content = generate_ovpn(username, group.get("subnet", ""), {
-                "server_ip": config.get("server_ip", "0.0.0.0"),
-                "port": config.get("port", 1194),
-                "proto": config.get("proto", "udp"),
-                "ca_cert": ca_cert,
-                "user_cert": user_cert,
-                "user_key": user_key,
-                "tc2_client_key": tc2_key_content,
-            })
-            ovpn_file = save_ovpn(username, ovpn_content)
+            ovpn_file = self._write_ovpn_from_current_material(
+                username,
+                group,
+                config,
+                tc2_client_key_path=tc2_client_key,
+            )
             ovpn_path = str(ovpn_file)
 
             sync_openvpn_runtime_permissions_from_config()
@@ -163,6 +150,77 @@ class UserService:
 
         PeerService().sync_all_mesh_push_routes_in_ccd()
         return user
+
+    def _write_ovpn_from_current_material(
+        self,
+        username: str,
+        group: dict,
+        config,
+        *,
+        tc2_client_key_path: str | Path | None = None,
+    ) -> Path:
+        """从当前 PKI 与系统配置生成并覆盖用户 OVPN。"""
+
+        pki = Path(str(config.pki_dir))
+        tc2_path = (
+            Path(tc2_client_key_path)
+            if tc2_client_key_path is not None
+            else pki / "tc2-clients" / f"{username}.key"
+        )
+        material = {
+            "ca_cert": pki / "ca.crt",
+            "user_cert": pki / "issued" / f"{username}.crt",
+            "user_key": pki / "private" / f"{username}.key",
+            "tc2_client_key": tc2_path,
+        }
+        missing = [str(path) for path in material.values() if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "重建 OVPN 缺少证书或密钥文件: " + ", ".join(missing)
+            )
+
+        from app.services.user.ovpn_gen import generate_ovpn, save_ovpn
+
+        ovpn_content = generate_ovpn(
+            username,
+            str(group.get("subnet") or ""),
+            {
+                "server_ip": config.get("server_ip", "0.0.0.0"),
+                "port": config.get("port", 1194),
+                "proto": config.get("proto", "udp"),
+                "ca_cert": material["ca_cert"].read_text(encoding="utf-8"),
+                "user_cert": material["user_cert"].read_text(encoding="utf-8"),
+                "user_key": material["user_key"].read_text(encoding="utf-8"),
+                "tc2_client_key": material["tc2_client_key"].read_text(
+                    encoding="utf-8"
+                ),
+            },
+        )
+        return save_ovpn(username, ovpn_content)
+
+    def regenerate_ovpn(self, username: str) -> str:
+        """按当前 PKI、组和系统配置重新生成用户 OVPN，并同步记录路径。"""
+
+        user = self._load_user(username)
+        if not user or user.get("status") == "deleted":
+            raise ValueError(f"用户不存在或已删除: {username}")
+
+        group_id = str(user.get("group_id") or "").strip()
+        group = self._load_group(group_id)
+        if not group:
+            raise ValueError(f"用户组不存在: {group_id}")
+
+        ovpn_file = self._write_ovpn_from_current_material(
+            username,
+            group,
+            load_config(),
+        )
+        user["ovpn_file_path"] = str(ovpn_file)
+        user["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.store.upsert_user(user)
+        sync_openvpn_runtime_permissions_from_config()
+        logger.info("已按当前 PKI 重建用户 OVPN: user=%s path=%s", username, ovpn_file)
+        return str(ovpn_file)
 
     def delete(self, username: str) -> bool:
         """
