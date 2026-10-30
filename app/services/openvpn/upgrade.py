@@ -100,6 +100,17 @@ def _emit(callback: _OUTPUT | None, message: str) -> None:
         callback(message)
 
 
+def _mirror_installer_output(callback: _OUTPUT | None = None) -> _OUTPUT:
+    """把 installer 的详细输出同时镜像到独立升级日志。"""
+
+    def sink(message: str) -> None:
+        logger.info(message)
+        if callback is not None:
+            callback(message)
+
+    return sink
+
+
 def _run(
     cmd: list[str],
     *,
@@ -222,7 +233,14 @@ def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
     from app.services.openvpn.installer import resolve_latest_openvpn_release
 
     current = detect_openvpn()
-    release = resolve_latest_openvpn_release(on_output=on_output)
+    _emit(
+        on_output,
+        f"[检测] 当前 OpenVPN: {current.get('version') or 'unknown'} "
+        f"({current.get('path') or 'not-found'})",
+    )
+    release = resolve_latest_openvpn_release(
+        on_output=_mirror_installer_output(on_output),
+    )
     target_version = str(release["tag_name"]).lstrip("v")
     current_version = str(current.get("version") or "")
     try:
@@ -253,6 +271,7 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
     _install_build_dependencies(distro, on_output)
 
     version_id = str(info.get("version_id") or "")
+    installer_output = _mirror_installer_output(on_output)
     env = _build_install_env(
         distro,
         version_id,
@@ -260,7 +279,7 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
         install_server_systemd=False,
         install_client_systemd=False,
         install_server_override=False,
-        on_output=on_output,
+        on_output=installer_output,
     )
     stage_root = Path(tempfile.mkdtemp(prefix="nicevpn-openvpn-upgrade-"))
     prefix = stage_root / "prefix"
@@ -275,7 +294,11 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
 
     shell = f"source {shlex_quote(str(_COMMON_SCRIPT))}; openvpn_compile_install"
     _emit(on_output, f"[Stage] 编译候选 OpenVPN {env['OPENVPN_TAG']} 到 {prefix}")
-    _run_command(["bash", "-lc", shell], on_output, env={**os.environ, **env})
+    _run_command(
+        ["bash", "-lc", shell],
+        installer_output,
+        env={**os.environ, **env},
+    )
 
     binary = prefix / "sbin" / "openvpn"
     if not binary.is_file():
@@ -605,6 +628,12 @@ def preflight_upgrade_candidate(stage: dict, on_output: _OUTPUT | None = None) -
         _emit(on_output, f"[Preflight] 服务端配置: {path.name}")
         result = preflight_server_config(binary, path)
         server_results.append(result)
+        log_tail = str(result.get("log_tail") or "").strip()
+        if log_tail:
+            _emit(
+                on_output,
+                f"[Preflight][server:{path.name}] OpenVPN 输出尾部:\n{log_tail}",
+            )
         if not result["ok"]:
             return {
                 "ok": False,
@@ -615,6 +644,17 @@ def preflight_upgrade_candidate(stage: dict, on_output: _OUTPUT | None = None) -
 
     _emit(on_output, "[Preflight] 验证代表性客户端 .ovpn")
     client_result = preflight_client_profile(binary)
+    client_log_tail = str(client_result.get("log_tail") or "").strip()
+    if client_log_tail:
+        source_label = (
+            "generated"
+            if client_result.get("generated")
+            else str(client_result.get("profile") or "existing")
+        )
+        _emit(
+            on_output,
+            f"[Preflight][client:{source_label}] OpenVPN 输出尾部:\n{client_log_tail}",
+        )
     ok = bool(client_result.get("ok"))
     return {
         "ok": ok,

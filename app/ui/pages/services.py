@@ -12,7 +12,11 @@ from nicegui import background_tasks, context, run, ui
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
 from app.core.config import load_config
-from app.core.constants import DEVICE_BIND_LOG_FILE, OPENVPN_DAEMON_LOG_DIR
+from app.core.constants import (
+    DEVICE_BIND_LOG_FILE,
+    OPENVPN_DAEMON_LOG_DIR,
+    OPENVPN_UPGRADE_LOG_FILE,
+)
 from app.services.config_editor.config_backup import backup_before_edit, save_with_backup
 from app.services.monitor.service_monitor import InstanceStatus, ServiceMonitor
 from app.services.openvpn.instance import (
@@ -148,6 +152,11 @@ class ServicesPage:
                                 self._running_chip = ui.label("0 运行").classes("services-running-chip")
                                 ui.space()
                                 secondary_action(
+                                    "升级日志",
+                                    icon="article",
+                                    on_click=self._show_openvpn_upgrade_log_viewer,
+                                ).tooltip("查看 OpenVPN 升级与兼容性预检日志")
+                                secondary_action(
                                     "OpenVPN 升级",
                                     icon="system_update_alt",
                                     on_click=self._open_openvpn_upgrade_dialog,
@@ -164,6 +173,24 @@ class ServicesPage:
                         self._peer_list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_peer_client_list()
 
+    def _show_openvpn_upgrade_log_viewer(self) -> None:
+        """查看独立 OpenVPN 升级日志，避免大量编译输出占据升级弹窗。"""
+
+        log_path = OPENVPN_UPGRADE_LOG_FILE
+
+        def load() -> tuple[str, str]:
+            if not log_path.exists():
+                return f"日志: {log_path}", "(尚无 OpenVPN 升级日志)"
+            return f"日志: {log_path}", self._read_log_tail(log_path)
+
+        self._open_log_tail_dialog(
+            "OpenVPN 升级日志",
+            load,
+            precheck_file=False,
+            watch_path=lambda: log_path,
+            caption_for_path=lambda path: f"日志: {path}",
+        )
+
     def _open_openvpn_upgrade_dialog(self) -> None:
         """检查最新 OpenVPN，staging 后同时验证 server.conf 与客户端 .ovpn。"""
 
@@ -175,7 +202,6 @@ class ServicesPage:
 
         current = detect_openvpn()
         current_version = str(current.get("version") or "未知")
-        log_lines: list[str] = []
         state: dict[str, Any] = {
             "preflight": None,
             "stage": self._openvpn_upgrade_stage,
@@ -206,10 +232,15 @@ class ServicesPage:
                 )
 
             status_label = ui.label("尚未执行升级检查。").classes("section-caption")
-            log_box = ui.textarea(
-                label="升级 / Preflight 日志",
-                value="",
-            ).props("readonly autogrow").classes("w-full font-mono text-xs")
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.label(f"详细日志：{OPENVPN_UPGRADE_LOG_FILE}").classes(
+                    "section-caption"
+                )
+                secondary_action(
+                    "查看升级日志",
+                    icon="article",
+                    on_click=self._show_openvpn_upgrade_log_viewer,
+                )
 
             with ui.row().classes("w-full justify-end gap-2"):
                 close_button = ui.button(
@@ -226,13 +257,6 @@ class ServicesPage:
                 )
                 upgrade_button.disable()
 
-            def refresh_log() -> None:
-                if log_lines:
-                    log_box.value = "\n".join(log_lines[-300:])
-
-            poll_timer = ui.timer(0.5, refresh_log)
-            dialog.on("hide", lambda: poll_timer.deactivate())
-
             async def run_check() -> None:
                 if self._openvpn_upgrade_busy:
                     return
@@ -247,14 +271,13 @@ class ServicesPage:
                 check_button.disable()
                 upgrade_button.disable()
                 close_button.disable()
-                log_lines.clear()
                 status_label.text = "正在检查最新版本并准备隔离候选 binary…"
                 try:
                     if self._openvpn_upgrade_stage:
                         cleanup_staged_candidate(self._openvpn_upgrade_stage)
                         self._openvpn_upgrade_stage = None
 
-                    info = await run.io_bound(inspect_upgrade, log_lines.append)
+                    info = await run.io_bound(inspect_upgrade)
                     target_version = str(info.get("target_version") or "未知")
                     target_label.text = f"目标版本：{target_version}"
                     if not bool(info.get("upgrade_available")):
@@ -266,11 +289,10 @@ class ServicesPage:
                     status_label.text = (
                         f"发现 OpenVPN {target_version}，正在临时编译并执行兼容性预检…"
                     )
-                    stage = await run.io_bound(stage_upgrade_candidate, log_lines.append)
+                    stage = await run.io_bound(stage_upgrade_candidate)
                     preflight = await run.io_bound(
                         preflight_upgrade_candidate,
                         stage,
-                        log_lines.append,
                     )
                     state["stage"] = stage
                     state["preflight"] = preflight
@@ -309,7 +331,6 @@ class ServicesPage:
                     client_label.text = "客户端配置：未通过"
                     self._notify_for_page(f"OpenVPN 升级检查失败: {exc}", type="negative")
                 finally:
-                    refresh_log()
                     self._openvpn_upgrade_busy = False
                     check_button.enable()
                     close_button.enable()
@@ -337,7 +358,6 @@ class ServicesPage:
                     result = await run.io_bound(
                         apply_staged_upgrade,
                         stage,
-                        log_lines.append,
                     )
                     status_label.text = (
                         f"OpenVPN {result.get('version')} 升级完成；"
@@ -363,7 +383,6 @@ class ServicesPage:
                     )
                     upgrade_button.enable()
                 finally:
-                    refresh_log()
                     self._openvpn_upgrade_busy = False
                     check_button.enable()
                     close_button.enable()
