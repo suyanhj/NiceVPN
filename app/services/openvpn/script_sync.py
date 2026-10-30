@@ -8,12 +8,14 @@ from app.core.constants import DEVICE_BIND_LOG_FILE, OPENVPN_ETC_DIR, VPN_SESSIO
 
 logger = logging.getLogger(__name__)
 
-_SCRIPT_NAMES = (
+OPENVPN_SCRIPT_NAMES = (
     "device-bind.sh",
     "device_binding_json.py",
     "vpn_session_audit.py",
     "vpn-session-disconnect.sh",
 )
+# 兼容既有内部引用/测试。
+_SCRIPT_NAMES = OPENVPN_SCRIPT_NAMES
 
 
 def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
