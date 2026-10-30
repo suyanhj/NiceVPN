@@ -171,6 +171,12 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     assert ":getRowId" in page.grid_view.grid.options
     assert ":onFirstDataRendered" in page.grid_view.grid.options
     assert len(page.grid_view.grid.options["rowData"]) == 2
+    device_column = next(
+        column
+        for column in page.grid_view.grid.options["columnDefs"]
+        if column.get("field") == "device_source"
+    )
+    assert device_column["filterParams"]["values"] == ["未知"]
     assert page.bulk_download_button._props.get("disable") is not True
     assert len(page.bulk_icon_buttons) == 5
     assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
