@@ -19,6 +19,40 @@ def set_filter_values(
     return [str(value) for value in values]
 
 
+def multi_text_filter_spec(
+    filter_model: Mapping[str, Any] | None,
+    field: str,
+) -> tuple[list[str], str, str] | None:
+    """返回 (values, match_type, operator)，兼容新多值过滤器和旧单值文本过滤器。"""
+
+    model = (filter_model or {}).get(field)
+    if not isinstance(model, Mapping):
+        return None
+
+    if str(model.get("filterType") or "") == "niceVpnMultiText":
+        raw_values = model.get("values")
+        if not isinstance(raw_values, Sequence) or isinstance(raw_values, (str, bytes)):
+            return None
+        values = [str(value).strip() for value in raw_values if str(value).strip()]
+        if not values:
+            return None
+        mode = str(model.get("type") or "containsAny")
+        mapping = {
+            "containsAny": ("contains", "OR"),
+            "containsAll": ("contains", "AND"),
+            "notContainsAny": ("notContains", "AND"),
+            "equalsAny": ("equals", "OR"),
+        }
+        match_type, operator = mapping.get(mode, ("contains", "OR"))
+        return values, match_type, operator
+
+    single = text_filter_spec(filter_model, field)
+    if single is None:
+        return None
+    value, match_type = single
+    return [value], match_type, "AND"
+
+
 def text_filter_spec(
     filter_model: Mapping[str, Any] | None,
     field: str,
@@ -105,6 +139,22 @@ def _single_filter_match(value: Any, model: Mapping[str, Any]) -> bool:
 
 
 def _model_match(value: Any, model: Mapping[str, Any]) -> bool:
+    if str(model.get("filterType") or "") == "niceVpnMultiText":
+        raw_values = model.get("values")
+        if not isinstance(raw_values, Sequence) or isinstance(raw_values, (str, bytes)):
+            return True
+        values = [str(item).strip() for item in raw_values if str(item).strip()]
+        if not values:
+            return True
+        mode = str(model.get("type") or "containsAny")
+        if mode == "containsAll":
+            return all(_single_filter_match(value, {"filter": item, "type": "contains"}) for item in values)
+        if mode == "notContainsAny":
+            return all(_single_filter_match(value, {"filter": item, "type": "notContains"}) for item in values)
+        if mode == "equalsAny":
+            return any(_single_filter_match(value, {"filter": item, "type": "equals"}) for item in values)
+        return any(_single_filter_match(value, {"filter": item, "type": "contains"}) for item in values)
+
     conditions = model.get("conditions")
     if isinstance(conditions, Sequence) and not isinstance(conditions, (str, bytes)):
         valid = [item for item in conditions if isinstance(item, Mapping)]
