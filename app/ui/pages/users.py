@@ -17,7 +17,7 @@ from app.services.openvpn.instance import get_status
 from app.services.user.bulk_import import BulkImportService
 from app.services.user.device_bind import DeviceBindingService
 from app.ui.components import confirm_dialog
-from app.ui.components.data_grid import render_data_grid
+from app.ui.components.data_grid import multi_text_filter_column, render_data_grid
 from app.ui.components.actions import create_action, primary_action, secondary_action
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
@@ -30,7 +30,7 @@ from app.ui.grid_query import (
     first_sort_spec,
     set_filter_values,
     sort_rows,
-    text_filter_spec,
+    multi_text_filter_spec,
 )
 from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
 from app.ui.components.status import status_badge, structured_value
@@ -299,7 +299,7 @@ class UsersPage:
             field not in db_filter_fields for field in filter_model
         )
 
-        username_spec = text_filter_spec(filter_model, "username")
+        username_spec = multi_text_filter_spec(filter_model, "username")
         if "username" in filter_model and username_spec is None:
             unsupported_filter = True
 
@@ -336,15 +336,18 @@ class UsersPage:
                 users = await run.io_bound(self.user_service.list_all)
                 return users, len(users)
 
-            search = username_spec[0] if username_spec else ""
+            search_values = username_spec[0] if username_spec else None
             search_mode = username_spec[1] if username_spec else "contains"
+            search_operator = username_spec[2] if username_spec else "AND"
             offset = max(0, (self.page - 1) * self.page_size)
             rows, total = await run.io_bound(
                 lambda: self.user_service.list_page(
                     offset=offset,
                     limit=self.page_size,
-                    search=search,
+                    search="",
                     search_mode=search_mode,
+                    search_values=search_values,
+                    search_operator=search_operator,
                     group_ids=group_ids,
                     statuses=statuses,
                     sort_by=self._user_sort_field,
@@ -358,8 +361,10 @@ class UsersPage:
                     lambda: self.user_service.list_page(
                         offset=(self.page - 1) * self.page_size,
                         limit=self.page_size,
-                        search=search,
+                        search="",
                         search_mode=search_mode,
+                        search_values=search_values,
+                        search_operator=search_operator,
                         group_ids=group_ids,
                         statuses=statuses,
                         sort_by=self._user_sort_field,
@@ -537,6 +542,7 @@ class UsersPage:
                 "minWidth": 120,
                 "maxWidth": 172,
                 "cellClass": "vpn-grid-primary-cell",
+                **multi_text_filter_column("输入用户名后按 Enter"),
             },
             {
                 "field": "account_status",
@@ -576,6 +582,7 @@ class UsersPage:
                 "flex": 0.82,
                 "minWidth": 122,
                 "cellClass": "vpn-grid-mono",
+                **multi_text_filter_column("输入 IP 后按 Enter"),
             },
             {
                 "field": "group",
@@ -595,12 +602,14 @@ class UsersPage:
                 "flex": 0.88,
                 "minWidth": 132,
                 "cellClass": "vpn-grid-mono",
+                "filter": False,
             },
             {
                 "field": "connection",
                 "headerName": "连接时间",
                 "flex": 1.04,
                 "minWidth": 168,
+                "filter": False,
             },
             {
                 "field": "device_source",
