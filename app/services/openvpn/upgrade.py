@@ -593,20 +593,6 @@ def _restore_path(record: dict) -> None:
         shutil.copy2(Path(str(record["backup"])), path)
 
 
-def _write_candidate_systemd_unit(stage: dict) -> None:
-    from app.services.openvpn.installer import _render_openvpn_systemd_unit_from_source
-
-    source_dir = Path(str(stage["source_dir"]))
-    unit_text = _render_openvpn_systemd_unit_from_source(source_dir, str(stage["tag"]))
-    unit = Path("/etc/systemd/system/openvpn-server@.service")
-    unit.parent.mkdir(parents=True, exist_ok=True)
-    unit.write_text(unit_text, encoding="utf-8")
-    override = Path("/etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf")
-    override.parent.mkdir(parents=True, exist_ok=True)
-    override.write_text("[Service]\nReadWritePaths=/etc/openvpn\n", encoding="utf-8")
-    subprocess.run(["systemctl", "daemon-reload"], check=True)
-
-
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     """切换候选 OpenVPN；失败时恢复 binary/systemd 并重启升级前运行实例。"""
 
@@ -651,7 +637,16 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
         cli_link.parent.mkdir(parents=True, exist_ok=True)
         _remove_path(cli_link)
         cli_link.symlink_to(prefix / "sbin" / "openvpn")
-        _write_candidate_systemd_unit(stage)
+
+        from app.services.openvpn.installer import (
+            install_openvpn_server_systemd_from_staged_source,
+        )
+
+        install_openvpn_server_systemd_from_staged_source(
+            source_dir=Path(str(stage["source_dir"])),
+            tag=str(stage["tag"]),
+            on_output=_mirror_installer_output(on_output),
+        )
 
         for name in active_instances:
             _emit(on_output, f"[升级] 重启实例 {name}")
