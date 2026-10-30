@@ -273,7 +273,16 @@ class SettingsPage:
         except Exception as exc:
             logger.exception("系统安全修复失败")
             safe_notify(f"安全修复失败: {exc}", type="negative")
-            self._start_diagnostics()
+            if self.diagnostics_status is not None:
+                self.diagnostics_status.text = "修复失败"
+            if self.diagnostics_container is not None:
+                self.diagnostics_container.clear()
+                with self.diagnostics_container:
+                    error_state(
+                        str(exc),
+                        title="系统安全修复失败",
+                        on_retry=self._start_safe_repair,
+                    )
         finally:
             self._diagnostics_running = False
 
