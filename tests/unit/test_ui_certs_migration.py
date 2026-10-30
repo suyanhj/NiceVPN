@@ -273,6 +273,7 @@ def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
     assert serial["flex"] > 0
     assert serial["cellClass"] == "vpn-grid-mono"
     assert serial[":filter"] == "window.NiceVpnMultiTextFilter"
+    assert serial["filterParams"]["filterValueField"] == "serial"
     assert ":cellRenderer" not in serial
 
     expiry = columns["expires_display"]
