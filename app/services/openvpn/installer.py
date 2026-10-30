@@ -64,6 +64,82 @@ def build_peer_openvpn_install_script(distro: str, version_id: str) -> str:
     return _render_remote_install_script(distro, env)
 
 
+def stage_openvpn_source_build(
+    distro: str,
+    version_id: str,
+    *,
+    prefix: Path,
+    cache: Path,
+    src_root: Path,
+    on_output: Callable[[str], None] | None = None,
+) -> dict[str, str]:
+    """使用正式发行版安装脚本把候选 OpenVPN 源码构建到隔离目录。
+
+    staging 强制走源码构建，禁止修改系统 OpenVPN symlink/systemd/EasyRSA。
+    Debian/RHEL 的依赖安装逻辑全部由对应 shell 入口维护。
+    """
+
+    distro = distro.lower().strip()
+    env = _build_install_env(
+        distro,
+        version_id,
+        install_easyrsa=False,
+        install_server_systemd=False,
+        install_client_systemd=False,
+        install_server_override=False,
+        on_output=on_output,
+    )
+    env.update(
+        {
+            "OPENVPN_PREFIX": str(prefix),
+            "OPENVPN_CACHE": str(cache),
+            "OPENVPN_SRC_ROOT": str(src_root),
+            "OPENVPN_CREATE_SYMLINK": "0",
+            "OPENVPN_FORCE_SOURCE": "1",
+        }
+    )
+    script_path = _install_script_path(distro)
+    _emit(
+        on_output,
+        f"[信息] staging 候选 OpenVPN {env['OPENVPN_TAG']} "
+        f"（{script_path.name} -> {prefix}）",
+    )
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env(env),
+    )
+
+    binary = prefix / "sbin" / "openvpn"
+    if not binary.is_file():
+        raise RuntimeError(f"候选 OpenVPN 构建完成但 binary 不存在: {binary}")
+
+    asset = str(env["OPENVPN_ASSET"])
+    source_name = (
+        asset[:-7]
+        if asset.endswith(".tar.gz")
+        else asset[:-4]
+        if asset.endswith(".tgz")
+        else asset
+    )
+    source_dir = src_root / source_name
+    if not source_dir.is_dir():
+        candidates = sorted(path for path in src_root.iterdir() if path.is_dir())
+        if len(candidates) != 1:
+            raise RuntimeError(f"无法识别 OpenVPN 源码目录: {src_root}")
+        source_dir = candidates[0]
+
+    return {
+        "prefix": str(prefix),
+        "source_dir": str(source_dir),
+        "binary": str(binary),
+        "tag": str(env["OPENVPN_TAG"]),
+        "asset": asset,
+        "distro": distro,
+        "distro_version": str(version_id or ""),
+    }
+
+
 def install_openvpn(
     distro: str,
     version_id: str,
