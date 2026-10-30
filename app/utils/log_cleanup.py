@@ -2,7 +2,7 @@
 """日志过期清理：管理端 data/logs 轮转备份、OpenVPN 目录下陈旧 .log、审计按文件名日期删除。
 
 说明：
-- app.log / openvpn-install.log 由 TimedRotatingFileHandler 按天轮转，backupCount=LOG_RETENTION_DAYS；
+- app.log / openvpn-install.log / openvpn-upgrade.log 由 TimedRotatingFileHandler 按天轮转，backupCount=LOG_RETENTION_DAYS；
   此处额外按 mtime 清理遗留的 *.log.*，防止历史 Rotating 后缀堆积。
 - /etc/openvpn/log 下守护进程、device-bind 与 VPN 审计日志：按 mtime 超过保留期则删除（活跃文件 mtime 会更新，一般不会被删）。
 - 审计 audit-YYYY-MM-DD.jsonl：按文件名日期早于保留期则删除。
@@ -74,9 +74,13 @@ def cleanup_expired_logs(retention_days: int | None = None) -> None:
             if not p.is_file():
                 continue
             name = p.name
-            if name in ("app.log", "openvpn-install.log"):
+            if name in ("app.log", "openvpn-install.log", "openvpn-upgrade.log"):
                 continue
-            if name.startswith("app.log.") or name.startswith("openvpn-install.log."):
+            if (
+                name.startswith("app.log.")
+                or name.startswith("openvpn-install.log.")
+                or name.startswith("openvpn-upgrade.log.")
+            ):
                 _unlink_if_expired(p)
 
     # OpenVPN 守护进程与状态、设备绑定日志、VPN 审计 JSONL
