@@ -1,0 +1,53 @@
+# OpenVPN 客户端配置文件
+# 用户: {{USERNAME}}
+# 组子网: {{GROUP_SUBNET}}
+#
+# 此文件由系统自动生成，请勿手动修改
+
+client
+dev tun
+proto {{PROTO}}
+remote {{SERVER_IP}} {{PORT}}
+
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+
+remote-cert-tls server
+cipher AES-256-GCM
+auth SHA256
+verb 3
+key-direction 1
+
+# MTU 优化
+tun-mtu 1400
+mssfix 1360
+
+# 密钥重协商周期（7天）
+reneg-sec 604800
+
+# 推送客户端信息用于设备绑定检查
+push-peer-info
+
+# ---- 内嵌证书与密钥 ----
+
+# CA 证书
+<ca>
+{{CA_CERT}}
+</ca>
+
+# 用户证书
+<cert>
+{{USER_CERT}}
+</cert>
+
+# 用户私钥
+<key>
+{{USER_KEY}}
+</key>
+
+# TLS-Crypt-V2 客户端密钥
+<tls-crypt-v2>
+{{TC2_CLIENT_KEY}}
+</tls-crypt-v2>
