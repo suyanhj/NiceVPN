@@ -371,6 +371,7 @@ def _run_foreground_preflight(
         proc = subprocess.Popen(
             [binary, "--config", str(config_path)],
             cwd=str(config_path.parent),
+            stdin=subprocess.DEVNULL,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
