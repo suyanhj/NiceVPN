@@ -24,7 +24,7 @@ from app.services.openvpn.detector import (
     get_distro_info,
 )
 from app.services.openvpn.instance import (
-    is_instance_running,
+    is_instance_active,
     iter_all_openvpn_instance_names,
     resolve_server_conf_dir,
 )
@@ -281,6 +281,11 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
     asset = str(env["OPENVPN_ASSET"])
     source_name = asset[:-7] if asset.endswith(".tar.gz") else asset[:-4] if asset.endswith(".tgz") else asset
     source_dir = src_root / source_name
+    if not source_dir.is_dir():
+        candidates = sorted(path for path in src_root.iterdir() if path.is_dir())
+        if len(candidates) != 1:
+            raise RuntimeError(f"无法识别 OpenVPN 源码目录: {src_root}")
+        source_dir = candidates[0]
     return {
         "stage_root": str(stage_root),
         "prefix": str(prefix),
@@ -688,7 +693,7 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     _emit(on_output, f"[备份] NiceVPN 完整备份: {backup_file}")
 
     active_instances = [
-        name for name in iter_all_openvpn_instance_names() if is_instance_running(name)
+        name for name in iter_all_openvpn_instance_names() if is_instance_active(name)
     ]
 
     rollback_root = Path(tempfile.mkdtemp(prefix="nicevpn-openvpn-rollback-"))
@@ -734,7 +739,7 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
             raise RuntimeError(str(postflight.get("error") or "升级后 preflight 失败"))
 
         failed_instances = [
-            name for name in active_instances if not is_instance_running(name)
+            name for name in active_instances if not is_instance_active(name)
         ]
         if failed_instances:
             raise RuntimeError("升级后实例未恢复运行: " + ", ".join(failed_instances))
