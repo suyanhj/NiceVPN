@@ -27,11 +27,26 @@ pip install -r requirements.txt
 
 ### 2. 启动系统
 
+前台运行：
+
 ```bash
 ./start.sh
 ```
 
-首次启动后，浏览器访问 `http://<服务器IP>:8880`，进入初始化引导页。
+生产环境建议直接安装为 systemd 服务：
+
+```bash
+sudo -E ./start.sh daemon
+```
+
+两种模式都会先构建前端；daemon 模式构建完成后会自动安装/更新 `openvpn-mgmt.service` 并启动服务。首次启动后，浏览器访问 `http://<服务器IP>:8880`，进入初始化引导页。
+
+NiceVPN 要求 Python 3.10+。脚本会优先使用 `PYTHON_BIN`、当前虚拟环境、项目 `.venv`，再自动选择系统中满足版本要求的 Python。例如：
+
+```bash
+PYTHON_BIN=/usr/local/bin/python3.14 ./start.sh
+PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
+```
 
 ### 3. 初始化引导流程
 
@@ -82,17 +97,29 @@ pip install -r requirements.txt
 
 ## 以 systemd 服务方式运行
 
-```bash
-# 复制 systemd 服务文件
-cp deploy/systemd/openvpn-mgmt.service /etc/systemd/system/
+无需手工复制 service，直接执行：
 
-# 启用并启动
-systemctl daemon-reload
-systemctl enable openvpn-mgmt
-systemctl start openvpn-mgmt
+```bash
+sudo -E ./start.sh daemon
 
 # 查看状态
 systemctl status openvpn-mgmt
+journalctl -u openvpn-mgmt -f
+```
+
+`start.sh daemon` 会把当前代码目录和选中的 Python 绝对路径写入 systemd unit。systemd 最终直接执行 `main.py`，不会在每次 restart 时重复构建前端。
+
+更新代码后可再次执行：
+
+```bash
+git pull
+sudo -E ./start.sh daemon
+```
+
+如果前端产物已经准备好，可跳过构建：
+
+```bash
+sudo -E ./start.sh daemon --no-build
 ```
 
 ---
