@@ -38,7 +38,7 @@ def test_systemd_template_runs_python_main_directly() -> None:
     text = SERVICE.read_text(encoding="utf-8")
 
     assert "WorkingDirectory=@NICEVPN_ROOT@" in text
-    assert 'ExecStart="@PYTHON_BIN@" "@NICEVPN_ROOT@/main.py"' in text
+    assert 'ExecStart="@PYTHON_BIN@" main.py' in text
     assert "start.sh" not in next(
         line for line in text.splitlines() if line.startswith("ExecStart=")
     )
