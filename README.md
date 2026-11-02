@@ -34,7 +34,7 @@
 
 ## 快速开始
 
-推荐使用根目录 `start.sh`。它会先通过 Docker 多阶段构建导出 V2 前端静态产物，再启动 NiceGUI；宿主机无需安装 Node/npm。
+推荐使用根目录 `start.sh`。普通模式会先通过 Docker 多阶段构建导出 V2 前端静态产物，再以前台方式启动 NiceGUI；宿主机无需安装 Node/npm。
 
 ```bash
 pip install -r requirements.txt
@@ -42,6 +42,14 @@ pip install -r requirements.txt
 ```
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
+
+生产环境可直接使用 daemon 模式。它会先完成前端构建，再将当前代码真实目录和实际 Python 解释器路径写入 systemd unit，随后 enable + restart：
+
+```bash
+sudo -E ./start.sh daemon
+```
+
+daemon 模式是幂等的，更新代码后再次执行即可重新构建前端、同步 service 并重启服务。systemd 本身只运行 `python main.py`，不会在每次服务重启时重复构建前端。
 
 如只想构建前端产物、不启动服务：
 
@@ -59,6 +67,8 @@ pip install -r requirements.txt
 
 ```bash
 NICEVPN_BUILD_UI=0 ./start.sh
+./start.sh --no-build
+sudo -E ./start.sh daemon --no-build
 ```
 
 CLI 不需要前端构建：
@@ -67,7 +77,26 @@ CLI 不需要前端构建：
 ./start.sh cli --help
 ```
 
-**命令行（可选）**：`python main.py cli --help`（逻辑见 `app/cli/entry.py`）
+**命令行（可选）**：`python main.py cli --help`（逻辑见 `app/cli/entry.py`）。
+
+### Python 解释器选择
+
+NiceVPN 要求 **Python 3.10+**。启动脚本会校验真实解释器版本，并按以下优先级选择：
+
+1. 显式环境变量 `PYTHON_BIN`
+2. 当前激活的 `VIRTUAL_ENV`
+3. 当前激活的 `CONDA_PREFIX`
+4. 项目目录下的 `.venv/bin/python`
+5. 当前 PATH 中满足版本要求的 Python
+
+例如：
+
+```bash
+PYTHON_BIN=/usr/local/bin/python3.14 ./start.sh
+PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
+```
+
+daemon 安装时会把解释器的**绝对真实路径**固化到 systemd unit 中，因此 systemd 不依赖登录 shell 的 PATH 或虚拟环境激活状态。
 
 ## 文档
 
@@ -110,15 +139,21 @@ api.md                  # 对外 API
 
 ### systemd
 
-`deploy/systemd/openvpn-mgmt.service` 默认调用根目录 `start.sh`。首次启动或前端源码变化时，由 Docker 构建 `frontend-assets` 并写入 `app/ui/vue/dist/`，随后启动 Python 服务。
+推荐直接使用：
 
 ```bash
-cp deploy/systemd/openvpn-mgmt.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now openvpn-mgmt
+sudo -E ./start.sh daemon
 ```
 
-如果发布包已经预置 V2 前端产物，可通过 systemd override 设置 `NICEVPN_BUILD_UI=0`，启动时不再调用 Docker。
+`deploy/systemd/openvpn-mgmt.service` 现在是安装模板。daemon 模式会把模板中的代码目录与 Python 路径替换为当前机器的真实值，再安装到 `/etc/systemd/system/openvpn-mgmt.service`。
+
+最终 systemd 只负责：
+
+```text
+<选定的 Python 绝对路径> <NiceVPN 真实目录>/main.py
+```
+
+因此 `systemctl restart openvpn-mgmt` 不会重新构建 Vue 前端。需要发布新前端时再次执行 `./start.sh daemon`；如发布包已经包含 V2 前端产物，可使用 `./start.sh daemon --no-build`。
 
 ### Docker
 
