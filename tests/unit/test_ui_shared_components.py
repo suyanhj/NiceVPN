@@ -577,3 +577,19 @@ def test_shared_server_pager_uses_single_ag_grid_style_contract() -> None:
     assert "vpn-data-grid__server-pager" not in data_grid_source
     assert ".vpn-server-pager" in shell_css
     assert ".vpn-data-grid__grid .ag-paging-panel" in shell_css
+
+
+def test_shared_server_pager_matches_certificate_footer_dimensions() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "height: 44px;" in shell_css
+    assert "background: #0c0c0d;" in shell_css
+    assert "font-size: 13px;" in shell_css
+    assert "flex: 0 0 64px !important;" in shell_css
+    assert "width: 28px !important;" in shell_css
+    assert "overflow-x: auto;" in shell_css
