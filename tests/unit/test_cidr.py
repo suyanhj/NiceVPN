@@ -1,6 +1,6 @@
 """CIDR 校验工具单元测试"""
 import pytest
-from app.utils.cidr import validate_cidr, is_subnet_of, subnets_overlap
+from app.utils.cidr import is_subnet_of, normalize_cidr, subnets_overlap, validate_cidr
 
 
 class TestValidateCidr:
@@ -29,6 +29,20 @@ class TestValidateCidr:
         assert validate_cidr("::1/128") is False
         assert validate_cidr("2001:db8::/32") is False
         assert validate_cidr("fe80::/10") is False
+
+
+class TestNormalizeCidr:
+    """测试 CIDR 网络地址归一化。"""
+
+    def test_host_bits_are_canonicalized(self):
+        assert normalize_cidr("192.168.1.0/16") == "192.168.0.0/16"
+        assert normalize_cidr("10.224.9.123/24") == "10.224.9.0/24"
+        assert normalize_cidr(" 172.16.5.8/12 ") == "172.16.0.0/12"
+
+    def test_invalid_cidr_returns_none(self):
+        assert normalize_cidr("192.168.1.1") is None
+        assert normalize_cidr("999.1.1.1/24") is None
+        assert normalize_cidr("") is None
 
 
 class TestIsSubnetOf:
