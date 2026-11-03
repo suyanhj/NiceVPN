@@ -26,7 +26,19 @@ def validate_cidr(s: str) -> bool:
 
 
 def normalize_cidr(s: str) -> str | None:
-    """将合法 IPv4 CIDR 归一化为真正的网络地址。\n\n    例如 192.168.1.0/16 会规范为 192.168.0.0/16。\n    非法 CIDR 返回 None，调用方可据此给出原有校验错误。\n    """\n    t = (s or "").strip()\n    if not validate_cidr(t):\n        return None\n    try:\n        n = IPNetwork(t, version=4)\n    except (AddrFormatError, TypeError, ValueError):\n        return None\n    return f"{n.network}/{n.prefixlen}"\n
+    """将合法 IPv4 CIDR 归一化为真正的网络地址。
+
+    例如 192.168.1.0/16 会规范为 192.168.0.0/16。
+    非法 CIDR 返回 None，调用方可据此给出原有校验错误。
+    """
+    t = (s or "").strip()
+    if not validate_cidr(t):
+        return None
+    try:
+        n = IPNetwork(t, version=4)
+    except (AddrFormatError, TypeError, ValueError):
+        return None
+    return f"{n.network}/{n.prefixlen}"
 
 def is_subnet_of(child: str, parent: str) -> bool:
     """判断 child 是否为 parent 的子网（或完全相同）。
