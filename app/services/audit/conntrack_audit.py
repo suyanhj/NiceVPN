@@ -206,8 +206,13 @@ class ConntrackAuditService:
         主动停机与异常退出必须严格区分：一旦 stop/shutdown 已请求，
         不得再进入自愈重启路径。
         """
-        self._stop_event.set()
+        thread = self._thread
         proc = self._process
+        was_running = bool(
+            (thread is not None and thread.is_alive())
+            or (proc is not None and proc.poll() is None)
+        )
+        self._stop_event.set()
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
@@ -219,7 +224,6 @@ class ConntrackAuditService:
             except ProcessLookupError:
                 pass
 
-        thread = self._thread
         if (
             thread is not None
             and thread.is_alive()
@@ -228,7 +232,10 @@ class ConntrackAuditService:
             thread.join(timeout=max(0.0, float(join_timeout)))
             if thread.is_alive():
                 logger.warning("conntrack 连接审计线程未在超时内退出")
-        logger.info("conntrack 连接审计监听已停止")
+        if was_running:
+            logger.info("conntrack 连接审计监听已停止")
+        else:
+            logger.debug("conntrack 连接审计监听已处于停止状态")
 
     def _should_stop(self) -> bool:
         """本地 stop 或应用全局 shutdown 任一触发即停止。"""
