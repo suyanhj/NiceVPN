@@ -37,6 +37,11 @@ def test_user_management_commands_are_exposed() -> None:
         ("user", "move", "alice", "--group-name", "运维组"): "cmd_user_move",
         ("user", "regenerate-ovpn", "alice"): "cmd_user_regenerate_ovpn",
         ("user", "kick", "alice"): "cmd_user_kick",
+        ("user", "device", "show", "alice"): "cmd_user_device_show",
+        ("user", "device", "reset", "alice"): "cmd_user_device_reset",
+        ("user", "ovpn", "show", "alice"): "cmd_user_ovpn_show",
+        ("user", "ovpn", "export", "alice", "--output", "/tmp/alice.ovpn"): "cmd_user_ovpn_export",
+        ("user", "ovpn", "regenerate", "alice"): "cmd_user_ovpn_regenerate",
     }
 
     for argv, func_name in cases.items():
@@ -60,3 +65,11 @@ def test_dry_run_is_available_on_mutating_group_and_user_commands() -> None:
     assert _parse(
         "user", "move", "alice", "--group-name", "运维组", "--dry-run"
     ).dry_run is True
+
+
+def test_device_and_ovpn_mutations_support_dry_run() -> None:
+    assert _parse("user", "device", "reset", "alice", "--dry-run").dry_run is True
+    assert _parse(
+        "user", "ovpn", "export", "alice", "--output", "/tmp/alice.ovpn", "--dry-run"
+    ).dry_run is True
+    assert _parse("user", "ovpn", "regenerate", "alice", "--dry-run").dry_run is True
