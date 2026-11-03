@@ -18,6 +18,7 @@ from app.core.scheduler import start_scheduler
 from app.api.download import router as download_router
 from app.api.vpn_ops import router as vpn_ops_router
 from app.cli.entry import main as cli_main
+from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
 from app.ui.components.app_shell import render_app_shell
 from app.ui.pages.certs import CertsPage
