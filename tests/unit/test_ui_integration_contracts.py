@@ -140,11 +140,14 @@ def test_vue_visual_layer_does_not_call_business_api_directly() -> None:
             assert marker not in source, f"{path}: {marker}"
 
 def test_frontend_dependency_install_is_reproducible() -> None:
-    """V2 前端必须提交 lockfile，并在 CI/Docker 中使用 npm ci。"""
+    """V2 前端必须提交 lockfile，并仅在 CI/开发构建链中使用 npm ci。"""
 
     frontend = VUE_DIR / "frontend"
     lockfile = frontend / "package-lock.json"
     workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    dist_workflow = (
+        ROOT / ".github" / "workflows" / "frontend-dist.yml"
+    ).read_text(encoding="utf-8")
     dockerfile = (ROOT / "deploy" / "docker" / "Dockerfile").read_text(encoding="utf-8")
 
     assert lockfile.is_file()
@@ -154,8 +157,14 @@ def test_frontend_dependency_install_is_reproducible() -> None:
     assert "registry.npmjs.org" in lock_source
 
     assert "npm ci --no-audit --no-fund" in workflow
+    assert "npm ci --no-audit --no-fund" in dist_workflow
     assert "npm install --no-audit --no-fund --package-lock=false" not in workflow
+    assert "npm install --no-audit --no-fund --package-lock=false" not in dist_workflow
     assert "cache-dependency-path: app/ui/vue/frontend/package-lock.json" in workflow
+    assert "cache-dependency-path: app/ui/vue/frontend/package-lock.json" in dist_workflow
 
-    assert "npm ci --no-audit --no-fund" in dockerfile
-    assert "npm install --no-audit --no-fund --package-lock=false" not in dockerfile
+    # 生产 Docker 镜像只消费 CI 预编译 dist，不应再安装 Node/npm。
+    assert "npm ci" not in dockerfile
+    assert "npm run" not in dockerfile
+    assert "NODE_IMAGE" not in dockerfile
+    assert "frontend-builder" not in dockerfile
