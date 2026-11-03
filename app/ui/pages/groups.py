@@ -26,7 +26,7 @@ from app.ui.components.server_pager import page_after_size_change, render_server
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
-from app.utils.cidr import normalize_cidr
+from app.utils.cidr import assignable_client_ip_count, normalize_cidr
 
 logger = logging.getLogger(__name__)
 
@@ -453,8 +453,21 @@ class GroupsPage:
                 "子网 CIDR",
                 placeholder="例如：10.224.1.0/24",
             ).classes("w-full")
+            fields["capacity"] = ui.label("").classes("text-caption text-grey-6")
+            fields["capacity"].set_visibility(False)
             fields["conflict"] = ui.label("").classes("text-caption text-negative")
             fields["conflict"].set_visibility(False)
+
+            def update_capacity(subnet_val: str) -> None:
+                capacity = assignable_client_ip_count(subnet_val)
+                if capacity is None:
+                    fields["capacity"].set_visibility(False)
+                    return
+                fields["capacity"].text = (
+                    f"可分配客户端 IP：{capacity} 个"
+                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                )
+                fields["capacity"].set_visibility(True)
 
             def on_subnet_change() -> None:
                 subnet_val = str(fields["subnet"].value or "").strip()
@@ -465,6 +478,9 @@ class GroupsPage:
                 if normalized is not None:
                     subnet_val = normalized
                     fields["subnet"].value = normalized
+                    update_capacity(normalized)
+                else:
+                    fields["capacity"].set_visibility(False)
                 config = load_config()
                 conflicts = check_subnet_conflict(
                     subnet_val,
@@ -546,8 +562,22 @@ class GroupsPage:
                     "text-caption text-grey"
                 )
 
+            fields["capacity"] = ui.label("").classes("text-caption text-grey-6")
             fields["conflict"] = ui.label("").classes("text-caption text-negative")
             fields["conflict"].set_visibility(False)
+
+            def update_capacity(subnet_val: str) -> None:
+                capacity = assignable_client_ip_count(subnet_val)
+                if capacity is None:
+                    fields["capacity"].set_visibility(False)
+                    return
+                fields["capacity"].text = (
+                    f"可分配客户端 IP：{capacity} 个"
+                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                )
+                fields["capacity"].set_visibility(True)
+
+            update_capacity(str(group.get("subnet") or ""))
 
             def on_subnet_change() -> None:
                 subnet_val = str(fields["subnet"].value or "").strip()
@@ -558,6 +588,9 @@ class GroupsPage:
                 if normalized is not None:
                     subnet_val = normalized
                     fields["subnet"].value = normalized
+                    update_capacity(normalized)
+                else:
+                    fields["capacity"].set_visibility(False)
                 if subnet_val == str(group.get("subnet") or ""):
                     fields["conflict"].set_visibility(False)
                     return
