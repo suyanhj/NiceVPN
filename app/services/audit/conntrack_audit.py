@@ -284,6 +284,7 @@ class ConntrackAuditService:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            start_new_session=True,
         ) as proc:
             self._process = proc
             try:
