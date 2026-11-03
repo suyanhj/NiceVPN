@@ -6,7 +6,7 @@ DIST_DIR="${ROOT_DIR}/app/ui/vue/dist"
 SERVICE_TEMPLATE="${ROOT_DIR}/deploy/systemd/openvpn-mgmt.service"
 SERVICE_PATH="/etc/systemd/system/openvpn-mgmt.service"
 SERVICE_NAME="openvpn-mgmt"
-BUILD_UI="${NICEVPN_BUILD_UI:-1}"
+BUILD_UI="${NICEVPN_BUILD_UI:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 log() {
@@ -96,18 +96,27 @@ select_python() {
     fail "未找到 Python >= 3.10。可通过 PYTHON_BIN=/path/to/python ./start.sh 显式指定。"
 }
 
-build_ui() {
-    if [[ "${BUILD_UI}" == "0" ]]; then
-        if [[ ! -f "${DIST_DIR}/VpnSpotlightSurface.js" ]]; then
-            log "已跳过前端构建，但 app/ui/vue/dist/ 中没有正式 V2 构建产物。"
-            log "NiceGUI 将回退到开发用原生 Vue SFC。"
-        else
-            log "已按 NICEVPN_BUILD_UI=0 跳过前端构建。"
-        fi
+frontend_assets_ready() {
+    [[ -s "${DIST_DIR}/VpnSpotlightSurface.js" ]] &&
+        [[ -s "${DIST_DIR}/VpnInteractiveGrid.js" ]]
+}
+
+prepare_ui() {
+    if [[ "${BUILD_UI}" == "1" ]]; then
+        log "按要求重新构建 Vue 前端资源..."
+        "${ROOT_DIR}/build-ui.sh" "${DIST_DIR}"
+        frontend_assets_ready || fail "Vue 构建完成但正式运行产物不完整：${DIST_DIR}"
         return 0
     fi
 
-    "${ROOT_DIR}/build-ui.sh" "${DIST_DIR}"
+    if frontend_assets_ready; then
+        log "使用仓库内预编译 Vue 前端资源：app/ui/vue/dist/"
+        return 0
+    fi
+
+    log "未找到完整的预编译 Vue 前端资源：app/ui/vue/dist/"
+    log "当前环境无需安装 Node/npm/Docker；请使用包含 CI 构建产物的正式提交。"
+    log "本次将回退到开发用原生 Vue SFC。需要本机重建时使用：./start.sh --build-ui"
 }
 
 install_daemon() {
@@ -153,13 +162,16 @@ main() {
         shift
     fi
 
-    if [[ "${1:-}" == "--no-build" ]]; then
+    if [[ "${1:-}" == "--build-ui" ]]; then
+        BUILD_UI=1
+        shift
+    elif [[ "${1:-}" == "--no-build" ]]; then
         BUILD_UI=0
         shift
     fi
 
     if [[ "${mode}" == "daemon" && "$#" -gt 0 ]]; then
-        fail "daemon 模式不接受额外参数。支持：./start.sh daemon [--no-build]"
+        fail "daemon 模式不接受额外参数。支持：./start.sh daemon [--build-ui|--no-build]"
     fi
 
     select_python
@@ -167,7 +179,7 @@ main() {
 
     # CLI 不渲染 Web UI，不需要构建前端。
     if [[ "${1:-}" != "cli" ]]; then
-        build_ui
+        prepare_ui
     fi
 
     if [[ "${mode}" == "daemon" ]]; then
