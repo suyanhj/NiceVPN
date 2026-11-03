@@ -353,6 +353,7 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid.options["theme"] == "quartz"
     assert view.grid.options["pagination"] is True
     assert view.grid.options["paginationPageSize"] == 25
+    assert view.grid.options["paginationPageSizeSelector"] == [20, 50, 100, 200, 25]
     locale = view.grid.options["localeText"]
     assert locale["contains"] == "包含"
     assert locale["notContains"] == "不包含"
@@ -402,7 +403,8 @@ def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("每页")
-            await user.should_see("第 2 / 3 页 · 共 123 条")
+            await user.should_see("51 至 100 共 123")
+            await user.should_see("第2共3")
 
     asyncio.run(verify_page())
 
@@ -439,7 +441,8 @@ def test_server_pager_page_size_contract_and_position_mapping() -> None:
             response = await user.open("/")
             assert response.status_code == 200
             await user.should_see("每页")
-            await user.should_see("第 2 / 3 页 · 共 123 条")
+            await user.should_see("51 至 100 共 123")
+            await user.should_see("第2共3")
 
     asyncio.run(verify_page())
     assert state["built"] is True
@@ -557,3 +560,20 @@ def test_safe_notify_ignores_closed_page_runtime_error(monkeypatch: pytest.Monke
 
     monkeypatch.setattr("app.ui.components.feedback.ui.notify", fail_notify)
     assert safe_notify("完成", type="positive") is False
+
+
+def test_shared_server_pager_uses_single_ag_grid_style_contract() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    data_grid_source = (
+        root / "app" / "ui" / "components" / "data_grid.py"
+    ).read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert "render_server_pager(" in data_grid_source
+    assert "vpn-data-grid__server-pager" not in data_grid_source
+    assert ".vpn-server-pager" in shell_css
+    assert ".vpn-data-grid__grid .ag-paging-panel" in shell_css
