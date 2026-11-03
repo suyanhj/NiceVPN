@@ -6,13 +6,16 @@ import argparse
 import getpass
 import json
 import logging
+import shutil
 import sys
+from pathlib import Path
 
 from app.cli.iptables_parse import iter_iptables_file, parse_iptables_line
 from app.core.config import load_config
 from app.services.firewall.rule_service import FirewallRuleService
 from app.services.group.crud import GroupService
 from app.services.user.crud import UserService
+from app.services.user.device_bind import DeviceBindingService
 from app.utils.cidr import is_subnet_of, validate_cidr
 from app.utils.logging_setup import setup_logging
 from app.models.firewall import FirewallRule
@@ -666,6 +669,113 @@ def cmd_user_kick(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_user_device_show(args: argparse.Namespace) -> int:
+    us = UserService()
+    _require_user(us, args.username)
+    binding = DeviceBindingService().get_binding(args.username)
+    if binding is None:
+        _print_json({"username": args.username, "bound": False, "binding": None})
+        return 0
+    _print_json(
+        {
+            "username": args.username,
+            "bound": True,
+            "binding": binding.model_dump(),
+        }
+    )
+    return 0
+
+
+def cmd_user_device_reset(args: argparse.Namespace) -> int:
+    us = UserService()
+    _require_user(us, args.username)
+    binding_service = DeviceBindingService()
+    binding = binding_service.get_binding(args.username)
+    if args.dry_run:
+        return _dry_run_result(
+            "user.device.reset",
+            username=args.username,
+            bound=binding is not None,
+            note="未删除设备绑定；下次连接不会因此重新绑定",
+        )
+    removed = binding_service.reset_binding(args.username)
+    _print_json(
+        {
+            "username": args.username,
+            "reset": removed,
+            "message": "设备绑定已重置" if removed else "当前没有设备绑定",
+        }
+    )
+    return 0
+
+
+def _user_ovpn_path(us: UserService, username: str) -> Path:
+    user = _require_user(us, username)
+    raw = str(user.get("ovpn_file_path") or "").strip()
+    if not raw:
+        raise SystemExit(f"用户未记录 OVPN 文件路径: {username}")
+    return Path(raw)
+
+
+def cmd_user_ovpn_show(args: argparse.Namespace) -> int:
+    us = UserService()
+    path = _user_ovpn_path(us, args.username)
+    _print_json(
+        {
+            "username": args.username,
+            "ovpn_file_path": str(path),
+            "exists": path.is_file(),
+            "size": path.stat().st_size if path.is_file() else None,
+        }
+    )
+    return 0
+
+
+def cmd_user_ovpn_export(args: argparse.Namespace) -> int:
+    us = UserService()
+    source = _user_ovpn_path(us, args.username)
+    if not source.is_file():
+        print(f"OVPN 文件不存在: {source}", file=sys.stderr)
+        return 1
+
+    output = Path(args.output).expanduser()
+    if output.exists() and output.is_dir():
+        output = output / source.name
+    elif str(args.output).endswith("/"):
+        output.mkdir(parents=True, exist_ok=True)
+        output = output / source.name
+
+    if args.dry_run:
+        return _dry_run_result(
+            "user.ovpn.export",
+            username=args.username,
+            source=str(source),
+            output=str(output),
+            note="未复制包含客户端私钥的 OVPN 文件",
+        )
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, output)
+    try:
+        output.chmod(0o600)
+    except OSError:
+        logger.warning("无法将导出的 OVPN 权限设置为 0600: %s", output)
+
+    _print_json(
+        {
+            "username": args.username,
+            "source": str(source),
+            "exported_to": str(output),
+            "size": output.stat().st_size,
+        }
+    )
+    return 0
+
+
+def cmd_user_ovpn_regenerate(args: argparse.Namespace) -> int:
+    return cmd_user_regenerate_ovpn(args)
+
 def _add_group_selector(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--group-id", default=None, help="组 UUID")
     parser.add_argument("--group-name", default=None, help="组名称（与 --group-id 二选一）")
@@ -787,6 +897,37 @@ def build_parser() -> argparse.ArgumentParser:
     uk.add_argument("username", help="用户名")
     _add_dry_run(uk)
     uk.set_defaults(func=cmd_user_kick)
+
+
+    device = user_sub.add_parser("device", help="用户设备绑定管理")
+    device_sub = device.add_subparsers(dest="user_device_command", required=True)
+
+    ds = device_sub.add_parser("show", help="查看用户当前设备绑定")
+    ds.add_argument("username", help="用户名")
+    ds.set_defaults(func=cmd_user_device_show, dry_run=False)
+
+    dr = device_sub.add_parser("reset", help="重置用户设备绑定")
+    dr.add_argument("username", help="用户名")
+    _add_dry_run(dr)
+    dr.set_defaults(func=cmd_user_device_reset)
+
+    ovpn = user_sub.add_parser("ovpn", help="用户 OVPN 配置管理")
+    ovpn_sub = ovpn.add_subparsers(dest="user_ovpn_command", required=True)
+
+    os = ovpn_sub.add_parser("show", help="查看 OVPN 文件路径和状态")
+    os.add_argument("username", help="用户名")
+    os.set_defaults(func=cmd_user_ovpn_show, dry_run=False)
+
+    oe = ovpn_sub.add_parser("export", help="导出 OVPN 到本机指定路径")
+    oe.add_argument("username", help="用户名")
+    oe.add_argument("--output", "-o", required=True, help="目标文件或目录")
+    _add_dry_run(oe)
+    oe.set_defaults(func=cmd_user_ovpn_export)
+
+    org = ovpn_sub.add_parser("regenerate", help="按当前 PKI/组配置重建 OVPN")
+    org.add_argument("username", help="用户名")
+    _add_dry_run(org)
+    org.set_defaults(func=cmd_user_ovpn_regenerate)
 
     # ---------- backward-compatible flat commands ----------
     g = sub.add_parser("add-group", help="兼容旧命令：添加用户组")
