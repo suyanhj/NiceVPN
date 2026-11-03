@@ -10,6 +10,13 @@ WorkingDirectory=@NICEVPN_ROOT@
 ExecStart="@PYTHON_BIN@" main.py
 Restart=on-failure
 RestartSec=5
+
+# 停机时只先向主 Python 进程发送 SIGTERM，让应用 shutdown hook
+# 主动停止 conntrack 等子进程；若超时，再由 systemd 清理整个 cgroup。
+KillMode=mixed
+TimeoutStopSec=20s
+SendSIGKILL=yes
+
 StandardOutput=journal
 StandardError=journal
 
