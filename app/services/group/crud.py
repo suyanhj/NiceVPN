@@ -198,11 +198,16 @@ class GroupService:
 
         current = self._load_group_or_raise(group_id)
         new_name = str(name).strip()
-        new_subnet = str(subnet).strip()
+        raw_subnet = str(subnet).strip()
         if not new_name:
             raise ValueError("组名称不能为空")
-        if not new_subnet:
+        if not raw_subnet:
             raise ValueError("子网不能为空")
+
+        normalized_subnet = normalize_cidr(raw_subnet)
+        if normalized_subnet is None:
+            raise ValueError(f"子网格式不合法: {raw_subnet}")
+        new_subnet = normalized_subnet
 
         for group in self.list_all():
             if group.get("id") != group_id and group.get("name") == new_name:
