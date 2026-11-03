@@ -63,4 +63,9 @@ def test_build_ui_supports_local_npm_or_docker() -> None:
     assert "npm ci --no-audit --no-fund" in build_script
     assert "npm run check" in build_script
     assert 'command -v "${DOCKER_BIN}"' in build_script
+    assert 'DOCKER_NODE_IMAGE="${DOCKER_NODE_IMAGE:-' in build_script
+    assert "--file -" in build_script
+    assert "--target frontend-assets" not in build_script
+    assert "deploy/docker/Dockerfile" not in build_script
+    assert "frontend-build.json" in build_script
     assert "生产环境无需构建" in build_script
