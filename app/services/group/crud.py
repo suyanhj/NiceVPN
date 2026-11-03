@@ -13,6 +13,7 @@ from app.core.constants import MGMT_PORT_START, OPENVPN_DEFAULT_MAX_CLIENTS
 from app.models.group import Group
 from app.services.group.subnet import check_subnet_conflict
 from app.utils.audit_log import AuditLogger
+from app.utils.cidr import normalize_cidr
 from app.storage.sqlite_store import SqliteStore, get_default_store
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ class GroupService:
         异常:
             ValueError: 名称重复或子网冲突
         """
+        normalized_subnet = normalize_cidr(subnet)
+        if normalized_subnet is None:
+            raise ValueError(f"子网格式不合法: {subnet}")
+        subnet = normalized_subnet
+
         # 校验名称唯一性
         if self._name_exists(name):
             raise ValueError(f"组名已存在: {name}")
@@ -141,6 +147,11 @@ class GroupService:
             ValueError: 组不存在、有活跃用户、有子组或子网冲突
         """
         data = self._load_group_or_raise(group_id)
+
+        normalized_subnet = normalize_cidr(new_subnet)
+        if normalized_subnet is None:
+            raise ValueError(f"子网格式不合法: {new_subnet}")
+        new_subnet = normalized_subnet
 
         if data.get("user_count", 0) > 0:
             raise ValueError(f"组内有 {data['user_count']} 个用户，无法修改子网")
