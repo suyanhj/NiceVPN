@@ -26,6 +26,7 @@ from app.ui.components.server_pager import page_after_size_change, render_server
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.copy_clipboard import copy_text_to_clipboard
+from app.utils.cidr import normalize_cidr
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,10 @@ class GroupsPage:
                 if not subnet_val:
                     fields["conflict"].set_visibility(False)
                     return
+                normalized = normalize_cidr(subnet_val)
+                if normalized is not None:
+                    subnet_val = normalized
+                    fields["subnet"].value = normalized
                 config = load_config()
                 conflicts = check_subnet_conflict(
                     subnet_val,
@@ -546,7 +551,14 @@ class GroupsPage:
 
             def on_subnet_change() -> None:
                 subnet_val = str(fields["subnet"].value or "").strip()
-                if not subnet_val or subnet_val == str(group.get("subnet") or ""):
+                if not subnet_val:
+                    fields["conflict"].set_visibility(False)
+                    return
+                normalized = normalize_cidr(subnet_val)
+                if normalized is not None:
+                    subnet_val = normalized
+                    fields["subnet"].value = normalized
+                if subnet_val == str(group.get("subnet") or ""):
                     fields["conflict"].set_visibility(False)
                     return
                 if is_root:
