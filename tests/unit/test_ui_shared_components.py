@@ -590,6 +590,8 @@ def test_shared_server_pager_matches_certificate_footer_dimensions() -> None:
     assert "height: 44px;" in shell_css
     assert "background: #0c0c0d;" in shell_css
     assert "font-size: 13px;" in shell_css
-    assert "flex: 0 0 64px !important;" in shell_css
+    assert "flex: 0 0 54px !important;" in shell_css
     assert "width: 28px !important;" in shell_css
     assert "overflow-x: auto;" in shell_css
+    assert ".vpn-server-pager-menu" in shell_css
+    assert "min-width: 56px !important;" in shell_css
