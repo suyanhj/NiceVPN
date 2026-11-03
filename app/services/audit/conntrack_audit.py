@@ -23,6 +23,7 @@ from typing import TextIO
 from app.core.config import load_config
 from app.core.constants import VPN_CONNECTION_AUDIT_LOG_FILE
 from app.services.user.crud import UserService
+from app.utils.shutdown import is_shutdown_requested
 
 logger = logging.getLogger(__name__)
 
@@ -199,21 +200,57 @@ class ConntrackAuditService:
         self._thread.start()
         logger.info("conntrack 连接审计监听已启动")
 
-    def stop(self) -> None:
-        """停止后台监听线程与 conntrack 子进程。"""
+    def stop(self, *, join_timeout: float = 5.0) -> None:
+        """停止后台监听线程与 conntrack 子进程。
+
+        主动停机与异常退出必须严格区分：一旦 stop/shutdown 已请求，
+        不得再进入自愈重启路径。
+        """
         self._stop_event.set()
-        if self._process and self._process.poll() is None:
-            self._process.terminate()
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                logger.warning("conntrack 子进程未及时退出，发送 SIGKILL")
+                proc.kill()
+                proc.wait(timeout=2)
+            except ProcessLookupError:
+                pass
+
+        thread = self._thread
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=max(0.0, float(join_timeout)))
+            if thread.is_alive():
+                logger.warning("conntrack 连接审计线程未在超时内退出")
+        logger.info("conntrack 连接审计监听已停止")
+
+    def _should_stop(self) -> bool:
+        """本地 stop 或应用全局 shutdown 任一触发即停止。"""
+        return self._stop_event.is_set() or is_shutdown_requested()
 
     def _run_forever(self) -> None:
-        """循环拉起 conntrack 子进程，异常退出后延迟重启。"""
-        while not self._stop_event.is_set():
+        """循环拉起 conntrack 子进程，仅异常退出时自愈重启。"""
+        while not self._should_stop():
             try:
                 self._run_once()
             except Exception as exc:
+                if self._should_stop():
+                    break
                 logger.exception("conntrack 连接审计监听异常: %s", exc)
-            if not self._stop_event.wait(self._restart_delay_seconds):
-                logger.warning("conntrack 连接审计监听准备重启")
+
+            if self._should_stop():
+                break
+            if self._stop_event.wait(self._restart_delay_seconds):
+                break
+            if self._should_stop():
+                break
+            logger.warning("conntrack 连接审计监听准备重启")
 
     def _run_once(self) -> None:
         """启动一次 conntrack 子进程并消费 stdout。"""
@@ -227,6 +264,9 @@ class ConntrackAuditService:
         self._refresh_username_mapping(force=True)
         self._log_file.parent.mkdir(parents=True, exist_ok=True)
 
+        if self._should_stop():
+            return
+
         cmd = ["conntrack", "-E", "-o", "timestamp"]
         logger.info("启动 conntrack 连接审计子进程: %s", " ".join(cmd))
         with subprocess.Popen(
@@ -239,21 +279,27 @@ class ConntrackAuditService:
             bufsize=1,
         ) as proc:
             self._process = proc
-            stdout = proc.stdout
-            if stdout is None:
-                raise RuntimeError("conntrack stdout 未打开")
-            self._consume_stdout(stdout, vpn_network, vpn_instance)
-            code = proc.poll()
-            if code is None:
-                proc.terminate()
-                code = proc.wait(timeout=5)
-            if code != 0 and not self._stop_event.is_set():
-                raise RuntimeError(f"conntrack 子进程异常退出，exit_code={code}")
+            try:
+                stdout = proc.stdout
+                if stdout is None:
+                    raise RuntimeError("conntrack stdout 未打开")
+                self._consume_stdout(stdout, vpn_network, vpn_instance)
+                code = proc.poll()
+                if code is None:
+                    proc.terminate()
+                    code = proc.wait(timeout=5)
+                if code != 0 and not self._should_stop():
+                    raise RuntimeError(
+                        f"conntrack 子进程异常退出，exit_code={code}"
+                    )
+            finally:
+                if self._process is proc:
+                    self._process = None
 
     def _consume_stdout(self, stdout: TextIO, vpn_network: IPv4Network, vpn_instance: str) -> None:
         """逐行解析 conntrack 输出并写入 JSONL。"""
         for line in stdout:
-            if self._stop_event.is_set():
+            if self._should_stop():
                 return
             self._refresh_username_mapping(force=False)
             try:
@@ -298,3 +344,12 @@ def start_conntrack_audit_listener() -> ConntrackAuditService:
         _singleton = ConntrackAuditService()
     _singleton.start()
     return _singleton
+
+
+
+def stop_conntrack_audit_listener() -> None:
+    """停止全局 conntrack 审计监听器；可重复调用。"""
+    global _singleton
+    if _singleton is None:
+        return
+    _singleton.stop()
