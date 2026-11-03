@@ -55,6 +55,57 @@ def test_group_update_details_can_rename_without_changing_subnet(
     assert saved["name"] == "全局 VPN"
 
 
+def test_group_create_canonicalizes_subnet(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """组 CIDR 主机位非零时，持久化前必须归一化为网络地址。"""
+
+    from app.services.group import crud
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "db.sqlite")
+    service = crud.GroupService(store)
+    monkeypatch.setattr(service.audit, "log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        crud,
+        "load_config",
+        lambda: type("Config", (), {"global_subnet": ""})(),
+    )
+
+    created = service.create("默认组", "192.168.1.0/16")
+
+    assert created["subnet"] == "192.168.0.0/16"
+    saved = store.get_group(created["id"])
+    assert saved is not None
+    assert saved["subnet"] == "192.168.0.0/16"
+
+
+def test_group_edit_treats_same_canonical_network_as_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """非规范写法映射到同一网络时，不应误触发根组子网修改限制。"""
+
+    from app.services.group import crud
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.upsert_group(_group("root", "默认组", "192.168.0.0/16"))
+    store.upsert_group(_group("dev", "开发组", "192.168.1.0/24"))
+
+    service = crud.GroupService(store)
+    monkeypatch.setattr(service.audit, "log", lambda *_args, **_kwargs: None)
+
+    updated = service.update_details(
+        "root",
+        name="默认组",
+        subnet="192.168.1.0/16",
+    )
+
+    assert updated["subnet"] == "192.168.0.0/16"
+
+
 def test_group_update_details_rejects_duplicate_name(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -195,3 +246,13 @@ def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
     assert ".vpn-v2-overview-grid" in shell_css
     assert ".vpn-metric-card--compact" in shell_css
     assert "fetch(" not in source
+
+
+def test_groups_page_normalizes_cidr_input_on_blur() -> None:
+    """新建与编辑输入框应在失焦时回填规范网络地址。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "groups.py").read_text(encoding="utf-8")
+
+    assert "normalize_cidr(subnet_val)" in source
+    assert 'fields["subnet"].value = normalized' in source
