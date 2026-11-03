@@ -189,12 +189,11 @@ sudo -E ./start.sh daemon
 
 ### Docker
 
-生产镜像使用多阶段构建：Node 22 只存在于 `frontend-builder` 阶段，最终 runtime 为 Python 3.14，不携带 Node/npm。默认针对国内网络优化：
+生产镜像直接使用仓库中由 GitHub Actions 预编译并提交的 `app/ui/vue/dist/`，Docker 构建过程不再安装 Node/npm，也不再重复编译 Vue。最终 runtime 为 Python 3.14。默认针对国内网络优化：
 
-- Node / Python 基础镜像：华为 SWR 公共镜像路径
+- Python 基础镜像：华为 SWR 公共镜像路径
 - Debian APT：中科大 `mirrors.ustc.edu.cn`
-- npm：阿里/npmmirror `https://registry.npmmirror.com`
-- apt、pip、npm 下载缓存使用 BuildKit cache mount，不写入最终 runtime 层
+- apt、pip 下载缓存使用 BuildKit cache mount，不写入最终 runtime 层
 
 ```bash
 DOCKER_BUILDKIT=1 docker build -t nicevpn:latest -f deploy/docker/Dockerfile .
@@ -216,14 +215,14 @@ docker run -d \
 
 ```bash
 docker build \
-  --build-arg NODE_IMAGE=your-registry/node:22-alpine \
   --build-arg PYTHON_IMAGE=your-registry/python:3.14-slim \
-  --build-arg NPM_REGISTRY=https://registry.npmjs.org \
   --build-arg DEBIAN_MIRROR=deb.debian.org \
   -t nicevpn:latest \
   -f deploy/docker/Dockerfile \
   .
 ```
+
+Docker 构建会校验 `app/ui/vue/dist/VpnSpotlightSurface.js`、`VpnInteractiveGrid.js` 与 `frontend-build.json`。缺少预编译运行产物时直接失败，避免制作出回退到开发 SFC 的生产镜像。
 
 ## 开发约定
 
