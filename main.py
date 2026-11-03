@@ -10,6 +10,7 @@ from fastapi import Request
 from nicegui import app, ui
 
 logger = logging.getLogger(__name__)
+_shutdown_hook_registered = False
 
 from app.core.config import load_config
 from app.core.constants import DEFAULT_HOST, DEFAULT_PORT
@@ -36,8 +37,29 @@ from app.utils.logging_setup import setup_logging
 from app.utils.session_secret import load_or_create_session_secret
 from app.utils.shutdown import request_shutdown
 
+def _shutdown_background_services() -> None:
+    """通知后台任务退出，并停止持有外部子进程的服务。"""
+    request_shutdown()
+    try:
+        from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
+
+        stop_conntrack_audit_listener()
+    except Exception:
+        logger.exception("停止 conntrack 连接审计监听失败")
+
+
+def _register_shutdown_hook() -> None:
+    """只注册一次 NiceGUI/Uvicorn 正常 shutdown 生命周期回调。"""
+    global _shutdown_hook_registered
+    if _shutdown_hook_registered:
+        return
+    app.on_shutdown(_shutdown_background_services)
+    _shutdown_hook_registered = True
+
+
 def init():
     """应用初始化：挂载静态资源、下载路由、注册页面和定时任务。"""
+    _register_shutdown_hook()
     app.add_static_files("/static", Path(__file__).parent / "app" / "ui" / "static")
 
     config = load_config()
@@ -184,11 +206,10 @@ def run_web() -> None:
             ),
         )
     except KeyboardInterrupt:
-        # Ctrl+C 时 asyncio/uvicorn 会先 CancelledError 再 KeyboardInterrupt，属正常停机路径
-        request_shutdown()
+        # 正常情况下 app.on_shutdown 已先完成后台资源清理；此处仅作兜底。
+        _shutdown_background_services()
         logger.info("收到键盘中断，Web 服务已停止")
         logging.shutdown()
-        os._exit(0)
 
 
 if __name__ == "__main__":
