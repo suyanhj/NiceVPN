@@ -41,8 +41,6 @@ def _shutdown_background_services() -> None:
     """通知后台任务退出，并停止持有外部子进程的服务。"""
     request_shutdown()
     try:
-        from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
-
         stop_conntrack_audit_listener()
     except Exception:
         logger.exception("停止 conntrack 连接审计监听失败")
