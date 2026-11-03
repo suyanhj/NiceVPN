@@ -1,31 +1,8 @@
 # syntax=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/docker/dockerfile:1.6
 
-ARG NODE_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/node:22-alpine
 ARG PYTHON_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/python:3.14-slim
 
 
-FROM ${NODE_IMAGE} AS frontend-builder
-
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-
-WORKDIR /build/app/ui/vue/frontend
-
-# 前端源码一次复制、一次 npm ci 构建；依赖由 package-lock.json 锁定，registry 可覆盖，npm 缓存只留在 BuildKit cache。
-COPY app/ui/vue/frontend/ ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set registry "${NPM_REGISTRY}" \
-    && npm ci --no-audit --no-fund \
-    && npm run check
-
-
-# 仅用于本地、CI、systemd 导出静态产物。
-FROM scratch AS frontend-assets
-COPY --from=frontend-builder /build/app/ui/vue/dist/ /
-
-
-# 系统依赖与 Python 依赖分层：
-# - Python 基础镜像或 apt 包不变时，requirements.txt 变化不会重新执行 apt。
-# - CI 使用 Buildx 外部缓存后，这两个阶段可跨 GitHub Hosted Runner 复用。
 FROM ${PYTHON_IMAGE} AS python-system
 
 ARG DEBIAN_MIRROR=mirrors.ustc.edu.cn
@@ -68,9 +45,13 @@ RUN mkdir -p \
         /etc/openvpn/ccd /etc/openvpn/mgmt/device_bindings /etc/openvpn/mgmt/ovpn \
         /etc/openvpn/log /etc/openvpn/scripts
 
-# app/ui/vue/dist 已由 .dockerignore 排除，避免复制旧产物后再覆盖。
+# Vue 正式运行产物由 GitHub Actions 预编译并随仓库发布；镜像不再安装 Node/npm。
 COPY . .
-COPY --from=frontend-builder /build/app/ui/vue/dist/ /app/app/ui/vue/dist/
+
+# 防止用缺失或不完整的预编译前端产物制作生产镜像。
+RUN test -s app/ui/vue/dist/VpnSpotlightSurface.js \
+    && test -s app/ui/vue/dist/VpnInteractiveGrid.js \
+    && test -s app/ui/vue/dist/frontend-build.json
 
 EXPOSE 8880
 
