@@ -50,14 +50,27 @@ def render_server_pager(
                 )
             )
             ui.label("每页").classes("vpn-server-pager__label")
-            ui.select(
-                list(normalized_options),
-                value=safe_size,
-                on_change=lambda event: on_page_size_change(int(event.value)),
-            ).props(
-                "dense borderless options-dense "
-                "popup-content-class=vpn-server-pager-menu"
+            page_size_button = ui.button(str(safe_size)).props(
+                "flat dense no-caps icon-right=arrow_drop_down "
+                "aria-label='选择每页条数'"
             ).classes("vpn-server-pager__page-size")
+
+            with page_size_button:
+                with ui.menu().props(
+                    "anchor='top left' self='bottom left'"
+                ).classes("vpn-server-pager-menu") as page_size_menu:
+                    def choose_page_size(value: int) -> object:
+                        page_size_menu.close()
+                        return on_page_size_change(value)
+
+                    for option in normalized_options:
+                        item_classes = "vpn-server-pager-menu__item"
+                        if option == safe_size:
+                            item_classes += " vpn-server-pager-menu__item--active"
+                        ui.menu_item(
+                            str(option),
+                            on_click=lambda value=option: choose_page_size(value),
+                        ).classes(item_classes)
 
         ui.label(
             f"{range_start} 至 {range_end} 共 {safe_total}"
