@@ -34,7 +34,7 @@
 
 ## 快速开始
 
-推荐使用根目录 `start.sh`。普通模式会先通过 Docker 多阶段构建导出 V2 前端静态产物，再以前台方式启动 NiceGUI；宿主机无需安装 Node/npm。
+推荐使用根目录 `start.sh`。正式 Vue 运行产物由 GitHub Actions 构建并提交到 `app/ui/vue/dist/`，普通启动直接使用仓库内预编译资源，因此生产宿主机**不需要 Node/npm，也不需要 Docker**。
 
 ```bash
 pip install -r requirements.txt
@@ -43,33 +43,29 @@ pip install -r requirements.txt
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
 
-生产环境可直接使用 daemon 模式。它会先完成前端构建，再将当前代码真实目录和实际 Python 解释器路径写入 systemd unit，随后 enable + restart：
+生产环境可直接使用 daemon 模式。它会直接使用仓库内预编译前端资源，再将当前代码真实目录和实际 Python 解释器路径写入 systemd unit，随后 enable + restart：
 
 ```bash
 sudo -E ./start.sh daemon
 ```
 
-daemon 模式是幂等的，更新代码后再次执行即可重新构建前端、同步 service 并重启服务。systemd 本身只运行 `python main.py`，不会在每次服务重启时重复构建前端。
+daemon 模式是幂等的。更新代码后再次执行即可同步 service 并重启服务；systemd 本身只运行 `python main.py`，不会在服务重启时构建 Vue。
 
-如只想构建前端产物、不启动服务：
+正常生产启动不需要构建前端。开发或需要强制重建时可使用：
+
+```bash
+./start.sh --build-ui
+sudo -E ./start.sh daemon --build-ui
+```
+
+`build-ui.sh` 会优先使用本机 npm；没有 npm 时回退到 Docker：
 
 ```bash
 ./build-ui.sh
-```
-
-默认输出到 `app/ui/vue/dist/`。也可以指定输出目录，方便本地调试、CI 或其他容器流程直接复用：
-
-```bash
 ./build-ui.sh /tmp/nicevpn-ui-dist
 ```
 
-如已存在 `app/ui/vue/dist/` 构建产物，可跳过启动前的前端构建：
-
-```bash
-NICEVPN_BUILD_UI=0 ./start.sh
-./start.sh --no-build
-sudo -E ./start.sh daemon --no-build
-```
+`--no-build` 与 `NICEVPN_BUILD_UI=0` 继续保留兼容，但现在已经是默认行为。
 
 CLI 不需要前端构建：
 
@@ -158,7 +154,7 @@ daemon 安装时会把解释器的**绝对真实路径**固化到 systemd unit �
 python -m pytest tests/unit -q
 ```
 
-GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Python 3.14，并单独通过 Docker 构建 V2 Vue 前端、运行 Chrome smoke 与 OpenSpec strict validation。
+GitHub Actions 在 `admin-ui` / `main` 的 push 与 pull request 上验证 Python 3.14，并运行 Vue 构建、Chrome smoke、Docker 构建与 OpenSpec strict validation。另有 `frontend-dist.yml`：当 `app/ui/vue/frontend/**` 变化时使用 Node 22 构建正式资源，写入 `frontend-build.json`，并把 `app/ui/vue/dist/` 自动提交回 `main`。
 
 ## 目录结构（摘）
 
@@ -189,7 +185,7 @@ sudo -E ./start.sh daemon
 <选定的 Python 绝对路径> <NiceVPN 真实目录>/main.py
 ```
 
-因此 `systemctl restart openvpn-mgmt` 不会重新构建 Vue 前端。需要发布新前端时再次执行 `./start.sh daemon`；如发布包已经包含 V2 前端产物，可使用 `./start.sh daemon --no-build`。
+因此 `systemctl restart openvpn-mgmt` 不会重新构建 Vue 前端。正式发布提交已经包含 CI 生成的 V2 前端产物，纯系统安装环境只需 Python 依赖即可运行；只有开发调试需要本机重新构建时才使用 `--build-ui`。
 
 ### Docker
 
