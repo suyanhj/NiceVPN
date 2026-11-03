@@ -256,3 +256,14 @@ def test_groups_page_normalizes_cidr_input_on_blur() -> None:
 
     assert "normalize_cidr(subnet_val)" in source
     assert 'fields["subnet"].value = normalized' in source
+
+
+def test_groups_cidr_forms_show_assignable_client_capacity() -> None:
+    """新建和编辑组都应展示与真实 CCD 分配一致的可用客户端 IP 数。"""
+
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "app" / "ui" / "pages" / "groups.py").read_text(encoding="utf-8")
+
+    assert "assignable_client_ip_count" in source
+    assert "可分配客户端 IP" in source
+    assert 'update_capacity(str(group.get("subnet") or ""))' in source
