@@ -1,6 +1,6 @@
 """CIDR 校验工具单元测试"""
 import pytest
-from app.utils.cidr import is_subnet_of, normalize_cidr, subnets_overlap, validate_cidr
+from app.utils.cidr import assignable_client_ip_count, is_subnet_of, normalize_cidr, subnets_overlap, validate_cidr
 
 
 class TestValidateCidr:
@@ -43,6 +43,22 @@ class TestNormalizeCidr:
         assert normalize_cidr("192.168.1.1") is None
         assert normalize_cidr("999.1.1.1/24") is None
         assert normalize_cidr("") is None
+
+
+class TestAssignableClientIpCount:
+    """测试用户组按真实 CCD 分配规则计算客户端容量。"""
+
+    def test_common_prefixes(self):
+        assert assignable_client_ip_count("192.168.1.0/16") == 65533
+        assert assignable_client_ip_count("10.8.1.0/24") == 253
+        assert assignable_client_ip_count("10.8.1.0/30") == 1
+
+    def test_small_networks_follow_allocator_semantics(self):
+        assert assignable_client_ip_count("10.8.1.0/31") == 1
+        assert assignable_client_ip_count("10.8.1.1/32") == 0
+
+    def test_invalid_returns_none(self):
+        assert assignable_client_ip_count("not-a-cidr") is None
 
 
 class TestIsSubnetOf:
