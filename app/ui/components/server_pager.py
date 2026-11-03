@@ -54,9 +54,10 @@ def render_server_pager(
                 list(normalized_options),
                 value=safe_size,
                 on_change=lambda event: on_page_size_change(int(event.value)),
-            ).props("dense borderless options-dense").classes(
-                "vpn-server-pager__page-size"
-            )
+            ).props(
+                "dense borderless options-dense "
+                "popup-content-class=vpn-server-pager-menu"
+            ).classes("vpn-server-pager__page-size")
 
         ui.label(
             f"{range_start} 至 {range_end} 共 {safe_total}"
