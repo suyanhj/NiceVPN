@@ -7,6 +7,8 @@ import time
 
 import schedule
 
+from app.utils.shutdown import is_shutdown_requested
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,14 +92,18 @@ def start_scheduler():
             logger.error("启动时重建防火墙失败（请检查本机 iptables/ipset 权限）: %s", e)
 
     def _run():
-        """后台线程主循环：持续执行待调度任务"""
+        """后台线程主循环：持续执行待调度任务，应用退出时及时结束。"""
         logger.info("定时任务调度器已启动")
-        while True:
+        while not is_shutdown_requested():
             try:
                 schedule.run_pending()
             except Exception as e:
                 logger.error("定时任务执行异常: %s", e)
-            time.sleep(1)
+            for _ in range(10):
+                if is_shutdown_requested():
+                    break
+                time.sleep(0.1)
+        logger.info("定时任务调度器已停止")
 
     t = threading.Thread(target=_run, daemon=True, name="scheduler")
     t.start()
