@@ -203,6 +203,7 @@ def run_web() -> None:
             reconnect_timeout=float(
                 config.get("admin_reconnect_timeout_seconds", 300) or 300
             ),
+            timeout_graceful_shutdown=10,
         )
     except KeyboardInterrupt:
         # 正常情况下 app.on_shutdown 已先完成后台资源清理；此处仅作兜底。
