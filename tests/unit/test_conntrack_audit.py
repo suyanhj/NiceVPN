@@ -78,3 +78,47 @@ def test_parse_conntrack_ignores_non_vpn_source():
     )
 
     assert event is None
+
+
+
+def test_conntrack_run_loop_does_not_restart_after_stop(monkeypatch):
+    """主动 stop 后不得进入 conntrack 自愈重启路径。"""
+    from app.services.audit import conntrack_audit as module
+
+    service = module.ConntrackAuditService(restart_delay_seconds=0)
+    calls = []
+
+    monkeypatch.setattr(module, "is_shutdown_requested", lambda: False)
+
+    def run_once():
+        calls.append("run")
+        service._stop_event.set()
+
+    monkeypatch.setattr(service, "_run_once", run_once)
+    service._run_forever()
+
+    assert calls == ["run"]
+
+
+def test_conntrack_run_loop_honors_global_shutdown(monkeypatch):
+    """应用全局 shutdown 一旦触发，conntrack 不得再次拉起子进程。"""
+    from app.services.audit import conntrack_audit as module
+
+    service = module.ConntrackAuditService(restart_delay_seconds=0)
+    state = {"shutdown": False}
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "is_shutdown_requested",
+        lambda: bool(state["shutdown"]),
+    )
+
+    def run_once():
+        calls.append("run")
+        state["shutdown"] = True
+
+    monkeypatch.setattr(service, "_run_once", run_once)
+    service._run_forever()
+
+    assert calls == ["run"]
