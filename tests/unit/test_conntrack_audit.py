@@ -122,3 +122,16 @@ def test_conntrack_run_loop_honors_global_shutdown(monkeypatch):
     service._run_forever()
 
     assert calls == ["run"]
+
+
+
+def test_conntrack_subprocess_is_detached_from_terminal() -> None:
+    """conntrack 子进程应独立于终端前台进程组，避免 Ctrl+C 直接打到子进程。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "app" / "services" / "audit" / "conntrack_audit.py"
+    ).read_text(encoding="utf-8")
+
+    assert "start_new_session=True" in source
