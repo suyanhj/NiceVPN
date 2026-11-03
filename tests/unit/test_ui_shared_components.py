@@ -601,3 +601,16 @@ def test_shared_server_pager_matches_certificate_footer_dimensions() -> None:
     assert "ui.select(" not in server_pager_source
     assert "ui.menu()" in server_pager_source
     assert "vpn-server-pager-menu__item--active" in server_pager_source
+
+
+def test_ag_grid_page_size_options_are_centered_like_server_pager() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+
+    assert ".ag-theme-quartz .ag-select-list-item" in shell_css
+    assert "justify-content: center !important;" in shell_css
+    assert "text-align: center !important;" in shell_css
