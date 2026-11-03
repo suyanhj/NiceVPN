@@ -1,0 +1,88 @@
+name: Build Vue runtime assets
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/ui/vue/frontend/**"
+      - ".github/workflows/frontend-dist.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frontend-dist-main
+  cancel-in-progress: true
+
+jobs:
+  build-and-commit:
+    name: Build and commit Vue dist
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/ui/vue/frontend/package-lock.json
+
+      - name: Build production Vue assets
+        working-directory: app/ui/vue/frontend
+        run: |
+          set -euo pipefail
+          npm config set registry "https://registry.npmmirror.com"
+          npm ci --no-audit --no-fund
+          npm run check
+          test -s ../dist/VpnSpotlightSurface.js
+          test -s ../dist/VpnInteractiveGrid.js
+
+      - name: Write build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("app/ui/vue/dist/frontend-build.json")
+          path.write_text(
+              json.dumps(
+                  {
+                      "source_commit": os.environ["GITHUB_SHA"],
+                      "node": "22",
+                      "built_by": "github-actions",
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit compiled runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f app/ui/vue/dist
+          if git diff --cached --quiet; then
+            echo "Vue dist is already up to date."
+            exit 0
+          fi
+
+          git commit -m "chore(ui): refresh compiled frontend assets [skip ci]"
+          git push origin HEAD:main
