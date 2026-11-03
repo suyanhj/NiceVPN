@@ -40,6 +40,27 @@ def normalize_cidr(s: str) -> str | None:
         return None
     return f"{n.network}/{n.prefixlen}"
 
+def assignable_client_ip_count(s: str) -> int | None:
+    """返回 NiceVPN 组子网实际可分配给客户端的 IPv4 地址数量。
+
+    与 UserService._allocate_virtual_ip_for_group 保持一致：
+    先按 IPv4 hosts() 排除网络/广播地址（/31、/32 遵循标准库语义），
+    再额外保留第一个可用主机地址，因此客户端从第二个 host 开始分配。
+    非法 CIDR 返回 None。
+    """
+    normalized = normalize_cidr(s)
+    if normalized is None:
+        return None
+    network = IPNetwork(normalized, version=4)
+    prefix = int(network.prefixlen)
+    size = int(network.size)
+    if prefix <= 30:
+        host_count = max(0, size - 2)
+    else:
+        host_count = size
+    return max(0, host_count - 1)
+
+
 def is_subnet_of(child: str, parent: str) -> bool:
     """判断 child 是否为 parent 的子网（或完全相同）。
 
