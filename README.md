@@ -77,6 +77,32 @@ CLI 不需要前端构建：
 ./start.sh cli --help
 ```
 
+推荐使用分层命令：
+
+```bash
+# 用户组
+./start.sh cli group list
+./start.sh cli group show --group-name 开发组
+./start.sh cli group add --name 开发组 --subnet 10.224.1.0/24
+./start.sh cli group update --group-name 开发组 --name 研发组
+./start.sh cli group disable --group-name 开发组
+./start.sh cli group enable --group-name 开发组
+./start.sh cli group delete --group-name 开发组
+
+# 用户
+./start.sh cli user list
+./start.sh cli user show alice
+./start.sh cli user add --username alice --group-name 开发组
+./start.sh cli user move alice --group-name 运维组
+./start.sh cli user disable alice
+./start.sh cli user enable alice
+./start.sh cli user kick alice
+./start.sh cli user regenerate-ovpn alice
+./start.sh cli user delete alice
+```
+
+修改类命令均支持 `--dry-run`；列表命令支持 `--json` 便于脚本消费。旧的 `add-group` / `add-user` 命令继续兼容。
+
 **命令行（可选）**：`python main.py cli --help`（逻辑见 `app/cli/entry.py`）。
 
 ### Python 解释器选择
