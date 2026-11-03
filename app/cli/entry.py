@@ -349,96 +349,480 @@ def cmd_hash_admin_password(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _print_json(data: object) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+
+
+def _print_rows(rows: list[dict], columns: list[tuple[str, str]]) -> None:
+    """无第三方依赖的紧凑表格输出；脚本消费可改用 --json。"""
+    if not rows:
+        print("（无数据）")
+        return
+    values: list[list[str]] = []
+    widths = [len(title) for _, title in columns]
+    for row in rows:
+        rendered = [str(row.get(key, "") if row.get(key) is not None else "") for key, _ in columns]
+        values.append(rendered)
+        for i, value in enumerate(rendered):
+            widths[i] = max(widths[i], len(value))
+    header = "  ".join(title.ljust(widths[i]) for i, (_, title) in enumerate(columns))
+    print(header)
+    print("  ".join("-" * w for w in widths))
+    for rendered in values:
+        print("  ".join(value.ljust(widths[i]) for i, value in enumerate(rendered)))
+
+
+def _resolve_group(
+    gs: GroupService,
+    *,
+    group_id: str | None = None,
+    group_name: str | None = None,
+) -> dict:
+    gid = _resolve_group_id(gs, group_id=group_id, group_name=group_name)
+    group = gs.get(gid)
+    if not group:
+        raise SystemExit(f"组不存在: {gid}")
+    return group
+
+
+def _require_user(us: UserService, username: str) -> dict:
+    user = us.get(username.strip())
+    if not user or user.get("status") == "deleted":
+        raise SystemExit(f"用户不存在或已删除: {username}")
+    return user
+
+
+def _dry_run_result(action: str, **payload: object) -> int:
+    _print_json({"dry_run": True, "action": action, **payload})
+    return 0
+
+
+# -------------------- group --------------------
+
+def cmd_group_list(args: argparse.Namespace) -> int:
+    gs = GroupService()
+    rows = gs.list_all()
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_rows(
+            rows,
+            [
+                ("id", "ID"),
+                ("name", "名称"),
+                ("subnet", "子网"),
+                ("status", "状态"),
+                ("user_count", "用户数"),
+            ],
+        )
+    return 0
+
+
+def cmd_group_show(args: argparse.Namespace) -> int:
+    group = _resolve_group(
+        GroupService(),
+        group_id=args.group_id,
+        group_name=args.group_name,
+    )
+    _print_json(group)
+    return 0
+
+
+def cmd_group_add(args: argparse.Namespace) -> int:
+    return cmd_add_group(args)
+
+
+def cmd_group_update(args: argparse.Namespace) -> int:
+    gs = GroupService()
+    current = _resolve_group(gs, group_id=args.group_id, group_name=args.group_name)
+    name = str(args.name if args.name is not None else current.get("name") or "").strip()
+    subnet = str(args.subnet if args.subnet is not None else current.get("subnet") or "").strip()
+    if args.dry_run:
+        return _dry_run_result(
+            "group.update",
+            group_id=current["id"],
+            current={"name": current.get("name"), "subnet": current.get("subnet")},
+            requested={"name": name, "subnet": subnet},
+            note="未写入数据库，未同步根组相关 OpenVPN/防火墙配置",
+        )
+    try:
+        updated = gs.update_details(str(current["id"]), name=name, subnet=subnet)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(updated)
+    return 0
+
+
+def cmd_group_delete(args: argparse.Namespace) -> int:
+    gs = GroupService()
+    group = _resolve_group(gs, group_id=args.group_id, group_name=args.group_name)
+    if args.dry_run:
+        return _dry_run_result(
+            "group.delete",
+            group_id=group["id"],
+            name=group.get("name"),
+            subnet=group.get("subnet"),
+            note="未删除用户组",
+        )
+    try:
+        gs.delete(str(group["id"]))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"deleted": True, "id": group["id"], "name": group.get("name")})
+    return 0
+
+
+def _cmd_group_status(args: argparse.Namespace, desired: str) -> int:
+    gs = GroupService()
+    group = _resolve_group(gs, group_id=args.group_id, group_name=args.group_name)
+    if args.dry_run:
+        return _dry_run_result(
+            f"group.{desired}",
+            group_id=group["id"],
+            from_status=group.get("status"),
+            to_status="active" if desired == "enable" else "disabled",
+        )
+    try:
+        updated = gs.enable(str(group["id"])) if desired == "enable" else gs.disable(str(group["id"]))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(updated)
+    return 0
+
+
+def cmd_group_enable(args: argparse.Namespace) -> int:
+    return _cmd_group_status(args, "enable")
+
+
+def cmd_group_disable(args: argparse.Namespace) -> int:
+    return _cmd_group_status(args, "disable")
+
+
+# -------------------- user --------------------
+
+def _user_view_rows(us: UserService, rows: list[dict]) -> list[dict]:
+    ip_map = us.list_ccd_virtual_ipv4_by_username()
+    return [
+        {
+            **row,
+            "virtual_ip": ip_map.get(str(row.get("username") or ""), ""),
+        }
+        for row in rows
+    ]
+
+
+def cmd_user_list(args: argparse.Namespace) -> int:
+    us = UserService()
+    rows = us.list_all()
+    if args.group_id or args.group_name:
+        gid = _resolve_group_id(
+            GroupService(),
+            group_id=args.group_id,
+            group_name=args.group_name,
+        )
+        rows = [row for row in rows if str(row.get("group_id") or "") == gid]
+    if args.status:
+        rows = [row for row in rows if str(row.get("status") or "") == args.status]
+    rows = _user_view_rows(us, rows)
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_rows(
+            rows,
+            [
+                ("username", "用户名"),
+                ("group_id", "组ID"),
+                ("virtual_ip", "VPN IP"),
+                ("status", "状态"),
+                ("cert_serial", "证书序列号"),
+            ],
+        )
+    return 0
+
+
+def cmd_user_show(args: argparse.Namespace) -> int:
+    us = UserService()
+    user = _require_user(us, args.username)
+    user = dict(user)
+    user["virtual_ip"] = us.list_ccd_virtual_ipv4_by_username().get(args.username, "")
+    _print_json(user)
+    return 0
+
+
+def cmd_user_add(args: argparse.Namespace) -> int:
+    return cmd_add_user(args)
+
+
+def cmd_user_delete(args: argparse.Namespace) -> int:
+    _require_initialized()
+    us = UserService()
+    user = _require_user(us, args.username)
+    if args.dry_run:
+        return _dry_run_result(
+            "user.delete",
+            username=args.username,
+            group_id=user.get("group_id"),
+            note="未吊销证书、未更新 CRL、未删除 OVPN/CCD/设备绑定",
+        )
+    try:
+        us.delete(args.username)
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"deleted": True, "username": args.username})
+    return 0
+
+
+def _cmd_user_status(args: argparse.Namespace, desired: str) -> int:
+    us = UserService()
+    user = _require_user(us, args.username)
+    target = "active" if desired == "enable" else "disabled"
+    current = str(user.get("status") or "")
+    if args.dry_run:
+        return _dry_run_result(
+            f"user.{desired}",
+            username=args.username,
+            from_status=current,
+            to_status=target,
+        )
+    if current != target:
+        try:
+            current = us.toggle_status(args.username)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    _print_json({"username": args.username, "status": current})
+    return 0
+
+
+def cmd_user_enable(args: argparse.Namespace) -> int:
+    return _cmd_user_status(args, "enable")
+
+
+def cmd_user_disable(args: argparse.Namespace) -> int:
+    return _cmd_user_status(args, "disable")
+
+
+def cmd_user_move(args: argparse.Namespace) -> int:
+    _require_initialized()
+    us = UserService()
+    user = _require_user(us, args.username)
+    gid = _resolve_group_id(
+        GroupService(),
+        group_id=args.group_id,
+        group_name=args.group_name,
+    )
+    if args.dry_run:
+        return _dry_run_result(
+            "user.move",
+            username=args.username,
+            old_group_id=user.get("group_id"),
+            new_group_id=gid,
+            note="未修改 CCD、未重新分配 VPN IP、未踢当前会话",
+        )
+    try:
+        result = us.change_group(args.username, gid)
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(result)
+    return 0
+
+
+def cmd_user_regenerate_ovpn(args: argparse.Namespace) -> int:
+    _require_initialized()
+    us = UserService()
+    _require_user(us, args.username)
+    if args.dry_run:
+        return _dry_run_result(
+            "user.regenerate-ovpn",
+            username=args.username,
+            note="未重建 OVPN 文件",
+        )
+    try:
+        path = us.regenerate_ovpn(args.username)
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"username": args.username, "ovpn_file_path": path})
+    return 0
+
+
+def cmd_user_kick(args: argparse.Namespace) -> int:
+    us = UserService()
+    _require_user(us, args.username)
+    if args.dry_run:
+        return _dry_run_result(
+            "user.kick",
+            username=args.username,
+            note="未通过 OpenVPN Management Interface 踢下线",
+        )
+    us.kick_offline(args.username)
+    _print_json({"username": args.username, "kicked": True})
+    return 0
+
+
+def _add_group_selector(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--group-id", default=None, help="组 UUID")
+    parser.add_argument("--group-name", default=None, help="组名称（与 --group-id 二选一）")
+
+
+def _add_dry_run(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="试运行：完成解析/定位后仅打印预览，不执行修改",
+    )
+    parser.set_defaults(dry_run=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cli.py",
         description=(
-            "OpenVPN 管理端命令行（核心操作）；亦可用: python main.py cli …\n\n"
-            "试运行：在命令行**任意位置**加入 --dry-run（可多次，效果相同）。"
-            "与正式命令使用同一套参数解析与业务校验，全部通过后仅打印 JSON，不写库、不签证书、不重建 iptables。\n"
-            "Tab 补全：pip install argcomplete 后运行 deploy/shell/install-ovpn-cli-symlink.sh（见脚本内说明）。"
+            "NiceVPN 命令行管理工具；亦可用: python main.py cli …\n\n"
+            "推荐使用分层命令：group / user / add-firewall。"
+            "旧命令 add-group / add-user 继续兼容。\n"
+            "试运行：在命令行任意位置加入 --dry-run。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # 与 _extract_dry_run 配合：真实 argv 会先剥离 --dry-run，此处仅供 argcomplete 识别根级补全
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run_root",
-        help=argparse.SUPPRESS,
-    )
+    p.add_argument("--dry-run", action="store_true", dest="dry_run_root", help=argparse.SUPPRESS)
     p.set_defaults(dry_run_root=False)
     sub = p.add_subparsers(dest="command", required=True)
 
-    g = sub.add_parser("add-group", help="添加用户组")
+    # ---------- group ----------
+    group = sub.add_parser("group", help="用户组管理")
+    group_sub = group.add_subparsers(dest="group_command", required=True)
+
+    gl = group_sub.add_parser("list", help="列出用户组")
+    gl.add_argument("--json", action="store_true", help="输出 JSON")
+    gl.set_defaults(func=cmd_group_list, dry_run=False)
+
+    gs = group_sub.add_parser("show", help="查看用户组详情")
+    _add_group_selector(gs)
+    gs.set_defaults(func=cmd_group_show, dry_run=False)
+
+    ga = group_sub.add_parser("add", help="添加用户组")
+    ga.add_argument("--name", required=True, help="组名称")
+    ga.add_argument("--subnet", required=True, help="子网 CIDR，如 10.8.1.0/24")
+    _add_dry_run(ga)
+    ga.set_defaults(func=cmd_group_add)
+
+    gu = group_sub.add_parser("update", help="修改用户组名称或子网")
+    _add_group_selector(gu)
+    gu.add_argument("--name", default=None, help="新组名称；省略则保持不变")
+    gu.add_argument("--subnet", default=None, help="新子网 CIDR；省略则保持不变")
+    _add_dry_run(gu)
+    gu.set_defaults(func=cmd_group_update)
+
+    gd = group_sub.add_parser("delete", help="删除用户组")
+    _add_group_selector(gd)
+    _add_dry_run(gd)
+    gd.set_defaults(func=cmd_group_delete)
+
+    ge = group_sub.add_parser("enable", help="启用用户组")
+    _add_group_selector(ge)
+    _add_dry_run(ge)
+    ge.set_defaults(func=cmd_group_enable)
+
+    gx = group_sub.add_parser("disable", help="停用用户组")
+    _add_group_selector(gx)
+    _add_dry_run(gx)
+    gx.set_defaults(func=cmd_group_disable)
+
+    # ---------- user ----------
+    user = sub.add_parser("user", help="VPN 用户管理")
+    user_sub = user.add_subparsers(dest="user_command", required=True)
+
+    ul = user_sub.add_parser("list", help="列出用户")
+    _add_group_selector(ul)
+    ul.add_argument("--status", choices=("active", "disabled"), default=None, help="按状态筛选")
+    ul.add_argument("--json", action="store_true", help="输出 JSON")
+    ul.set_defaults(func=cmd_user_list, dry_run=False)
+
+    ushow = user_sub.add_parser("show", help="查看用户详情")
+    ushow.add_argument("username", help="用户名")
+    ushow.set_defaults(func=cmd_user_show, dry_run=False)
+
+    ua = user_sub.add_parser("add", help="添加 VPN 用户（需已初始化 PKI）")
+    ua.add_argument("--username", required=True, help="用户名")
+    _add_group_selector(ua)
+    ua.add_argument("--password", default=None, help="客户端私钥加密密码；只传给 EasyRSA，不保存")
+    _add_dry_run(ua)
+    ua.set_defaults(func=cmd_user_add)
+
+    ud = user_sub.add_parser("delete", help="删除用户并吊销证书")
+    ud.add_argument("username", help="用户名")
+    _add_dry_run(ud)
+    ud.set_defaults(func=cmd_user_delete)
+
+    ue = user_sub.add_parser("enable", help="启用用户")
+    ue.add_argument("username", help="用户名")
+    _add_dry_run(ue)
+    ue.set_defaults(func=cmd_user_enable)
+
+    ux = user_sub.add_parser("disable", help="停用用户并踢下线")
+    ux.add_argument("username", help="用户名")
+    _add_dry_run(ux)
+    ux.set_defaults(func=cmd_user_disable)
+
+    um = user_sub.add_parser("move", help="切换用户所属组并重新分配 VPN IP")
+    um.add_argument("username", help="用户名")
+    _add_group_selector(um)
+    _add_dry_run(um)
+    um.set_defaults(func=cmd_user_move)
+
+    ur = user_sub.add_parser("regenerate-ovpn", help="按当前 PKI/组配置重建用户 OVPN")
+    ur.add_argument("username", help="用户名")
+    _add_dry_run(ur)
+    ur.set_defaults(func=cmd_user_regenerate_ovpn)
+
+    uk = user_sub.add_parser("kick", help="踢掉用户当前在线会话")
+    uk.add_argument("username", help="用户名")
+    _add_dry_run(uk)
+    uk.set_defaults(func=cmd_user_kick)
+
+    # ---------- backward-compatible flat commands ----------
+    g = sub.add_parser("add-group", help="兼容旧命令：添加用户组")
     g.add_argument("--name", required=True, help="组名称")
     g.add_argument("--subnet", required=True, help="子网 CIDR，如 10.8.1.0/24")
-    g.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="试运行：校验通过后仅打印 JSON，不落库",
-    )
-    g.set_defaults(func=cmd_add_group, dry_run=False)
+    _add_dry_run(g)
+    g.set_defaults(func=cmd_add_group)
 
-    u = sub.add_parser("add-user", help="添加 VPN 用户（需已初始化 PKI）")
+    u = sub.add_parser("add-user", help="兼容旧命令：添加 VPN 用户")
     u.add_argument("--username", required=True, help="用户名")
-    u.add_argument("--group-id", default=None, help="组 UUID")
-    u.add_argument("--group-name", default=None, help="组名（与 --group-id 二选一）")
-    u.add_argument(
-        "--password",
-        default=None,
-        help="客户端私钥加密密码；仅传给 EasyRSA，不由 NiceVPN 保存",
-    )
-    u.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="试运行：校验通过后仅打印 JSON，不落库",
-    )
-    u.set_defaults(func=cmd_add_user, dry_run=False)
+    _add_group_selector(u)
+    u.add_argument("--password", default=None, help="客户端私钥加密密码；仅传给 EasyRSA，不保存")
+    _add_dry_run(u)
+    u.set_defaults(func=cmd_add_user)
 
-    f = sub.add_parser(
-        "add-firewall",
-        help="添加防火墙规则；可从 iptables 命令文本文件导入",
-    )
-    f.add_argument(
-        "--owner-type",
-        required=True,
-        choices=("group", "user"),
-        help="规则归属类型",
-    )
-    f.add_argument("--owner-id", default=None, help="组 UUID（owner-type=group 时）")
-    f.add_argument("--group-name", default=None, help="组名（与 owner-id 二选一）")
-    f.add_argument("--username", default=None, help="用户名（owner-type=user 时）")
-    iptables_file = f.add_argument(
+    # ---------- firewall (保持原行为) ----------
+    fw = sub.add_parser("add-firewall", help="添加防火墙规则；可从 iptables 命令文本文件导入")
+    fw.add_argument("--owner-type", required=True, choices=("group", "user"), help="规则归属类型")
+    fw.add_argument("--owner-id", default=None, help="组 UUID（owner-type=group 时）")
+    fw.add_argument("--group-name", default=None, help="组名（与 owner-id 二选一）")
+    fw.add_argument("--username", default=None, help="用户名（owner-type=user 时）")
+    iptables_file = fw.add_argument(
         "--iptables-file",
         default=None,
         help="每行一条完整命令，如 iptables -A INPUT -p udp --dport 1194 -j ACCEPT",
     )
-    f.add_argument(
-        "--iptables-line",
-        default=None,
-        help="单条 iptables 命令（与文件二选一或同时使用，先 line 后 file）",
-    )
-    f.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="试运行：校验通过后仅打印 JSON，不落库",
-    )
-    f.set_defaults(func=cmd_add_firewall, dry_run=False)
+    fw.add_argument("--iptables-line", default=None, help="单条 iptables 命令")
+    _add_dry_run(fw)
+    fw.set_defaults(func=cmd_add_firewall)
     if FilesCompleter is not None:
         iptables_file.completer = FilesCompleter()
 
-    auth = sub.add_parser(
-        "hash-admin-password",
-        help="交互生成管理后台使用的 Argon2id 密码哈希",
-    )
+    auth = sub.add_parser("hash-admin-password", help="交互生成管理后台使用的 Argon2id 密码哈希")
     auth.set_defaults(func=cmd_hash_admin_password, dry_run=False)
 
     return p
-
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
