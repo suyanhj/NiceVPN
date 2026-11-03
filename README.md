@@ -98,6 +98,16 @@ CLI 不需要前端构建：
 ./start.sh cli user enable alice
 ./start.sh cli user kick alice
 ./start.sh cli user regenerate-ovpn alice
+
+# 设备绑定
+./start.sh cli user device show alice
+./start.sh cli user device reset alice
+
+# OVPN 文件
+./start.sh cli user ovpn show alice
+./start.sh cli user ovpn export alice --output /root/alice.ovpn
+./start.sh cli user ovpn regenerate alice
+
 ./start.sh cli user delete alice
 ```
 
