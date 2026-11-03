@@ -9,7 +9,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from nicegui import ui
 
-from app.ui.components.server_pager import SERVER_PAGE_SIZE_OPTIONS
+from app.ui.components.server_pager import SERVER_PAGE_SIZE_OPTIONS, render_server_pager
 
 
 MULTI_TEXT_FILTER_JS = "window.NiceVpnMultiTextFilter"
@@ -182,6 +182,12 @@ def render_data_grid(
         )
     if pagination and not server_pagination:
         options["paginationPageSize"] = page_size
+        options["paginationPageSizeSelector"] = list(
+            dict.fromkeys(
+                max(1, int(value))
+                for value in (*server_page_size_options, page_size)
+            )
+        )
     if suppress_horizontal_scroll:
         options["suppressHorizontalScroll"] = True
     if external_filter_text is not None:
@@ -232,39 +238,12 @@ def render_data_grid(
             else None
         )
         if server_pagination:
-            with ui.row().classes(
-                "vpn-data-grid__server-pager w-full items-center justify-end gap-2"
-            ):
-                if on_server_page_size_change is not None:
-                    normalized_options = tuple(
-                        dict.fromkeys(
-                            max(1, int(value))
-                            for value in (*server_page_size_options, page_size)
-                        )
-                    )
-                    ui.label("每页").classes("vpn-data-grid__server-page-label")
-                    ui.select(
-                        list(normalized_options),
-                        value=page_size,
-                        on_change=lambda event: on_server_page_size_change(
-                            int(event.value)
-                        ),
-                    ).props(
-                        "dense outlined options-dense"
-                    ).classes("vpn-data-grid__server-page-size")
-                previous = ui.button(
-                    icon="chevron_left",
-                    on_click=lambda: on_server_page_change(current_page - 1),
-                ).props("flat round dense aria-label='上一页'")
-                ui.label(
-                    f"第 {current_page} / {total_pages} 页 · 共 {total_rows} 条"
-                ).classes("vpn-data-grid__server-page-label")
-                following = ui.button(
-                    icon="chevron_right",
-                    on_click=lambda: on_server_page_change(current_page + 1),
-                ).props("flat round dense aria-label='下一页'")
-                if current_page <= 1:
-                    previous.disable()
-                if current_page >= total_pages:
-                    following.disable()
+            render_server_pager(
+                total=total_rows,
+                page=current_page,
+                page_size=page_size,
+                on_change=on_server_page_change,
+                on_page_size_change=on_server_page_size_change,
+                page_size_options=server_page_size_options,
+            )
     return DataGrid(container=container, grid=grid, summary=summary)
