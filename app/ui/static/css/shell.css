@@ -1368,6 +1368,23 @@ body {
   background: rgba(110, 168, 255, 0.07);
 }
 
+/* AG Grid 原生分页 page-size 下拉与服务端分页菜单统一：数字居中、紧凑、同一 hover/active 语言。 */
+.ag-theme-quartz .ag-select-list-item {
+  justify-content: center !important;
+  padding-inline: 0 !important;
+  text-align: center !important;
+}
+
+.ag-theme-quartz .ag-select-list-item > span {
+  width: 100%;
+  text-align: center !important;
+}
+
+.ag-theme-quartz .ag-select-list-item.ag-active-item {
+  background: rgba(21, 189, 232, 0.07) !important;
+  color: #dfe7f2 !important;
+}
+
 /* 服务端分页严格对齐 AG Grid 原生分页条。 */
 .vpn-server-pager {
   display: flex !important;
