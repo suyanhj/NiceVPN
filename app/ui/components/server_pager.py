@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""服务端分页的共享轻量页脚。"""
+"""服务端分页的共享页脚，视觉与 AG Grid 原生分页保持一致。"""
 
 from __future__ import annotations
 
@@ -30,14 +30,18 @@ def render_server_pager(
     on_page_size_change: Callable[[int], object] | None = None,
     page_size_options: Sequence[int] = SERVER_PAGE_SIZE_OPTIONS,
 ) -> None:
-    """渲染服务端分页页脚；页码与每页条数变化都由调用方重新查询数据。"""
+    """渲染统一服务端分页页脚；样式、信息密度与 AG Grid 原生分页对齐。"""
 
     safe_total = max(0, int(total))
     safe_size = max(1, int(page_size))
     pages = max(1, (safe_total + safe_size - 1) // safe_size)
     current = min(max(1, int(page)), pages)
+    range_start = 0 if safe_total == 0 else (current - 1) * safe_size + 1
+    range_end = min(safe_total, current * safe_size)
 
-    with ui.row().classes("w-full items-center justify-end gap-2 q-pt-sm"):
+    with ui.row().classes(
+        "vpn-server-pager w-full items-center justify-end no-wrap"
+    ):
         if on_page_size_change is not None:
             normalized_options = tuple(
                 dict.fromkeys(
@@ -45,27 +49,50 @@ def render_server_pager(
                     for value in (*page_size_options, safe_size)
                 )
             )
-            ui.label("每页").classes("text-caption text-grey-6")
+            ui.label("每页").classes("vpn-server-pager__label")
             ui.select(
                 list(normalized_options),
                 value=safe_size,
                 on_change=lambda event: on_page_size_change(int(event.value)),
-            ).props(
-                "dense outlined options-dense"
-            ).classes("server-pager-page-size")
+            ).props("dense borderless options-dense").classes(
+                "vpn-server-pager__page-size"
+            )
 
+        ui.label(
+            f"{range_start} 至 {range_end} 共 {safe_total}"
+        ).classes("vpn-server-pager__range")
+
+        first = ui.button(
+            icon="first_page",
+            on_click=lambda: on_change(1),
+        ).props("flat round dense aria-label='首页'").classes(
+            "vpn-server-pager__button"
+        )
         previous = ui.button(
             icon="chevron_left",
             on_click=lambda: on_change(current - 1),
-        ).props("flat round dense aria-label='上一页'")
-        ui.label(f"第 {current} / {pages} 页 · 共 {safe_total} 条").classes(
-            "text-caption text-grey-6"
+        ).props("flat round dense aria-label='上一页'").classes(
+            "vpn-server-pager__button"
         )
+
+        ui.label(f"第{current}共{pages}").classes("vpn-server-pager__page")
+
         following = ui.button(
             icon="chevron_right",
             on_click=lambda: on_change(current + 1),
-        ).props("flat round dense aria-label='下一页'")
+        ).props("flat round dense aria-label='下一页'").classes(
+            "vpn-server-pager__button"
+        )
+        last = ui.button(
+            icon="last_page",
+            on_click=lambda: on_change(pages),
+        ).props("flat round dense aria-label='末页'").classes(
+            "vpn-server-pager__button"
+        )
+
         if current <= 1:
+            first.disable()
             previous.disable()
         if current >= pages:
             following.disable()
+            last.disable()
