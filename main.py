@@ -4,13 +4,17 @@
 import logging
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from fastapi import Request
 from nicegui import app, ui
+from nicegui.server import Server
 
 logger = logging.getLogger(__name__)
 _shutdown_hook_registered = False
+_background_shutdown_started = threading.Event()
 
 from app.core.config import load_config
 from app.core.constants import DEFAULT_HOST, DEFAULT_PORT
@@ -39,13 +43,38 @@ from app.utils.session_secret import load_or_create_session_secret
 from app.utils.shutdown import request_shutdown
 
 def _shutdown_background_services() -> None:
-    """通知后台任务退出，并停止持有外部子进程的服务。"""
+    """通知后台任务退出，并停止持有外部子进程的服务；可重复调用。"""
+    if _background_shutdown_started.is_set():
+        return
+    _background_shutdown_started.set()
     request_shutdown()
     try:
         stop_conntrack_audit_listener()
     except Exception:
         logger.exception("停止 conntrack 连接审计监听失败")
 
+
+def _watch_uvicorn_exit() -> None:
+    """Uvicorn 一收到退出请求，就尽早停止 NiceVPN 后台服务。"""
+    server = None
+    while server is None:
+        server = getattr(Server, "instance", None)
+        if server is None:
+            time.sleep(0.05)
+
+    while not server.should_exit and not server.force_exit:
+        time.sleep(0.05)
+
+    _shutdown_background_services()
+
+
+def _start_uvicorn_exit_watcher() -> None:
+    """统一覆盖 Ctrl+C 与 systemd SIGTERM 的早期退出监听。"""
+    threading.Thread(
+        target=_watch_uvicorn_exit,
+        daemon=True,
+        name="uvicorn-exit-watcher",
+    ).start()
 
 def _register_shutdown_hook() -> None:
     """只注册一次 NiceGUI/Uvicorn 正常 shutdown 生命周期回调。"""
@@ -190,6 +219,8 @@ def run_web() -> None:
         else None
     )
 
+    _start_uvicorn_exit_watcher()
+
     try:
         ui.run(
             host=DEFAULT_HOST,
@@ -203,7 +234,6 @@ def run_web() -> None:
             reconnect_timeout=float(
                 config.get("admin_reconnect_timeout_seconds", 300) or 300
             ),
-            timeout_graceful_shutdown=10,
         )
     except KeyboardInterrupt:
         # 正常情况下 app.on_shutdown 已先完成后台资源清理；此处仅作兜底。
