@@ -32,7 +32,7 @@ from app.ui.grid_query import (
     sort_rows,
     multi_text_filter_spec,
 )
-from app.ui.components.states import empty_state, error_state, loading_state, no_match_state
+from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
 from app.ui.components.list_selection import (
@@ -290,7 +290,7 @@ class UsersPage:
                 {label or gid for gid, label in group_names.items()},
                 key=str.casefold,
             ),
-            "device_source": [],
+            "device": [],
         }
 
         filter_model = dict(self._user_filter_model)
@@ -425,7 +425,7 @@ class UsersPage:
         else:
             facet_usernames = usernames_result
 
-        self._user_filter_values["device_source"] = self._device_filter_values(
+        self._user_filter_values["device"] = self._device_filter_values(
             facet_usernames,
             binding_aux,
         )
@@ -453,7 +453,7 @@ class UsersPage:
             rows = filter_rows(
                 rows,
                 filter_model,
-                value_fields={"device_source": "device_filter"},
+                value_fields={"device": "device_filter"},
             )
             rows = sort_rows(
                 rows,
@@ -671,10 +671,11 @@ class UsersPage:
                 "filter": False,
             },
             {
-                "field": "device_source",
-                "headerName": "设备 / 来源",
-                "flex": 1.15,
-                "minWidth": 188,
+                "field": "device",
+                "headerName": "设备",
+                "width": 112,
+                "minWidth": 96,
+                "maxWidth": 132,
                 ":filter": "window.NiceVpnSetFilter",
                 "filterParams": {
                     "filterValueField": "device_filter",
@@ -683,6 +684,14 @@ class UsersPage:
                     "noMatchesLabel": "没有匹配设备",
                     "valueOrder": ["安卓", "iOS", "Mac", "Windows", "Linux", "未知"],
                 },
+            },
+            {
+                "field": "source",
+                "headerName": "来源 IP",
+                "flex": 0.95,
+                "minWidth": 158,
+                "cellClass": "vpn-grid-mono",
+                **multi_text_filter_column("输入来源 IP 后按 Enter"),
             },
             {
                 "field": "actions",
@@ -774,21 +783,15 @@ class UsersPage:
                 ui.icon("warning_amber", color="warning")
                 ui.label("；".join(warnings)).classes("section-caption")
 
-        if self.total_rows <= 0:
+        if self.total_rows <= 0 and not self._user_filter_model:
             self.grid_view = None
-            if self._user_filter_model:
-                no_match_state(
-                    description="当前列筛选没有匹配用户。",
-                    on_clear=self._clear_user_filters,
-                )
-            else:
-                empty_state(
-                    "暂无用户",
-                    description="创建用户或批量导入后会显示在这里。",
-                    action_label="新建用户",
-                    on_action=self._show_create_dialog,
-                    icon="person_off",
-                )
+            empty_state(
+                "暂无用户",
+                description="创建用户或批量导入后会显示在这里。",
+                action_label="新建用户",
+                on_action=self._show_create_dialog,
+                icon="person_off",
+            )
             return
 
         self.grid_view = render_data_grid(
