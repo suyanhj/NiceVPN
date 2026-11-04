@@ -25,6 +25,7 @@ def test_navigation_paths_are_unique_and_keep_existing_urls() -> None:
         "/",
         "/users",
         "/groups",
+        "/tags",
         "/peers",
         "/firewall",
         "/certs",
