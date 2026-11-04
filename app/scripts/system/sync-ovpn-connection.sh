@@ -68,7 +68,9 @@ cleanup_backups() {
     done
 }
 
-trap 'rollback' ERR INT TERM
+trap 'status=$?; rollback; exit "$status"' ERR
+trap 'rollback; exit 130' INT
+trap 'rollback; exit 143' TERM
 
 shopt -s nullglob
 files=("$OVPN_DIR"/*.ovpn)
