@@ -15,6 +15,7 @@ from typing import Any
 from nicegui import background_tasks, run, ui
 
 from app.services.firewall.rule_service import CE_PEER_RULE_PREFIX
+from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
 from app.ui.adapters.firewall import adapt_center_rule_rows
 from app.ui.components.actions import danger_action, secondary_action
@@ -57,10 +58,12 @@ class FirewallCenterGridMixin:
             for peer in self._peer_service.list_all()
             if str(peer.get("id") or "").strip()
         }
+        tag_names = {tag["id"]: tag["name"] for tag in TagService().list_all()}
         rows = adapt_center_rule_rows(
             rules,
             group_names=group_names,
             peer_names=peer_names,
+            tag_names=tag_names,
         )
         self._center_raw_by_id = {
             str(row["id"]): dict(row.get("raw") or {})
@@ -73,9 +76,10 @@ class FirewallCenterGridMixin:
     ) -> tuple[list[dict[str, Any]], int]:
         """从 SQLite 分页读取中心规则，并构建完整的列筛选 facets。"""
 
-        groups_result, peers_result, facets_result = await asyncio.gather(
+        groups_result, peers_result, tags_result, facets_result = await asyncio.gather(
             run.io_bound(GroupService().list_all),
             run.io_bound(self._peer_service.list_all),
+            run.io_bound(TagService().list_all),
             run.io_bound(self.rule_service.list_unified_facets),
             return_exceptions=True,
         )
@@ -100,6 +104,15 @@ class FirewallCenterGridMixin:
                 if str(peer.get("id") or "").strip()
             }
 
+        tag_names: dict[str, str] = {}
+        if isinstance(tags_result, BaseException):
+            logger.error("加载中心规则标签名称失败: %s", tags_result)
+        else:
+            tag_names = {
+                str(tag.get("id") or ""): str(tag.get("name") or "")
+                for tag in tags_result
+            }
+
         if isinstance(facets_result, BaseException):
             raise facets_result
         facets = facets_result
@@ -115,6 +128,8 @@ class FirewallCenterGridMixin:
                 continue
             if owner_type == "group":
                 label = group_names.get(owner_id) or owner_id
+            elif owner_type == "tag":
+                label = f"标签 · {tag_names.get(owner_id) or owner_id}"
             elif owner_type == "peer":
                 peer_name = peer_names.get(owner_id) or ""
                 label = (
@@ -262,6 +277,7 @@ class FirewallCenterGridMixin:
             rules,
             group_names=group_names,
             peer_names=peer_names,
+            tag_names=tag_names,
         )
         return rows, int(total)
 
