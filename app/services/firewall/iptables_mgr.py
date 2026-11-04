@@ -108,7 +108,7 @@ class IptablesManager:
             if kind == "j":
                 rule = payload
                 assert isinstance(rule, FirewallRule)
-                if self._has_multi_specific_ips(list(rule.source_ips or [])):
+                if self._has_multiple_addresses(list(rule.source_ips or [])):
                     specs.append(
                         self.ipset_mgr.spec("rule", rule.id, "src", rule.source_ips or [])
                     )
@@ -122,14 +122,14 @@ class IptablesManager:
                         )
             else:
                 pid, cln, extra = payload  # type: ignore[misc]
-                if self._has_multi_specific_ips(cln):
+                if self._has_multiple_addresses(cln):
                     specs.append(
                         self.ipset_mgr.spec("peer", str(pid), "lan", cln)
                     )
                 dest_ip = str((extra or {}).get("dest_ip") or "").strip()
                 if dest_ip:
                     dest_ips = [ip.strip() for ip in dest_ip.split(",") if ip.strip()]
-                    if self._has_multi_specific_ips(dest_ips):
+                    if self._has_multiple_addresses(dest_ips):
                         specs.append(
                             self.ipset_mgr.spec(
                                 "rule",
@@ -351,24 +351,26 @@ class IptablesManager:
         except ValueError:
             return False
 
+    @staticmethod
+    def _has_multiple_addresses(tokens: list[str]) -> bool:
+        """规范化去重后至少两个 IPv4 IP/CIDR 条目时使用 hash:net ipset。
+
+        保持 ipset_mgr.spec 与 iptables 规则生成的判定口径完全一致。
+        """
+        return len(IpsetManager.normalize_entries(tokens)) >= 2
+
     @classmethod
     def _has_multi_specific_ips(cls, tokens: list[str]) -> bool:
-        """仅当出现两个及以上具体 IP 时返回 True。"""
-        n = 0
-        for item in tokens:
-            if cls._is_specific_ip(item):
-                n += 1
-                if n >= 2:
-                    return True
-        return False
+        """兼容旧调用名；当前含义是多 IP/CIDR，不仅是多个具体 IP。"""
+        return cls._has_multiple_addresses(tokens)
 
     @classmethod
     def _rule_should_use_dest_ipset(cls, rule: FirewallRule) -> bool:
-        """目标侧：只要有多个具体 IP（非 CIDR）则使用 ipset。"""
-        if not rule.dest_ip or "," not in rule.dest_ip:
+        """目标侧：至少两个不同 IP/CIDR 时使用 ipset。"""
+        if not rule.dest_ip:
             return False
         tokens = [ip.strip() for ip in str(rule.dest_ip).split(",") if ip.strip()]
-        return cls._has_multi_specific_ips(tokens)
+        return cls._has_multiple_addresses(tokens)
 
     @staticmethod
     def _filter_table_chain_policy(table: str, chain: str) -> str | None:
@@ -1193,7 +1195,7 @@ class IptablesManager:
         has_l4_match = bool(dest_ip) or bool(dest_port) or (protocol not in ("all", ""))
         if not has_l4_match:
             out: list[str] = []
-            if self._has_multi_specific_ips(cleaned):
+            if self._has_multiple_addresses(cleaned):
                 set_name = self._peer_lan_ipset_name(pid)
                 line = (
                     f"-A {CHAIN_NAME} -m set --match-set {set_name} src "
@@ -1228,7 +1230,7 @@ class IptablesManager:
             raise RuntimeError(f"对端 {pid[:8]} 中心侧匹配条件不合法: {exc}") from exc
         pvs = self._protocol_port_variants(fr)
         dest_tokens = [ip.strip() for ip in str(fr.dest_ip or "").split(",") if ip.strip()]
-        use_dest_ipset = self._has_multi_specific_ips(dest_tokens)
+        use_dest_ipset = self._has_multiple_addresses(dest_tokens)
         if not dest_tokens:
             dest_loop: list[str | None] = [None]
         elif use_dest_ipset:
@@ -1236,7 +1238,7 @@ class IptablesManager:
         else:
             dest_loop = list(dest_tokens)
         out2: list[str] = []
-        if self._has_multi_specific_ips(cleaned):
+        if self._has_multiple_addresses(cleaned):
             set_src = self._peer_lan_ipset_name(pid)
             for dest in dest_loop:
                 for pv in pvs:
@@ -1282,8 +1284,8 @@ class IptablesManager:
         """将单条业务规则展开为一条或多条 iptables 行。
 
         源/目标地址策略：
-        - 任一侧出现“多个具体 IP（非 CIDR）”→ 该侧使用 ipset + ``-m set --match-set``
-        - 其它情况（CIDR/单 IP）→ 直接使用 ``-s/-d``（按列表展开）
+        - 任一侧存在两个及以上规范化去重的 IP/CIDR → 该侧使用 ipset + ``-m set --match-set``
+        - 其它情况（单 CIDR/单 IP）→ 直接使用 ``-s/-d``（按列表展开）
 
         仅当 ``rule.description`` 非空时附加 ``-m comment``（无默认注释）。
         """
@@ -1292,8 +1294,8 @@ class IptablesManager:
 
         src_tokens = [str(ip).strip() for ip in (rule.source_ips or []) if str(ip).strip()]
         dest_tokens = [ip.strip() for ip in str(rule.dest_ip or "").split(",") if ip.strip()]
-        use_src_ipset = self._has_multi_specific_ips(src_tokens)
-        use_dest_ipset = self._has_multi_specific_ips(dest_tokens)
+        use_src_ipset = self._has_multiple_addresses(src_tokens)
+        use_dest_ipset = self._has_multiple_addresses(dest_tokens)
 
         src_terms: list[str | None]
         if use_src_ipset:
