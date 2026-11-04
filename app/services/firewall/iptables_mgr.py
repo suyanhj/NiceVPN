@@ -104,15 +104,17 @@ class IptablesManager:
         实际 stage/swap/rollback/gc 统一交给 IpsetManager。
         """
         specs: list[IpsetSpec] = []
+        seen: set[str] = set()
         for _pri, kind, payload in merged:
             if kind == "j":
                 rule = payload
                 assert isinstance(rule, FirewallRule)
                 if rule.owner_type == "tag":
                     if rule.source_ips:
-                        specs.append(
-                            self.ipset_mgr.spec("tag", rule.owner_id, "src", rule.source_ips)
-                        )
+                        spec = self.ipset_mgr.spec("tag", rule.owner_id, "src", rule.source_ips)
+                        if spec.name not in seen:
+                            specs.append(spec)
+                            seen.add(spec.name)
                 elif self._has_multiple_addresses(list(rule.source_ips or [])):
                     specs.append(
                         self.ipset_mgr.spec("rule", rule.id, "src", rule.source_ips or [])
