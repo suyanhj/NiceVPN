@@ -277,7 +277,7 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
     assert online["device_source"] == "Mac · 203.0.113.10:50000"
 
     assert disabled["device_filter"] == "未知"
-    assert disabled["account_status_tone"] == "warning"
+    assert disabled["account_status_tone"] == "unknown"
     assert disabled["session_status_tone"] == "unknown"
 
 
