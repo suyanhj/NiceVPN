@@ -1506,6 +1506,7 @@ class SettingsPage:
 
         from app.services.firewall.rule_service import FirewallRuleService
         from app.services.openvpn.instance import regenerate_all_server_confs
+        from app.services.user.ovpn_sync import sync_existing_ovpn_connection
 
         previous = load_config()
         try:
@@ -1565,9 +1566,24 @@ class SettingsPage:
             )
             return False
 
+        try:
+            ovpn_sync = sync_existing_ovpn_connection(previous, merged)
+        except Exception as exc:
+            logger.error("同步历史 OVPN 连接地址失败: %s", exc)
+            rollback("历史 OVPN 同步失败")
+            safe_notify(
+                f"同步历史 OVPN 失败，配置已尝试回滚: {exc}",
+                type="negative",
+                multi_line=True,
+            )
+            return False
+
         self.config = load_config()
+        changed = int(ovpn_sync.get("changed") or 0)
+        total = int(ovpn_sync.get("total") or 0)
         safe_notify(
-            "已保存；server.conf 与 VPN_FORWARD 已更新。"
+            "已保存；server.conf、VPN_FORWARD 与客户端连接配置已同步。"
+            f"历史 OVPN 更新 {changed}/{total} 个。"
             "请到服务管理重启实例并让客户端重连。",
             type="positive",
             multi_line=True,
