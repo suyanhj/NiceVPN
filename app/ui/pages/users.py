@@ -796,6 +796,7 @@ class UsersPage:
             selected_ids=self.selected_users,
             on_cell_click=self._on_grid_cell_clicked,
             suppress_horizontal_scroll=True,
+            initial_filter_model=self._user_filter_model,
             show_summary=False,
             server_total=self.total_rows,
             server_page=self.page,
@@ -805,29 +806,6 @@ class UsersPage:
         self.grid_view.grid.on("selectionChanged", self._on_grid_selection_changed)
         self.grid_view.grid.on("filterChanged", self._on_user_grid_query_changed)
         self.grid_view.grid.on("sortChanged", self._on_user_grid_query_changed)
-        self._restore_user_filter_model()
-
-    def _restore_user_filter_model(self) -> None:
-        if self.grid_view is None or not self._user_filter_model:
-            return
-
-        async def apply_model() -> None:
-            try:
-                if self.grid_view is not None:
-                    await self.grid_view.grid.run_grid_method(
-                        "setFilterModel",
-                        self._user_filter_model,
-                    )
-            except Exception as exc:
-                logger.debug("恢复用户 Grid 筛选模型失败: %s", exc)
-
-        try:
-            background_tasks.create(
-                apply_model(),
-                name="users-filter-model-restore",
-            )
-        except RuntimeError:
-            logger.debug("当前无后台任务上下文，跳过用户筛选模型恢复")
 
     def _on_user_page_change(self, page: int) -> None:
         target = max(1, int(page))
