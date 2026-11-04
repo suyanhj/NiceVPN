@@ -78,6 +78,27 @@ class TagService:
             if entity_id in self.store.get_tag_members(tag["id"])[key]
         ]
 
+    def refresh_if_referenced(self, *, entity_type: str, entity_id: str, other_group_id: str = "") -> None:
+        """用户/组状态或地址变动后，仅在存在受影响标签规则时刷新。"""
+        relevant = set(self.get_entity_tag_ids(entity_type, entity_id))
+        if entity_type == "user":
+            user = self.store.get_user(entity_id)
+            if user:
+                relevant.update(self.get_entity_tag_ids("group", str(user.get("group_id") or "")))
+            if other_group_id:
+                relevant.update(self.get_entity_tag_ids("group", other_group_id))
+        if not relevant:
+            return
+        active_refs = {
+            str(rule.get("owner_id") or "")
+            for rule in self.store.list_firewall_rules()
+            if rule.get("owner_type") == "tag" and rule.get("enabled", True)
+        }
+        if not (active_refs & relevant):
+            return
+        from app.services.firewall.rule_service import FirewallRuleService
+        FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+
     def resolve_addresses(self, tag_id: str, *, ccd_ips: dict[str, str] | None = None) -> tuple[str, ...]:
         """合并直接关联用户和关联组下的用户虚拟 IP，以及当前组 CIDR。
 
