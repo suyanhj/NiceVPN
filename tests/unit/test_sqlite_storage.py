@@ -326,7 +326,12 @@ def test_schema_v3_migrates_existing_group_payload_cidr(tmp_path: Path) -> None:
 
     # 模拟旧 v2 数据：payload 中保留合法但不是网络地址的历史 CIDR。
     with store.connection(write=True) as conn:
-        payload = store.get_group("g-old")
+        payload = json.loads(
+            conn.execute(
+                "SELECT payload FROM groups WHERE id = ?",
+                ("g-old",),
+            ).fetchone()["payload"]
+        )
         payload["subnet"] = "10.8.1.12/24"
         conn.execute(
             "UPDATE groups SET payload = ? WHERE id = ?",
@@ -355,7 +360,12 @@ def test_schema_v3_leaves_unparseable_group_cidr_untouched(tmp_path: Path) -> No
     )
 
     with store.connection(write=True) as conn:
-        payload = store.get_group("g-invalid")
+        payload = json.loads(
+            conn.execute(
+                "SELECT payload FROM groups WHERE id = ?",
+                ("g-invalid",),
+            ).fetchone()["payload"]
+        )
         payload["subnet"] = "not-a-cidr"
         conn.execute(
             "UPDATE groups SET payload = ? WHERE id = ?",
