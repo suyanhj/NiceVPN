@@ -12,16 +12,22 @@ from app.core.constants import OVPN_PROFILES_DIR, SCRIPTS_DIR
 _SYNC_SCRIPT = SCRIPTS_DIR / "system" / "sync-ovpn-connection.sh"
 
 
-def _connection_tuple(config: Mapping[str, object]) -> tuple[str, int, str]:
-    host = str(config.get("server_ip") or "").strip()
-    port = int(config.get("port") or 1194)
-    proto = str(config.get("proto") or "udp").strip().lower()
+def _config_value(config: object, key: str, default: object = None) -> object:
+    if isinstance(config, Mapping):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _connection_tuple(config: object) -> tuple[str, int, str]:
+    host = str(_config_value(config, "server_ip", "") or "").strip()
+    port = int(_config_value(config, "port", 1194) or 1194)
+    proto = str(_config_value(config, "proto", "udp") or "udp").strip().lower()
     return host, port, proto
 
 
 def sync_existing_ovpn_connection(
-    previous: Mapping[str, object],
-    current: Mapping[str, object],
+    previous: object,
+    current: object,
 ) -> dict[str, int]:
     """当 server_ip/port/proto 变化时调用 shell 批量同步现有 OVPN。"""
 
