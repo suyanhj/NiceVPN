@@ -16,6 +16,10 @@ reconcile 本身不会立即销毁旧内容。旧 stable 内容会暂存在 stag
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import fcntl
+import os
+import tempfile
+import threading
 import hashlib
 import ipaddress
 import logging
@@ -72,10 +76,45 @@ class IpsetReconcileTransaction:
     swaps: list[IpsetSwap] = field(default_factory=list)
     committed: bool = False
     rolled_back: bool = False
+    # 锁覆盖 reconcile -> iptables 更新 -> commit/rollback 整个事务。
+    lock_fd: int | None = field(default=None, repr=False)
 
 
 class IpsetManager:
     """NiceVPN ipset 的声明式 reconcile 管理器。"""
+
+    # 所有 IpsetManager 实例共享线程锁，跨进程再使用 flock。
+    _transaction_lock = threading.Lock()
+    _lock_path = os.path.join(tempfile.gettempdir(), "nicevpn-ipset-reconcile.lock")
+
+    @classmethod
+    def _acquire_transaction_lock(cls) -> int:
+        cls._transaction_lock.acquire()
+        fd = None
+        try:
+            flags = os.O_RDWR | os.O_CREAT
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(cls._lock_path, flags, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return fd
+        except Exception:
+            if fd is not None:
+                os.close(fd)
+            cls._transaction_lock.release()
+            raise
+
+    @classmethod
+    def _release_transaction_lock(cls, txn: IpsetReconcileTransaction) -> None:
+        fd = txn.lock_fd
+        if fd is None:
+            return
+        txn.lock_fd = None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+            cls._transaction_lock.release()
 
     def __init__(
         self,
@@ -199,10 +238,11 @@ class IpsetManager:
         for spec in desired:
             self._validate_spec(spec)
 
-        existing = self.list_names()
-        txn = IpsetReconcileTransaction(desired_names=set(names))
+        lock_fd = self._acquire_transaction_lock()
+        txn = IpsetReconcileTransaction(desired_names=set(names), lock_fd=lock_fd)
 
         try:
+            existing = self.list_names()
             for spec in desired:
                 stage_name = self._stage_name(spec.name)
                 stable_existed = spec.name in existing
@@ -266,16 +306,19 @@ class IpsetManager:
             logger.error("不能 commit 已 rollback 的 ipset 事务")
             return False
 
-        ok = True
-        for swap in txn.swaps:
-            if not self._destroy_best_effort(swap.stage_name):
+        try:
+            ok = True
+            for swap in txn.swaps:
+                if not self._destroy_best_effort(swap.stage_name):
+                    ok = False
+
+            if not self.gc(txn.desired_names):
                 ok = False
 
-        if not self.gc(txn.desired_names):
-            ok = False
-
-        txn.committed = True
-        return ok
+            txn.committed = True
+            return ok
+        finally:
+            self._release_transaction_lock(txn)
 
     def rollback(self, txn: IpsetReconcileTransaction) -> bool:
         """逆序 swap 回旧内容，并恢复 reconcile 前 stable 集合是否存在的状态。"""
@@ -285,35 +328,43 @@ class IpsetManager:
             logger.error("不能 rollback 已 commit 的 ipset 事务")
             return False
 
-        ok = True
-        for swap in reversed(txn.swaps):
-            try:
-                self._run(
-                    ["ipset", "swap", swap.stage_name, swap.stable_name],
-                    timeout=10,
-                )
-            except Exception as exc:
-                ok = False
-                logger.critical(
-                    "ipset rollback swap 失败 stable=%s stage=%s: %s",
-                    swap.stable_name,
-                    swap.stage_name,
-                    exc,
-                )
-                # stage 里可能仍保存旧内容，保留现场供人工恢复。
-                continue
-
-            if swap.stable_was_created:
-                if not self._destroy_best_effort(swap.stable_name):
+        try:
+            ok = True
+            for swap in reversed(txn.swaps):
+                try:
+                    self._run(
+                        ["ipset", "swap", swap.stage_name, swap.stable_name],
+                        timeout=10,
+                    )
+                except Exception as exc:
                     ok = False
-            if not self._destroy_best_effort(swap.stage_name):
-                ok = False
+                    logger.critical(
+                        "ipset rollback swap 失败 stable=%s stage=%s: %s",
+                        swap.stable_name,
+                        swap.stage_name,
+                        exc,
+                    )
+                    # stage 里可能仍保存旧内容，保留现场供人工恢复。
+                    continue
 
-        txn.rolled_back = True
-        return ok
+                if swap.stable_was_created:
+                    if not self._destroy_best_effort(swap.stable_name):
+                        ok = False
+                if not self._destroy_best_effort(swap.stage_name):
+                    ok = False
+
+            txn.rolled_back = True
+            return ok
+        finally:
+            self._release_transaction_lock(txn)
 
     def gc(self, desired_names: Iterable[str]) -> bool:
-        """删除 NiceVPN 命名空间中的孤儿 stable 集合与遗留 stage 集合。"""
+        """删除 NiceVPN 命名空间中的孤儿 stable 集合。
+
+        不在全局 GC 中删除 staging：它可能属于其他仍在执行的事务。
+        本事务的 staging 由 commit/rollback 清理，异常遗留的 staging
+        保留现场供专门维护流程审计。
+        """
         desired = {str(name).strip() for name in desired_names if str(name).strip()}
         try:
             actual = self.list_names()
@@ -323,10 +374,6 @@ class IpsetManager:
 
         ok = True
         for name in sorted(actual):
-            if name.startswith(IPSET_STAGE_PREFIX):
-                if not self._destroy_best_effort(name):
-                    ok = False
-                continue
             if self.is_stable_managed_name(name) and name not in desired:
                 if not self._destroy_best_effort(name):
                     ok = False
