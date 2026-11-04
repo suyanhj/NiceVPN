@@ -18,8 +18,14 @@ NEW_HOST="$5"
 NEW_PORT="$6"
 NEW_PROTO="$7"
 
-[[ -d "$OVPN_DIR" ]] || {
-    echo "OVPN_DIR_NOT_FOUND=$OVPN_DIR" >&2
+if [[ ! -d "$OVPN_DIR" ]]; then
+    printf 'OLD=%s:%s/%s\n' "$OLD_HOST" "$OLD_PORT" "$OLD_PROTO"
+    printf 'NEW=%s:%s/%s\n' "$NEW_HOST" "$NEW_PORT" "$NEW_PROTO"
+    printf 'TOTAL=0\nCHANGED=0\n'
+    exit 0
+fi
+[[ -n "$NEW_HOST" ]] || {
+    echo "INVALID_NEW_HOST" >&2
     exit 3
 }
 [[ "$NEW_PORT" =~ ^[0-9]+$ ]] && (( NEW_PORT >= 1 && NEW_PORT <= 65535 )) || {
