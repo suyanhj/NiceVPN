@@ -376,6 +376,47 @@ def test_data_grid_uses_community_modules_selection_paging_and_summary() -> None
     assert view.grid._event_listeners
 
 
+
+def test_data_grid_restores_custom_filter_model_on_grid_ready() -> None:
+    """自定义 Community Filter 必须通过 Grid API 恢复模型，不能只依赖 initialState。"""
+
+    state: dict[str, object] = {}
+    model = {
+        "status": {
+            "filterType": "niceVpnSet",
+            "values": ["停用"],
+        }
+    }
+
+    def page() -> None:
+        state["view"] = render_data_grid(
+            (
+                {
+                    "field": "status",
+                    "headerName": "状态",
+                    ":filter": "window.NiceVpnSetFilter",
+                    "filterParams": {"values": ["启用", "停用"]},
+                },
+            ),
+            (),
+            initial_filter_model=model,
+            pagination=False,
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+
+    options = state["view"].grid.options
+    assert options["initialState"]["filter"]["filterModel"] == model
+    on_ready = options[":onGridReady"]
+    assert "setFilterModel(model)" in on_ready
+    assert '"停用"' in on_ready
+    assert "queueMicrotask" in on_ready
+
 def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
     """服务端分页时 AG Grid 不再持有全量数据，也不启用客户端分页。"""
 
