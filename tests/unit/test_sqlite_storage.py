@@ -264,11 +264,11 @@ def test_device_bindings_are_not_part_of_structured_sqlite_migration(
     assert binding.is_file()
 
 
-def test_schema_v2_adds_query_index_columns(tmp_path: Path) -> None:
+def test_schema_v3_keeps_query_indexes_and_normalizes_group_cidrs(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "db.sqlite")
     store.initialize()
 
-    assert store.schema_version() == 2
+    assert store.schema_version() == 3
     with store.connection() as conn:
         peer_columns = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(peers)").fetchall()
@@ -294,6 +294,80 @@ def test_schema_v2_adds_query_index_columns(tmp_path: Path) -> None:
         "dest_ip",
         "dest_port",
     } <= firewall_columns
+
+
+
+def test_group_write_normalizes_non_network_cidr(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "db.sqlite")
+    store.upsert_group(
+        {
+            "id": "g-cidr",
+            "name": "历史兼容组",
+            "subnet": "10.8.1.12/24",
+            "status": "active",
+        }
+    )
+
+    assert store.get_group("g-cidr")["subnet"] == "10.8.1.0/24"
+
+
+def test_schema_v3_migrates_existing_group_payload_cidr(tmp_path: Path) -> None:
+    path = tmp_path / "db.sqlite"
+    store = SqliteStore(path)
+    store.initialize()
+    store.upsert_group(
+        {
+            "id": "g-old",
+            "name": "旧组",
+            "subnet": "10.8.1.0/24",
+            "status": "active",
+        }
+    )
+
+    # 模拟旧 v2 数据：payload 中保留合法但不是网络地址的历史 CIDR。
+    with store.connection(write=True) as conn:
+        payload = store.get_group("g-old")
+        payload["subnet"] = "10.8.1.12/24"
+        conn.execute(
+            "UPDATE groups SET payload = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), "g-old"),
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 3")
+
+    store._initialized = False
+    store.initialize()
+
+    assert store.schema_version() == 3
+    assert store.get_group("g-old")["subnet"] == "10.8.1.0/24"
+
+
+def test_schema_v3_leaves_unparseable_group_cidr_untouched(tmp_path: Path) -> None:
+    path = tmp_path / "db.sqlite"
+    store = SqliteStore(path)
+    store.initialize()
+    store.upsert_group(
+        {
+            "id": "g-invalid",
+            "name": "异常历史组",
+            "subnet": "10.8.0.0/24",
+            "status": "active",
+        }
+    )
+
+    with store.connection(write=True) as conn:
+        payload = store.get_group("g-invalid")
+        payload["subnet"] = "not-a-cidr"
+        conn.execute(
+            "UPDATE groups SET payload = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), "g-invalid"),
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 3")
+
+    store._initialized = False
+    store.initialize()
+
+    assert store.get_group("g-invalid")["subnet"] == "not-a-cidr"
+
 
 
 def test_users_groups_and_peers_support_database_pages(tmp_path: Path) -> None:
