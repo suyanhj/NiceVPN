@@ -272,7 +272,10 @@ def test_user_empty_result_preserves_applied_set_filter(screen: Screen) -> None:
         button = header.find_element(By.CSS_SELECTOR, ".ag-header-cell-filter-button")
         screen.selenium.execute_script("arguments[0].click()", button)
         screen.wait(0.2)
-        return screen.selenium.find_element(By.CSS_SELECTOR, popup_selector)
+        popups = screen.selenium.find_elements(By.CSS_SELECTOR, popup_selector)
+        visible = [popup for popup in popups if popup.is_displayed()]
+        assert visible, f"missing visible filter popup for {field}"
+        return visible[-1]
 
     account_popup = open_filter("account_status", ".vpn-grid-set-filter")
     option_rows = account_popup.find_elements(
