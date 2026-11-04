@@ -118,6 +118,7 @@ def render_data_grid(
     selected_ids: Iterable[object] | None = None,
     on_cell_click: Callable[..., Any] | None = None,
     suppress_horizontal_scroll: bool = False,
+    always_show_horizontal_scroll: bool = False,
     external_filter_text: str | None = None,
     initial_filter_model: Mapping[str, Any] | None = None,
     row_height: int | None = None,
@@ -230,6 +231,8 @@ def render_data_grid(
         )
     if suppress_horizontal_scroll:
         options["suppressHorizontalScroll"] = True
+    if always_show_horizontal_scroll:
+        options["alwaysShowHorizontalScroll"] = True
     if external_filter_text is not None:
         query = str(external_filter_text or "").strip().casefold()
         options[":isExternalFilterPresent"] = f"() => {str(bool(query)).lower()}"
