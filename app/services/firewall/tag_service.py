@@ -31,8 +31,7 @@ class TagService:
         if not refresh_kernel:
             return
         try:
-            from app.services.firewall.rule_service import FirewallRuleService
-            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+            self.refresh_for_tags([tag_id])
         except Exception:
             self.store.set_tag_members(tag_id, **previous)
             raise
@@ -50,8 +49,7 @@ class TagService:
         if not refresh_kernel:
             return
         try:
-            from app.services.firewall.rule_service import FirewallRuleService
-            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+            self.refresh_for_tags(set(before) | set(desired))
         except Exception:
             self.store.replace_entity_tags(entity_type, entity_id, before)
             raise
