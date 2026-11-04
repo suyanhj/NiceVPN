@@ -51,6 +51,27 @@ EXPIRY_WITH_DETAIL_RENDERER = r"""(params) => {
   return root;
 }"""
 
+
+TRAFFIC_STACK_RENDERER = r"""(params) => {
+  if (!params.data?._online) {
+    return String(params.value ?? '—');
+  }
+
+  const root = document.createElement('div');
+  root.className = 'vpn-grid-traffic-stack';
+
+  const down = document.createElement('div');
+  down.className = 'vpn-grid-traffic-stack__line vpn-grid-traffic-stack__line--down';
+  down.textContent = '↓ ' + String(params.data?.traffic_down ?? '0 B');
+
+  const up = document.createElement('div');
+  up.className = 'vpn-grid-traffic-stack__line vpn-grid-traffic-stack__line--up';
+  up.textContent = '↑ ' + String(params.data?.traffic_up ?? '0 B');
+
+  root.append(down, up);
+  return root;
+}"""
+
 ACTION_BUTTON_RENDERER = r"""(params) => {
   const button = document.createElement('button');
   button.type = 'button';
