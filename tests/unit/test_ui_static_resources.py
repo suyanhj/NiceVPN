@@ -306,3 +306,13 @@ def test_ag_grid_status_pills_prioritize_positive_states() -> None:
     assert "color: #89909b;" in source
     assert ".vpn-grid-filter-actions" in source
     assert ".vpn-grid-filter-actions__button--primary" in source
+
+
+
+def test_custom_filters_restore_injected_initial_model() -> None:
+    """0 行 Grid 延迟实例化过滤器时，也必须从 filterParams 恢复已应用模型。"""
+
+    source = (STATIC_DIR / "js" / "ag-grid-set-filter.js").read_text(encoding="utf-8")
+
+    assert source.count("params.initialModel && Array.isArray(params.initialModel.values)") == 2
+    assert source.count("this.setModel(params.initialModel);") == 2
