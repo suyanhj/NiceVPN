@@ -170,7 +170,7 @@ def test_certificate_status_set_filter_opens_and_searches_values(
 def test_certificate_cn_multi_text_filter_accepts_multiple_tags(
     screen: Screen,
 ) -> None:
-    """自由文本列可连续输入多个标签，并按“包含任一”实时过滤。"""
+    """自由文本列可连续输入多个标签，仅在点击“应用”后过滤。"""
 
     screen.selenium.set_window_size(1280, 900)
     screen.open("/certs")
@@ -213,6 +213,24 @@ def test_certificate_cn_multi_text_filter_accepts_multiple_tags(
         ".vpn-grid-multi-text-filter__tag-text",
     )
     assert [tag.text for tag in tags] == ["alice", "charlie"]
+
+    # Enter 只提交标签草稿，不应立即刷新/过滤 Grid。
+    before_apply = [
+        cell.text.strip()
+        for cell in screen.selenium.find_elements(
+            By.CSS_SELECTOR,
+            '.ag-center-cols-container .ag-row [col-id="common_name"], '
+            '.ag-pinned-left-cols-container .ag-row [col-id="common_name"]',
+        )
+        if cell.is_displayed() and cell.text.strip()
+    ]
+    assert "bob" in before_apply
+
+    apply_button = popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-filter-actions__button--primary",
+    )
+    screen.selenium.execute_script("arguments[0].click()", apply_button)
 
     def visible_names(_driver):
         return [
