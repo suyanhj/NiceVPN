@@ -279,3 +279,34 @@ def test_refresh_rolls_back_ipset_when_iptables_restore_fails(monkeypatch):
     assert ipsets.reconciled is True
     assert ipsets.rolled_back is True
     assert ipsets.committed is False
+
+
+def test_transaction_lock_released_after_commit_and_rollback():
+    """同进程先 commit 再 rollback 的后继事务不应被锁死。"""
+    kernel = FakeIpsetKernel()
+    mgr = IpsetManager(runner=kernel.run)
+
+    one = mgr.spec("rule", "lock-one", "src", ["10.2.0.1"])
+    txn = mgr.reconcile([one])
+    assert txn.lock_fd is not None
+    assert mgr.commit(txn)
+    assert txn.lock_fd is None
+
+    two = mgr.spec("rule", "lock-two", "src", ["10.2.0.2"])
+    next_txn = mgr.reconcile([one, two])
+    assert next_txn.lock_fd is not None
+    assert mgr.rollback(next_txn)
+    assert next_txn.lock_fd is None
+
+
+def test_transaction_lock_released_after_reconcile_error():
+    kernel = FakeIpsetKernel()
+    mgr = IpsetManager(runner=kernel.run)
+    kernel.fail_add_entry = "10.3.0.99/32"
+
+    with pytest.raises(RuntimeError, match="simulated add failure"):
+        mgr.reconcile([mgr.spec("rule", "fails", "src", ["10.3.0.99"])])
+
+    kernel.fail_add_entry = None
+    followup = mgr.reconcile([mgr.spec("rule", "ok", "src", ["10.3.0.1"])])
+    assert mgr.commit(followup)
