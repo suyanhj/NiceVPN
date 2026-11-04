@@ -293,6 +293,8 @@ class UserService:
 
         # 减少组用户计数
         self._increment_group_user_count(user_data.get("group_id", ""), -1)
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
 
         self.audit.log("delete_user", "user", username, {}, "success")
         return True
@@ -364,6 +366,8 @@ class UserService:
         # 停用时通过管理接口踢人下线
         if new_status == "disabled":
             self._kill_client_session(username)
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
 
         self.audit.log("toggle_user_status", "user", username,
                        f"状态变更为 {new_status}", "success")
@@ -430,6 +434,10 @@ class UserService:
 
             PeerService().sync_all_mesh_push_routes_in_ccd()
             self._kill_client_session(username)
+            from app.services.firewall.tag_service import TagService
+            TagService(self.store).refresh_if_referenced(
+                entity_type="user", entity_id=username, other_group_id=old_group_id,
+            )
 
             result = {
                 "username": username,
