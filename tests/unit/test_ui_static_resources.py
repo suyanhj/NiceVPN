@@ -280,10 +280,29 @@ def test_ag_grid_community_set_filter_is_shared_and_safe() -> None:
     assert "equalsAny" in source
     assert "vpn-grid-multi-text-filter__tag" in source
     assert "forEachLeafNode" in source
-    assert "filterChangedCallback" in source
+    assert source.count("this.params.filterChangedCallback?.();") == 2
+    assert source.count("this.applyButton.addEventListener('click', () => this.applyDraft())") == 2
+    assert "this.draftSelectedValues" in source
+    assert "this.draftValues" in source
+    assert "this.draftMode" in source
+    assert "vpn-grid-filter-actions__button--primary" in source
     assert "vpn-grid-set-filter__search" in source
     assert "vpn-grid-set-filter__checkbox" in source
     assert "innerHTML" not in source
     assert "fetch(" not in source
     assert "axios" not in source
     assert "/api/" not in source
+
+
+
+def test_ag_grid_status_pills_prioritize_positive_states() -> None:
+    """在线/启用保持高亮，离线/停用使用中性弱化样式。"""
+
+    source = (STATIC_DIR / "css" / "ag-grid-theme.css").read_text(encoding="utf-8")
+
+    assert ".vpn-grid-status-pill--success" in source
+    assert "background: rgba(45, 212, 191, 0.22);" in source
+    assert ".vpn-grid-status-pill--unknown" in source
+    assert "color: #89909b;" in source
+    assert ".vpn-grid-filter-actions" in source
+    assert ".vpn-grid-filter-actions__button--primary" in source
