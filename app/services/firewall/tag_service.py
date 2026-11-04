@@ -78,6 +78,20 @@ class TagService:
             if entity_id in self.store.get_tag_members(tag["id"])[key]
         ]
 
+    def refresh_for_tags(self, tag_ids) -> None:
+        """关联刚被级联删除时，也能按修改前的标签 ID 判断是否需要刷新。"""
+        affected = set(tag_ids)
+        if not affected:
+            return
+        active = {
+            str(rule.get("owner_id") or "")
+            for rule in self.store.list_firewall_rules()
+            if rule.get("owner_type") == "tag" and rule.get("enabled", True)
+        }
+        if affected & active:
+            from app.services.firewall.rule_service import FirewallRuleService
+            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+
     def refresh_if_referenced(self, *, entity_type: str, entity_id: str, other_group_id: str = "") -> None:
         """用户/组状态或地址变动后，仅在存在受影响标签规则时刷新。"""
         relevant = set(self.get_entity_tag_ids(entity_type, entity_id))
