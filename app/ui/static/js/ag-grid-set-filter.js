@@ -64,6 +64,9 @@
       });
 
       this.refreshValues(false);
+      if (params.initialModel && Array.isArray(params.initialModel.values)) {
+        this.setModel(params.initialModel);
+      }
     }
 
     getGui() {
@@ -382,6 +385,10 @@
         event.preventDefault();
         this.addValues(text.split(/[\n,]+/));
       });
+
+      if (params.initialModel && Array.isArray(params.initialModel.values)) {
+        this.setModel(params.initialModel);
+      }
     }
 
     getGui() {
