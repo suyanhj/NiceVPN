@@ -7,7 +7,7 @@ import threading
 import re
 from datetime import datetime
 
-from nicegui import background_tasks, run, ui
+from nicegui import run, ui
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
