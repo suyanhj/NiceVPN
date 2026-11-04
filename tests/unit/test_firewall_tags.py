@@ -76,3 +76,29 @@ def test_empty_tag_skips_rule_instead_of_matching_all(store, monkeypatch):
     )
     rule = FirewallRule(owner_type="tag", owner_id="empty", action="accept", priority=10)
     assert svc._resolve_tag_rules([rule.model_dump()]) == []
+
+
+def test_entity_tag_replace_is_atomic_and_rejects_invalid_ids(store):
+    store.create_tag("tag1", "财务")
+    store.create_tag("tag2", "研发")
+    store.replace_entity_tags("user", "alice", ["tag1"])
+    assert store.list_entity_tag_ids("user", "alice") == ["tag1"]
+    with pytest.raises(ValueError, match="未知标签"):
+        store.replace_entity_tags("user", "alice", ["tag2", "unknown"])
+    assert store.list_entity_tag_ids("user", "alice") == ["tag1"]
+    store.replace_entity_tags("user", "alice", ["tag2"])
+    assert store.list_entity_tag_ids("user", "alice") == ["tag2"]
+
+
+def test_failed_firewall_refresh_restores_tag_associations(store, monkeypatch):
+    store.create_tag("tag1", "财务")
+    store.create_tag("tag2", "研发")
+    store.replace_entity_tags("user", "alice", ["tag1"])
+
+    def fail_refresh(self):
+        raise RuntimeError("iptables-restore failed")
+
+    monkeypatch.setattr(FirewallRuleService, "refresh_vpn_forward_only", fail_refresh)
+    with pytest.raises(RuntimeError, match="iptables-restore"):
+        TagService(store).set_entity_tags("user", "alice", ["tag2"])
+    assert store.list_entity_tag_ids("user", "alice") == ["tag1"]
