@@ -16,6 +16,7 @@ from app.ui.components import confirm_dialog
 from app.ui.components.actions import create_action, danger_action, secondary_action
 from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.tag_dialog import show_entity_tags_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -346,6 +347,12 @@ class GroupsPage:
                     "编辑",
                     icon="edit",
                     on_click=lambda current=group: self._show_edit_dialog(current),
+                ).props("dense")
+
+                secondary_action(
+                    "标签",
+                    icon="sell",
+                    on_click=lambda gid=group_id: show_entity_tags_dialog("group", gid),
                 ).props("dense")
 
                 if is_active:
