@@ -392,6 +392,30 @@
   color: #fb8fa2;
 }
 
+
+.vpn-grid-traffic-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  font-family: var(--vpn-font-mono);
+  line-height: 1.12;
+  white-space: nowrap;
+}
+
+.vpn-grid-traffic-stack__line {
+  font-size: 12px;
+}
+
+.vpn-grid-traffic-stack__line--down {
+  color: #c6cad3;
+}
+
+.vpn-grid-traffic-stack__line--up {
+  color: #7f8792;
+}
+
 .vpn-grid-inline-action {
   min-height: 32px;
   padding: 0 12px;
