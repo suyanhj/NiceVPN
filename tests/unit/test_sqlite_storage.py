@@ -337,7 +337,7 @@ def test_schema_v3_migrates_existing_group_payload_cidr(tmp_path: Path) -> None:
             "UPDATE groups SET payload = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False), "g-old"),
         )
-        conn.execute("DELETE FROM schema_migrations WHERE version = 3")
+        conn.execute("DELETE FROM schema_migrations WHERE version >= 3")
 
     store._initialized = False
     store.initialize()
