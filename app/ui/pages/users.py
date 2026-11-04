@@ -541,11 +541,6 @@ class UsersPage:
             "source": real_address,
             "device": device,
             "device_filter": device if device != "—" else "未知",
-            "device_source": (
-                f"{device} · {real_address}"
-                if device != "—" and real_address != "—"
-                else (device if device != "—" else real_address)
-            ),
             "created_at": created_at,
             "actions": "操作",
             "_status": status,
