@@ -266,16 +266,18 @@ class TestIptablesIpsetStrategy:
         assert IptablesManager._has_multi_specific_ips(["10.0.0.1", "10.0.0.2"])
         assert IptablesManager._has_multi_specific_ips(["10.0.0.1", "10.0.0.0/24", "10.0.0.2"])
 
-    def test_cidr_or_single_ip_not_use_ipset(self):
-        """仅 CIDR 或单 IP 不触发 ipset。"""
+    def test_multi_cidr_and_mixed_use_ipset_single_or_duplicates_do_not(self):
+        """混合 IP/CIDR、多 CIDR 都使用 ipset；重复地址去重后单条不用。"""
         from app.services.firewall.iptables_mgr import IptablesManager
 
-        assert not IptablesManager._has_multi_specific_ips(["10.0.0.0/24", "10.1.0.0/24"])
-        assert not IptablesManager._has_multi_specific_ips(["10.0.0.1"])
-        assert not IptablesManager._has_multi_specific_ips([])
+        assert IptablesManager._has_multiple_addresses(["10.0.0.0/24", "10.1.0.0/24"])
+        assert IptablesManager._has_multiple_addresses(["1.1.1.1", "2.2.2.0/24"])
+        assert not IptablesManager._has_multiple_addresses(["10.0.0.1"])
+        assert not IptablesManager._has_multiple_addresses(["10.0.0.1", "10.0.0.1/32"])
+        assert not IptablesManager._has_multiple_addresses([])
 
-    def test_expand_rule_lines_dest_multi_cidr_direct_iptables(self):
-        """目标多 CIDR 直接展开为 -d，不走 dst ipset。"""
+    def test_expand_rule_lines_dest_multi_cidr_uses_ipset(self):
+        """目标多 CIDR 只生成一条 iptables 规则并匹配 dst ipset。"""
         from app.services.firewall.iptables_mgr import IptablesManager
 
         rule = _make_rule(
@@ -286,10 +288,55 @@ class TestIptablesIpsetStrategy:
             dest_port="443",
         )
         lines = IptablesManager()._expand_rule_lines(rule)
-        assert len(lines) == 2
-        assert all("--match-set" not in x for x in lines)
-        assert any("-d 172.16.0.0/16" in x for x in lines)
-        assert any("-d 192.168.0.0/24" in x for x in lines)
+        assert len(lines) == 1
+        assert "--match-set " + IptablesManager._rule_ipset_name("r-cidr", "dst") + " dst" in lines[0]
+        assert "-d 172.16.0.0/16" not in lines[0]
+
+    def test_mixed_target_ip_and_cidr_uses_ipset(self):
+        """回归：1.1.1.1,2.2.2.0/24 不再拆成两条 -d。"""
+        from app.services.firewall.iptables_mgr import IptablesManager
+
+        rule = _make_rule(id="r-mixed", dest_ip="1.1.1.1,2.2.2.0/24")
+        manager = IptablesManager()
+        lines = manager._expand_rule_lines(rule)
+        assert len(lines) == 1
+        assert f"--match-set {manager._rule_ipset_name('r-mixed', 'dst')} dst" in lines[0]
+        merged, _ = manager._build_merged_forward_entries([rule])
+        specs = manager._desired_ipsets_for_merged_forward(merged)
+        assert len(specs) == 1
+        assert specs[0].name == manager._rule_ipset_name("r-mixed", "dst")
+        assert specs[0].entries == ("1.1.1.1/32", "2.2.2.0/24")
+
+    def test_mixed_source_ip_and_cidr_uses_ipset(self):
+        """源 IP 和 CIDR 混合时亦走 src ipset。"""
+        from app.services.firewall.iptables_mgr import IptablesManager
+
+        rule = _make_rule(
+            id="r-mixed-src",
+            source_ips=["10.0.0.1", "10.1.0.0/24"],
+        )
+        manager = IptablesManager()
+        lines = manager._expand_rule_lines(rule)
+        assert len(lines) == 1
+        assert f"--match-set {manager._rule_ipset_name('r-mixed-src', 'src')} src" in lines[0]
+        merged, _ = manager._build_merged_forward_entries([rule])
+        specs = manager._desired_ipsets_for_merged_forward(merged)
+        assert len(specs) == 1
+        assert specs[0].entries == ("10.0.0.1/32", "10.1.0.0/24")
+
+    def test_center_peer_multi_cidr_uses_ipset(self):
+        """中心对端 LAN 多 CIDR 也使用 peer ipset。"""
+        from app.services.firewall.iptables_mgr import IptablesManager
+
+        manager = IptablesManager()
+        cidrs = ["192.168.0.0/24", "10.10.0.0/16"]
+        lines = manager._expand_center_peer_forward_lines("peer-cidr", cidrs)
+        assert len(lines) == 1
+        assert f"--match-set {manager._peer_lan_ipset_name('peer-cidr')} src" in lines[0]
+        merged, _ = manager._build_merged_forward_entries([], [("peer-cidr", cidrs, 100, {})])
+        specs = manager._desired_ipsets_for_merged_forward(merged)
+        assert len(specs) == 1
+        assert specs[0].entries == ("10.10.0.0/16", "192.168.0.0/24")
 
     def test_expand_rule_lines_src_multi_specific_ip_use_ipset(self):
         """源多具体 IP 时使用 src ipset。"""
