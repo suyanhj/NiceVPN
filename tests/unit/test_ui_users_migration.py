@@ -167,6 +167,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     assert page.grid_view.grid.options["pagination"] is False
     assert "paginationPageSize" not in page.grid_view.grid.options
     assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
+    assert page.grid_view.grid.options["rowHeight"] == 52
     assert page.grid_view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in page.grid_view.grid.options
     assert ":onFirstDataRendered" in page.grid_view.grid.options
@@ -219,6 +220,8 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     source = columns["source"]
     assert columns["virtual_ip"][":filter"] == "window.NiceVpnMultiTextFilter"
     assert columns["traffic"]["filter"] is False
+    assert columns["traffic"]["width"] == 112
+    assert "vpn-grid-traffic-stack" in columns["traffic"][":cellRenderer"]
     assert columns["connection"]["filter"] is False
     assert group[":filter"] == "window.NiceVpnSetFilter"
     assert group["filterParams"]["selectAllLabel"] == "(全选)"
@@ -281,11 +284,40 @@ def test_user_grid_row_exposes_field_specific_status_tones_device_and_source() -
     assert online["device_filter"] == "Mac"
     assert online["device"] == "Mac"
     assert online["source"] == "203.0.113.10:50000"
+    assert online["traffic_down"] == "1.0 KB"
+    assert online["traffic_up"] == "2.0 KB"
+    assert online["traffic"] == "↓ 1.0 KB / ↑ 2.0 KB"
+    assert " · " in online["connection"]
     assert "device_source" not in online
 
     assert disabled["device_filter"] == "未知"
     assert disabled["account_status_tone"] == "unknown"
     assert disabled["session_status_tone"] == "unknown"
+    assert disabled["traffic"] == "—"
+    assert disabled["traffic_down"] == "—"
+    assert disabled["traffic_up"] == "—"
+
+
+
+def test_offline_connection_time_does_not_repeat_session_state() -> None:
+    page = UsersPage()
+    row = page._build_user_grid_row(
+        _user("offline-user"),
+        None,
+        {
+            "last_connected_since": "2026-11-03 23:25:00",
+            "device_label": "Windows",
+        },
+        "10.8.0.20",
+        {"group-main": "默认接入组"},
+        live_available=True,
+    )
+
+    assert row["session_status"] == "离线"
+    assert row["connection"] != "—"
+    assert "上次" not in row["connection"]
+    assert row["connection"].startswith("2026-11-03")
+
 
 
 def test_device_filter_values_only_expose_actual_device_types() -> None:
