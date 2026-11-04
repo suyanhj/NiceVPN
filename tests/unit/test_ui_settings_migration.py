@@ -233,6 +233,14 @@ def test_server_save_success_updates_runtime(
         "app.services.openvpn.instance.regenerate_all_server_confs",
         lambda: regen_calls.append(1),
     )
+    ovpn_sync_calls: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        "app.services.user.ovpn_sync.sync_existing_ovpn_connection",
+        lambda previous, current: (
+            ovpn_sync_calls.append((previous, current))
+            or {"total": 3, "changed": 3}
+        ),
+    )
 
     class Firewall:
         def refresh_vpn_forward_only(self):
@@ -247,7 +255,55 @@ def test_server_save_success_updates_runtime(
     assert len(saved) == 1
     assert regen_calls == [1]
     assert refresh_calls == [1]
+    assert len(ovpn_sync_calls) == 1
+    assert "3/3" in messages[-1][0]
     assert messages[-1][1] == "positive"
+
+
+
+def test_server_save_rolls_back_when_ovpn_sync_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _config()
+    page = _prepare_server_page()
+    messages = _capture_notify(monkeypatch)
+    saves: list[object] = []
+    regen_calls: list[int] = []
+    refresh_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "app.ui.pages.settings.load_config",
+        lambda: cfg,
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.settings.save_config",
+        lambda value: saves.append(value),
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.instance.regenerate_all_server_confs",
+        lambda: regen_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "app.services.user.ovpn_sync.sync_existing_ovpn_connection",
+        lambda _previous, _current: (_ for _ in ()).throw(
+            RuntimeError("sed failed")
+        ),
+    )
+
+    class Firewall:
+        def refresh_vpn_forward_only(self):
+            refresh_calls.append(1)
+
+    monkeypatch.setattr(
+        "app.services.firewall.rule_service.FirewallRuleService",
+        lambda: Firewall(),
+    )
+
+    assert page._save_server_connection() is False
+    assert len(saves) == 2
+    assert regen_calls == [1, 1]
+    assert refresh_calls == [1, 1]
+    assert "回滚" in messages[-1][0]
 
 
 def test_sysctl_permission_error_has_specific_feedback(
