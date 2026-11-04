@@ -199,21 +199,33 @@ class SqliteStore:
         self._init_lock = threading.RLock()
 
     def _fix_permissions(self) -> None:
-        """数据库包含用户与 SSH 凭据；POSIX 下 DB/WAL/SHM 仅允许 owner 读写。"""
+        """数据库包含用户与 SSH 凭据；POSIX 下 DB/WAL/SHM 仅允许 owner 读写。
+
+        WAL/SHM 是 SQLite 运行期瞬时文件。并发短连接可能在 exists() 与 chmod()
+        之间删除或重建它们；这种 ENOENT 竞态不应把已经成功的数据查询判成失败。
+        真实的权限错误仍然必须抛出。
+        """
         if os.name == "nt":
             return
-        for path in (
-            self.path,
-            Path(str(self.path) + "-wal"),
-            Path(str(self.path) + "-shm"),
-        ):
+        paths = (
+            (self.path, False),
+            (Path(str(self.path) + "-wal"), True),
+            (Path(str(self.path) + "-shm"), True),
+        )
+        for path, transient in paths:
             if not path.exists():
                 continue
             try:
                 os.chmod(path, 0o600)
-            except OSError:
-                # 权限修正失败不能静默暴露敏感数据。
+            except FileNotFoundError:
+                if transient:
+                    continue
                 raise RuntimeError(f"无法设置 SQLite 文件权限为 0600: {path}")
+            except OSError as exc:
+                # 权限修正失败不能静默暴露敏感数据。
+                raise RuntimeError(
+                    f"无法设置 SQLite 文件权限为 0600: {path}"
+                ) from exc
 
     def _open(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
