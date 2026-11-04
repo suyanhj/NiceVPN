@@ -154,8 +154,26 @@ def render_data_grid(
     )
 
     normalized_rows = [dict(row) for row in rows]
+    normalized_filter_model = {
+        str(field): dict(model)
+        for field, model in (initial_filter_model or {}).items()
+        if isinstance(model, Mapping)
+    }
+    normalized_columns: list[dict[str, Any]] = []
+    for raw_column in columns:
+        column = dict(raw_column)
+        field = str(column.get("field") or "")
+        params = column.get("filterParams")
+        if isinstance(params, Mapping):
+            column["filterParams"] = dict(params)
+        if field in normalized_filter_model and isinstance(column.get("filterParams"), dict):
+            # 自定义 Community Filter 可能在 0 行 Grid 中延迟到打开菜单时才实例化。
+            # 把已应用模型放入 filterParams，确保实例化时即可恢复 UI 状态。
+            column["filterParams"]["initialModel"] = dict(normalized_filter_model[field])
+        normalized_columns.append(column)
+
     options: dict[str, Any] = {
-        "columnDefs": [dict(column) for column in columns],
+        "columnDefs": normalized_columns,
         "defaultColDef": {
             "sortable": True,
             "filter": True,
@@ -167,12 +185,7 @@ def render_data_grid(
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
-    if initial_filter_model:
-        normalized_filter_model = {
-            str(field): dict(model)
-            for field, model in initial_filter_model.items()
-            if isinstance(model, Mapping)
-        }
+    if normalized_filter_model:
         # AG Grid initialState 对 Community 自定义 filter 的 UI 恢复并不稳定。
         # Grid ready 后显式调用 setFilterModel，确保自定义过滤器的 setModel()
         # 真正收到模型，空结果重建 Grid 时也能恢复勾选状态。
