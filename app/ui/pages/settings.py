@@ -561,8 +561,8 @@ class SettingsPage:
                 format="%.0f",
             ).classes("w-full")
             help_hint(
-                "保存会重写 server.conf 并刷新 VPN_FORWARD；"
-                "OpenVPN 进程仍需在服务管理中重启。",
+                "保存会重写 server.conf、刷新 VPN_FORWARD，并同步已有客户端 "
+                ".ovpn 的 remote/proto；OpenVPN 进程仍需在服务管理中重启。",
                 aria_label="保存生效说明",
             )
 
