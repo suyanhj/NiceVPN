@@ -29,6 +29,7 @@ from app.ui.pages.certs import CertsPage
 from app.ui.pages.dashboard import DashboardPage
 from app.ui.pages.firewall import FirewallPage
 from app.ui.pages.groups import GroupsPage
+from app.ui.pages.tags import TagsPage
 from app.ui.pages.init_page import InitPage
 from app.ui.pages.peers import PeersPage
 from app.ui.pages.services import ServicesPage
@@ -150,6 +151,13 @@ def _register_pages(*, auth_enabled: bool = False) -> None:
             return
         render_app_shell("组管理", "/groups", auth_enabled=auth_enabled)
         GroupsPage().render()
+
+    @ui.page("/tags")
+    def tags_page():
+        if not _ensure_initialized():
+            return
+        render_app_shell("标签管理", "/tags", auth_enabled=auth_enabled)
+        TagsPage().render()
 
     @ui.page("/peers")
     def peers_page():
