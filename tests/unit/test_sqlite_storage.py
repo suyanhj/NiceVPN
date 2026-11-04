@@ -47,6 +47,53 @@ def test_sqlite_database_permissions_are_private(tmp_path: Path) -> None:
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions only")
+def test_sqlite_transient_shm_chmod_race_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """SHM/WAL 在 exists 与 chmod 之间消失时，不应让正常查询失败。"""
+
+    path = tmp_path / "db.sqlite"
+    store = SqliteStore(path)
+    store.initialize()
+    shm = Path(str(path) + "-shm")
+    shm.touch(exist_ok=True)
+
+    real_chmod = os.chmod
+
+    def flaky_chmod(target, mode):
+        if Path(target) == shm:
+            raise FileNotFoundError(str(target))
+        return real_chmod(target, mode)
+
+    monkeypatch.setattr(os, "chmod", flaky_chmod)
+    store._fix_permissions()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions only")
+def test_sqlite_real_permission_error_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """真正的权限错误不能被瞬时文件容错吞掉。"""
+
+    path = tmp_path / "db.sqlite"
+    store = SqliteStore(path)
+    store.initialize()
+    real_chmod = os.chmod
+
+    def denied_chmod(target, mode):
+        if Path(target) == path:
+            raise PermissionError(str(target))
+        return real_chmod(target, mode)
+
+    monkeypatch.setattr(os, "chmod", denied_chmod)
+    with pytest.raises(RuntimeError, match="无法设置 SQLite 文件权限"):
+        store._fix_permissions()
+
 def test_structured_services_do_not_read_legacy_json_directories() -> None:
     root = Path(__file__).resolve().parents[2]
     contracts = {
