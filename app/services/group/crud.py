@@ -182,6 +182,9 @@ class GroupService:
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.store.upsert_group(data)
 
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="group", entity_id=group_id)
+
         # 根组修改后同步全局配置和默认防火墙规则
         if is_root:
             self._sync_global_subnet(group_id, old_subnet, new_subnet)
@@ -432,6 +435,9 @@ class GroupService:
         data["status"] = status
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.store.upsert_group(data)
+
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="group", entity_id=group_id)
 
         self.audit.log(
             f"{'enable' if status == 'active' else 'disable'}_group",
