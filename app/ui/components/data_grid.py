@@ -119,6 +119,7 @@ def render_data_grid(
     on_cell_click: Callable[..., Any] | None = None,
     suppress_horizontal_scroll: bool = False,
     external_filter_text: str | None = None,
+    initial_filter_model: Mapping[str, Any] | None = None,
     pagination: bool = True,
     row_drag_managed: bool = False,
     show_summary: bool = True,
@@ -166,6 +167,16 @@ def render_data_grid(
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if initial_filter_model:
+        options["initialState"] = {
+            "filter": {
+                "filterModel": {
+                    str(field): dict(model)
+                    for field, model in initial_filter_model.items()
+                    if isinstance(model, Mapping)
+                }
+            }
+        }
     if row_drag_managed:
         options["rowDragManaged"] = True
         if not selectable:
