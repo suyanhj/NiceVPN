@@ -13,8 +13,8 @@ PRESET_PROTOCOLS = ["tcp", "udp", "icmp", "all"]
 class FirewallRule(BaseModel):
     """防火墙规则，关联到组或用户"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="规则唯一标识")
-    owner_type: Literal['group', 'user'] = Field(..., description="规则归属类型")
-    owner_id: str = Field(..., description="归属对象ID（组ID或用户名）")
+    owner_type: Literal['group', 'user', 'tag'] = Field(..., description="规则归属类型（组/用户/标签）")
+    owner_id: str = Field(..., description="归属对象ID（组ID、用户名或标签ID）")
     deployment_target: Literal["center", "peer"] = Field(
         default="center",
         description="部署目标：center=中心 VPN 主机 iptables；peer=对端站点（仅规划/标识，中心不生成 iptables）",
