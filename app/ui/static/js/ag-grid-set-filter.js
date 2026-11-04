@@ -11,6 +11,7 @@
       this.params = params;
       this.allValues = [];
       this.selectedValues = new Set();
+      this.draftSelectedValues = new Set();
       this.searchText = '';
 
       this.gui = document.createElement('div');
@@ -34,7 +35,28 @@
       this.list = document.createElement('div');
       this.list.className = 'vpn-grid-set-filter__list';
 
-      this.gui.append(this.searchWrap, this.list);
+      this.actions = document.createElement('div');
+      this.actions.className = 'vpn-grid-filter-actions';
+
+      this.resetButton = document.createElement('button');
+      this.resetButton.type = 'button';
+      this.resetButton.className = 'vpn-grid-filter-actions__button';
+      this.resetButton.textContent = '清除';
+
+      this.applyButton = document.createElement('button');
+      this.applyButton.type = 'button';
+      this.applyButton.className = 'vpn-grid-filter-actions__button vpn-grid-filter-actions__button--primary';
+      this.applyButton.textContent = '应用';
+
+      this.actions.append(this.resetButton, this.applyButton);
+      this.gui.append(this.searchWrap, this.list, this.actions);
+
+      this.resetButton.addEventListener('click', () => {
+        this.draftSelectedValues = new Set(this.allValues);
+        this.renderList();
+        this.notifyFilterModified();
+      });
+      this.applyButton.addEventListener('click', () => this.applyDraft());
 
       this.searchInput.addEventListener('input', () => {
         this.searchText = this.searchInput.value.trim().toLocaleLowerCase();
@@ -49,13 +71,15 @@
     }
 
     afterGuiAttached() {
+      this.draftSelectedValues = new Set(this.selectedValues);
+      this.renderList();
       window.setTimeout(() => this.searchInput?.focus(), 0);
     }
 
     isFilterActive() {
       return (
         this.selectedValues.size !== this.allValues.length ||
-        this.allValues.some(value => !this.selectedValues.has(value)) ||
+        this.allValues.some(value => !this.draftSelectedValues.has(value)) ||
         Array.from(this.selectedValues).some(value => !this.allValues.includes(value))
       );
     }
@@ -92,6 +116,7 @@
       } else {
         this.selectedValues = new Set(model.values.map(value => this.normalize(value)));
       }
+      this.draftSelectedValues = new Set(this.selectedValues);
       this.renderList();
     }
 
@@ -168,6 +193,7 @@
         this.selectedValues = new Set(previousSelection);
       }
 
+      this.draftSelectedValues = new Set(this.selectedValues);
       this.renderList();
     }
 
@@ -180,7 +206,12 @@
       );
     }
 
-    notifyFilterChanged() {
+    notifyFilterModified() {
+      this.params.filterModifiedCallback?.();
+    }
+
+    applyDraft() {
+      this.selectedValues = new Set(this.draftSelectedValues);
       this.params.filterModifiedCallback?.();
       this.params.filterChangedCallback?.();
     }
@@ -201,7 +232,7 @@
 
       this.list.replaceChildren();
       const visible = this.visibleValues();
-      const selectedVisibleCount = visible.filter(value => this.selectedValues.has(value)).length;
+      const selectedVisibleCount = visible.filter(value => this.draftSelectedValues.has(value)).length;
       const allVisibleSelected = visible.length > 0 && selectedVisibleCount === visible.length;
       const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
 
@@ -216,15 +247,15 @@
       selectAll.addEventListener('change', () => {
         if (selectAll.checked) {
           if (!this.searchText) {
-            this.selectedValues = new Set(this.allValues);
+            this.draftSelectedValues = new Set(this.allValues);
           } else {
-            visible.forEach(value => this.selectedValues.add(value));
+            visible.forEach(value => this.draftSelectedValues.add(value));
           }
         } else {
-          visible.forEach(value => this.selectedValues.delete(value));
+          visible.forEach(value => this.draftSelectedValues.delete(value));
         }
         this.renderList();
-        this.notifyFilterChanged();
+        this.notifyFilterModified();
       });
       this.list.append(selectAllRow);
 
@@ -240,7 +271,7 @@
         const row = document.createElement('label');
         row.className = 'vpn-grid-set-filter__option';
 
-        const checkbox = this.createCheckbox(this.selectedValues.has(value));
+        const checkbox = this.createCheckbox(this.draftSelectedValues.has(value));
         const text = document.createElement('span');
         text.className = 'vpn-grid-set-filter__option-text';
         text.textContent = value;
@@ -248,12 +279,12 @@
         row.append(checkbox, text);
         checkbox.addEventListener('change', () => {
           if (checkbox.checked) {
-            this.selectedValues.add(value);
+            this.draftSelectedValues.add(value);
           } else {
-            this.selectedValues.delete(value);
+            this.draftSelectedValues.delete(value);
           }
           this.renderList();
-          this.notifyFilterChanged();
+          this.notifyFilterModified();
         });
 
         this.list.append(row);
@@ -266,7 +297,9 @@
     init(params) {
       this.params = params;
       this.values = [];
+      this.draftValues = [];
       this.mode = 'containsAny';
+      this.draftMode = 'containsAny';
 
       this.gui = document.createElement('div');
       this.gui.className = 'vpn-grid-multi-text-filter';
@@ -297,13 +330,36 @@
       this.input.spellcheck = false;
       this.input.placeholder = String(params.inputPlaceholder || '输入后按 Enter');
 
+      this.actions = document.createElement('div');
+      this.actions.className = 'vpn-grid-filter-actions';
+
+      this.resetButton = document.createElement('button');
+      this.resetButton.type = 'button';
+      this.resetButton.className = 'vpn-grid-filter-actions__button';
+      this.resetButton.textContent = '清除';
+
+      this.applyButton = document.createElement('button');
+      this.applyButton.type = 'button';
+      this.applyButton.className = 'vpn-grid-filter-actions__button vpn-grid-filter-actions__button--primary';
+      this.applyButton.textContent = '应用';
+
+      this.actions.append(this.resetButton, this.applyButton);
       this.inputWrap.append(this.tags, this.input);
-      this.gui.append(this.modeSelect, this.inputWrap);
+      this.gui.append(this.modeSelect, this.inputWrap, this.actions);
 
       this.modeSelect.addEventListener('change', () => {
-        this.mode = this.modeSelect.value || 'containsAny';
-        this.notifyFilterChanged();
+        this.draftMode = this.modeSelect.value || 'containsAny';
+        this.notifyFilterModified();
       });
+      this.resetButton.addEventListener('click', () => {
+        this.draftValues = [];
+        this.draftMode = 'containsAny';
+        this.modeSelect.value = this.draftMode;
+        this.input.value = '';
+        this.renderTags();
+        this.notifyFilterModified();
+      });
+      this.applyButton.addEventListener('click', () => this.applyDraft());
 
       this.input.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ',') {
@@ -311,10 +367,10 @@
           this.commitInput();
           return;
         }
-        if (event.key === 'Backspace' && !this.input.value && this.values.length) {
-          this.values.pop();
+        if (event.key === 'Backspace' && !this.input.value && this.draftValues.length) {
+          this.draftValues.pop();
           this.renderTags();
-          this.notifyFilterChanged();
+          this.notifyFilterModified();
         }
       });
 
@@ -333,6 +389,10 @@
     }
 
     afterGuiAttached() {
+      this.draftValues = [...this.values];
+      this.draftMode = this.mode;
+      this.modeSelect.value = this.draftMode;
+      this.renderTags();
       window.setTimeout(() => this.input?.focus(), 0);
     }
 
@@ -345,7 +405,7 @@
     }
 
     addValues(rawValues) {
-      const next = [...this.values];
+      const next = [...this.draftValues];
       const seen = new Set(next.map(value => value.toLocaleLowerCase()));
       rawValues.forEach(raw => {
         const value = this.normalizeValue(raw);
@@ -356,13 +416,13 @@
         seen.add(key);
         next.push(value);
       });
-      if (next.length === this.values.length) {
+      if (next.length === this.draftValues.length) {
         return;
       }
-      this.values = next;
+      this.draftValues = next;
       this.input.value = '';
       this.renderTags();
-      this.notifyFilterChanged();
+      this.notifyFilterModified();
     }
 
     commitInput() {
@@ -370,17 +430,17 @@
     }
 
     removeValue(index) {
-      if (index < 0 || index >= this.values.length) {
+      if (index < 0 || index >= this.draftValues.length) {
         return;
       }
-      this.values.splice(index, 1);
+      this.draftValues.splice(index, 1);
       this.renderTags();
-      this.notifyFilterChanged();
+      this.notifyFilterModified();
     }
 
     renderTags() {
       this.tags.replaceChildren();
-      this.values.forEach((value, index) => {
+      this.draftValues.forEach((value, index) => {
         const tag = document.createElement('span');
         tag.className = 'vpn-grid-multi-text-filter__tag';
 
@@ -446,7 +506,9 @@
           .filter(Boolean);
         this.mode = String(model.type || 'containsAny');
       }
-      this.modeSelect.value = this.mode;
+      this.draftValues = [...this.values];
+      this.draftMode = this.mode;
+      this.modeSelect.value = this.draftMode;
       this.input.value = '';
       this.renderTags();
     }
