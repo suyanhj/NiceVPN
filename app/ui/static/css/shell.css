@@ -1916,6 +1916,28 @@ body {
   min-height: 0 !important;
 }
 
+/* 用户表使用 52px 行高容纳双行流量，所有普通/自定义单元格统一垂直居中。 */
+.users-page--v2 .vpn-data-grid__grid .ag-cell {
+  display: flex;
+  align-items: center;
+}
+
+.users-page--v2 .vpn-data-grid__grid .ag-cell-wrapper {
+  width: 100%;
+  height: 100%;
+  align-items: center;
+}
+
+.users-page--v2 .vpn-data-grid__grid .ag-cell-value {
+  min-width: 0;
+}
+
+/* 用户字段较多，保留 AG Grid 原生横向滚动条；左右 pinned 列仍固定。 */
+.users-page--v2 .ag-body-horizontal-scroll,
+.users-page--v2 .ag-body-horizontal-scroll-viewport {
+  min-height: 12px;
+}
+
 .users-page--v2 .vpn-data-warning {
   flex: 0 0 auto;
   padding: 8px 10px;
