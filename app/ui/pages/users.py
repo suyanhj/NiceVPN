@@ -22,6 +22,7 @@ from app.ui.components.actions import create_action, primary_action, secondary_a
 from app.ui.components.data_grid_renderers import (
     ACTION_BUTTON_RENDERER,
     STATUS_PILL_RENDERER,
+    TRAFFIC_STACK_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.server_pager import page_after_size_change
@@ -502,8 +503,10 @@ class UsersPage:
 
         bytes_received = int(session.get("bytes_received", 0) or 0) if session else 0
         bytes_sent = int(session.get("bytes_sent", 0) or 0) if session else 0
+        traffic_down = self._format_bytes(bytes_received) if session else "—"
+        traffic_up = self._format_bytes(bytes_sent) if session else "—"
         traffic = (
-            f"↓{self._format_bytes(bytes_received)} ↑{self._format_bytes(bytes_sent)}"
+            f"↓ {traffic_down} / ↑ {traffic_up}"
             if session
             else "—"
         )
@@ -513,7 +516,9 @@ class UsersPage:
             f"{self._format_connection_duration(connected_raw)}"
             if session
             else (
-                f"上次 {self._format_connected_since(str(binding_aux.get('last_connected_since') or ''))}"
+                self._format_connected_since(
+                    str(binding_aux.get("last_connected_since") or "")
+                )
                 if binding_aux.get("last_connected_since")
                 else "—"
             )
@@ -537,6 +542,8 @@ class UsersPage:
             "cert_serial": cert_serial,
             "cert_serial_display": self._short_serial(cert_serial),
             "traffic": traffic,
+            "traffic_down": traffic_down,
+            "traffic_up": traffic_up,
             "connection": connection,
             "source": real_address,
             "device": device,
@@ -653,9 +660,11 @@ class UsersPage:
             {
                 "field": "traffic",
                 "headerName": "流量",
-                "flex": 0.88,
-                "minWidth": 132,
-                "cellClass": "vpn-grid-mono",
+                "width": 112,
+                "minWidth": 102,
+                "maxWidth": 132,
+                ":cellRenderer": TRAFFIC_STACK_RENDERER,
+                "cellClass": "vpn-grid-renderer-cell",
                 "filter": False,
             },
             {
@@ -797,6 +806,7 @@ class UsersPage:
             on_cell_click=self._on_grid_cell_clicked,
             suppress_horizontal_scroll=True,
             initial_filter_model=self._user_filter_model,
+            row_height=52,
             show_summary=False,
             server_total=self.total_rows,
             server_page=self.page,
