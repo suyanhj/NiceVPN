@@ -94,6 +94,12 @@ def test_failed_firewall_refresh_restores_tag_associations(store, monkeypatch):
     store.create_tag("tag1", "财务")
     store.create_tag("tag2", "研发")
     store.replace_entity_tags("user", "alice", ["tag1"])
+    store.replace_firewall_owner("tag1", [
+        FirewallRule(
+            id="tag-rule-1", owner_type="tag", owner_id="tag1",
+            action="accept", priority=100, enabled=True,
+        ).model_dump()
+    ])
 
     def fail_refresh(self):
         raise RuntimeError("iptables-restore failed")
