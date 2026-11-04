@@ -42,6 +42,8 @@ class FirewallCenterActionsMixin:
 
         groups = GroupService().list_all()
         users = UserService().list_all()
+        from app.services.firewall.tag_service import TagService
+        tags = TagService().list_all()
 
         from app.core.config import load_config
 
@@ -79,6 +81,7 @@ class FirewallCenterActionsMixin:
             holder["fields"] = render_firewall_rule_create_fields(
                 groups=groups,
                 users=users,
+                tags=tags,
                 peer_presets_loader=load_peer_presets,
                 ccd_reader=read_ccd_vpn_ips,
                 parse_user_source=parse_user_source_for_create,
