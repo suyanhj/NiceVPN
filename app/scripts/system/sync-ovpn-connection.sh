@@ -91,12 +91,12 @@ for file in "${files[@]}"; do
     fi
 
     rm -f -- "${file}${BACKUP_SUFFIX}"
+    touched+=("$file")
     sed -i"$BACKUP_SUFFIX" \
         -e "s|^[[:space:]]*remote[[:space:]].*$|remote ${NEW_HOST_ESCAPED} ${NEW_PORT}|" \
         -e "s|^[[:space:]]*proto[[:space:]].*$|proto ${NEW_PROTO}|" \
         -- "$file"
 
-    touched+=("$file")
     ((changed += 1))
 done
 
