@@ -79,7 +79,7 @@
     isFilterActive() {
       return (
         this.selectedValues.size !== this.allValues.length ||
-        this.allValues.some(value => !this.draftSelectedValues.has(value)) ||
+        this.allValues.some(value => !this.selectedValues.has(value)) ||
         Array.from(this.selectedValues).some(value => !this.allValues.includes(value))
       );
     }
@@ -526,7 +526,14 @@
       return (labels[this.mode] || '包含任一') + ': ' + this.values.join(', ');
     }
 
-    notifyFilterChanged() {
+    notifyFilterModified() {
+      this.params.filterModifiedCallback?.();
+    }
+
+    applyDraft() {
+      this.commitInput();
+      this.values = [...this.draftValues];
+      this.mode = this.draftMode;
       this.params.filterModifiedCallback?.();
       this.params.filterChangedCallback?.();
     }
