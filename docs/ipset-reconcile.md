@@ -7,6 +7,7 @@
 ## 实现
 
 - `IpsetManager.spec(owner_type, owner_id, purpose, entries)`：业务层仅声明 owner/purpose/成员，统一转换 IPv4 和 CIDR。
+- **ipset 选择规则**：源或目标侧规范化去重后有至少两个 IP/CIDR 条目时统一使用 `hash:net`；单 IP 或单 CIDR 仍用 iptables 直接匹配。例如 `1.1.1.1,2.2.2.0/24`、两个不同 CIDR、两个不同 IP 均使用 ipset。中心对端 LAN 同样适用。
 - `stable_name`：继续使用历史 `ovpnfw_` 与 `ovpnpeer_` 哈希命名，不迁移原有业务引用；`ovpntag_` 为下一阶段预留。
 - `reconcile`：获取跨线程/进程锁，枚举内核，先写唯一 staging set，使用 `ipset swap` 切换稳定名称；原 stable 内容留在 staging，等待调用方确认。
 - `commit`：iptables 成功之后销毁本事务的 staging，GC 不再出现在期望状态中的 NiceVPN stable 集合；GC 的 destroy 失败只记录告警、不破坏已经生效的规则。
