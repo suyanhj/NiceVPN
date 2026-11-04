@@ -19,7 +19,7 @@ from typing import Any, Iterator, Mapping, Sequence
 from app.core.constants import SQLITE_DB_FILE
 from app.utils.cidr import normalize_cidr
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -285,6 +285,9 @@ class SqliteStore:
                 if current < 3:
                     self._migrate_v3_normalize_group_cidrs(conn)
                     current = 3
+                if current < 4:
+                    self._migrate_v4_tags(conn)
+                    current = 4
                 conn.commit()
             self._initialized = True
 
@@ -855,6 +858,129 @@ class SqliteStore:
     def count_peers(self) -> int:
         with self.connection() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM peers").fetchone()["n"])
+
+    @staticmethod
+    def _migrate_v4_tags(conn: sqlite3.Connection) -> None:
+        """标签元数据和用户/组关联；外键级联只删除关联，不删除用户/组。"""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS user_tags (
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+                PRIMARY KEY(tag_id, username)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_tags_username ON user_tags(username);
+            CREATE TABLE IF NOT EXISTS group_tags (
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                PRIMARY KEY(tag_id, group_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_group_tags_group ON group_tags(group_id);
+        """)
+        conn.execute(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            (4, "firewall-tags", _now_iso()),
+        )
+
+    # ---- tags ----
+
+    def create_tag(self, tag_id: str, name: str, description: str = "") -> None:
+        tag_id, name = str(tag_id).strip(), str(name).strip()
+        if not tag_id or not name:
+            raise ValueError("标签 ID 与名称不能为空")
+        now = _now_iso()
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO tags(id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (tag_id, name, str(description), now, now),
+            )
+
+    def list_tags(self) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT id,name,description,created_at,updated_at FROM tags ORDER BY name,id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_tag(self, tag_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT id,name,description,created_at,updated_at FROM tags WHERE id=?",
+                (str(tag_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_tag(self, tag_id: str, *, name: str, description: str = "") -> None:
+        name = str(name).strip()
+        if not name:
+            raise ValueError("标签名称不能为空")
+        with self.connection(write=True) as conn:
+            cur = conn.execute(
+                "UPDATE tags SET name=?,description=?,updated_at=? WHERE id=?",
+                (name, str(description), _now_iso(), str(tag_id)),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("标签不存在")
+
+    def delete_tag(self, tag_id: str) -> None:
+        with self.connection(write=True) as conn:
+            conn.execute("DELETE FROM tags WHERE id=?", (str(tag_id),))
+
+    def set_tag_members(
+        self, tag_id: str, *, usernames: Sequence[str] = (), group_ids: Sequence[str] = (),
+    ) -> None:
+        """整体替换关联，单事务提交；非法成员拒绝并保持原关联。"""
+        tid = str(tag_id)
+        users = sorted({str(v).strip() for v in usernames if str(v).strip()})
+        groups = sorted({str(v).strip() for v in group_ids if str(v).strip()})
+        with self.connection(write=True) as conn:
+            if conn.execute("SELECT 1 FROM tags WHERE id=?", (tid,)).fetchone() is None:
+                raise ValueError("标签不存在")
+            if users:
+                placeholders = ",".join("?" for _ in users)
+                found = {r[0] for r in conn.execute(
+                    f"SELECT username FROM users WHERE username IN ({placeholders})", users
+                )}
+                if len(found) != len(users):
+                    raise ValueError("关联用户不存在")
+            if groups:
+                placeholders = ",".join("?" for _ in groups)
+                found = {r[0] for r in conn.execute(
+                    f"SELECT id FROM groups WHERE id IN ({placeholders})", groups
+                )}
+                if len(found) != len(groups):
+                    raise ValueError("关联用户组不存在")
+            conn.execute("DELETE FROM user_tags WHERE tag_id=?", (tid,))
+            conn.execute("DELETE FROM group_tags WHERE tag_id=?", (tid,))
+            conn.executemany(
+                "INSERT INTO user_tags(tag_id,username) VALUES (?,?)",
+                [(tid, username) for username in users],
+            )
+            conn.executemany(
+                "INSERT INTO group_tags(tag_id,group_id) VALUES (?,?)",
+                [(tid, gid) for gid in groups],
+            )
+
+    def get_tag_members(self, tag_id: str) -> dict[str, list[str]]:
+        with self.connection() as conn:
+            users = conn.execute(
+                "SELECT username FROM user_tags WHERE tag_id=? ORDER BY username",
+                (str(tag_id),),
+            ).fetchall()
+            groups = conn.execute(
+                "SELECT group_id FROM group_tags WHERE tag_id=? ORDER BY group_id",
+                (str(tag_id),),
+            ).fetchall()
+        return {
+            "usernames": [r[0] for r in users],
+            "group_ids": [r[0] for r in groups],
+        }
 
     # ---- firewall rules ----
 
