@@ -40,6 +40,13 @@ from typing import Optional
 from pydantic import ValidationError
 
 from app.models.firewall import FirewallRule
+from app.services.firewall.ipset_mgr import (
+    IPSET_PREFIX,
+    IPSET_PREFIX_PEER,
+    IpsetManager,
+    IpsetReconcileTransaction,
+    IpsetSpec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +56,16 @@ CHAIN_NAME = "VPN_FORWARD"
 LEGACY_CHAIN_PEER = "VPN_PEER"
 # 对端专用链前缀（后缀为 md5 短哈希，总长 ≤ iptables 链名限制）
 PEER_CHAIN_PREFIX = "VPN_PEER_"
-# ipset 集合名前缀（总长度需 <=31）
-IPSET_PREFIX = "ovpnfw_"
-IPSET_PREFIX_PEER = "ovpnpeer_"
+# ipset 集合名前缀由 ipset_mgr 统一定义；这里重新导入以兼容历史引用。
 # xt_comment 整条注释通常 ≤256；前缀 ``ovpn-mgmt-… inst=`` 约占 40 字节，inst 值单独限长
 _IPTABLES_INST_COMMENT_MAX = 96
 
 
 class IptablesManager:
     """iptables + ipset 规则的原子重建、导出与导入。"""
+
+    def __init__(self, ipset_mgr: IpsetManager | None = None) -> None:
+        self.ipset_mgr = ipset_mgr or IpsetManager()
 
     def _build_merged_forward_entries(
         self,
@@ -86,35 +94,51 @@ class IptablesManager:
         merged.sort(key=lambda x: (x[0], 0 if x[1] == "j" else 1))
         return merged, peer_plan
 
-    def _ensure_ipsets_for_merged_forward(self, merged: list[tuple[int, str, object]]) -> None:
-        """为 ``VPN_FORWARD`` 中会引用的 ipset 创建/刷新集合。"""
+    def _desired_ipsets_for_merged_forward(
+        self,
+        merged: list[tuple[int, str, object]],
+    ) -> list[IpsetSpec]:
+        """由完整 VPN_FORWARD 计划生成完整 ipset 期望状态。
+
+        这里只描述“应该有哪些集合、每个集合有哪些成员”，不直接修改内核。
+        实际 stage/swap/rollback/gc 统一交给 IpsetManager。
+        """
+        specs: list[IpsetSpec] = []
         for _pri, kind, payload in merged:
             if kind == "j":
                 rule = payload
                 assert isinstance(rule, FirewallRule)
                 if self._has_multi_specific_ips(list(rule.source_ips or [])):
-                    self._ipset_ensure_add_multi(
-                        self._rule_ipset_name(rule.id, "src"), rule.source_ips
+                    specs.append(
+                        self.ipset_mgr.spec("rule", rule.id, "src", rule.source_ips or [])
                     )
                 if self._rule_should_use_dest_ipset(rule):
                     dest_ips = [
                         ip.strip() for ip in str(rule.dest_ip or "").split(",") if ip.strip()
                     ]
                     if dest_ips:
-                        self._ipset_ensure_add_multi(
-                            self._rule_ipset_name(rule.id, "dst"), dest_ips
+                        specs.append(
+                            self.ipset_mgr.spec("rule", rule.id, "dst", dest_ips)
                         )
             else:
                 pid, cln, extra = payload  # type: ignore[misc]
                 if self._has_multi_specific_ips(cln):
-                    self._ipset_ensure_add_multi(self._peer_lan_ipset_name(pid), cln)
+                    specs.append(
+                        self.ipset_mgr.spec("peer", str(pid), "lan", cln)
+                    )
                 dest_ip = str((extra or {}).get("dest_ip") or "").strip()
                 if dest_ip:
                     dest_ips = [ip.strip() for ip in dest_ip.split(",") if ip.strip()]
                     if self._has_multi_specific_ips(dest_ips):
-                        self._ipset_ensure_add_multi(
-                            self._rule_ipset_name(f"ce-peer-{pid}", "dst"), dest_ips
+                        specs.append(
+                            self.ipset_mgr.spec(
+                                "rule",
+                                f"ce-peer-{pid}",
+                                "dst",
+                                dest_ips,
+                            )
                         )
+        return specs
 
     def refresh_vpn_forward_only(
         self,
@@ -122,7 +146,7 @@ class IptablesManager:
         *,
         center_peers: Optional[list[tuple]] = None,
     ) -> bool:
-        """仅重写 ``VPN_FORWARD`` 链，不触碰 INPUT/FORWARD 固定钩子、ip_forward、MASQUERADE。"""
+        """仅重写 VPN_FORWARD，并把 ipset 与链规则作为同一事务收敛。"""
         if os.name == "nt":
             return True
         saved = self._iptables_save_chain_rule_lines(CHAIN_NAME)
@@ -130,18 +154,24 @@ class IptablesManager:
             logger.error("无法备份 VPN_FORWARD 链，已中止刷新")
             return False
 
+        ipset_txn: IpsetReconcileTransaction | None = None
+
         def _kernel_rollback_and_fail(reason: str) -> bool:
-            logger.error("VPN_FORWARD 刷新失败: %s，正恢复 VPN_FORWARD 链", reason)
+            logger.error("VPN_FORWARD 刷新失败: %s，正恢复 ipset 与 VPN_FORWARD 链", reason)
+            if ipset_txn is not None and not self.ipset_mgr.rollback(ipset_txn):
+                logger.critical("恢复 ipset 事务失败，请人工检查 ipset")
             if not self._iptables_restore_chain_rule_lines(CHAIN_NAME, saved):
                 logger.critical("恢复 VPN_FORWARD 链失败，请人工检查 iptables")
             return False
 
         merged, peer_plan = self._build_merged_forward_entries(rules, center_peers)
         try:
-            self._ensure_ipsets_for_merged_forward(merged)
-        except RuntimeError as e:
-            logger.error("刷新 VPN_FORWARD 前配置 ipset 失败: %s", e)
-            return _kernel_rollback_and_fail(f"ipset: {e}")
+            desired_ipsets = self._desired_ipsets_for_merged_forward(merged)
+            ipset_txn = self.ipset_mgr.reconcile(desired_ipsets)
+        except (RuntimeError, ValueError) as e:
+            logger.error("刷新 VPN_FORWARD 前 reconcile ipset 失败: %s", e)
+            return _kernel_rollback_and_fail(f"ipset reconcile: {e}")
+
         try:
             rules_text = self._generate_merged_rules_text(merged)
         except Exception as e:
@@ -170,6 +200,9 @@ class IptablesManager:
                 err = (result.stderr or result.stdout or "").strip()
                 logger.error("VPN_FORWARD iptables-restore 失败: %s", err or "(无 stderr/stdout)")
                 return _kernel_rollback_and_fail("iptables-restore 非零")
+
+            if ipset_txn is not None and not self.ipset_mgr.commit(ipset_txn):
+                logger.warning("VPN_FORWARD 已生效，但 ipset GC 未完全成功；后续 reconcile 将重试")
 
             center_json = sum(1 for _p, k, _ in merged if k == "j")
             center_peer = sum(1 for _p, k, _ in merged if k == "p")
@@ -207,41 +240,37 @@ class IptablesManager:
         *,
         center_peers: Optional[list[tuple]] = None,
     ) -> bool:
-        """按全局 priority 合并 JSON 中心规则与对端内网放行，写入 ``VPN_FORWARD``。
+        """项目级完整重建：VPN_FORWARD + ipset + hooks + NAT。
 
-        ``center_peers`` 每项为 ``(peer_id, lan_cidrs, priority, match_extra)``；
-        ``match_extra`` 含目标/端口/协议/自定义注释，与对端 JSON 中 ``center_forward_*`` 一致。
-
-        源CIDR → 直接使用 iptables -s（原生支持）
-        源IP列表 → ipset + iptables -m set --match-set src
-        目标多IP → ipset + iptables -m set --match-set dst
-
-        在 ``flush``/``ipset`` 任一步失败时，用重建前 ``iptables-save -t filter`` 快照恢复内核；
-        快照若失败则**不** ``flush``，直接返回 False。
+        ipset 先以 stage/swap 方式准备，但旧内容暂存在 stage 中；只有 filter 表与固定
+        hooks/NAT 全部成功后才 commit + GC。任一步失败时，先 rollback ipset，再恢复
+        filter 快照，因此历史集合不会只增不减，也不会因半途失败留下错误 stable 内容。
         """
         if os.name == "nt":
             return True
         saved = self._iptables_save_filter_t_bytes()
         if saved is None:
-            logger.error("无法备份 filter 表，已中止重建（未对内核作 flush）")
+            logger.error("无法备份 filter 表，已中止重建（未修改 ipset/iptables）")
             return False
 
+        ipset_txn: IpsetReconcileTransaction | None = None
+
         def _kernel_rollback_and_fail(reason: str) -> bool:
-            logger.error("iptables 重建失败: %s，正用快照恢复 filter 表", reason)
+            logger.error("iptables 重建失败: %s，正恢复 ipset 与 filter 表", reason)
+            if ipset_txn is not None and not self.ipset_mgr.rollback(ipset_txn):
+                logger.critical("恢复 ipset 事务失败，请人工检查 ipset")
             if not self._iptables_restore_filter_t_bytes(saved):
                 logger.critical("从快照恢复 filter 表也失败，请人工检查 iptables")
             return False
 
-        self._flush_chain()
-        self._cleanup_managed_ipsets()
-
         merged, peer_plan = self._build_merged_forward_entries(rules, center_peers)
 
         try:
-            self._ensure_ipsets_for_merged_forward(merged)
-        except RuntimeError as e:
-            logger.error("ipset 配置失败: %s", e)
-            return _kernel_rollback_and_fail(f"ipset: {e}")
+            desired_ipsets = self._desired_ipsets_for_merged_forward(merged)
+            ipset_txn = self.ipset_mgr.reconcile(desired_ipsets)
+        except (RuntimeError, ValueError) as e:
+            logger.error("ipset reconcile 失败: %s", e)
+            return _kernel_rollback_and_fail(f"ipset reconcile: {e}")
 
         try:
             rules_text = self._generate_merged_rules_text(merged)
@@ -259,6 +288,7 @@ class IptablesManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(rules_text)
 
+            self._flush_chain()
             result = subprocess.run(
                 ["iptables-restore", "--noflush", tmp_path],
                 capture_output=True,
@@ -279,6 +309,9 @@ class IptablesManager:
 
             self._ensure_ipv4_forward_enabled()
             self._ensure_vpn_nat_masquerade()
+
+            if ipset_txn is not None and not self.ipset_mgr.commit(ipset_txn):
+                logger.warning("iptables 已生效，但 ipset GC 未完全成功；后续 reconcile 将重试")
 
             center_json = sum(1 for _p, k, _ in merged if k == "j")
             center_peer = sum(1 for _p, k, _ in merged if k == "p")
@@ -303,9 +336,8 @@ class IptablesManager:
 
     @staticmethod
     def _rule_ipset_name(rule_id: str, direction: str = "src") -> str:
-        """由规则 ID 和方向（src/dst）派生固定长度且合法的 ipset 名称。"""
-        h = hashlib.md5(f"{rule_id}_{direction}".encode("utf-8")).hexdigest()[:20]
-        return f"{IPSET_PREFIX}{direction[0]}{h}"
+        """兼容旧调用；stable name 由 IpsetManager 统一生成。"""
+        return IpsetManager.stable_name("rule", rule_id, direction)
 
     @staticmethod
     def _is_specific_ip(token: str) -> bool:
@@ -1073,9 +1105,8 @@ class IptablesManager:
 
     @staticmethod
     def _peer_lan_ipset_name(peer_id: str) -> str:
-        """对端内网 CIDR 集合名（hash:net），与防火墙 JSON ipset 前缀隔离。"""
-        h = hashlib.md5(f"peer_lan_{peer_id}".encode("utf-8")).hexdigest()[:20]
-        return f"{IPSET_PREFIX_PEER}l{h}"
+        """兼容旧调用；对端 LAN stable name 由 IpsetManager 统一生成。"""
+        return IpsetManager.stable_name("peer", peer_id, "lan")
 
     def sync_peer_vpn_center_rule(self, peer_id: str, lan_cidrs: list[str]) -> bool:
         """已由 ``FirewallRuleService`` 合并写入 ``VPN_FORWARD``；此处只刷新该链。"""
@@ -1094,48 +1125,6 @@ class IptablesManager:
 
         FirewallRuleService().refresh_vpn_forward_only()
         logger.info("已请求刷新 VPN_FORWARD（remove_peer_vpn_center_rules peer=%s）", peer_id)
-
-    def _cleanup_managed_ipsets(self) -> None:
-        """删除本模块创建的 ipset 集合。"""
-        try:
-            result = subprocess.run(
-                ["ipset", "list", "-n"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                return
-            for name in result.stdout.splitlines():
-                if name.startswith(IPSET_PREFIX):
-                    subprocess.run(
-                        ["ipset", "destroy", name],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            logger.warning("清理 ipset 集合失败: %s", e)
-
-    def _ipset_ensure_add_multi(self, set_name: str, ips: list[str]) -> None:
-        """创建 hash:net 集合并写入多条 IP/CIDR。"""
-        subprocess.run(
-            ["ipset", "create", set_name, "hash:net", "family", "inet", "-exist"],
-            capture_output=True, text=True, timeout=10,
-        )
-        subprocess.run(
-            ["ipset", "flush", set_name],
-            capture_output=True, text=True, timeout=10,
-        )
-        for ip in ips:
-            # 单个 IP 需要加 /32 后缀
-            entry = ip if "/" in ip else f"{ip}/32"
-            add_result = subprocess.run(
-                ["ipset", "add", set_name, entry],
-                capture_output=True, text=True, timeout=10,
-            )
-            if add_result.returncode != 0:
-                raise RuntimeError(f"ipset add 失败: {set_name} <- {entry}: {add_result.stderr}")
 
     def _generate_rules_text(self, rules: list[FirewallRule]) -> str:
         """生成 iptables-save 格式的规则文本。"""
