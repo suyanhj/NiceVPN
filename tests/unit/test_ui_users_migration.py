@@ -539,3 +539,42 @@ def test_filtered_empty_users_keep_grid_and_filter_model() -> None:
     assert page.grid_view.grid.options["rowData"] == []
     assert page.grid_view.grid.options["columnDefs"][0]["field"] == "username"
     assert page.grid_view.grid.options["localeText"]["noRowsToShow"] == "暂无数据"
+    assert page.grid_view.grid.options["initialState"]["filter"]["filterModel"] == {
+        "username": {
+            "filterType": "niceVpnMultiText",
+            "type": "containsAny",
+            "values": ["does-not-exist"],
+        }
+    }
+
+
+
+def test_filtered_empty_status_keeps_selected_set_filter_model() -> None:
+    """停用筛选无结果时，重建后的表头过滤器仍应保留“停用”模型。"""
+
+    page = UsersPage()
+    page.total_rows = 0
+    page._user_filter_model = {
+        "account_status": {
+            "filterType": "niceVpnSet",
+            "values": ["停用"],
+        }
+    }
+
+    def builder() -> None:
+        page._render_user_grid([], [])
+
+    async def verify_page() -> None:
+        async with user_simulation(builder) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+
+    assert page.grid_view is not None
+    assert page.grid_view.grid.options["initialState"]["filter"]["filterModel"] == {
+        "account_status": {
+            "filterType": "niceVpnSet",
+            "values": ["停用"],
+        }
+    }
