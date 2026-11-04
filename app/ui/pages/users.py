@@ -526,13 +526,11 @@ class UsersPage:
             "id": username,
             "username": username,
             "account_status": "启用" if status == "active" else "停用",
-            "account_status_tone": "success" if status == "active" else "warning",
+            "account_status_tone": "success" if status == "active" else "unknown",
             "session_status": (
                 "在线" if is_online else ("离线" if live_available else "未知")
             ),
-            "session_status_tone": (
-                "success" if is_online else ("unknown" if live_available else "warning")
-            ),
+            "session_status_tone": "success" if is_online else "unknown",
             "virtual_ip": virtual_ip,
             "group": group_name,
             "group_id": group_id,
