@@ -168,15 +168,26 @@ def render_data_grid(
         "animateRows": True,
     }
     if initial_filter_model:
+        normalized_filter_model = {
+            str(field): dict(model)
+            for field, model in initial_filter_model.items()
+            if isinstance(model, Mapping)
+        }
+        # AG Grid initialState 对 Community 自定义 filter 的 UI 恢复并不稳定。
+        # Grid ready 后显式调用 setFilterModel，确保自定义过滤器的 setModel()
+        # 真正收到模型，空结果重建 Grid 时也能恢复勾选状态。
+        model_json = json.dumps(normalized_filter_model, ensure_ascii=False)
         options["initialState"] = {
             "filter": {
-                "filterModel": {
-                    str(field): dict(model)
-                    for field, model in initial_filter_model.items()
-                    if isinstance(model, Mapping)
-                }
+                "filterModel": normalized_filter_model,
             }
         }
+        options[":onGridReady"] = (
+            "(params) => {"
+            f"const model = {model_json};"
+            "queueMicrotask(() => params.api.setFilterModel(model));"
+            "}"
+        )
     if row_drag_managed:
         options["rowDragManaged"] = True
         if not selectable:
