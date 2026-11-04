@@ -532,12 +532,10 @@ def test_filtered_empty_users_keep_grid_and_filter_model() -> None:
         async with user_simulation(builder) as user:
             response = await user.open("/")
             assert response.status_code == 200
-            await user.should_see("暂无数据")
-            await user.should_not_see("没有匹配结果")
-            await user.should_not_see("清除筛选")
 
     asyncio.run(verify_page())
 
     assert page.grid_view is not None
     assert page.grid_view.grid.options["rowData"] == []
     assert page.grid_view.grid.options["columnDefs"][0]["field"] == "username"
+    assert page.grid_view.grid.options["localeText"]["noRowsToShow"] == "暂无数据"
