@@ -219,9 +219,12 @@ class FirewallCenterActionsMixin:
             ).classes("w-full")
 
             fields["source"] = ui.input(
-                "源子网 CIDR 或源 IP 列表",
-                value=source_value,
+                "标签动态来源（只读）" if rule.get("owner_type") == "tag"
+                else "源子网 CIDR 或源 IP 列表",
+                value=("由标签成员自动计算" if rule.get("owner_type") == "tag" else source_value),
             ).classes("w-full")
+            if rule.get("owner_type") == "tag":
+                fields["source"].props("readonly")
             fields["dest_ip"] = ui.input(
                 "目标地址",
                 value=str(rule.get("dest_ip") or ""),
@@ -390,7 +393,10 @@ class FirewallCenterActionsMixin:
         owner_type = str(original.get("owner_type") or "group")
         source_subnet = None
         source_ips = None
-        if owner_type == "user" and source_text:
+        if owner_type == "tag":
+            # 来源始终由 tag id 关联实时计算，编辑规则不能写入静态 IP。
+            source_subnet, source_ips = None, None
+        elif owner_type == "user" and source_text:
             try:
                 source_subnet, source_ips = parse_user_source_for_create(
                     source_text
