@@ -255,6 +255,76 @@ def test_certificate_cn_multi_text_filter_accepts_multiple_tags(
     assert "bob" not in names
 
 
+
+def test_user_empty_result_preserves_applied_set_filter(screen: Screen) -> None:
+    """服务端筛选返回空表后，已应用的 Set Filter 仍保持原选择。"""
+
+    screen.selenium.set_window_size(1280, 900)
+    screen.open("/users")
+    screen.should_contain("用户管理")
+    screen.wait(0.5)
+
+    def open_filter(field: str, popup_selector: str):
+        header = screen.selenium.find_element(
+            By.CSS_SELECTOR,
+            f'.ag-header-cell[col-id="{field}"]',
+        )
+        button = header.find_element(By.CSS_SELECTOR, ".ag-header-cell-filter-button")
+        screen.selenium.execute_script("arguments[0].click()", button)
+        screen.wait(0.2)
+        return screen.selenium.find_element(By.CSS_SELECTOR, popup_selector)
+
+    account_popup = open_filter("account_status", ".vpn-grid-set-filter")
+    option_rows = account_popup.find_elements(
+        By.CSS_SELECTOR,
+        ".vpn-grid-set-filter__option",
+    )
+    enabled_row = next(row for row in option_rows if row.text.strip() == "启用")
+    enabled_checkbox = enabled_row.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
+    if enabled_checkbox.is_selected():
+        screen.selenium.execute_script("arguments[0].click()", enabled_checkbox)
+    account_apply = account_popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-filter-actions__button--primary",
+    )
+    screen.selenium.execute_script("arguments[0].click()", account_apply)
+    screen.wait(0.5)
+
+    username_popup = open_filter("username", ".vpn-grid-multi-text-filter")
+    field = username_popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-multi-text-filter__input-wrap > input",
+    )
+    field.send_keys("__definitely_no_such_user__")
+    field.send_keys(Keys.ENTER)
+    username_apply = username_popup.find_element(
+        By.CSS_SELECTOR,
+        ".vpn-grid-filter-actions__button--primary",
+    )
+    screen.selenium.execute_script("arguments[0].click()", username_apply)
+
+    WebDriverWait(screen.selenium, 5).until(
+        lambda _driver: len(
+            screen.selenium.find_elements(
+                By.CSS_SELECTOR,
+                ".ag-center-cols-container .ag-row:not(.ag-row-pinned)",
+            )
+        ) == 0
+    )
+
+    account_popup = open_filter("account_status", ".vpn-grid-set-filter")
+    selected = {}
+    for row in account_popup.find_elements(
+        By.CSS_SELECTOR,
+        ".vpn-grid-set-filter__option",
+    ):
+        label = row.text.strip()
+        if label in {"启用", "停用"}:
+            checkbox = row.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
+            selected[label] = checkbox.is_selected()
+
+    assert selected == {"启用": False, "停用": True}
+
 def test_dashboard_echarts_renders_in_real_browser(screen: Screen) -> None:
     screen.selenium.set_window_size(1440, 900)
     screen.open("/")
