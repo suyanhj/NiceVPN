@@ -400,7 +400,11 @@ class IpsetManager:
         self._run(args, timeout=10)
 
     def _destroy_best_effort(self, name: str) -> bool:
-        result = self._run(["ipset", "destroy", name], check=False, timeout=10)
+        try:
+            result = self._run(["ipset", "destroy", name], check=False, timeout=10)
+        except RuntimeError as exc:
+            logger.warning("销毁 ipset 异常 %s: %s", name, exc)
+            return False
         if result.returncode == 0:
             return True
         stderr = self._stderr(result)
