@@ -190,7 +190,8 @@ def test_gc_only_touches_nicevpn_namespaces():
     assert mgr.gc({desired})
     assert desired in kernel.sets
     assert orphan not in kernel.sets
-    assert stale_stage not in kernel.sets
+    # 未确认所属事务的 staging 不在全局 GC 中清理，避免误删并发事务。
+    assert stale_stage in kernel.sets
     assert "third_party_set" in kernel.sets
 
 
