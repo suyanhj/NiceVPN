@@ -24,8 +24,59 @@ class TagService:
     def list_all(self) -> list[dict]:
         return self.store.list_tags()
 
-    def set_members(self, tag_id: str, *, usernames=(), group_ids=()) -> None:
+    def set_members(self, tag_id: str, *, usernames=(), group_ids=(), refresh_kernel: bool = True) -> None:
+        """更新关联后刷新内核；失败时恢复 SQLite 原关联。"""
+        previous = self.store.get_tag_members(tag_id)
         self.store.set_tag_members(tag_id, usernames=usernames, group_ids=group_ids)
+        if not refresh_kernel:
+            return
+        try:
+            from app.services.firewall.rule_service import FirewallRuleService
+            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+        except Exception:
+            self.store.set_tag_members(tag_id, **previous)
+            raise
+
+    def set_entity_tags(
+        self, entity_type: str, entity_id: str, tag_ids,
+        *, refresh_kernel: bool = True,
+    ) -> None:
+        """替换某用户或组的标签（保留其它实体的标签关联）。"""
+        if entity_type not in ("user", "group"):
+            raise ValueError("仅支持 user/group")
+        ids = {str(v) for v in tag_ids}
+        tags = {row["id"] for row in self.store.list_tags()}
+        if not ids.issubset(tags):
+            raise ValueError("存在未知标签")
+        changes: list[tuple[str, dict[str, list[str]]]] = []
+        try:
+            for tag_id in sorted(tags):
+                previous = self.store.get_tag_members(tag_id)
+                members = {key: list(values) for key, values in previous.items()}
+                key = "usernames" if entity_type == "user" else "group_ids"
+                current = set(members[key])
+                desired = (current | {entity_id}) if tag_id in ids else (current - {entity_id})
+                if desired == current:
+                    continue
+                members[key] = sorted(desired)
+                self.store.set_tag_members(tag_id, **members)
+                changes.append((tag_id, previous))
+            if refresh_kernel and changes:
+                from app.services.firewall.rule_service import FirewallRuleService
+                FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+        except Exception:
+            for tag_id, previous in reversed(changes):
+                self.store.set_tag_members(tag_id, **previous)
+            raise
+
+    def get_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
+        if entity_type not in ("user", "group"):
+            raise ValueError("仅支持 user/group")
+        key = "usernames" if entity_type == "user" else "group_ids"
+        return [
+            tag["id"] for tag in self.store.list_tags()
+            if entity_id in self.store.get_tag_members(tag["id"])[key]
+        ]
 
     def resolve_addresses(self, tag_id: str, *, ccd_ips: dict[str, str] | None = None) -> tuple[str, ...]:
         """合并直接关联用户和关联组下的用户虚拟 IP，以及当前组 CIDR。
