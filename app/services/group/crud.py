@@ -323,7 +323,11 @@ class GroupService:
                 f"根组「{data.get('name', '')}」是全局组，不允许删除，只允许修改子网"
             )
 
+        from app.services.firewall.tag_service import TagService
+        tag_service = TagService(self.store)
+        affected_tags = tag_service.get_entity_tag_ids("group", group_id)
         self.store.delete_group(group_id)
+        tag_service.refresh_for_tags(affected_tags)
 
         self.audit.log(
             "delete_group", "group", group_id,
