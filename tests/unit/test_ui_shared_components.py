@@ -412,6 +412,7 @@ def test_data_grid_restores_custom_filter_model_on_grid_ready() -> None:
 
     options = state["view"].grid.options
     assert options["initialState"]["filter"]["filterModel"] == model
+    assert options["columnDefs"][0]["filterParams"]["initialModel"] == model["status"]
     on_ready = options[":onGridReady"]
     assert "setFilterModel(model)" in on_ready
     assert '"停用"' in on_ready
