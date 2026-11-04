@@ -16,7 +16,10 @@ reconcile 本身不会立即销毁旧内容。旧 stable 内容会暂存在 stag
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows 本机仅运行 UI/单元测试，不操作 Linux ipset
+    fcntl = None  # type: ignore[assignment]
 import os
 import tempfile
 import threading
@@ -96,7 +99,8 @@ class IpsetManager:
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
             fd = os.open(cls._lock_path, flags, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
             return fd
         except Exception:
             if fd is not None:
@@ -111,7 +115,8 @@ class IpsetManager:
             return
         txn.lock_fd = None
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
             cls._transaction_lock.release()
