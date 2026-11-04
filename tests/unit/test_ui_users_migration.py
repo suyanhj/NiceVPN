@@ -174,7 +174,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     device_column = next(
         column
         for column in page.grid_view.grid.options["columnDefs"]
-        if column.get("field") == "device_source"
+        if column.get("field") == "device"
     )
     assert device_column["filterParams"]["values"] == ["未知"]
     assert page.bulk_download_button._props.get("disable") is not True
@@ -195,7 +195,8 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
         "group",
         "traffic",
         "connection",
-        "device_source",
+        "device",
+        "source",
         "actions",
     ]
 
@@ -214,7 +215,8 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     assert session[":filter"] == "window.NiceVpnSetFilter"
 
     group = columns["group"]
-    device = columns["device_source"]
+    device = columns["device"]
+    source = columns["source"]
     assert columns["virtual_ip"][":filter"] == "window.NiceVpnMultiTextFilter"
     assert columns["traffic"]["filter"] is False
     assert columns["connection"]["filter"] is False
@@ -233,6 +235,9 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
         "Linux",
         "未知",
     ]
+    assert source[":filter"] == "window.NiceVpnMultiTextFilter"
+    assert source["filterParams"]["inputPlaceholder"] == "输入来源 IP 后按 Enter"
+    assert source["cellClass"] == "vpn-grid-mono"
 
     actions = columns["actions"]
     assert actions["pinned"] == "right"
@@ -241,11 +246,11 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     assert actions["resizable"] is False
     assert "vpn-grid-inline-action" in actions[":cellRenderer"]
 
-    for removed in ("cert_serial_display", "source", "device", "created_at"):
+    for removed in ("cert_serial_display", "device_source", "created_at"):
         assert removed not in columns
 
 
-def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -> None:
+def test_user_grid_row_exposes_field_specific_status_tones_device_and_source() -> None:
     page = UsersPage()
 
     online = page._build_user_grid_row(
@@ -274,7 +279,9 @@ def test_user_grid_row_exposes_field_specific_status_tones_and_device_source() -
     assert online["account_status_tone"] == "success"
     assert online["session_status_tone"] == "success"
     assert online["device_filter"] == "Mac"
-    assert online["device_source"] == "Mac · 203.0.113.10:50000"
+    assert online["device"] == "Mac"
+    assert online["source"] == "203.0.113.10:50000"
+    assert "device_source" not in online
 
     assert disabled["device_filter"] == "未知"
     assert disabled["account_status_tone"] == "unknown"
@@ -502,3 +509,35 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     ).read_text(encoding="utf-8")
     assert "filterValueField" in set_filter_source
     assert "this.filterValue(params.node)" in set_filter_source
+
+
+
+def test_filtered_empty_users_keep_grid_and_filter_model() -> None:
+    """筛选无结果时保留 AG Grid 表头和筛选入口，而不是替换成清空筛选状态页。"""
+
+    page = UsersPage()
+    page.total_rows = 0
+    page._user_filter_model = {
+        "username": {
+            "filterType": "niceVpnMultiText",
+            "type": "containsAny",
+            "values": ["does-not-exist"],
+        }
+    }
+
+    def builder() -> None:
+        page._render_user_grid([], [])
+
+    async def verify_page() -> None:
+        async with user_simulation(builder) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            await user.should_see("暂无数据")
+            await user.should_not_see("没有匹配结果")
+            await user.should_not_see("清除筛选")
+
+    asyncio.run(verify_page())
+
+    assert page.grid_view is not None
+    assert page.grid_view.grid.options["rowData"] == []
+    assert page.grid_view.grid.options["columnDefs"][0]["field"] == "username"
