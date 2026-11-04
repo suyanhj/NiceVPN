@@ -120,6 +120,7 @@ def render_data_grid(
     suppress_horizontal_scroll: bool = False,
     external_filter_text: str | None = None,
     initial_filter_model: Mapping[str, Any] | None = None,
+    row_height: int | None = None,
     pagination: bool = True,
     row_drag_managed: bool = False,
     show_summary: bool = True,
@@ -185,6 +186,10 @@ def render_data_grid(
         ":getRowId": f"(params) => String(params.data?.{row_id} ?? '')",
         "animateRows": True,
     }
+    if row_height is not None:
+        if int(row_height) <= 0:
+            raise ValueError("行高必须大于 0")
+        options["rowHeight"] = int(row_height)
     if normalized_filter_model:
         # AG Grid initialState 对 Community 自定义 filter 的 UI 恢复并不稳定。
         # Grid ready 后显式调用 setFilterModel，确保自定义过滤器的 setModel()
