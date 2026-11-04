@@ -418,6 +418,35 @@ def test_data_grid_restores_custom_filter_model_on_grid_ready() -> None:
     assert '"停用"' in on_ready
     assert "queueMicrotask" in on_ready
 
+
+def test_data_grid_supports_page_specific_row_height() -> None:
+    state: dict[str, object] = {}
+
+    def page() -> None:
+        state["view"] = render_data_grid(
+            ({"field": "name", "headerName": "名称"},),
+            ({"id": "a", "name": "Alice"},),
+            row_height=52,
+            pagination=False,
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+
+    asyncio.run(verify_page())
+    assert state["view"].grid.options["rowHeight"] == 52
+
+    with pytest.raises(ValueError, match="行高必须大于 0"):
+        render_data_grid(
+            ({"field": "name", "headerName": "名称"},),
+            (),
+            row_height=0,
+        )
+
+
+
 def test_data_grid_server_pagination_keeps_only_current_page_rows() -> None:
     """服务端分页时 AG Grid 不再持有全量数据，也不启用客户端分页。"""
 
