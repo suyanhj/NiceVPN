@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 from app.core.constants import SQLITE_DB_FILE
+from app.utils.cidr import normalize_cidr
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -155,6 +156,18 @@ def _append_multi_text_clause(
     clauses.append("(" + joiner.join(fragments) + ")")
 
 
+def _normalize_group_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """规范组 subnet；合法但非网络地址的历史 CIDR 自动转成网络地址。"""
+
+    payload = dict(data)
+    raw_subnet = str(payload.get("subnet") or "").strip()
+    if raw_subnet:
+        normalized = normalize_cidr(raw_subnet)
+        if normalized is not None:
+            payload["subnet"] = normalized
+    return payload
+
+
 def _peer_index_values(data: dict[str, Any]) -> tuple[Any, ...]:
     lan_cidrs = [
         str(value).strip()
@@ -269,6 +282,9 @@ class SqliteStore:
                 if current < 2:
                     self._migrate_v2_query_indexes(conn)
                     current = 2
+                if current < 3:
+                    self._migrate_v3_normalize_group_cidrs(conn)
+                    current = 3
                 conn.commit()
             self._initialized = True
 
@@ -386,6 +402,25 @@ class SqliteStore:
                 "SELECT MAX(version) AS version FROM schema_migrations"
             ).fetchone()
         return int(row["version"] or 0)
+
+    @staticmethod
+    def _migrate_v3_normalize_group_cidrs(conn: sqlite3.Connection) -> None:
+        """规范历史用户组 CIDR，只修正可合法解析的非网络地址写法。"""
+
+        for row in conn.execute("SELECT id, payload FROM groups").fetchall():
+            data = _load_payload(str(row["payload"]))
+            normalized = _normalize_group_payload(data)
+            if normalized == data:
+                continue
+            conn.execute(
+                "UPDATE groups SET payload = ? WHERE id = ?",
+                (_dump_payload(normalized), str(row["id"])),
+            )
+
+        conn.execute(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            (3, "normalize-group-cidrs", _now_iso()),
+        )
 
     # ---- users ----
 
@@ -568,7 +603,7 @@ class SqliteStore:
         group_id = str(data.get("id") or "").strip()
         if not group_id:
             raise ValueError("group.id 不能为空")
-        payload = dict(data)
+        payload = _normalize_group_payload(data)
         payload["id"] = group_id
         with self.connection(write=True) as conn:
             conn.execute(
