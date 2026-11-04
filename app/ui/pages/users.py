@@ -804,7 +804,6 @@ class UsersPage:
             page_size=self.page_size,
             selected_ids=self.selected_users,
             on_cell_click=self._on_grid_cell_clicked,
-            suppress_horizontal_scroll=True,
             initial_filter_model=self._user_filter_model,
             row_height=52,
             show_summary=False,
