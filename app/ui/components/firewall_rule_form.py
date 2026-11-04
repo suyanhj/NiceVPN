@@ -15,7 +15,6 @@ class FirewallRuleCreateFields:
 
     owner_type: Any
     group: Any
-    tag: Any
     users: Any
     auto_source: Any
     peer_lan: Any
@@ -35,6 +34,7 @@ class FirewallRuleCreateFields:
     parse_user_source: Callable[
         [str], tuple[str | None, list[str] | None]
     ]
+    tag: Any = None
 
     def read_values(self) -> dict[str, Any]:
         """读取并校验表单值；业务层只需处理优先级与落库/写回。"""
