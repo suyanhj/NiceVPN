@@ -967,6 +967,46 @@ class SqliteStore:
                 [(tid, gid) for gid in groups],
             )
 
+    def list_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
+        if entity_type == "user":
+            table, column = "user_tags", "username"
+        elif entity_type == "group":
+            table, column = "group_tags", "group_id"
+        else:
+            raise ValueError("仅支持 user/group")
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"SELECT tag_id FROM {table} WHERE {column}=? ORDER BY tag_id",
+                (str(entity_id),),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def replace_entity_tags(self, entity_type: str, entity_id: str, tag_ids: Sequence[str]) -> None:
+        """单个 SQLite 事务整体替换一个用户/组的所有标签，杜绝关联写到一半。"""
+        if entity_type == "user":
+            table, column, entity_table, entity_key = "user_tags", "username", "users", "username"
+        elif entity_type == "group":
+            table, column, entity_table, entity_key = "group_tags", "group_id", "groups", "id"
+        else:
+            raise ValueError("仅支持 user/group")
+        eid = str(entity_id).strip()
+        ids = sorted({str(value).strip() for value in tag_ids if str(value).strip()})
+        with self.connection(write=True) as conn:
+            if conn.execute(f"SELECT 1 FROM {entity_table} WHERE {entity_key}=?", (eid,)).fetchone() is None:
+                raise ValueError("关联用户或组不存在")
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                count = conn.execute(
+                    f"SELECT COUNT(*) FROM tags WHERE id IN ({placeholders})", ids,
+                ).fetchone()[0]
+                if int(count) != len(ids):
+                    raise ValueError("存在未知标签")
+            conn.execute(f"DELETE FROM {table} WHERE {column}=?", (eid,))
+            conn.executemany(
+                f"INSERT INTO {table}(tag_id,{column}) VALUES (?,?)",
+                [(tid, eid) for tid in ids],
+            )
+
     def get_tag_members(self, tag_id: str) -> dict[str, list[str]]:
         with self.connection() as conn:
             users = conn.execute(
