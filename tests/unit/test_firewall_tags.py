@@ -108,3 +108,29 @@ def test_failed_firewall_refresh_restores_tag_associations(store, monkeypatch):
     with pytest.raises(RuntimeError, match="iptables-restore"):
         TagService(store).set_entity_tags("user", "alice", ["tag2"])
     assert store.list_entity_tag_ids("user", "alice") == ["tag1"]
+
+
+def test_tag_delete_rejected_while_rule_references_tag(store):
+    service = TagService(store)
+    store.create_tag("tag1", "核心")
+    store.replace_firewall_owner("tag1", [
+        FirewallRule(id="protected-rule", owner_type="tag", owner_id="tag1",
+                     action="drop", priority=100, enabled=False).model_dump()
+    ])
+    with pytest.raises(ValueError, match="仍被"):
+        service.delete("tag1")
+    assert store.get_tag("tag1") is not None
+    store.replace_firewall_owner("tag1", [])
+    service.delete("tag1")
+    assert store.get_tag("tag1") is None
+
+
+def test_tags_page_has_registered_route_and_navigation():
+    from app.ui.components.app_shell import NAVIGATION_ITEMS, PAGE_HELP_BY_PATH
+    import main
+    from app.ui.pages.tags import TagsPage
+
+    assert TagsPage is not None
+    assert any(item.path == "/tags" for item in NAVIGATION_ITEMS)
+    assert "/tags" in PAGE_HELP_BY_PATH
+    assert callable(main._register_pages)
