@@ -24,6 +24,28 @@ class TagService:
     def list_all(self) -> list[dict]:
         return self.store.list_tags()
 
+    def update(self, tag_id: str, *, name: str, description: str = "") -> dict:
+        self.store.update_tag(tag_id, name=name, description=description)
+        return self.store.get_tag(tag_id) or {}
+
+    def delete(self, tag_id: str) -> None:
+        """拒绝删除仍有防火墙规则引用的标签，避免悬空规则。"""
+        if self.store.get_tag(tag_id) is None:
+            raise ValueError("标签不存在")
+        referenced = [
+            row for row in self.store.list_firewall_rules()
+            if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)
+        ]
+        if referenced:
+            raise ValueError(f"标签仍被 {len(referenced)} 条防火墙规则引用，请先删除规则")
+        self.store.delete_tag(tag_id)
+
+    def rule_count(self, tag_id: str) -> int:
+        return sum(
+            1 for row in self.store.list_firewall_rules()
+            if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)
+        )
+
     def set_members(self, tag_id: str, *, usernames=(), group_ids=(), refresh_kernel: bool = True) -> None:
         """更新关联后刷新内核；失败时恢复 SQLite 原关联。"""
         previous = self.store.get_tag_members(tag_id)
