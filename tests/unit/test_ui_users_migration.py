@@ -166,7 +166,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     assert page.grid_view.grid._props["modules"] == ["AllCommunityModule"]
     assert page.grid_view.grid.options["pagination"] is False
     assert "paginationPageSize" not in page.grid_view.grid.options
-    assert page.grid_view.grid.options["suppressHorizontalScroll"] is True
+    assert "suppressHorizontalScroll" not in page.grid_view.grid.options
     assert page.grid_view.grid.options["rowHeight"] == 52
     assert page.grid_view.grid.options["rowSelection"] == {"mode": "multiRow"}
     assert ":getRowId" in page.grid_view.grid.options
@@ -513,7 +513,7 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert "users-import-dialog" in source
     assert "users-change-group-dialog" in source
     assert "users-config-drawer" in source
-    assert "suppress_horizontal_scroll=True" in source
+    assert "suppress_horizontal_scroll=True" not in source
     assert "show_summary=False" in source
     assert "server_total=self.total_rows" in source
     assert "on_server_page_change=self._on_user_page_change" in source
@@ -532,6 +532,8 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
     assert ".users-page--v2 .users-bar-icon-action--create" in shell_css
     assert ".users-page--v2 .users-data-region" in shell_css
     assert ".users-page--v2 .users-data-region .vpn-data-grid__grid" in shell_css
+    assert ".users-page--v2 .vpn-data-grid__grid .ag-cell" in shell_css
+    assert ".users-page--v2 .ag-body-horizontal-scroll" in shell_css
     assert ".q-dialog .q-card.users-action-dialog" in shell_css
     assert ".users-dialog-icon-action" in shell_css
     assert ".q-dialog .q-card.users-config-drawer" in shell_css
