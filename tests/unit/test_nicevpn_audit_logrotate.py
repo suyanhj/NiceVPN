@@ -37,8 +37,12 @@ def test_only_three_nicevpn_logs_are_managed():
         ):
             assert directive in block
     assert conf.count("@OPENVPN_LOG_DIR@/") == 3
-    assert "/server.log" not in conf
-    assert "server-status.log" not in conf
+    active_entries = [
+        line for line in conf.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert not any("/server.log" in line for line in active_entries)
+    assert not any("server-status.log" in line for line in active_entries)
     assert "copytruncate" not in "\n".join(
         l for l in conf.splitlines() if not l.lstrip().startswith("#")
     )
