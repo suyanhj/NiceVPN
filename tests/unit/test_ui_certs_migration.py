@@ -250,7 +250,8 @@ def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
     assert identity["lockPinned"] is True
     assert identity["width"] == 146
     assert identity["maxWidth"] == 176
-    assert identity["cellClass"] == "vpn-grid-primary-cell"
+    assert "vpn-grid-primary-cell" in identity["cellClass"].split()
+    assert "vpn-grid-copyable-cell" in identity["cellClass"].split()
     assert identity[":filter"] == "window.NiceVpnMultiTextFilter"
     assert identity["filterParams"]["inputPlaceholder"] == "输入 CN 后按 Enter"
     assert ":cellRenderer" not in identity
@@ -271,7 +272,8 @@ def test_cert_grid_columns_keep_table_structure_with_demo_style_cells() -> None:
 
     serial = columns["serial_display"]
     assert serial["flex"] > 0
-    assert serial["cellClass"] == "vpn-grid-mono"
+    assert "vpn-grid-mono" in serial["cellClass"].split()
+    assert "vpn-grid-copyable-cell" in serial["cellClass"].split()
     assert serial[":filter"] == "window.NiceVpnMultiTextFilter"
     assert serial["filterParams"]["filterValueField"] == "serial"
     assert ":cellRenderer" not in serial
