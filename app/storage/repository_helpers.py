@@ -117,5 +117,3 @@ def _firewall_index_values(data: dict[str, Any]) -> tuple[Any, ...]:
         str(data.get("dest_ip") or "").strip(),
         str(data.get("dest_port") or "").strip(),
     )
-
-
