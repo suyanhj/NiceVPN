@@ -1638,6 +1638,14 @@ body {
   font-size: 12px;
 }
 
+/* Copyable grid identifiers use the same click behavior as firewall fields. */
+.vpn-data-grid__grid .ag-cell.vpn-grid-copyable-cell {
+  cursor: copy;
+}
+.vpn-data-grid__grid .ag-cell.vpn-grid-copyable-cell:hover {
+  color: var(--vpn-color-brand-soft);
+}
+
 .vpn-grid-action-cell {
   cursor: pointer;
   color: var(--vpn-color-brand-soft);
