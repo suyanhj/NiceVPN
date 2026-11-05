@@ -22,7 +22,7 @@ def test_log_snapshot_never_uses_full_file_read(tmp_path: Path, monkeypatch) -> 
     p = tmp_path / "large.log"
     with p.open("wb") as stream:
         stream.seek(2 * 1024 * 1024 * 1024)
-        stream.write(b"older\nlatest\n")
+        stream.write(b"\nolder\nlatest\n")
 
     def forbid_full_read(*_args, **_kwargs):
         raise AssertionError("must not call Path.read_text for log snapshots")
