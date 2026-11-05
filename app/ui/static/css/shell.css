@@ -3388,3 +3388,234 @@ body {
     min-height: 520px;
   }
 }
+
+/* Tags: use the same compact dark list treatment as Groups and Firewall v2. */
+.tags-page--v2 .tags-toolbar {
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(21, 189, 232, 0.08);
+  border-radius: 12px;
+  background: #111214;
+}
+.tags-page--v2 .tags-toolbar .vpn-toolbar__search {
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+}
+.tags-page--v2 .tags-search {
+  flex: 1 1 240px;
+  min-width: min(100%, 200px);
+}
+.tags-page--v2 .tags-filter {
+  flex: 0 0 172px;
+  min-width: 150px;
+}
+.tags-page--v2 .tags-toolbar .q-field__control {
+  border-radius: 9px;
+  background: #0c0c0d;
+}
+.tags-page--v2 .tags-list-panel {
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(21, 189, 232, 0.08) !important;
+  border-radius: 14px !important;
+  background: #0c0c0d !important;
+  box-shadow: none !important;
+}
+.tags-page--v2 .mgmt-list-head {
+  min-height: 50px;
+  margin: 0 !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.08) !important;
+  background: #111214;
+}
+.tags-page--v2 .mgmt-kicker {
+  color: #aeb3bc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.tags-page--v2 .group-list-count {
+  color: #6f747e;
+  font-size: 11px;
+}
+.tags-page--v2 .tags-record-list {
+  gap: 0 !important;
+  overflow-y: auto;
+}
+.tags-page--v2 .tags-record-card {
+  width: 100%;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07);
+  background: #0c0c0d;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.tags-page--v2 .tags-record-card:last-child {
+  border-bottom: 0;
+}
+.tags-page--v2 .tags-record-card:hover,
+.tags-page--v2 .tags-record-card.is-expanded {
+  background: rgba(21, 189, 232, 0.045);
+  box-shadow: inset 3px 0 0 rgba(21, 189, 232, 0.82);
+}
+.tags-page--v2 .tags-record-header {
+  width: 100%;
+  min-height: 68px;
+  gap: 14px;
+  padding: 10px 14px;
+}
+.tags-page--v2 .tags-record-toggle {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 4px;
+  color: #f2f4f7;
+  border-radius: 7px;
+}
+.tags-page--v2 .tags-record-toggle .q-btn__content {
+  width: 100%;
+  justify-content: flex-start;
+  min-width: 0;
+}
+.tags-page--v2 .tags-record-main {
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  text-align: left;
+}
+.tags-page--v2 .tags-record-chevron {
+  color: #727985;
+  font-size: 18px;
+}
+.tags-page--v2 .tags-record-icon {
+  color: #15bde8;
+  font-size: 18px;
+}
+.tags-page--v2 .tags-record-copy {
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  align-items: flex-start;
+}
+.tags-page--v2 .tags-record-copy .mgmt-record-title {
+  color: #f2f4f7;
+  font-size: 14px;
+  font-weight: 600;
+}
+.tags-page--v2 .tags-record-description {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #727985;
+  font-size: 11px;
+  text-align: left;
+}
+.tags-page--v2 .tags-record-meta {
+  flex: 0 1 310px;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: #727985;
+  font-size: 11px;
+}
+.tags-page--v2 .tags-record-meta .q-icon {
+  color: #59626f;
+}
+.tags-page--v2 .tags-record-actions {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+.tags-page--v2 .tags-record-actions .vpn-action,
+.tags-page--v2 .tags-detail-toolbar .vpn-action {
+  min-height: 30px;
+  padding-inline: 9px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.tags-page--v2 .tags-record-actions .vpn-action--secondary,
+.tags-page--v2 .tags-detail-toolbar .vpn-action--secondary {
+  border-color: rgba(187, 190, 201, 0.10) !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: #9aa0aa !important;
+}
+.tags-page--v2 .tags-record-actions .vpn-action--secondary:hover,
+.tags-page--v2 .tags-detail-toolbar .vpn-action--secondary:hover {
+  border-color: rgba(21, 189, 232, 0.22) !important;
+  background: rgba(21, 189, 232, 0.06) !important;
+  color: #49ccec !important;
+}
+.tags-page--v2 .tags-record-details {
+  width: 100%;
+  gap: 10px;
+  padding: 12px 18px 18px;
+  border-top: 1px solid rgba(187, 190, 201, 0.08);
+  background: #111214;
+}
+.tags-page--v2 .tags-detail-toolbar {
+  width: 100%;
+  gap: 10px;
+}
+.tags-page--v2 .tags-detail-id,
+.tags-page--v2 .tags-detail-muted {
+  color: #727985;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.tags-page--v2 .tags-detail-tabs {
+  color: #9aa0aa;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.08);
+}
+.tags-page--v2 .tags-detail-panels,
+.tags-page--v2 .tags-detail-panel {
+  padding: 0 !important;
+  border: none;
+  background: transparent !important;
+}
+.tags-page--v2 .tags-detail-list {
+  gap: 0;
+  width: 100%;
+}
+.tags-page--v2 .tags-detail-row {
+  min-height: 49px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07);
+}
+.tags-page--v2 .tags-detail-row:last-child {
+  border-bottom: none;
+}
+.tags-page--v2 .tags-detail-row:hover {
+  background: rgba(21, 189, 232, 0.04);
+}
+.tags-page--v2 .tags-detail-name {
+  color: #dce1e8;
+  font-size: 13px;
+  font-weight: 550;
+}
+.tags-page--v2 .tags-detail-empty {
+  padding: 16px 12px;
+  color: #727985;
+  font-size: 12px;
+}
+.tags-page--v2 .tags-detail-row .q-badge {
+  border-color: rgba(187, 190, 201, 0.16);
+  color: #9aa0aa;
+}
+@media (max-width: 767px) {
+  .tags-page--v2 .tags-toolbar .vpn-toolbar__search {
+    flex-basis: 100%;
+  }
+  .tags-page--v2 .tags-filter {
+    flex: 1 1 150px;
+  }
+  .tags-page--v2 .tags-record-header {
+    flex-wrap: wrap;
+  }
+  .tags-page--v2 .tags-record-toggle {
+    flex-basis: 100%;
+  }
+  .tags-page--v2 .tags-record-meta {
+    flex: 1 1 auto;
+  }
+  .tags-page--v2 .tags-record-actions {
+    margin-left: auto;
+  }
+}
