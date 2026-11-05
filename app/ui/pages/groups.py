@@ -17,6 +17,7 @@ from app.ui.components.actions import create_action, danger_action, secondary_ac
 from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.tag_dialog import show_entity_tags_dialog
+from app.ui.components.batch_tag_dialog import show_batch_tags_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -44,6 +45,7 @@ class GroupsPage:
         self.bulk_bar = None
         self.bulk_enable_button = None
         self.bulk_disable_button = None
+        self.bulk_tags_button = None
         self.bulk_delete_button = None
         self.page = 1
         self.page_size = 50
@@ -73,6 +75,16 @@ class GroupsPage:
                 "批量启用",
                 icon="check_circle",
                 on_click=self._batch_enable,
+                disabled=disabled,
+                tooltip="请先选择用户组" if disabled else None,
+            )
+            self.bulk_tags_button = secondary_action(
+                "批量标签",
+                icon="sell",
+                on_click=lambda: show_batch_tags_dialog(
+                    "group", set(self.selected_ids),
+                    on_success=self._refresh_group_page,
+                ),
                 disabled=disabled,
                 tooltip="请先选择用户组" if disabled else None,
             )
@@ -419,6 +431,7 @@ class GroupsPage:
         for button in (
             self.bulk_enable_button,
             self.bulk_disable_button,
+            self.bulk_tags_button,
             self.bulk_delete_button,
         ):
             if button is None:
