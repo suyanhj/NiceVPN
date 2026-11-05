@@ -25,7 +25,7 @@ class FakeClient:
 
     def exec_command(self, command: str, *, timeout: int):
         self.calls.append((command, timeout))
-        return None, FakeOutput("正常".encode("utf-8")), FakeOutput(b"\\xffwarn")
+        return None, FakeOutput("正常".encode("utf-8")), FakeOutput(bytes([0xFF]) + b"warn")
 
 
 def test_common_ssh_executor_returns_decoded_streams_and_exit_status() -> None:
