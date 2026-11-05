@@ -237,11 +237,11 @@ class CertsPage:
             rows = await run.io_bound(self._load_rows)
         except Exception as exc:
             logger.exception("加载证书列表失败")
-            if self.summary_container is not None:
+            if self.summary_container is not None and not getattr(self.summary_container, "is_deleted", False):
                 self.summary_container.clear()
-            if self.alert_container is not None:
+            if self.alert_container is not None and not getattr(self.alert_container, "is_deleted", False):
                 self.alert_container.clear()
-            if self.data_container is not None:
+            if self.data_container is not None and not getattr(self.data_container, "is_deleted", False):
                 self.data_container.clear()
                 with self.data_container:
                     error_state(
@@ -253,7 +253,7 @@ class CertsPage:
         finally:
             self._refresh_running = False
 
-        if self.data_container is None:
+        if self.data_container is None or getattr(self.data_container, "is_deleted", False):
             return
 
         self._render_summary_metrics(rows)
@@ -289,7 +289,7 @@ class CertsPage:
     def _render_summary_metrics(self, rows: list[dict[str, Any]]) -> None:
         """渲染证书库状态摘要；只消费已适配行，不增加业务请求。"""
 
-        if self.summary_container is None:
+        if self.summary_container is None or getattr(self.summary_container, "is_deleted", False):
             return
 
         valid_count = sum(row.get("status") == "valid" for row in rows)
@@ -336,7 +336,7 @@ class CertsPage:
     def _render_expiry_alerts(self, rows: list[dict[str, Any]]) -> None:
         """复用当前证书快照渲染临期告警，不再二次读取 index.txt。"""
 
-        if self.alert_container is None:
+        if self.alert_container is None or getattr(self.alert_container, "is_deleted", False):
             return
 
         expiring = [row for row in rows if row.get("status") == "expiring"]
