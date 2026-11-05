@@ -83,7 +83,7 @@ class TagsPage:
         self._refresh()
 
     def _refresh(self) -> None:
-        if self.list_container is None:
+        if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
         self.list_container.clear()
         try:
