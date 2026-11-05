@@ -752,7 +752,7 @@ class UsersPage:
             rows, warnings, total = await self._load_user_grid_rows_async()
         except Exception as exc:
             logger.exception("加载用户列表失败")
-            if self.data_container is not None:
+            if self.data_container is not None and not getattr(self.data_container, "is_deleted", False):
                 self.data_container.clear()
                 with self.data_container:
                     error_state(
@@ -764,7 +764,7 @@ class UsersPage:
         finally:
             self._refresh_running = False
 
-        if self.data_container is None:
+        if self.data_container is None or getattr(self.data_container, "is_deleted", False):
             return
 
         self.total_rows = int(total)
