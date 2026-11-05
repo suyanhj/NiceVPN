@@ -109,10 +109,10 @@ def test_change_group_full_target_group_raises_before_state_change(monkeypatch, 
 
     old_ccd = "ifconfig-push 10.8.1.2 255.255.0.0\n"
     (ccd_dir / "alice").write_text(old_ccd, encoding="utf-8")
-    (ccd_dir / "bob").write_text("ifconfig-push 10.8.2.2 255.255.0.0\\n", encoding="utf-8")
+    (ccd_dir / "bob").write_text("ifconfig-push 10.8.2.2 255.255.0.0\n", encoding="utf-8")
     # 新策略允许子组 .1，需要同时占用 .1 和 .2 才算 /30 满员。
     (ccd_dir / "legacy-peer").write_text(
-        "ifconfig-push 10.8.2.1 255.255.0.0\\n", encoding="utf-8"
+        "ifconfig-push 10.8.2.1 255.255.0.0\n", encoding="utf-8"
     )
 
     killed: list[str] = []
