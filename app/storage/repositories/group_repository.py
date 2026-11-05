@@ -147,4 +147,3 @@ class GroupRepositoryMixin:
     def count_groups(self) -> int:
         with self.connection() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM groups").fetchone()["n"])
-
