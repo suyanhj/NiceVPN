@@ -40,28 +40,29 @@ class TagsPage:
         self.expanded_tags: set[str] = set()
         self.query = ""
         self.filter_mode = "all"
-        with ui.column().classes("page-shell mgmt-page tags-page--v2 w-full gap-4"):
-            with ui.element("section").classes("mgmt-panel"):
-                with ui.row().classes("w-full items-center justify-between flex-wrap gap-3"):
-                    with ui.column().classes("gap-1"):
-                        ui.label("标签管理").classes("text-lg font-medium")
-                        ui.label("管理用户与组的策略标签；点击标签行查看关联明细。").classes(
-                            "section-caption"
-                        )
-                    create_action("新建标签", icon="add", on_click=self._show_create_dialog)
-                with ui.row().classes("w-full gap-3 items-center flex-wrap mt-3"):
+        with ui.column().classes("page-shell mgmt-page tags-page--v2"):
+            with ui.element("section").classes("vpn-toolbar tags-toolbar"):
+                with ui.element("div").classes("vpn-toolbar__search"):
                     ui.input(
                         placeholder="搜索标签名称或说明",
                         on_change=self._on_search,
-                    ).props("outlined dense clearable").classes("min-w-[14rem] flex-1")
+                    ).props("outlined dense clearable debounce=250").classes(
+                        "tags-search"
+                    )
                     ui.select(
                         {"all": "全部标签", "assigned": "已关联成员",
                          "empty": "空标签", "referenced": "已引用规则"},
                         value="all",
                         on_change=self._on_filter,
                         label="筛选",
-                    ).props("outlined dense").classes("w-44")
-            self.list_container = ui.column().classes("w-full gap-3")
+                    ).props("outlined dense").classes("tags-filter")
+                with ui.element("div").classes("vpn-toolbar__primary"):
+                    create_action("新建标签", icon="add", on_click=self._show_create_dialog)
+            with ui.element("section").classes("mgmt-panel mgmt-panel-list tags-list-panel"):
+                with ui.element("div").classes("mgmt-list-head"):
+                    ui.label("标签列表").classes("mgmt-kicker")
+                    self.total_label = ui.label("共 0 个标签").classes("group-list-count")
+                self.list_container = ui.column().classes("mgmt-record-list tags-record-list w-full")
             self._refresh()
 
     def _on_search(self, event) -> None:
@@ -111,6 +112,8 @@ class TagsPage:
                     rules=len(linked_rules),
                 ):
                     cards.append((tag, members, linked_rules))
+            if hasattr(self, "total_label"):
+                self.total_label.text = f"共 {len(cards)} / {len(tags)} 个标签" if self.query or self.filter_mode != "all" else f"共 {len(tags)} 个标签"
             with self.list_container:
                 if not tags:
                     with ui.element("section").classes("mgmt-panel"):
@@ -122,7 +125,6 @@ class TagsPage:
                     with ui.element("section").classes("mgmt-panel"):
                         ui.label("没有符合筛选条件的标签。").classes("section-caption")
                     return
-                ui.label(f"共 {len(cards)} 个标签").classes("section-caption")
                 for tag, members, linked_rules in cards:
                     self._render_card(
                         tag, members, linked_rules,
@@ -141,33 +143,39 @@ class TagsPage:
         usernames = members["usernames"]
         group_ids = members["group_ids"]
         expanded = tag_id in self.expanded_tags
+
         with ui.element("section").classes(
-            "mgmt-panel w-full !p-0 overflow-hidden rounded-lg "
-            + ("border-l-4 border-l-primary" if expanded else "")
+            "tags-record-card" + (" is-expanded" if expanded else "")
         ):
-            with ui.row().classes("w-full items-center no-wrap gap-2 p-3"):
+            with ui.row().classes("tags-record-header items-center no-wrap"):
                 with ui.button(
                     on_click=lambda tid=tag_id: self._toggle_tag(tid),
                 ).props(
                     f"flat no-caps align=left aria-label='展开或收起标签'"
                     f" aria-expanded={'true' if expanded else 'false'}"
-                ).classes("flex-1 min-w-0 !justify-start !px-2"):
-                    with ui.row().classes("items-center gap-3 w-full flex-wrap"):
-                        ui.icon("expand_less" if expanded else "expand_more", size="sm")
-                        ui.icon("sell", size="sm").classes("text-primary")
-                        with ui.column().classes("gap-0 min-w-[10rem] flex-1"):
-                            ui.label(str(tag["name"])).classes(
-                                "font-semibold text-left break-all"
-                            )
+                ).classes("tags-record-toggle"):
+                    with ui.row().classes("items-center no-wrap tags-record-main"):
+                        ui.icon("expand_less" if expanded else "expand_more").classes(
+                            "tags-record-chevron"
+                        )
+                        ui.icon("sell").classes("tags-record-icon")
+                        with ui.column().classes("tags-record-copy"):
+                            ui.label(str(tag["name"])).classes("mgmt-record-title")
                             if tag.get("description"):
                                 ui.label(str(tag["description"])).classes(
-                                    "text-xs opacity-70 text-left"
+                                    "tags-record-description"
                                 )
-                        with ui.row().classes("items-center gap-3 text-sm flex-wrap"):
-                            ui.label(f"用户 {len(usernames)}")
-                            ui.label(f"组 {len(group_ids)}")
-                            ui.label(f"规则 {len(rules)}")
-                with ui.row().classes("items-center gap-1 shrink-0"):
+                with ui.row().classes("tags-record-meta items-center"):
+                    with ui.element("span").classes("mgmt-meta-item"):
+                        ui.icon("person_outline", size="14px")
+                        ui.label(f"用户 {len(usernames)}")
+                    with ui.element("span").classes("mgmt-meta-item"):
+                        ui.icon("folder_shared", size="14px")
+                        ui.label(f"组 {len(group_ids)}")
+                    with ui.element("span").classes("mgmt-meta-item"):
+                        ui.icon("shield", size="14px")
+                        ui.label(f"规则 {len(rules)}")
+                with ui.element("div").classes("mgmt-actions tags-record-actions"):
                     secondary_action(
                         "编辑", icon="edit",
                         on_click=lambda data=dict(tag): self._show_edit_dialog(data),
@@ -179,43 +187,44 @@ class TagsPage:
                         tooltip="该标签被防火墙规则引用，请先删除规则" if rules else None,
                     ).props("dense")
             if expanded:
-                ui.separator()
-                with ui.column().classes("w-full gap-4 px-4 py-4 bg-slate-500/5"):
-                    with ui.row().classes("w-full items-center justify-between flex-wrap gap-2"):
-                        ui.label(f"标签 ID：{tag_id}").classes("text-xs opacity-60 break-all")
+                with ui.column().classes("tags-record-details"):
+                    with ui.row().classes("tags-detail-toolbar items-center justify-between"):
+                        ui.label(f"标签 ID：{tag_id}").classes("tags-detail-id")
                         secondary_action(
                             "管理关联", icon="group_add",
                             on_click=lambda tid=tag_id: self._show_members_dialog(tid),
                         ).props("dense")
-                    with ui.tabs().classes("w-full").props("dense align=left") as tabs:
+                    with ui.tabs().classes("firewall-compact-tabs tags-detail-tabs w-full").props(
+                        "dense align=left"
+                    ) as tabs:
                         user_tab = ui.tab(f"关联用户 ({len(usernames)})", icon="people")
                         group_tab = ui.tab(f"关联组 ({len(group_ids)})", icon="folder_shared")
                         rule_tab = ui.tab(f"引用规则 ({len(rules)})", icon="shield")
                     with ui.tab_panels(tabs, value=user_tab).classes(
-                        "w-full bg-transparent"
+                        "tags-detail-panels w-full"
                     ).props("animated=False"):
-                        with ui.tab_panel(user_tab).classes("!p-0"):
+                        with ui.tab_panel(user_tab).classes("tags-detail-panel"):
                             self._render_user_members(usernames, users_by_name)
-                        with ui.tab_panel(group_tab).classes("!p-0"):
+                        with ui.tab_panel(group_tab).classes("tags-detail-panel"):
                             self._render_group_members(group_ids, groups_by_id)
-                        with ui.tab_panel(rule_tab).classes("!p-0"):
+                        with ui.tab_panel(rule_tab).classes("tags-detail-panel"):
                             self._render_rule_refs(rules)
 
     @staticmethod
     def _render_user_members(names: list[str], lookup: dict[str, dict]) -> None:
         if not names:
-            ui.label("暂无关联用户").classes("section-caption p-3")
+            ui.label("暂无关联用户").classes("tags-detail-empty")
             return
-        with ui.column().classes("w-full gap-0"):
+        with ui.column().classes("tags-detail-list w-full"):
             for username in names:
                 info = lookup.get(username, {})
                 status = str(info.get("status") or "unknown")
                 with ui.row().classes(
-                    "w-full items-center justify-between gap-3 p-3 border-b border-slate-500/10"
+                    "tags-detail-row w-full items-center justify-between gap-3"
                 ):
                     with ui.row().classes("items-center gap-2"):
                         ui.icon("person_outline", size="sm")
-                        ui.label(username).classes("font-medium")
+                        ui.label(username).classes("tags-detail-name")
                     ui.badge(
                         "启用" if status == "active" else "停用" if status == "disabled"
                         else "已删除" if status == "deleted" else "未知"
@@ -224,18 +233,17 @@ class TagsPage:
     @staticmethod
     def _render_group_members(ids: list[str], lookup: dict[str, dict]) -> None:
         if not ids:
-            ui.label("暂无关联用户组").classes("section-caption p-3")
+            ui.label("暂无关联用户组").classes("tags-detail-empty")
             return
-        with ui.column().classes("w-full gap-0"):
+        with ui.column().classes("tags-detail-list w-full"):
             for group_id in ids:
                 info = lookup.get(group_id, {})
                 with ui.row().classes(
-                    "w-full items-center justify-between flex-wrap gap-3 p-3 "
-                    "border-b border-slate-500/10"
+                    "tags-detail-row w-full items-center justify-between gap-3 flex-wrap"
                 ):
                     with ui.column().classes("gap-0"):
-                        ui.label(str(info.get("name") or group_id)).classes("font-medium")
-                        ui.label(group_id).classes("text-xs opacity-60")
+                        ui.label(str(info.get("name") or group_id)).classes("tags-detail-name")
+                        ui.label(group_id).classes("tags-detail-muted")
                     ui.label(str(info.get("subnet") or "—")).classes(
                         "font-mono text-sm"
                     )
@@ -243,13 +251,12 @@ class TagsPage:
     @staticmethod
     def _render_rule_refs(rules: list[dict]) -> None:
         if not rules:
-            ui.label("暂无防火墙规则引用").classes("section-caption p-3")
+            ui.label("暂无防火墙规则引用").classes("tags-detail-empty")
             return
-        with ui.column().classes("w-full gap-0"):
+        with ui.column().classes("tags-detail-list w-full"):
             for rule in sorted(rules, key=lambda item: int(item.get("priority") or 0)):
                 with ui.row().classes(
-                    "w-full items-center justify-between gap-3 flex-wrap p-3 "
-                    "border-b border-slate-500/10"
+                    "tags-detail-row w-full items-center justify-between gap-3 flex-wrap"
                 ):
                     with ui.column().classes("gap-0"):
                         ui.label(str(rule.get("description") or rule.get("id") or "未命名规则")).classes(
@@ -259,7 +266,7 @@ class TagsPage:
                             f"优先级 {rule.get('priority', '—')} · "
                             f"{str(rule.get('protocol') or 'all').upper()} · "
                             f"{rule.get('dest_ip') or '所有目标'}"
-                        ).classes("text-xs opacity-65")
+                        ).classes("tags-detail-muted")
                     with ui.row().classes("items-center gap-2"):
                         ui.badge(str(rule.get("action") or "—").upper()).props("outline")
                         ui.badge(
