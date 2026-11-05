@@ -134,3 +134,25 @@ def test_tags_page_has_registered_route_and_navigation():
     assert any(item.path == "/tags" for item in NAVIGATION_ITEMS)
     assert "/tags" in PAGE_HELP_BY_PATH
     assert callable(main._register_pages)
+
+
+def test_tags_page_list_filters_and_independent_expansion_state():
+    from app.ui.pages.tags import TagsPage
+
+    tag = {"name": "运维终端", "description": "生产跳板机"}
+    match = TagsPage._matches_filter
+    assert match(tag, "跳板", "all", users=0, groups=0, rules=0)
+    assert match(tag, "", "empty", users=0, groups=0, rules=0)
+    assert not match(tag, "", "assigned", users=0, groups=0, rules=0)
+    assert match(tag, "", "assigned", users=2, groups=0, rules=0)
+    assert match(tag, "", "referenced", users=0, groups=0, rules=1)
+    assert not match(tag, "无关", "all", users=1, groups=1, rules=1)
+
+    page = TagsPage()
+    page.expanded_tags = set()
+    page._refresh = lambda: None
+    page._toggle_tag("first")
+    page._toggle_tag("second")
+    assert page.expanded_tags == {"first", "second"}
+    page._toggle_tag("first")
+    assert page.expanded_tags == {"second"}
