@@ -195,7 +195,7 @@ class TagsPage:
                             on_click=lambda tid=tag_id: self._show_members_dialog(tid),
                         ).props("dense")
                     with ui.tabs().classes("firewall-compact-tabs tags-detail-tabs w-full").props(
-                        "dense align=left"
+                        "dense align=left inline-label"
                     ) as tabs:
                         user_tab = ui.tab(f"关联用户 ({len(usernames)})", icon="people")
                         group_tab = ui.tab(f"关联组 ({len(group_ids)})", icon="folder_shared")
