@@ -65,7 +65,13 @@ def assignable_client_ip_count(
         server_ip = IPv4Address(int(pool.network_address) + 1)
     except (ValueError, TypeError):
         return None
-    return max(0, host_count - int(server_ip in network.hosts()))
+    server_is_usable_host = (
+        server_ip in network
+        and (network.prefixlen >= 31 or server_ip not in (
+            network.network_address, network.broadcast_address
+        ))
+    )
+    return max(0, host_count - int(server_is_usable_host))
 
 def is_subnet_of(child: str, parent: str) -> bool:
     """判断 child 是否为 parent 的子网（或完全相同）。
