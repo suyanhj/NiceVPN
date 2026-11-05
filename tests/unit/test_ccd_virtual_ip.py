@@ -76,7 +76,7 @@ def test_ip_allocation_reserves_server_ip_and_exhausts_without_overflow(monkeypa
     ip, _ = service._allocate_virtual_ip_for_group(group)
     assert ip == "192.168.1.2"
     (ccd / "existing-user").write_text(
-        "ifconfig-push 192.168.1.2 255.255.255.0\\n", encoding="utf-8"
+        "ifconfig-push 192.168.1.2 255.255.255.0\n", encoding="utf-8"
     )
     with pytest.raises(ValueError, match="所有地址已分配"):
         service._allocate_virtual_ip_for_group(group)
@@ -100,7 +100,7 @@ def test_child_group_first_host_is_available_and_all_ccd_ips_are_excluded(monkey
     assert ip == "192.168.1.1"
     assert mask == "255.255.0.0"
     (ccd / "legacy-other-group").write_text(
-        "ifconfig-push 192.168.1.1 255.255.0.0\\n", encoding="utf-8"
+        "ifconfig-push 192.168.1.1 255.255.0.0\n", encoding="utf-8"
     )
     ip, _ = service._allocate_virtual_ip_for_group(child)
     assert ip == "192.168.1.2"
