@@ -285,7 +285,7 @@ class TagsPage:
         def submit() -> bool:
             name = str(fields["name"].value or "").strip()
             if not name:
-                ui.notify("请输入标签名称", type="warning")
+                safe_notify("请输入标签名称", type="warning")
                 return False
             try:
                 self.service.create(name, str(fields["description"].value or "").strip())
@@ -293,7 +293,7 @@ class TagsPage:
                 self._refresh()
                 return True
             except Exception as exc:
-                ui.notify(f"创建失败：{exc}", type="negative")
+                safe_notify(f"创建失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog("新建标签", body=body, on_submit=submit)
@@ -318,7 +318,7 @@ class TagsPage:
                 self._refresh()
                 return True
             except Exception as exc:
-                ui.notify(f"更新失败：{exc}", type="negative")
+                safe_notify(f"更新失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog("编辑标签", body=body, on_submit=submit)
@@ -327,14 +327,14 @@ class TagsPage:
     def _show_members_dialog(self, tag_id: str) -> None:
         tag = self.service.store.get_tag(tag_id)
         if not tag:
-            ui.notify("标签已不存在", type="negative")
+            safe_notify("标签已不存在", type="negative")
             return
         try:
             current = self.service.store.get_tag_members(tag_id)
             users = UserService(store=self.service.store).list_all()
             groups = GroupService(store=self.service.store).list_all()
         except Exception as exc:
-            ui.notify(f"读取成员失败：{exc}", type="negative")
+            safe_notify(f"读取成员失败：{exc}", type="negative")
             return
 
         def body() -> None:
@@ -367,7 +367,7 @@ class TagsPage:
                 self._refresh()
                 return True
             except Exception as exc:
-                ui.notify(f"更新成员失败：{exc}", type="negative")
+                safe_notify(f"更新成员失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog(
