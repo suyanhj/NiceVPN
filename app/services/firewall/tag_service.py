@@ -79,6 +79,25 @@ class TagService:
     def get_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
         return self.store.list_entity_tag_ids(entity_type, entity_id)
 
+    def batch_change_entities(
+        self, entity_type: str, entity_ids, tag_ids, *, operation: str,
+    ) -> int:
+        """批量关联在单事务更新，并且只执行一次防火墙收敛。"""
+        ids = sorted({str(v).strip() for v in entity_ids if str(v).strip()})
+        tags = sorted({str(v).strip() for v in tag_ids if str(v).strip()})
+        before = self.store.batch_change_entity_tags(
+            entity_type, ids, tags, operation=operation,
+        )
+        affected = set(tags)
+        for previous in before.values():
+            affected.update(previous)
+        try:
+            self.refresh_for_tags(affected)
+        except Exception:
+            self.store.restore_entity_tag_snapshots(entity_type, before)
+            raise
+        return len(ids)
+
     def refresh_for_tags(self, tag_ids) -> None:
         """关联刚被级联删除时，也能按修改前的标签 ID 判断是否需要刷新。"""
         affected = set(tag_ids)
