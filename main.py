@@ -5,12 +5,10 @@ import logging
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 
 from fastapi import Request
 from nicegui import app, ui
-from nicegui.server import Server
 
 logger = logging.getLogger(__name__)
 _shutdown_hook_registered = False
@@ -55,30 +53,8 @@ def _shutdown_background_services() -> None:
         logger.exception("停止 conntrack 连接审计监听失败")
 
 
-def _watch_uvicorn_exit() -> None:
-    """Uvicorn 一收到退出请求，就尽早停止 NiceVPN 后台服务。"""
-    server = None
-    while server is None:
-        server = getattr(Server, "instance", None)
-        if server is None:
-            time.sleep(0.05)
-
-    while not server.should_exit and not server.force_exit:
-        time.sleep(0.05)
-
-    _shutdown_background_services()
-
-
-def _start_uvicorn_exit_watcher() -> None:
-    """统一覆盖 Ctrl+C 与 systemd SIGTERM 的早期退出监听。"""
-    threading.Thread(
-        target=_watch_uvicorn_exit,
-        daemon=True,
-        name="uvicorn-exit-watcher",
-    ).start()
-
 def _register_shutdown_hook() -> None:
-    """只注册一次 NiceGUI/Uvicorn 正常 shutdown 生命周期回调。"""
+    """使用 NiceGUI 原生 shutdown 生命周期回调，统一清理后台资源。"""
     global _shutdown_hook_registered
     if _shutdown_hook_registered:
         return
@@ -226,8 +202,6 @@ def run_web() -> None:
         if auth_enabled
         else None
     )
-
-    _start_uvicorn_exit_watcher()
 
     try:
         ui.run(
