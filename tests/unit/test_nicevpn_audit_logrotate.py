@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grp
+import os
 import pwd
 import shutil
 import subprocess
@@ -72,8 +73,10 @@ def test_logrotate_config_parses_with_real_binary_when_installed(tmp_path):
     if binary is None:
         pytest.skip("CI 环境未安装 logrotate")
     group = grp.getgrgid(pwd.getpwnam("nobody").pw_gid).gr_name
-    logs = tmp_path / "openvpn-logs"
-    logs.mkdir()
+    if os.geteuid() != 0:
+        pytest.skip("logrotate su nobody 预检需要 root 权限")
+    # 只做 -d 语法检验，/var/log 可由 nobody 穿越；pytest 临时目录可能是 0700。
+    logs = Path("/var/log")
     conf = (
         CONF.read_text(encoding="utf-8")
         .replace("@OPENVPN_LOG_DIR@", str(logs))
@@ -83,7 +86,7 @@ def test_logrotate_config_parses_with_real_binary_when_installed(tmp_path):
     path = tmp_path / "logrotate.conf"
     path.write_text(conf, encoding="utf-8")
     result = subprocess.run(
-        [binary, "-d", str(path)],
+        [binary, "-d", "-s", str(tmp_path / "state"), str(path)],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
