@@ -68,7 +68,7 @@ def test_native_logrotate_installer_and_openvpn_install_flow():
     assert "INSTALL_SERVER_SYSTEMD" in rhel
     assert "id -gn nobody" in installer
     assert "copytruncate" not in installer
-    assert "logrotate.timer" not in installer
+    assert "systemctl enable --now nicevpn-audit-logrotate.timer" not in installer
 
 
 def test_logrotate_installer_bash_syntax():
