@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from nicegui import context, ui, run
+from app.ui.components.feedback import safe_notify
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
 from app.core.config import load_config
@@ -321,11 +322,11 @@ class PeersPage:
 
         username = str(row.get("bound_username") or "").strip()
         if not username:
-            ui.notify("该对端未绑定用户，无法下载客户端配置", type="warning")
+            safe_notify("该对端未绑定用户，无法下载客户端配置", type="warning")
             return
         path = OVPN_PROFILES_DIR / f"{username}.ovpn"
         if not path.is_file():
-            ui.notify(
+            safe_notify(
                 f"未找到 {username} 的客户端配置，请先在用户管理生成或重新签发配置",
                 type="negative",
             )
@@ -334,7 +335,7 @@ class PeersPage:
             ui.download(path.read_bytes(), f"{username}.ovpn")
         except OSError as exc:
             logger.exception("读取对端绑定用户配置失败 user=%s", username)
-            ui.notify(f"读取客户端配置失败: {exc}", type="negative")
+            safe_notify(f"读取客户端配置失败: {exc}", type="negative")
 
     def _render_manual_meta(self, label: str, value: str) -> None:
         """渲染部署说明元信息行。"""
@@ -367,22 +368,22 @@ class PeersPage:
     async def _copy_manual_text(text: str, message: str) -> None:
         """复制部署说明文本并给出提示。"""
         if not str(text or "").strip():
-            ui.notify("没有可复制的内容", type="warning")
+            safe_notify("没有可复制的内容", type="warning")
             return
         if await copy_text_to_clipboard(text):
-            ui.notify(message, type="positive")
+            safe_notify(message, type="positive")
 
     def _show_peer_config_push_dialog(self, row: dict) -> None:
         """集中推送对端客户端配置、systemd service 与 iptables 规则。"""
         pid = str(row.get("id") or "")
         if not pid:
-            ui.notify("缺少对端 ID", type="negative")
+            safe_notify("缺少对端 ID", type="negative")
             return
         if not str(row.get("ssh_host") or "").strip() or not str(row.get("ssh_username") or "").strip():
-            ui.notify("请先填写 SSH 主机与用户名", type="warning")
+            safe_notify("请先填写 SSH 主机与用户名", type="warning")
             return
         if not peer_row_has_usable_ssh_auth(row):
-            ui.notify("请配置 SSH 密码或私钥，或使用系统设置中的全局私钥", type="warning")
+            safe_notify("请配置 SSH 密码或私钥，或使用系统设置中的全局私钥", type="warning")
             return
         uname = str(row.get("bound_username") or "").strip()
         try:
@@ -435,10 +436,10 @@ class PeersPage:
                             if old:
                                 Path(old).unlink(missing_ok=True)
                             custom_tmp["path"] = tmp
-                            ui.notify(f"已选择本机文件: {getattr(e.file, 'name', '')}", type="positive")
+                            safe_notify(f"已选择本机文件: {getattr(e.file, 'name', '')}", type="positive")
                         except Exception as exc:
                             peer_remote_log.exception("读取本机上传 .ovpn 失败")
-                            ui.notify(str(exc), type="negative")
+                            safe_notify(str(exc), type="negative")
                             raise RuntimeError(f"读取本机上传失败: {exc}") from exc
 
                     ui.upload(
@@ -457,7 +458,7 @@ class PeersPage:
             async def do_push() -> None:
                 selected = bool(push_ovpn.value) or bool(push_service.value) or bool(push_fw.value)
                 if not selected:
-                    ui.notify("请至少勾选一个推送项", type="warning")
+                    safe_notify("请至少勾选一个推送项", type="warning")
                     return
                 result_box.clear()
                 with result_box:
@@ -519,7 +520,7 @@ class PeersPage:
                 result_box.clear()
                 with result_box:
                     ui.markdown("**推送完成**\n\n" + "\n".join(lines))
-                ui.notify("对端配置推送完成", type="positive")
+                safe_notify("对端配置推送完成", type="positive")
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
                 secondary_action("关闭", on_click=dialog.close)
@@ -530,13 +531,13 @@ class PeersPage:
         """SSH 自动探测并安装/装配 OpenVPN 客户端。"""
         pid = str(row.get("id") or "")
         if not pid:
-            ui.notify("缺少对端 ID", type="negative")
+            safe_notify("缺少对端 ID", type="negative")
             return
         if not str(row.get("ssh_host") or "").strip() or not str(row.get("ssh_username") or "").strip():
-            ui.notify("请先填写 SSH 主机与用户名", type="warning")
+            safe_notify("请先填写 SSH 主机与用户名", type="warning")
             return
         if not peer_row_has_usable_ssh_auth(row):
-            ui.notify("请配置 SSH 密码或私钥，或使用系统设置中的全局私钥", type="warning")
+            safe_notify("请配置 SSH 密码或私钥，或使用系统设置中的全局私钥", type="warning")
             return
         eff_bin = str(row.get("ssh_openvpn_binary") or "").strip() or None
         with ui.dialog() as dialog, ui.card().classes(
@@ -753,18 +754,18 @@ class PeersPage:
         """手动刷新 Mesh CCD，并阻止重复点击。"""
 
         if self._mesh_sync_running:
-            ui.notify("Mesh 路由正在刷新，请稍候", type="info")
+            safe_notify("Mesh 路由正在刷新，请稍候", type="info")
             return
         self._mesh_sync_running = True
         try:
             self.peer_service.sync_all_mesh_push_routes_in_ccd()
         except RuntimeError as exc:
             logger.error("手动刷新 mesh CCD 失败: %s", exc)
-            ui.notify(str(exc), type="negative")
+            safe_notify(str(exc), type="negative")
             return
         finally:
             self._mesh_sync_running = False
-        ui.notify("已重写各用户 CCD 中的 Mesh 路由", type="positive")
+        safe_notify("已重写各用户 CCD 中的 Mesh 路由", type="positive")
 
     def _show_peers_help_dialog(self) -> None:
         """右侧说明栏：精简要点 + 快捷跳转。"""
@@ -1057,7 +1058,7 @@ class PeersPage:
 
         usernames = self._peer_bind_select_usernames(exclude_peer_id=None)
         if not usernames:
-            ui.notify(
+            safe_notify(
                 "无可用绑定用户（均已占用或无活跃用户）。请先建用户或释放占用。",
                 type="warning",
             )
@@ -1128,11 +1129,11 @@ class PeersPage:
                     try:
                         raw = await event.file.read()
                         fields["ssh_key"].set_value(raw.decode("utf-8", errors="replace"))
-                        ui.notify(f"已载入私钥文件: {event.file.name}", type="positive")
+                        safe_notify(f"已载入私钥文件: {event.file.name}", type="positive")
                     except Exception as exc:
                         filename = getattr(event.file, "name", "")
                         logger.exception("新建对端：读取上传私钥失败 file=%s", filename)
-                        ui.notify(f"读取上传失败 ({filename}): {exc}", type="negative")
+                        safe_notify(f"读取上传失败 ({filename}): {exc}", type="negative")
                         raise RuntimeError(f"读取上传私钥失败: {exc}") from exc
 
                 ui.upload(
@@ -1165,11 +1166,11 @@ class PeersPage:
         async def submit() -> bool:
             name = str(fields["name"].value or "").strip()
             if not name:
-                ui.notify("请填写显示名称", type="warning")
+                safe_notify("请填写显示名称", type="warning")
                 return False
             username = str(fields["user"].value or "").strip()
             if not username:
-                ui.notify("请选择绑定用户", type="warning")
+                safe_notify("请选择绑定用户", type="warning")
                 return False
 
             auth_mode = str(fields["ssh_auth"].value or "none")
@@ -1207,14 +1208,14 @@ class PeersPage:
             }
 
             if payload["ssh_host"] and not payload["ssh_username"]:
-                ui.notify("填写 SSH 主机后必须同时填写 SSH 用户名", type="warning")
+                safe_notify("填写 SSH 主机后必须同时填写 SSH 用户名", type="warning")
                 return False
 
             try:
                 created = self.peer_service.create(payload)
             except (ValueError, RuntimeError) as exc:
                 logger.error("创建对端失败: %s", exc)
-                ui.notify(str(exc), type="negative")
+                safe_notify(str(exc), type="negative")
                 return False
 
             peer_id = str(created.get("id") or "")
@@ -1269,7 +1270,7 @@ class PeersPage:
 
         peer_id = str(row.get("id") or "")
         if not peer_id:
-            ui.notify("缺少对端 ID", type="negative")
+            safe_notify("缺少对端 ID", type="negative")
             return
 
         usernames = self._peer_bind_select_usernames(exclude_peer_id=peer_id)
@@ -1385,11 +1386,11 @@ class PeersPage:
                     try:
                         raw = await event.file.read()
                         fields["ssh_key"].set_value(raw.decode("utf-8", errors="replace"))
-                        ui.notify(f"已载入私钥文件: {event.file.name}", type="positive")
+                        safe_notify(f"已载入私钥文件: {event.file.name}", type="positive")
                     except Exception as exc:
                         filename = getattr(event.file, "name", "")
                         logger.exception("编辑对端：读取上传私钥失败 file=%s", filename)
-                        ui.notify(f"读取上传失败 ({filename}): {exc}", type="negative")
+                        safe_notify(f"读取上传失败 ({filename}): {exc}", type="negative")
                         raise RuntimeError(f"读取上传私钥失败: {exc}") from exc
 
                 ui.upload(
@@ -1426,11 +1427,11 @@ class PeersPage:
         async def submit() -> bool:
             name = str(fields["name"].value or "").strip()
             if not name:
-                ui.notify("请填写显示名称", type="warning")
+                safe_notify("请填写显示名称", type="warning")
                 return False
             username = str(fields["user"].value or "").strip()
             if not username:
-                ui.notify("请选择绑定用户", type="warning")
+                safe_notify("请选择绑定用户", type="warning")
                 return False
 
             auth_mode = str(fields["ssh_auth"].value or "none")
@@ -1453,7 +1454,7 @@ class PeersPage:
             }
 
             if payload["ssh_host"] and not payload["ssh_username"]:
-                ui.notify("填写 SSH 主机后必须同时填写 SSH 用户名", type="warning")
+                safe_notify("填写 SSH 主机后必须同时填写 SSH 用户名", type="warning")
                 return False
 
             if auth_mode == "none":
@@ -1467,7 +1468,7 @@ class PeersPage:
                 if new_password:
                     payload["ssh_password"] = new_password
                 elif not has_saved_password:
-                    ui.notify("请选择密码认证时需要填写 SSH 密码", type="warning")
+                    safe_notify("请选择密码认证时需要填写 SSH 密码", type="warning")
                     return False
             elif auth_mode == "key":
                 payload["ssh_password"] = ""
@@ -1477,7 +1478,7 @@ class PeersPage:
                     payload["ssh_private_key"] = new_key
                     payload["ssh_private_key_passphrase"] = new_passphrase
                 elif not has_saved_key:
-                    ui.notify("请选择私钥认证时需要填写或上传 SSH 私钥", type="warning")
+                    safe_notify("请选择私钥认证时需要填写或上传 SSH 私钥", type="warning")
                     return False
                 elif new_passphrase:
                     payload["ssh_private_key_passphrase"] = new_passphrase
@@ -1486,7 +1487,7 @@ class PeersPage:
                 self.peer_service.update(peer_id, payload)
             except (ValueError, RuntimeError) as exc:
                 logger.error("更新对端失败: %s", exc)
-                ui.notify(str(exc), type="negative")
+                safe_notify(str(exc), type="negative")
                 return False
 
             form.close()
@@ -1544,9 +1545,9 @@ class PeersPage:
                 self.peer_service.delete(pid)
             except ValueError as exc:
                 logger.error("删除对端失败: %s", exc)
-                ui.notify(str(exc), type="negative")
+                safe_notify(str(exc), type="negative")
                 return
-            ui.notify("已删除对端实例", type="positive")
+            safe_notify("已删除对端实例", type="positive")
             self._refresh_list()
 
         confirm_dialog.show(
