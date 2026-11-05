@@ -4,7 +4,7 @@
 说明：
 - app.log / openvpn-install.log / openvpn-upgrade.log 由 TimedRotatingFileHandler 按天轮转，backupCount=LOG_RETENTION_DAYS；
   此处额外按 mtime 清理遗留的 *.log.*，防止历史 Rotating 后缀堆积。
-- /etc/openvpn/log 下其他 OpenVPN 日志按 mtime 清理；NiceVPN 三类活动审计日志由独立 logrotate 管理，不能在这里 unlink。
+- /etc/openvpn/log 下其他 OpenVPN 日志按 mtime 清理；NiceVPN 三类活动审计日志与 server.log 均由系统 logrotate 管理，不能在这里 unlink。
 - 审计 audit-YYYY-MM-DD.jsonl：按文件名日期早于保留期则删除。
 """
 from __future__ import annotations
@@ -86,12 +86,13 @@ def cleanup_expired_logs(retention_days: int | None = None) -> None:
             ):
                 _unlink_if_expired(p)
 
-    # NiceVPN 三类日志由 logrotate 按大小轮转。不能按旧 mtime 删除活跃
+    # NiceVPN 三类日志与 server.log 由 logrotate 按大小轮转。不能按旧 mtime 删除活跃
     # 路径，否则 OpenVPN 的 nobody 钩子可能无法重新创建文件。
     logrotate_managed = {
         DEVICE_BIND_LOG_FILE.resolve(),
         VPN_SESSION_AUDIT_LOG_FILE.resolve(),
         VPN_CONNECTION_AUDIT_LOG_FILE.resolve(),
+        (OPENVPN_DAEMON_LOG_DIR / "server.log").resolve(),
     }
     # 其余 OpenVPN 自身日志继续使用既有过期清理逻辑。
     scan_dirs = tuple(dict.fromkeys((OPENVPN_DAEMON_LOG_DIR, OPENVPN_LOG_ROOT)))
