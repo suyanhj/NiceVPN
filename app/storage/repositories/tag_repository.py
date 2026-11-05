@@ -214,4 +214,3 @@ class TagRepositoryMixin:
             "usernames": [r[0] for r in users],
             "group_ids": [r[0] for r in groups],
         }
-
