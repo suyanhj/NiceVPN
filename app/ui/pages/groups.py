@@ -164,7 +164,7 @@ class GroupsPage:
         return [dict(group) for group in groups], int(total), root_id
 
     def _refresh_group_page(self) -> None:
-        if self.list_container is None:
+        if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
         try:
             groups, total, root_id = self._load_group_page()
