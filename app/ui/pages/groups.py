@@ -479,13 +479,16 @@ class GroupsPage:
             fields["conflict"].set_visibility(False)
 
             def update_capacity(subnet_val: str) -> None:
-                capacity = assignable_client_ip_count(subnet_val)
+                capacity = assignable_client_ip_count(
+                    subnet_val,
+                    global_subnet=str(load_config().global_subnet or subnet_val),
+                )
                 if capacity is None:
                     fields["capacity"].set_visibility(False)
                     return
                 fields["capacity"].text = (
                     f"可分配客户端 IP：{capacity} 个"
-                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                    "（保留全局 VPN 服务端地址及组子网网络/广播地址）"
                 )
                 fields["capacity"].set_visibility(True)
 
@@ -587,13 +590,16 @@ class GroupsPage:
             fields["conflict"].set_visibility(False)
 
             def update_capacity(subnet_val: str) -> None:
-                capacity = assignable_client_ip_count(subnet_val)
+                capacity = assignable_client_ip_count(
+                    subnet_val,
+                    global_subnet=str(load_config().global_subnet or subnet_val),
+                )
                 if capacity is None:
                     fields["capacity"].set_visibility(False)
                     return
                 fields["capacity"].text = (
                     f"可分配客户端 IP：{capacity} 个"
-                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                    "（保留全局 VPN 服务端地址及组子网网络/广播地址）"
                 )
                 fields["capacity"].set_visibility(True)
 
