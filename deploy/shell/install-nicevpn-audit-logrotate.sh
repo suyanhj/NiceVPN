@@ -33,6 +33,13 @@ LOG_DIR="$(printf '%s' "$LOG_DIR" | sed 's|/*$||')"
 LOGROTATE_BIN="$(command -v logrotate)"
 LOG_GROUP="$(id -gn nobody)"
 
+# logrotate 会以 nobody 执行 rename/create；目录本身也必须可写。
+# 如果 OpenVPN 初始化尚未创建该目录，后续初始化按现有权限流程创建。
+if [[ -d "$LOG_DIR" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u nobody -- test -w "$LOG_DIR" ||
+        fail "日志目录不可由 nobody 写入/重命名：$LOG_DIR；请先修复 OpenVPN 日志目录权限"
+fi
+
 escape_sed() {
     printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
