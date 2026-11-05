@@ -267,3 +267,27 @@ def test_groups_cidr_forms_show_assignable_client_capacity() -> None:
     assert "assignable_client_ip_count" in source
     assert "可分配客户端 IP" in source
     assert 'update_capacity(str(group.get("subnet") or ""))' in source
+
+
+def test_group_delete_rejects_rules_even_when_disabled(monkeypatch, tmp_path):
+    """删除组前拒绝遗留中心规则，避免孤儿 ACCEPT/DROP 规则。"""
+    from app.services.group.crud import GroupService
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "groups.sqlite")
+    root = _group("root", "根组", "10.8.0.0/16")
+    child = _group("g1", "旧业务组", "10.8.1.0/24")
+    # 根组必须是最早创建的组，避免同时间戳时 SQLite 按 ID 排序改变身份。
+    child["created_at"] = "2026-01-02T00:00:00+00:00"
+    store.upsert_group(root)
+    store.upsert_group(child)
+    store.replace_firewall_owner("g1", [{
+        "id": "old-rule", "owner_type": "group", "owner_id": "g1",
+        "priority": 10, "enabled": False, "action": "accept",
+        "protocol": "all", "source_subnet": "10.8.1.0/24",
+    }])
+    service = GroupService(store)
+    with pytest.raises(ValueError, match="仍被 1 条中心防火墙规则引用"):
+        service.delete("g1")
+    assert store.get_group("g1") is not None
+    assert len(store.get_firewall_owner("g1")) == 1

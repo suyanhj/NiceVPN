@@ -86,13 +86,13 @@ def test_change_group_reassigns_ip_preserves_ccd_blocks_and_kicks(monkeypatch, c
 
     assert result["changed"] is True
     assert result["old_virtual_ip"] == "10.8.1.2"
-    assert result["new_virtual_ip"] == "10.8.2.3"
+    assert result["new_virtual_ip"] == "10.8.2.1"
     assert store.get_user("alice")["group_id"] == "g2"
     assert store.get_group("g1")["user_count"] == 0
     assert store.get_group("g2")["user_count"] == 2
     ccd_text = (ccd_dir / "alice").read_text(encoding="utf-8")
     assert "disable" in ccd_text
-    assert "ifconfig-push 10.8.2.3 255.255.0.0" in ccd_text
+    assert "ifconfig-push 10.8.2.1 255.255.0.0" in ccd_text
     assert "iroute 172.16.1.0 255.255.255.0" in ccd_text
     assert 'push "route 192.168.1.0 255.255.255.0"' in ccd_text
     assert change_group_env["sync_calls"]["count"] == 1
@@ -110,6 +110,10 @@ def test_change_group_full_target_group_raises_before_state_change(monkeypatch, 
     old_ccd = "ifconfig-push 10.8.1.2 255.255.0.0\n"
     (ccd_dir / "alice").write_text(old_ccd, encoding="utf-8")
     (ccd_dir / "bob").write_text("ifconfig-push 10.8.2.2 255.255.0.0\n", encoding="utf-8")
+    # 新策略允许子组 .1，需要同时占用 .1 和 .2 才算 /30 满员。
+    (ccd_dir / "legacy-peer").write_text(
+        "ifconfig-push 10.8.2.1 255.255.0.0\n", encoding="utf-8"
+    )
 
     killed: list[str] = []
     monkeypatch.setattr(mod.UserService, "_kill_client_session", lambda self, username: killed.append(username))

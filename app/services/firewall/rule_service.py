@@ -878,13 +878,42 @@ class FirewallRuleService:
             out.append((pid, cidrs, pri, extra))
         return out
 
+    def _resolve_tag_rules(self, rows: list[dict]) -> list[FirewallRule]:
+        """标签规则不持久化 IP 快照；每次写内核时动态解析当前地址。"""
+        from app.services.firewall.tag_service import TagService
+
+        tags = TagService(self.store)
+        ccd_ips = None
+        resolved: dict[str, tuple[str, ...]] = {}
+        result: list[FirewallRule] = []
+        for row in rows:
+            if not row.get("enabled", True):
+                continue
+            if row.get("owner_type") != "tag":
+                result.append(FirewallRule(**row))
+                continue
+            tag_id = str(row.get("owner_id") or "")
+            if tag_id not in resolved:
+                if ccd_ips is None:
+                    from app.services.user.crud import UserService
+                    ccd_ips = UserService(store=self.store).list_ccd_virtual_ipv4_by_username()
+                resolved[tag_id] = tags.resolve_addresses(tag_id, ccd_ips=ccd_ips)
+            addresses = resolved[tag_id]
+            if not addresses:
+                # 空标签不能生成没有 src 匹配的宽松规则。
+                logger.info("跳过空成员标签规则 tag=%s rule=%s", tag_id, row.get("id"))
+                continue
+            effective = dict(row)
+            effective["source_subnet"] = None
+            effective["source_ips"] = list(addresses)
+            result.append(FirewallRule(**effective))
+        result.sort(key=lambda rule: rule.priority)
+        return result
+
     def _rebuild_all_rules(self) -> None:
         """合并全部 owner 的已启用规则、对端中心放行，一次性重建 iptables / ipset。"""
         merged_raw = self.store.list_firewall_rules()
-        enabled_rules = [
-            FirewallRule(**r) for r in merged_raw if r.get("enabled", True)
-        ]
-        enabled_rules.sort(key=lambda x: x.priority)
+        enabled_rules = self._resolve_tag_rules(merged_raw)
         center_peers = self._collect_center_peers()
         if not self.iptables_mgr.rebuild_rules(enabled_rules, center_peers=center_peers):
             msg = (
@@ -897,10 +926,7 @@ class FirewallRuleService:
     def _refresh_vpn_forward_only(self) -> None:
         """规则管理专用：只刷新 ``VPN_FORWARD`` 链，不触碰 INPUT、FORWARD 钩子、ip_forward、MASQUERADE。"""
         merged_raw = self.store.list_firewall_rules()
-        enabled_rules = [
-            FirewallRule(**r) for r in merged_raw if r.get("enabled", True)
-        ]
-        enabled_rules.sort(key=lambda x: x.priority)
+        enabled_rules = self._resolve_tag_rules(merged_raw)
         center_peers = self._collect_center_peers()
         if not self.iptables_mgr.refresh_vpn_forward_only(enabled_rules, center_peers=center_peers):
             msg = (

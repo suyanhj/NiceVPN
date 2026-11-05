@@ -41,11 +41,13 @@ def adapt_center_rule_row(
     *,
     group_names: Mapping[str, str] | None = None,
     peer_names: Mapping[str, str] | None = None,
+    tag_names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """把普通中心 JSON 规则或中心侧对端虚拟行转换为稳定 Grid 行模型。"""
 
     groups = group_names or {}
     peers = peer_names or {}
+    tags = tag_names or {}
 
     rule_id = str(rule.get("id") or "").strip()
     row_kind = str(rule.get("_row_kind") or "json").strip() or "json"
@@ -65,7 +67,9 @@ def adapt_center_rule_row(
     ).strip()
 
     if owner_type == "group":
-        owner_label = str(groups.get(owner_id) or owner_id or "—")
+        owner_label = str(groups.get(owner_id) or (f"已删除的组 · {owner_id}" if owner_id else "—"))
+    elif owner_type == "tag":
+        owner_label = (f"标签 · {tags[owner_id]}" if tags.get(owner_id) else f"已删除的标签 · {owner_id or '—'}")
     elif owner_type == "peer" or row_kind == "center_peer":
         peer_name = str(peers.get(peer_id or owner_id) or "").strip()
         if peer_name and (peer_id or owner_id):
@@ -151,6 +155,7 @@ def adapt_center_rule_rows(
     *,
     group_names: Mapping[str, str] | None = None,
     peer_names: Mapping[str, str] | None = None,
+    tag_names: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """批量适配并保持输入顺序。"""
 
@@ -159,6 +164,7 @@ def adapt_center_rule_rows(
             rule,
             group_names=group_names,
             peer_names=peer_names,
+            tag_names=tag_names,
         )
         for rule in rules
     ]

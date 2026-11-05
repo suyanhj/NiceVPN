@@ -25,6 +25,8 @@ from app.ui.components.data_grid_renderers import (
     TRAFFIC_STACK_RENDERER,
 )
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.tag_dialog import show_entity_tags_dialog
+from app.ui.components.batch_tag_dialog import show_batch_tags_dialog
 from app.ui.components.server_pager import page_after_size_change
 from app.ui.grid_query import (
     filter_rows,
@@ -168,6 +170,16 @@ class UsersPage:
                 "power_settings_new",
                 "批量踢下线",
                 self._batch_kick_offline,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
+                "sell",
+                "批量关联标签",
+                lambda: show_batch_tags_dialog(
+                    "user", set(self.selected_users),
+                    on_success=self._refresh_user_list,
+                ),
                 disabled_action=True,
                 track_bulk=True,
             )
@@ -1032,6 +1044,11 @@ class UsersPage:
                     "drive_file_move",
                     "切换组",
                     lambda: self._show_change_group_dialog(username),
+                )
+                icon_action(
+                    "sell",
+                    "标签",
+                    lambda: show_entity_tags_dialog("user", username),
                 )
                 icon_action(
                     "download",

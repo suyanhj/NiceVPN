@@ -16,6 +16,8 @@ from app.ui.components import confirm_dialog
 from app.ui.components.actions import create_action, danger_action, secondary_action
 from app.ui.components.cards import metric_card
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.tag_dialog import show_entity_tags_dialog
+from app.ui.components.batch_tag_dialog import show_batch_tags_dialog
 from app.ui.components.list_selection import (
     apply_row_checkboxes,
     sync_select_all_checkbox,
@@ -43,6 +45,7 @@ class GroupsPage:
         self.bulk_bar = None
         self.bulk_enable_button = None
         self.bulk_disable_button = None
+        self.bulk_tags_button = None
         self.bulk_delete_button = None
         self.page = 1
         self.page_size = 50
@@ -72,6 +75,16 @@ class GroupsPage:
                 "批量启用",
                 icon="check_circle",
                 on_click=self._batch_enable,
+                disabled=disabled,
+                tooltip="请先选择用户组" if disabled else None,
+            )
+            self.bulk_tags_button = secondary_action(
+                "批量标签",
+                icon="sell",
+                on_click=lambda: show_batch_tags_dialog(
+                    "group", set(self.selected_ids),
+                    on_success=self._refresh_group_page,
+                ),
                 disabled=disabled,
                 tooltip="请先选择用户组" if disabled else None,
             )
@@ -348,6 +361,12 @@ class GroupsPage:
                     on_click=lambda current=group: self._show_edit_dialog(current),
                 ).props("dense")
 
+                secondary_action(
+                    "标签",
+                    icon="sell",
+                    on_click=lambda gid=group_id: show_entity_tags_dialog("group", gid),
+                ).props("dense")
+
                 if is_active:
                     secondary_action(
                         "停用",
@@ -412,6 +431,7 @@ class GroupsPage:
         for button in (
             self.bulk_enable_button,
             self.bulk_disable_button,
+            self.bulk_tags_button,
             self.bulk_delete_button,
         ):
             if button is None:
@@ -459,13 +479,16 @@ class GroupsPage:
             fields["conflict"].set_visibility(False)
 
             def update_capacity(subnet_val: str) -> None:
-                capacity = assignable_client_ip_count(subnet_val)
+                capacity = assignable_client_ip_count(
+                    subnet_val,
+                    global_subnet=str(load_config().global_subnet or subnet_val),
+                )
                 if capacity is None:
                     fields["capacity"].set_visibility(False)
                     return
                 fields["capacity"].text = (
                     f"可分配客户端 IP：{capacity} 个"
-                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                    "（保留全局 VPN 服务端地址及组子网网络/广播地址）"
                 )
                 fields["capacity"].set_visibility(True)
 
@@ -567,13 +590,16 @@ class GroupsPage:
             fields["conflict"].set_visibility(False)
 
             def update_capacity(subnet_val: str) -> None:
-                capacity = assignable_client_ip_count(subnet_val)
+                capacity = assignable_client_ip_count(
+                    subnet_val,
+                    global_subnet=str(load_config().global_subnet or subnet_val),
+                )
                 if capacity is None:
                     fields["capacity"].set_visibility(False)
                     return
                 fields["capacity"].text = (
                     f"可分配客户端 IP：{capacity} 个"
-                    "（已扣除网络/广播地址及 NiceVPN 保留的首个主机地址）"
+                    "（保留全局 VPN 服务端地址及组子网网络/广播地址）"
                 )
                 fields["capacity"].set_visibility(True)
 

@@ -40,26 +40,38 @@ def normalize_cidr(s: str) -> str | None:
         return None
     return f"{n.network}/{n.prefixlen}"
 
-def assignable_client_ip_count(s: str) -> int | None:
-    """返回 NiceVPN 组子网实际可分配给客户端的 IPv4 地址数量。
+def assignable_client_ip_count(
+    s: str, *, global_subnet: str | None = None,
+) -> int | None:
+    """与 CCD 分配器一致的客户端容量：保留真正的全局服务端地址。
 
-    与 UserService._allocate_virtual_ip_for_group 保持一致：
-    先按 IPv4 hosts() 排除网络/广播地址（/31、/32 遵循标准库语义），
-    再额外保留第一个可用主机地址，因此客户端从第二个 host 开始分配。
-    非法 CIDR 返回 None。
+    用户组只承载逻辑归属；其 .1 不必然是网关。保守地按组 IPv4
+    主机地址计算（不分配组网络/广播），只扣除落在组中的全局 server .1。
+    global_subnet 未提供时为兼容根组展示，以 s 本身作为全局池。
     """
+    from ipaddress import IPv4Network, IPv4Address
+
     normalized = normalize_cidr(s)
     if normalized is None:
         return None
-    network = IPNetwork(normalized, version=4)
-    prefix = int(network.prefixlen)
-    size = int(network.size)
-    if prefix <= 30:
-        host_count = max(0, size - 2)
+    network = IPv4Network(normalized, strict=False)
+    if network.prefixlen <= 30:
+        host_count = max(0, network.num_addresses - 2)
     else:
-        host_count = size
-    return max(0, host_count - 1)
-
+        host_count = network.num_addresses
+    pool_text = global_subnet if global_subnet else normalized
+    try:
+        pool = IPv4Network(pool_text, strict=False)
+        server_ip = IPv4Address(int(pool.network_address) + 1)
+    except (ValueError, TypeError):
+        return None
+    server_is_usable_host = (
+        server_ip in network
+        and (network.prefixlen >= 31 or server_ip not in (
+            network.network_address, network.broadcast_address
+        ))
+    )
+    return max(0, host_count - int(server_is_usable_host))
 
 def is_subnet_of(child: str, parent: str) -> bool:
     """判断 child 是否为 parent 的子网（或完全相同）。

@@ -1,0 +1,165 @@
+# -*- coding: utf-8 -*-
+"""防火墙标签：持久化关联与运行时源地址解析。
+
+标签本身不是地址快照。每次防火墙刷新时按当前用户 CCD IP、当前组网段
+重新计算成员，保证 ipset swap 使用完整期望状态而非增量 append。
+"""
+from __future__ import annotations
+
+import uuid
+
+from app.storage.sqlite_store import SqliteStore, get_default_store
+from app.services.firewall.ipset_mgr import IpsetManager
+
+
+class TagService:
+    def __init__(self, store: SqliteStore | None = None):
+        self.store = store or get_default_store()
+
+    def create(self, name: str, description: str = "") -> dict:
+        tag_id = str(uuid.uuid4())
+        self.store.create_tag(tag_id, name, description)
+        return self.store.get_tag(tag_id) or {}
+
+    def list_all(self) -> list[dict]:
+        return self.store.list_tags()
+
+    def update(self, tag_id: str, *, name: str, description: str = "") -> dict:
+        self.store.update_tag(tag_id, name=name, description=description)
+        return self.store.get_tag(tag_id) or {}
+
+    def delete(self, tag_id: str) -> None:
+        """拒绝删除仍有防火墙规则引用的标签，避免悬空规则。"""
+        if self.store.get_tag(tag_id) is None:
+            raise ValueError("标签不存在")
+        referenced = [
+            row for row in self.store.list_firewall_rules()
+            if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)
+        ]
+        if referenced:
+            raise ValueError(f"标签仍被 {len(referenced)} 条防火墙规则引用，请先删除规则")
+        self.store.delete_tag(tag_id)
+
+    def rule_count(self, tag_id: str) -> int:
+        return sum(
+            1 for row in self.store.list_firewall_rules()
+            if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)
+        )
+
+    def set_members(self, tag_id: str, *, usernames=(), group_ids=(), refresh_kernel: bool = True) -> None:
+        """更新关联后刷新内核；失败时恢复 SQLite 原关联。"""
+        previous = self.store.get_tag_members(tag_id)
+        self.store.set_tag_members(tag_id, usernames=usernames, group_ids=group_ids)
+        if not refresh_kernel:
+            return
+        try:
+            self.refresh_for_tags([tag_id])
+        except Exception:
+            self.store.set_tag_members(tag_id, **previous)
+            raise
+
+    def set_entity_tags(
+        self, entity_type: str, entity_id: str, tag_ids,
+        *, refresh_kernel: bool = True,
+    ) -> None:
+        """单事务替换关联；内核刷新失败则恢复修改前关联。"""
+        before = self.store.list_entity_tag_ids(entity_type, entity_id)
+        desired = sorted(set(str(value) for value in tag_ids))
+        if before == desired:
+            return
+        self.store.replace_entity_tags(entity_type, entity_id, desired)
+        if not refresh_kernel:
+            return
+        try:
+            self.refresh_for_tags(set(before) | set(desired))
+        except Exception:
+            self.store.replace_entity_tags(entity_type, entity_id, before)
+            raise
+
+    def get_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
+        return self.store.list_entity_tag_ids(entity_type, entity_id)
+
+    def batch_change_entities(
+        self, entity_type: str, entity_ids, tag_ids, *, operation: str,
+    ) -> int:
+        """批量关联在单事务更新，并且只执行一次防火墙收敛。"""
+        ids = sorted({str(v).strip() for v in entity_ids if str(v).strip()})
+        tags = sorted({str(v).strip() for v in tag_ids if str(v).strip()})
+        before = self.store.batch_change_entity_tags(
+            entity_type, ids, tags, operation=operation,
+        )
+        affected = set(tags)
+        for previous in before.values():
+            affected.update(previous)
+        try:
+            self.refresh_for_tags(affected)
+        except Exception:
+            self.store.restore_entity_tag_snapshots(entity_type, before)
+            raise
+        return len(ids)
+
+    def refresh_for_tags(self, tag_ids) -> None:
+        """关联刚被级联删除时，也能按修改前的标签 ID 判断是否需要刷新。"""
+        affected = set(tag_ids)
+        if not affected:
+            return
+        active = {
+            str(rule.get("owner_id") or "")
+            for rule in self.store.list_firewall_rules()
+            if rule.get("owner_type") == "tag" and rule.get("enabled", True)
+        }
+        if affected & active:
+            from app.services.firewall.rule_service import FirewallRuleService
+            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+
+    def refresh_if_referenced(self, *, entity_type: str, entity_id: str, other_group_id: str = "") -> None:
+        """用户/组状态或地址变动后，仅在存在受影响标签规则时刷新。"""
+        relevant = set(self.get_entity_tag_ids(entity_type, entity_id))
+        if entity_type == "user":
+            user = self.store.get_user(entity_id)
+            if user:
+                relevant.update(self.get_entity_tag_ids("group", str(user.get("group_id") or "")))
+            if other_group_id:
+                relevant.update(self.get_entity_tag_ids("group", other_group_id))
+        if not relevant:
+            return
+        active_refs = {
+            str(rule.get("owner_id") or "")
+            for rule in self.store.list_firewall_rules()
+            if rule.get("owner_type") == "tag" and rule.get("enabled", True)
+        }
+        if not (active_refs & relevant):
+            return
+        from app.services.firewall.rule_service import FirewallRuleService
+        FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+
+    def resolve_addresses(self, tag_id: str, *, ccd_ips: dict[str, str] | None = None) -> tuple[str, ...]:
+        """合并直接关联用户和关联组下的用户虚拟 IP，以及当前组 CIDR。
+
+        只采集 active 用户/组，且只读现有 CCD，不猜测/分配新的地址。
+        """
+        if self.store.get_tag(tag_id) is None:
+            raise ValueError(f"标签不存在: {tag_id}")
+        members = self.store.get_tag_members(tag_id)
+        ip_by_user = ccd_ips
+        if ip_by_user is None:
+            from app.services.user.crud import UserService
+            ip_by_user = UserService(store=self.store).list_ccd_virtual_ipv4_by_username()
+        usernames = set(members["usernames"])
+        addresses: list[str] = []
+        for group_id in members["group_ids"]:
+            group = self.store.get_group(group_id)
+            if not group or str(group.get("status", "active")) != "active":
+                continue
+            subnet = str(group.get("subnet") or "").strip()
+            if subnet:
+                addresses.append(subnet)
+            # 加入组内活动用户的 CCD 地址，便于组子网与 CCD 地址不一致时仍可覆盖。
+            usernames.update(self.store.list_active_usernames_by_group(group_id))
+        for username in sorted(usernames):
+            user = self.store.get_user(username)
+            if user and str(user.get("status", "active")) == "active":
+                address = ip_by_user.get(username)
+                if address:
+                    addresses.append(address)
+        return IpsetManager.normalize_entries(addresses)

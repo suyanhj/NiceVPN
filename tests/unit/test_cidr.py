@@ -55,7 +55,7 @@ class TestAssignableClientIpCount:
 
     def test_small_networks_follow_allocator_semantics(self):
         assert assignable_client_ip_count("10.8.1.0/31") == 1
-        assert assignable_client_ip_count("10.8.1.1/32") == 0
+        assert assignable_client_ip_count("10.8.1.1/32") == 1
 
     def test_invalid_returns_none(self):
         assert assignable_client_ip_count("not-a-cidr") is None
@@ -107,3 +107,15 @@ class TestSubnetsOverlap:
         # 完全相同的网段应视为重叠
         assert subnets_overlap("10.8.0.0/16", "10.8.0.0/16") is True
         assert subnets_overlap("192.168.1.0/24", "192.168.1.0/24") is True
+
+
+def test_subgroup_capacity_only_reserves_actual_server_tun_address():
+    assert assignable_client_ip_count(
+        "192.168.1.0/24", global_subnet="192.168.0.0/16"
+    ) == 254
+    assert assignable_client_ip_count(
+        "192.168.0.0/24", global_subnet="192.168.0.0/16"
+    ) == 253
+    assert assignable_client_ip_count(
+        "192.168.0.0/16", global_subnet="192.168.0.0/16"
+    ) == 65533

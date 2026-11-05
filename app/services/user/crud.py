@@ -78,6 +78,9 @@ class UserService:
         if password_enabled and not str(password or ""):
             raise ValueError("启用客户端私钥密码时必须填写密码")
 
+        # 在生成证书/客户端配置前检查组地址容量，避免池满后遗留 PKI 产物。
+        self._allocate_virtual_ip_for_group(group)
+
         config = load_config()
         now = datetime.now(timezone.utc).isoformat()
 
@@ -293,6 +296,8 @@ class UserService:
 
         # 减少组用户计数
         self._increment_group_user_count(user_data.get("group_id", ""), -1)
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
 
         self.audit.log("delete_user", "user", username, {}, "success")
         return True
@@ -364,6 +369,8 @@ class UserService:
         # 停用时通过管理接口踢人下线
         if new_status == "disabled":
             self._kill_client_session(username)
+        from app.services.firewall.tag_service import TagService
+        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
 
         self.audit.log("toggle_user_status", "user", username,
                        f"状态变更为 {new_status}", "success")
@@ -430,6 +437,10 @@ class UserService:
 
             PeerService().sync_all_mesh_push_routes_in_ccd()
             self._kill_client_session(username)
+            from app.services.firewall.tag_service import TagService
+            TagService(self.store).refresh_if_referenced(
+                entity_type="user", entity_id=username, other_group_id=old_group_id,
+            )
 
             result = {
                 "username": username,
@@ -608,17 +619,31 @@ class UserService:
         fix_path_for_openvpn_shared_data(ccd_file)
 
     def _allocate_virtual_ip_for_group(self, group: dict) -> tuple[str, str]:
-        """从组子网分配一个未占用的虚拟 IP，并返回对应 ifconfig-push 掩码。"""
-        subnet = group.get("subnet", "10.8.1.0/24")
-        network = IPv4Network(subnet, strict=False)
-        hosts = list(network.hosts())
-        if not hosts:
-            raise ValueError(f"组子网 {subnet} 没有可用的主机地址")
+        """分配组内固定 IP；只保留真正的全局 TUN 服务端地址。
 
-        used_ips = self._collect_used_ips_in_group(group["id"], network)
-        for host in hosts[1:]:
-            if str(host) not in used_ips:
-                return str(host), _ifconfig_push_netmask(network)
+        子组中的第一个主机（例如 192.168.1.1/24）不是独立 VPN 网关，
+        可以分配。跨组及历史 CCD 均视为占用，避免重复分配。
+        """
+        from ipaddress import IPv4Address
+
+        subnet = str(group.get("subnet") or "10.8.1.0/24")
+        network = IPv4Network(subnet, strict=False)
+        config = load_config()
+        global_subnet = str(config.get("global_subnet") or "").strip()
+        if not global_subnet:
+            raise ValueError("未配置全局 VPN 地址池，无法安全分配虚拟 IP")
+        pool = IPv4Network(global_subnet, strict=False)
+        if not network.subnet_of(pool):
+            raise ValueError(f"组子网 {subnet} 不在全局 VPN 地址池 {pool} 内")
+        server_ip = IPv4Address(int(pool.network_address) + 1)
+
+        # 使用所有用户的 CCD（包括其它组和历史文件），而非仅扫描本组。
+        # 不修改已有地址；只在新地址分配时排除占用和服务端 TUN。
+        used_ips = set(self.list_ccd_virtual_ipv4_by_username().values())
+        for host in network.hosts():
+            ip = str(host)
+            if host != server_ip and ip not in used_ips:
+                return ip, _ifconfig_push_netmask(network)
         raise ValueError(f"组子网 {subnet} 内没有可用 IP，所有地址已分配")
 
     def _read_ccd_virtual_ip(self, username: str) -> str | None:
@@ -688,7 +713,8 @@ class UserService:
                     if len(parts) >= 2 and parts[0] == "ifconfig-push":
                         result[ccd_file.name] = parts[1]
                         break
-            except OSError:
+            except (OSError, UnicodeError):
+                # CCD 目录若混入二进制或非 UTF-8 文件，不应阻断 IP 分配。
                 continue
         return result
 

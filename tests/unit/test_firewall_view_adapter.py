@@ -152,3 +152,25 @@ def test_batch_adapter_keeps_service_priority_order() -> None:
 
     assert [row["id"] for row in rows] == ["r10", "r20"]
     assert [row["priority"] for row in rows] == [10, 20]
+
+
+def test_orphan_group_rule_shows_deleted_owner_and_retains_id():
+    owner = "fd7fdf4e-8b22-4f85-a8e9-d21b34e29475"
+    rule = {
+        "id": "orphan-rule", "owner_type": "group", "owner_id": owner,
+        "action": "accept", "source_subnet": "10.254.255.0/24",
+        "enabled": True,
+    }
+    row = adapt_center_rule_row(rule, group_names={})
+    assert row["owner_id"] == owner
+    assert row["owner_label"] == f"已删除的组 · {owner}"
+    assert row["enabled"] is True
+    assert row["action"] == "accept"
+
+
+def test_missing_tag_has_explicit_orphan_label():
+    row = adapt_center_rule_row({
+        "id": "orphan-tag-rule", "owner_type": "tag",
+        "owner_id": "old-tag-id", "action": "drop",
+    }, tag_names={})
+    assert row["owner_label"] == "已删除的标签 · old-tag-id"

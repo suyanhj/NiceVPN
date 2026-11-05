@@ -104,11 +104,18 @@ class IptablesManager:
         实际 stage/swap/rollback/gc 统一交给 IpsetManager。
         """
         specs: list[IpsetSpec] = []
+        seen: set[str] = set()
         for _pri, kind, payload in merged:
             if kind == "j":
                 rule = payload
                 assert isinstance(rule, FirewallRule)
-                if self._has_multiple_addresses(list(rule.source_ips or [])):
+                if rule.owner_type == "tag":
+                    if rule.source_ips:
+                        spec = self.ipset_mgr.spec("tag", rule.owner_id, "src", rule.source_ips)
+                        if spec.name not in seen:
+                            specs.append(spec)
+                            seen.add(spec.name)
+                elif self._has_multiple_addresses(list(rule.source_ips or [])):
                     specs.append(
                         self.ipset_mgr.spec("rule", rule.id, "src", rule.source_ips or [])
                     )
@@ -333,6 +340,13 @@ class IptablesManager:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+    @staticmethod
+    def _effective_source_set_name(rule: FirewallRule) -> str:
+        """标签源集合以 tag ID 命名，供多个规则共用。"""
+        if rule.owner_type == "tag":
+            return IpsetManager.stable_name("tag", rule.owner_id, "src")
+        return IpsetManager.stable_name("rule", rule.id, "src")
 
     @staticmethod
     def _rule_ipset_name(rule_id: str, direction: str = "src") -> str:
@@ -1294,7 +1308,7 @@ class IptablesManager:
 
         src_tokens = [str(ip).strip() for ip in (rule.source_ips or []) if str(ip).strip()]
         dest_tokens = [ip.strip() for ip in str(rule.dest_ip or "").split(",") if ip.strip()]
-        use_src_ipset = self._has_multiple_addresses(src_tokens)
+        use_src_ipset = rule.owner_type == "tag" or self._has_multiple_addresses(src_tokens)
         use_dest_ipset = self._has_multiple_addresses(dest_tokens)
 
         src_terms: list[str | None]
@@ -1322,7 +1336,7 @@ class IptablesManager:
                 for pv in proto_variants:
                     parts = [f"-A {CHAIN_NAME}"]
                     if use_src_ipset:
-                        parts.append(f"-m set --match-set {self._rule_ipset_name(rule.id, 'src')} src")
+                        parts.append(f"-m set --match-set {self._effective_source_set_name(rule)} src")
                     elif src:
                         parts.append(f"-s {src}")
                     if use_dest_ipset:

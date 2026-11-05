@@ -34,6 +34,7 @@ class FirewallRuleCreateFields:
     parse_user_source: Callable[
         [str], tuple[str | None, list[str] | None]
     ]
+    tag: Any = None
 
     def read_values(self) -> dict[str, Any]:
         """读取并校验表单值；业务层只需处理优先级与落库/写回。"""
@@ -62,6 +63,12 @@ class FirewallRuleCreateFields:
                     raw_source = str(self.source.value or "").strip()
                     source_subnet = raw_source or None
                     source_ips = None
+        elif owner_type == "tag":
+            owner_id = str(self.tag.value or "").strip() if self.tag is not None else ""
+            if not owner_id:
+                raise ValueError("请选择标签")
+            # 标签的实际源 IP 在每次规则刷新时动态计算，禁止表单写入静态快照。
+            source_subnet, source_ips = None, None
         elif owner_type == "user":
             selected = self.users.value or []
             user_ids = (
@@ -114,6 +121,7 @@ def render_firewall_rule_create_fields(
     *,
     groups: Sequence[Mapping[str, Any]],
     users: Sequence[Mapping[str, Any]],
+    tags: Sequence[Mapping[str, Any]] = (),
     peer_presets_loader: Callable[[str], Sequence[Mapping[str, Any]]],
     ccd_reader: Callable[[list[str]], list[str]],
     parse_user_source: Callable[
@@ -143,7 +151,7 @@ def render_firewall_rule_create_fields(
         default_group_id = next(iter(group_map), None)
 
     owner_type = ui.select(
-        {"group": "组", "user": "用户"},
+        {"group": "组", "user": "用户", **({"tag": "标签"} if tags else {})},
         label=owner_type_label,
         value="group",
     ).classes("w-full")
@@ -159,6 +167,13 @@ def render_firewall_rule_create_fields(
         value=default_group_id,
         with_input=True,
     ).classes("w-full")
+    tag_select = ui.select(
+        {str(tag["id"]): str(tag["name"]) for tag in tags},
+        label="选择标签",
+        with_input=True,
+    ).classes("w-full") if tags else None
+    if tag_select is not None:
+        tag_select.set_visibility(False)
     users_select = ui.select(
         user_options,
         label="选择用户（多选）",
@@ -275,10 +290,14 @@ def render_firewall_rule_create_fields(
     def on_owner_type_change() -> None:
         is_group = owner_type.value == "group"
         group.set_visibility(is_group)
-        users_select.set_visibility(not is_group)
+        is_user = owner_type.value == "user"
+        if tag_select is not None:
+            tag_select.set_visibility(owner_type.value == "tag")
+        users_select.set_visibility(is_user)
         auto_source.set_visibility(is_group)
         peer_lan.set_visibility(is_group)
-        user_hint.set_visibility(not is_group)
+        user_hint.set_visibility(is_user)
+        source.set_visibility(is_group or is_user)
         if is_group:
             sync_peer_presets()
         mutex()
@@ -354,6 +373,7 @@ def render_firewall_rule_create_fields(
     return FirewallRuleCreateFields(
         owner_type=owner_type,
         group=group,
+        tag=tag_select,
         users=users_select,
         auto_source=auto_source,
         peer_lan=peer_lan,
