@@ -12,7 +12,7 @@ if [[ -v NICEVPN_OPENVPN_LOG_DIR ]]; then LOG_DIR="$NICEVPN_OPENVPN_LOG_DIR"; fi
 fail() { printf '[NiceVPN logrotate] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[NiceVPN logrotate] %s\n' "$*"; }
 
-[[ "$EUID" -eq 0 ]] || fail "安装 systemd 定时器必须使用 root"
+[[ "$EUID" -eq 0 ]] || fail "写入 /etc/logrotate.d 需要 root 权限"
 command -v logrotate >/dev/null 2>&1 || fail "未安装 logrotate，请先通过系统包管理器安装"
 id nobody >/dev/null 2>&1 || fail "不存在 nobody 用户，无法保证 OpenVPN 钩子写入权限"
 [[ "$LOG_DIR" == /* ]] || fail "NICEVPN_OPENVPN_LOG_DIR 必须是绝对路径"
@@ -21,7 +21,7 @@ id nobody >/dev/null 2>&1 || fail "不存在 nobody 用户，无法保证 OpenVP
    "$LOG_DIR" != *"*"* && "$LOG_DIR" != *"?"* &&
    "$LOG_DIR" != *";"* ]] || fail "日志目录包含不支持的 logrotate 特殊字符"
 [[ -f "$CONF_TEMPLATE" ]] ||
-    fail "仓库中缺少轮转配置或 systemd 模板"
+    fail "仓库中缺少轮转配置模板"
 
 LOG_DIR="$(printf '%s' "$LOG_DIR" | sed 's|/*$||')"
 LOGROTATE_BIN="$(command -v logrotate)"
@@ -62,6 +62,15 @@ if [[ -f /etc/systemd/system/nicevpn-audit-logrotate.timer ]] &&
           /etc/systemd/system/nicevpn-audit-logrotate.service \
           /etc/nicevpn/logrotate-audit.conf
     systemctl daemon-reload
+fi
+
+# 系统原生 timer 可用时确保启用；没有 timer 的发行版沿用 cron.daily。
+if command -v systemctl >/dev/null 2>&1 &&
+   [[ -d /run/systemd/system ]] &&
+   systemctl list-unit-files logrotate.timer --no-legend 2>/dev/null | grep -q '^logrotate.timer'; then
+    if ! systemctl enable --now logrotate.timer >/dev/null 2>&1; then
+        log "WARNING: 系统 logrotate.timer 无法启用，请检查发行版 cron.daily 配置"
+    fi
 fi
 
 log "已安装 $CONF_TARGET，随系统 logrotate.timer / cron 自动检查"
