@@ -3,7 +3,6 @@
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +31,7 @@ from app.ui.adapters.services import adapt_local_service_view, adapt_peer_servic
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import secondary_action
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.log_reader import read_log_tail_lines
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 
@@ -521,30 +521,7 @@ class ServicesPage:
         max_bytes: int = _LOG_TAIL_MAX_BYTES,
     ) -> str:
         """按行数和字节双重限制逆向读取，超长单行也不会导致 OOM。"""
-        if max_lines <= 0 or max_bytes <= 0:
-            return ""
-        block_size = 65536
-        chunks: list[bytes] = []
-        total_newlines = 0
-        total_bytes = 0
-        with path.open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            position = stream.tell()
-            while position > 0 and total_newlines <= max_lines and total_bytes < max_bytes:
-                step = min(block_size, position, max_bytes - total_bytes)
-                position -= step
-                stream.seek(position)
-                chunk = stream.read(step)
-                chunks.append(chunk)
-                total_newlines += chunk.count(b"\n")
-                total_bytes += len(chunk)
-
-        raw = b"".join(reversed(chunks))
-        tail_lines = raw.splitlines()[-max_lines:]
-        body = "\n".join(line.decode("utf-8", errors="replace") for line in tail_lines)
-        if position > 0 and total_bytes >= max_bytes:
-            return f"(日志过大，仅读取末尾 {max_bytes // 1024} KiB)\n{body}"
-        return body
+        return read_log_tail_lines(path, max_lines, max_bytes=max_bytes)
 
     def _open_log_tail_dialog(
         self,
