@@ -3561,8 +3561,53 @@ body {
   overflow-wrap: anywhere;
 }
 .tags-page--v2 .tags-detail-tabs {
+  min-height: 36px;
   color: #9aa0aa;
   border-bottom: 1px solid rgba(187, 190, 201, 0.08);
+}
+.tags-page--v2 .tags-detail-tabs .q-tabs__content {
+  min-height: 36px;
+  gap: 8px;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab {
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 10px;
+  color: #818895;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab__content {
+  flex-direction: row !important;
+  flex-wrap: nowrap;
+  gap: 5px;
+  min-height: 32px;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab__icon {
+  margin: 0 !important;
+  font-size: 16px !important;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab__label {
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab--active {
+  color: #49ccec !important;
+  font-weight: 600;
+}
+.tags-page--v2 .tags-detail-tabs .q-tab__indicator {
+  height: 2px;
+}
+@media (max-width: 767px) {
+  .tags-page--v2 .tags-detail-tabs .q-tabs__content {
+    gap: 2px;
+  }
+  .tags-page--v2 .tags-detail-tabs .q-tab {
+    padding-inline: 7px;
+  }
 }
 .tags-page--v2 .tags-detail-panels,
 .tags-page--v2 .tags-detail-panel {
