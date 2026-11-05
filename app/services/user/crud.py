@@ -619,18 +619,31 @@ class UserService:
         fix_path_for_openvpn_shared_data(ccd_file)
 
     def _allocate_virtual_ip_for_group(self, group: dict) -> tuple[str, str]:
-        """从组子网分配一个未占用的虚拟 IP，并返回对应 ifconfig-push 掩码。"""
-        subnet = group.get("subnet", "10.8.1.0/24")
+        """分配组内固定 IP；只保留真正的全局 TUN 服务端地址。
+
+        子组中的第一个主机（例如 192.168.1.1/24）不是独立 VPN 网关，
+        可以分配。跨组及历史 CCD 均视为占用，避免重复分配。
+        """
+        from ipaddress import IPv4Address
+
+        subnet = str(group.get("subnet") or "10.8.1.0/24")
         network = IPv4Network(subnet, strict=False)
-        # 避免大子网 list(network.hosts()) 导致高内存占用。
-        # 当前策略保留首个主机地址供网关（/24 中通常是 .1），从第二个开始分配。
-        used_ips = self._collect_used_ips_in_group(group["id"], network)
-        hosts = iter(network.hosts())
-        # /31 遵循 ipaddress.hosts() 语义，与容量展示保持一致。
-        next(hosts, None)
-        for host in hosts:
-            if str(host) not in used_ips:
-                return str(host), _ifconfig_push_netmask(network)
+        config = load_config()
+        global_subnet = str(config.get("global_subnet") or "").strip()
+        if not global_subnet:
+            raise ValueError("未配置全局 VPN 地址池，无法安全分配虚拟 IP")
+        pool = IPv4Network(global_subnet, strict=False)
+        if not network.subnet_of(pool):
+            raise ValueError(f"组子网 {subnet} 不在全局 VPN 地址池 {pool} 内")
+        server_ip = IPv4Address(int(pool.network_address) + 1)
+
+        # 使用所有用户的 CCD（包括其它组和历史文件），而非仅扫描本组。
+        # 不修改已有地址；只在新地址分配时排除占用和服务端 TUN。
+        used_ips = set(self.list_ccd_virtual_ipv4_by_username().values())
+        for host in network.hosts():
+            ip = str(host)
+            if host != server_ip and ip not in used_ips:
+                return ip, _ifconfig_push_netmask(network)
         raise ValueError(f"组子网 {subnet} 内没有可用 IP，所有地址已分配")
 
     def _read_ccd_virtual_ip(self, username: str) -> str | None:
