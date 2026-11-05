@@ -107,4 +107,3 @@ def migrate_v4_tags(conn: sqlite3.Connection) -> None:
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
         (4, "firewall-tags", _now_iso()),
     )
-
