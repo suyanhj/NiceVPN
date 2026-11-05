@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
+
 import logging
 import re
 import shlex
@@ -28,19 +30,6 @@ logger = logging.getLogger("peer.remote")
 COMMENT_FWD_TMPL = "ovpn-mgmt-peer peer={peer_id} role=fwd-global"
 COMMENT_JUMP_TMPL = "ovpn-mgmt-peer peer={peer_id} role=jump-chain"
 COMMENT_MASQ_TMPL = "ovpn-mgmt-peer peer={peer_id} role=masq idx={idx}"
-
-
-def _exec_ssh(
-    client: paramiko.SSHClient,
-    command: str,
-    *,
-    timeout: int,
-) -> tuple[str, str, int]:
-    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    out_b = stdout.read()
-    err_b = stderr.read()
-    code = stdout.channel.recv_exit_status()
-    return out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace"), code
 
 
 def _detect_sudo_prefix(client: paramiko.SSHClient, *, timeout: int = 15) -> str:
