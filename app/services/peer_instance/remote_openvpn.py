@@ -2,8 +2,6 @@
 """经 SSH 在远端 Linux 检测 OpenVPN 客户端：路径与版本逻辑对齐本机 ``detector``，不涉及 PKI/服务端。"""
 from __future__ import annotations
 
-from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
-
 import io
 import logging
 import re
@@ -17,6 +15,7 @@ from paramiko.ssh_exception import SSHException
 from packaging.version import Version
 
 from app.core.constants import OPENVPN_MIN_VERSION, OPENVPN_SEARCH_PATHS
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
 
 logger = logging.getLogger("peer.remote")
 
