@@ -2,6 +2,8 @@
 """经 SSH 在远端 Linux 检测 OpenVPN 客户端：路径与版本逻辑对齐本机 ``detector``，不涉及 PKI/服务端。"""
 from __future__ import annotations
 
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
+
 import io
 import logging
 import re
@@ -91,19 +93,6 @@ def _parse_remote_os_release(text: str) -> dict[str, str]:
         "pretty_name": info.get("pretty_name", ""),
         "name": info.get("name", ""),
     }
-
-
-def _exec_ssh(
-    client: paramiko.SSHClient,
-    command: str,
-    *,
-    timeout: int,
-) -> tuple[str, str, int]:
-    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    out_b = stdout.read()
-    err_b = stderr.read()
-    code = stdout.channel.recv_exit_status()
-    return out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace"), code
 
 
 def detect_openvpn_via_ssh(
