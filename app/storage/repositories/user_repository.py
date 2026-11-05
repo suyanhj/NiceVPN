@@ -183,4 +183,3 @@ class UserRepositoryMixin:
         with self.connection() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS n FROM users{where}").fetchone()
         return int(row["n"])
-
