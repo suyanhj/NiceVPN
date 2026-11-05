@@ -1,0 +1,11 @@
+[Unit]
+Description=Check NiceVPN audit logs for rotation every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=1min
+Unit=nicevpn-audit-logrotate.service
+
+[Install]
+WantedBy=timers.target
