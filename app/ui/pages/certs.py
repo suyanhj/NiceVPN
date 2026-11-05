@@ -30,6 +30,7 @@ from app.ui.components.data_grid_renderers import (
 from app.ui.components.feedback import AsyncOperationGuard
 from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
+from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.ui.components.toolbars import render_bulk_action_bar
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class CertsPage:
                 "width": 146,
                 "minWidth": 118,
                 "maxWidth": 176,
-                "cellClass": "vpn-grid-primary-cell",
+                "cellClass": "vpn-grid-primary-cell vpn-grid-copyable-cell",
                 **multi_text_filter_column("输入 CN 后按 Enter"),
             },
             {
@@ -176,7 +177,7 @@ class CertsPage:
                 "headerName": "序列号",
                 "flex": 1.45,
                 "minWidth": 178,
-                "cellClass": "vpn-grid-mono",
+                "cellClass": "vpn-grid-mono vpn-grid-copyable-cell",
                 **multi_text_filter_column(
                     "输入序列号后按 Enter",
                     filter_value_field="serial",
@@ -378,18 +379,41 @@ class CertsPage:
             else:
                 button.disable()
 
-    def _on_grid_cell_clicked(self, event) -> None:
+    @staticmethod
+    def _grid_copy_target(col_id: str, row: dict) -> tuple[str, str] | None:
+        """证书短序列号展示在表格，但点击时必须复制完整序列号。"""
+        columns = {
+            "common_name": ("common_name", "证书 CN 已复制"),
+            "serial_display": ("serial", "完整证书序列号已复制"),
+        }
+        spec = columns.get(col_id)
+        if spec is None:
+            return None
+        field, message = spec
+        value = str(row.get(field) or "").strip()
+        if not value or value in {"—", "*"}:
+            return None
+        return value, message
+
+    async def _on_grid_cell_clicked(self, event) -> None:
         args = getattr(event, "args", None) or {}
         if not isinstance(args, dict):
             return
         col_id = args.get("colId")
         if col_id is None and isinstance(args.get("column"), dict):
             col_id = args["column"].get("colId")
-        if col_id != "actions":
-            return
         row = args.get("data") or {}
-        if isinstance(row, dict) and row.get("common_name"):
-            self._show_cert_actions(row)
+        if not isinstance(row, dict):
+            return
+        if col_id == "actions":
+            if row.get("common_name"):
+                self._show_cert_actions(row)
+            return
+        target = self._grid_copy_target(str(col_id or ""), row)
+        if target is not None:
+            value, message = target
+            if await copy_text_to_clipboard(value):
+                safe_notify(message, type="positive")
 
     def _show_cert_actions(self, row: dict) -> None:
         common_name = str(row.get("common_name") or "")
