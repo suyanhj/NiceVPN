@@ -156,3 +156,56 @@ def test_tags_page_list_filters_and_independent_expansion_state():
     assert page.expanded_tags == {"first", "second"}
     page._toggle_tag("first")
     assert page.expanded_tags == {"second"}
+
+
+def test_batch_add_remove_keeps_unrelated_tags_and_is_atomic(store):
+    store.create_tag("a", "A")
+    store.create_tag("b", "B")
+    store.create_tag("c", "C")
+    store.replace_entity_tags("user", "alice", ["a"])
+    before = store.batch_change_entity_tags(
+        "user", ["alice", "bob"], ["b"], operation="add"
+    )
+    assert before == {"alice": ["a"], "bob": []}
+    assert store.list_entity_tag_ids("user", "alice") == ["a", "b"]
+    assert store.list_entity_tag_ids("user", "bob") == ["b"]
+    store.batch_change_entity_tags("user", ["alice", "bob"], ["b"], operation="remove")
+    assert store.list_entity_tag_ids("user", "alice") == ["a"]
+    assert store.list_entity_tag_ids("user", "bob") == []
+    with pytest.raises(ValueError, match="不存在"):
+        store.batch_change_entity_tags(
+            "user", ["alice", "nonexistent"], ["c"], operation="add"
+        )
+    assert store.list_entity_tag_ids("user", "alice") == ["a"]
+
+
+def test_batch_tag_service_refreshes_once_and_rolls_back(store, monkeypatch):
+    store.create_tag("a", "A")
+    store.create_tag("b", "B")
+    store.replace_entity_tags("user", "alice", ["a"])
+    store.replace_firewall_owner("a", [
+        FirewallRule(id="tag-batch-rule", owner_type="tag", owner_id="a",
+                     action="drop", priority=20).model_dump()
+    ])
+    calls = []
+
+    def refresh(self):
+        calls.append(1)
+        raise RuntimeError("iptables failure")
+
+    monkeypatch.setattr(FirewallRuleService, "refresh_vpn_forward_only", refresh)
+    with pytest.raises(RuntimeError, match="iptables failure"):
+        TagService(store).batch_change_entities(
+            "user", ["alice", "bob"], ["b"], operation="add"
+        )
+    assert len(calls) == 1
+    assert store.list_entity_tag_ids("user", "alice") == ["a"]
+    assert store.list_entity_tag_ids("user", "bob") == []
+
+
+def test_batch_group_tag_association(store):
+    store.create_tag("g-tag", "业务组")
+    TagService(store).batch_change_entities(
+        "group", ["g1"], ["g-tag"], operation="add"
+    )
+    assert store.list_entity_tag_ids("group", "g1") == ["g-tag"]
