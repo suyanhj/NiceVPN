@@ -10,8 +10,6 @@
 """
 from __future__ import annotations
 
-from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
-
 import logging
 import re
 import shlex
@@ -23,6 +21,7 @@ from app.services.firewall.iptables_mgr import IptablesManager
 from app.services.peer_instance.ccd_merge import sorted_unique_ipv4_cidrs
 from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_from_row
 from app.utils.cidr import validate_iptables_rest_line_addr_tokens
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
 
 logger = logging.getLogger("peer.remote")
 
