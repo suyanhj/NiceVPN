@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from nicegui import background_tasks, context, run, ui
+from app.ui.components.feedback import safe_notify
 from nicegui.functions.notify import ARG_MAP as _NICEGUI_NOTIFY_ARG_MAP
 
 from app.core.config import load_config
@@ -197,7 +198,7 @@ class ServicesPage:
         from app.services.openvpn.detector import detect_openvpn
 
         if self._openvpn_upgrade_busy:
-            ui.notify("OpenVPN 升级检查正在执行，请稍候", type="info")
+            safe_notify("OpenVPN 升级检查正在执行，请稍候", type="info")
             return
 
         current = detect_openvpn()
@@ -338,7 +339,7 @@ class ServicesPage:
                 stage = self._openvpn_upgrade_stage
                 preflight = state.get("preflight")
                 if not stage or not isinstance(preflight, dict) or not preflight.get("ok"):
-                    ui.notify("请先完成候选版本兼容性预检", type="warning")
+                    safe_notify("请先完成候选版本兼容性预检", type="warning")
                     return
 
                 from app.services.openvpn.upgrade import (
@@ -389,7 +390,7 @@ class ServicesPage:
             def confirm_upgrade() -> None:
                 stage = self._openvpn_upgrade_stage
                 if not stage:
-                    ui.notify("没有已通过预检的候选版本", type="warning")
+                    safe_notify("没有已通过预检的候选版本", type="warning")
                     return
                 confirm_dialog.show(
                     title=f"升级到 OpenVPN {stage.get('version')}？",
@@ -411,7 +412,7 @@ class ServicesPage:
         """关闭升级对话框时清理未应用的 staging 目录。"""
 
         if self._openvpn_upgrade_busy:
-            ui.notify("升级操作执行中，暂不能关闭", type="warning")
+            safe_notify("升级操作执行中，暂不能关闭", type="warning")
             return
         from app.services.openvpn.upgrade import cleanup_staged_candidate
 
@@ -431,7 +432,7 @@ class ServicesPage:
     def _refresh_current_tab(self) -> None:
         if self._active_tab == "peers":
             if self._peer_refresh_running:
-                ui.notify("对端状态刷新中，请稍候", type="info")
+                safe_notify("对端状态刷新中，请稍候", type="info")
                 return
             self._refresh_peer_client_list()
         else:
@@ -566,11 +567,11 @@ class ServicesPage:
                 try:
                     initial = load()
                 except FileNotFoundError as exc:
-                    ui.notify("日志不存在", type="warning")
+                    safe_notify("日志不存在", type="warning")
                     return
                 except OSError as exc:
                     logger.error("读日志失败: %s", exc)
-                    ui.notify(f"读日志失败: {exc}", type="negative")
+                    safe_notify(f"读日志失败: {exc}", type="negative")
                     return
             else:
                 initial = load()
@@ -611,11 +612,11 @@ class ServicesPage:
                     try:
                         pl, t = load()
                     except FileNotFoundError as exc:
-                        ui.notify("日志不存在", type="warning")
+                        safe_notify("日志不存在", type="warning")
                         return
                     except OSError as exc:
                         logger.error("刷新日志失败: %s", exc)
-                        ui.notify(f"读取失败: {exc}", type="negative")
+                        safe_notify(f"读取失败: {exc}", type="negative")
                         return
                 else:
                     pl, t = load()
@@ -1003,12 +1004,12 @@ class ServicesPage:
 
         peer_id = str(peer_id or "").strip()
         if not peer_id:
-            ui.notify("缺少对端 ID", type="negative")
+            safe_notify("缺少对端 ID", type="negative")
             return False
         if action not in {"start", "stop", "restart", "enable", "disable"}:
             raise ValueError(f"不支持的对端服务操作: {action}")
         if peer_id in self._peer_action_busy:
-            ui.notify("该对端已有服务操作执行中，请稍候", type="info")
+            safe_notify("该对端已有服务操作执行中，请稍候", type="info")
             return False
 
         self._peer_action_busy.add(peer_id)
@@ -1026,12 +1027,12 @@ class ServicesPage:
                 action,
                 exc,
             )
-            ui.notify(f"{action} 失败: {exc}", type="negative")
+            safe_notify(f"{action} 失败: {exc}", type="negative")
             return False
         finally:
             self._peer_action_busy.discard(peer_id)
 
-        ui.notify(f"已执行 {action}", type="positive")
+        safe_notify(f"已执行 {action}", type="positive")
         return True
 
     def _show_peer_client_file_log_viewer(self, peer_id: str, peer_name: str) -> None:
@@ -1079,7 +1080,7 @@ class ServicesPage:
                         return
                     logger.error("读取对端客户端日志失败 peer=%s: %s", peer_id, exc)
                     set_body(f"读取失败: {exc}")
-                    ui.notify(f"读日志失败: {exc}", type="negative")
+                    safe_notify(f"读日志失败: {exc}", type="negative")
                     return
 
                 if not state["open"] or generation != state["generation"]:
@@ -1267,7 +1268,7 @@ class ServicesPage:
         """在创建后台任务前占用实例，消除重复点击竞态。"""
 
         if name in self._local_instance_busy:
-            ui.notify(f"{name} 尚有本机操作进行中，请稍候", type="warning")
+            safe_notify(f"{name} 尚有本机操作进行中，请稍候", type="warning")
             return False
         if action not in {"start", "stop", "restart"}:
             raise ValueError(f"不支持的本机服务操作: {action}")
@@ -1286,7 +1287,7 @@ class ServicesPage:
                 action,
                 exc,
             )
-            ui.notify(f"{name} {action} 任务未能排队", type="negative")
+            safe_notify(f"{name} {action} 任务未能排队", type="negative")
             return False
         return True
 
@@ -1349,7 +1350,7 @@ class ServicesPage:
         conf_file = resolve_server_conf_dir(self._conf_dir) / f"{name}.conf"
         conf_path = str(conf_file)
         if not conf_file.exists():
-            ui.notify(f"配置文件不存在: {conf_path}", type="negative")
+            safe_notify(f"配置文件不存在: {conf_path}", type="negative")
             return
 
         try:
@@ -1357,7 +1358,7 @@ class ServicesPage:
             content = conf_file.read_text(encoding="utf-8")
         except Exception as exc:
             logger.exception("打开实例配置失败 instance=%s", name)
-            ui.notify(f"读取或备份配置失败: {exc}", type="negative")
+            safe_notify(f"读取或备份配置失败: {exc}", type="negative")
             return
 
         fields: dict[str, Any] = {}
@@ -1394,9 +1395,9 @@ class ServicesPage:
             save_with_backup(conf_path, new_content)
         except Exception as exc:
             logger.exception("保存实例配置失败 path=%s", conf_path)
-            ui.notify(f"保存失败: {exc}", type="negative")
+            safe_notify(f"保存失败: {exc}", type="negative")
             return False
-        ui.notify("已保存配置；请重启实例使新配置生效", type="warning")
+        safe_notify("已保存配置；请重启实例使新配置生效", type="warning")
         return True
 
     def _do_save_config(self, dialog, conf_path: str, new_content: str):
