@@ -180,7 +180,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     )
     assert device_column["filterParams"]["values"] == ["未知"]
     assert page.bulk_download_button._props.get("disable") is not True
-    assert len(page.bulk_icon_buttons) == 5
+    assert len(page.bulk_icon_buttons) == 6
     assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
 
 
