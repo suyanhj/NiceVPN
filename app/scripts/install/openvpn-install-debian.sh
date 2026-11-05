@@ -27,6 +27,9 @@ install_source_dependencies() {
         build-essential curl ca-certificates pkg-config autoconf automake libtool \
         libssl-dev libnl-3-dev libnl-genl-3-dev libpam0g-dev libcap-ng-dev \
         liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev conntrack
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
+        apt install -y logrotate
+    fi
 }
 
 _log "Debian 系安装：codename=${DEBIAN_CODENAME} min_version=${OPENVPN_MIN_VERSION}"
@@ -54,6 +57,9 @@ if [ -n "${PKG_VERSION}" ] && [ "${PKG_VERSION}" != "(none)" ] \
     && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION}"; then
     _log "仓库 openvpn ${PKG_VERSION} 满足 ${OPENVPN_MIN_VERSION}+，使用 apt 安装"
     pkgs=(openvpn conntrack)
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
+        pkgs+=(logrotate)
+    fi
     if [ "${INSTALL_EASYRSA}" = "1" ]; then
         pkgs=(openvpn easy-rsa conntrack)
     fi

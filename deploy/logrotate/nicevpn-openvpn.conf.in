@@ -1,0 +1,67 @@
+# NiceVPN 设备/审计日志，以及 OpenVPN server.log 的本机轮转策略。
+# 由 deploy/shell/install-nicevpn-logrotate.sh 安装到 /etc/logrotate.d/nicevpn-openvpn。
+# server-status.log 是周期覆盖的实时状态文件，不做轮转。
+# NiceVPN 三个日志采用 rename+create；OpenVPN server.log 独立使用 copytruncate。
+# 注意 Fluent Bit 的 tail DB、rotate_wait 和归档文件匹配规则。
+
+@OPENVPN_LOG_DIR@/openvpn-device-bind.log {
+    daily
+    maxsize 16M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su @LOG_OWNER@ @LOG_GROUP@
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
+
+@OPENVPN_LOG_DIR@/openvpn-session-audit.jsonl {
+    daily
+    maxsize 64M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su @LOG_OWNER@ @LOG_GROUP@
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
+
+@OPENVPN_LOG_DIR@/openvpn-connection-audit.jsonl {
+    daily
+    maxsize 128M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su @LOG_OWNER@ @LOG_GROUP@
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
+
+# OpenVPN 自身持有 log-append 文件描述符，不宜 rename+create 后无人 reopen。
+# copytruncate 不会重启 VPN，但复制/截断间有极小的日志丢失窗口。
+@OPENVPN_LOG_DIR@/server.log {
+    daily
+    maxsize 128M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su @LOG_OWNER@ @LOG_GROUP@
+    copytruncate
+}

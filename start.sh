@@ -149,6 +149,17 @@ PY
     systemctl enable "${SERVICE_NAME}" >/dev/null
     systemctl restart "${SERVICE_NAME}"
 
+    # 使用系统 logrotate.timer/cron，直接在 /etc/logrotate.d 下配置。
+    if command -v logrotate >/dev/null 2>&1; then
+        if bash "$ROOT_DIR/deploy/shell/install-nicevpn-logrotate.sh"; then
+            log "NiceVPN/OpenVPN 日志轮转配置已安装。"
+        else
+            log "WARNING: 日志轮转配置安装失败，主服务不受影响；请检查安装日志。"
+        fi
+    else
+        log "WARNING: logrotate 未安装，OpenVPN/NiceVPN 日志不会自动轮转。"
+    fi
+
     log "NiceVPN 已由 systemd 托管。"
     systemctl --no-pager --full status "${SERVICE_NAME}" || true
 }
