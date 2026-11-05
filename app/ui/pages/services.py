@@ -46,6 +46,8 @@ _LOG_REALTIME_MAX_LINES = 500
 _LOG_REALTIME_POLL_SEC = 1.0
 # 日志可能持续写入多年；任何快照或实时读取均限制最大读取字节数。
 _LOG_TAIL_MAX_BYTES = 512 * 1024
+# 实时刷新每秒发生，进一步约束单次推送到浏览器的数据量。
+_LOG_REALTIME_MAX_BYTES = 128 * 1024
 
 
 class ServicesPage:
@@ -644,7 +646,9 @@ class ServicesPage:
                     return
                 path_caption.text = cap(p)
                 try:
-                    body = self._read_log_last_lines(p, _LOG_REALTIME_MAX_LINES)
+                    body = self._read_log_last_lines(
+                        p, _LOG_REALTIME_MAX_LINES, max_bytes=_LOG_REALTIME_MAX_BYTES
+                    )
                 except FileNotFoundError:
                     body = f"(尚无文件)\n{p}"
                 except OSError as exc:
