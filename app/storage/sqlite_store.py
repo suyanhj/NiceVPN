@@ -19,77 +19,7 @@ from typing import Any, Iterator, Mapping, Sequence
 from app.core.constants import SQLITE_DB_FILE
 from app.utils.cidr import normalize_cidr
 
-SCHEMA_VERSION = 4
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS storage_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    group_id TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT '',
-    payload TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_users_group_status
-    ON users(group_id, status);
-CREATE INDEX IF NOT EXISTS idx_users_status_username
-    ON users(status, username COLLATE NOCASE);
-
-CREATE TABLE IF NOT EXISTS groups (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT '',
-    payload TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_name
-    ON groups(name);
-CREATE INDEX IF NOT EXISTS idx_groups_created_at
-    ON groups(created_at, id);
-
-CREATE TABLE IF NOT EXISTS peers (
-    id TEXT PRIMARY KEY,
-    bound_username TEXT NOT NULL,
-    center_forward_priority INTEGER NOT NULL DEFAULT 500000,
-    center_forward_enabled INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT '',
-    payload TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_peers_bound_username
-    ON peers(bound_username);
-CREATE INDEX IF NOT EXISTS idx_peers_priority
-    ON peers(center_forward_priority, id);
-
-CREATE TABLE IF NOT EXISTS firewall_rules (
-    id TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL,
-    owner_type TEXT NOT NULL,
-    priority INTEGER NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT '',
-    payload TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_firewall_owner_priority
-    ON firewall_rules(owner_id, priority, id);
-CREATE INDEX IF NOT EXISTS idx_firewall_priority
-    ON firewall_rules(priority, id);
-CREATE INDEX IF NOT EXISTS idx_firewall_owner_type
-    ON firewall_rules(owner_type, owner_id);
-"""
+from app.storage.schema_manager import SCHEMA_VERSION, ensure_schema, execute_sql_file
 
 
 def _now_iso() -> str:
@@ -258,37 +188,14 @@ class SqliteStore:
             with self._open() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
-                conn.executescript(_SCHEMA_SQL)
+                ensure_schema(
+                    conn,
+                    migrate_v2=self._migrate_v2_query_indexes,
+                    migrate_v3=self._migrate_v3_normalize_group_cidrs,
+                    migrate_v4=self._migrate_v4_tags,
+                    now_iso=_now_iso,
+                )
                 self._fix_permissions()
-                check = conn.execute("PRAGMA quick_check").fetchone()
-                if check is None or str(check[0]).lower() != "ok":
-                    raise RuntimeError(
-                        f"SQLite quick_check 失败: {check[0] if check else 'no result'}"
-                    )
-                row = conn.execute(
-                    "SELECT MAX(version) AS version FROM schema_migrations"
-                ).fetchone()
-                current = int(row["version"] or 0)
-                if current > SCHEMA_VERSION:
-                    raise RuntimeError(
-                        f"数据库 schema v{current} 高于当前程序支持的 v{SCHEMA_VERSION}"
-                    )
-                if current < 1:
-                    conn.execute(
-                        "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-                        (1, "initial-structured-metadata", _now_iso()),
-                    )
-                    current = 1
-                if current < 2:
-                    self._migrate_v2_query_indexes(conn)
-                    current = 2
-                if current < 3:
-                    self._migrate_v3_normalize_group_cidrs(conn)
-                    current = 3
-                if current < 4:
-                    self._migrate_v4_tags(conn)
-                    current = 4
-                conn.commit()
             self._initialized = True
 
     @staticmethod
@@ -349,14 +256,7 @@ class SqliteStore:
                 (*_firewall_index_values(data), str(row["id"])),
             )
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_peers_center_enabled_priority "
-            "ON peers(has_lan_cidrs, center_forward_enabled, center_forward_priority, id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_firewall_filter "
-            "ON firewall_rules(enabled, protocol, action, owner_type, owner_id)"
-        )
+        execute_sql_file(conn, "002_query_indexes.sql")
         conn.execute(
             "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
             (2, "query-pagination-indexes", _now_iso()),
@@ -862,27 +762,7 @@ class SqliteStore:
     @staticmethod
     def _migrate_v4_tags(conn: sqlite3.Connection) -> None:
         """标签元数据和用户/组关联；外键级联只删除关联，不删除用户/组。"""
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS tags (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS user_tags (
-                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-                PRIMARY KEY(tag_id, username)
-            );
-            CREATE INDEX IF NOT EXISTS idx_user_tags_username ON user_tags(username);
-            CREATE TABLE IF NOT EXISTS group_tags (
-                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-                PRIMARY KEY(tag_id, group_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_group_tags_group ON group_tags(group_id);
-        """)
+        execute_sql_file(conn, "004_firewall_tags.sql")
         conn.execute(
             "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
             (4, "firewall-tags", _now_iso()),
