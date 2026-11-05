@@ -624,10 +624,9 @@ class UserService:
         network = IPv4Network(subnet, strict=False)
         # 避免大子网 list(network.hosts()) 导致高内存占用。
         # 当前策略保留首个主机地址供网关（/24 中通常是 .1），从第二个开始分配。
-        if network.num_addresses <= 2:
-            raise ValueError(f"组子网 {subnet} 没有可分配的客户端地址")
         used_ips = self._collect_used_ips_in_group(group["id"], network)
         hosts = iter(network.hosts())
+        # /31 遵循 ipaddress.hosts() 语义，与容量展示保持一致。
         next(hosts, None)
         for host in hosts:
             if str(host) not in used_ips:
