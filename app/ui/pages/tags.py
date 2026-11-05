@@ -6,6 +6,8 @@ import logging
 
 from nicegui import ui
 
+from app.ui.components.feedback import safe_notify
+
 from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
 from app.services.user.crud import UserService
@@ -287,8 +289,8 @@ class TagsPage:
                 return False
             try:
                 self.service.create(name, str(fields["description"].value or "").strip())
+                safe_notify("标签已创建", type="positive")
                 self._refresh()
-                ui.notify("标签已创建", type="positive")
                 return True
             except Exception as exc:
                 ui.notify(f"创建失败：{exc}", type="negative")
@@ -312,8 +314,8 @@ class TagsPage:
                     tag["id"], name=fields["name"].value,
                     description=fields["description"].value,
                 )
+                safe_notify("标签已更新", type="positive")
                 self._refresh()
-                ui.notify("标签已更新", type="positive")
                 return True
             except Exception as exc:
                 ui.notify(f"更新失败：{exc}", type="negative")
@@ -361,8 +363,8 @@ class TagsPage:
                     usernames=fields["users"].value or [],
                     group_ids=fields["groups"].value or [],
                 )
+                safe_notify("标签成员已更新", type="positive")
                 self._refresh()
-                ui.notify("标签成员已更新", type="positive")
                 return True
             except Exception as exc:
                 ui.notify(f"更新成员失败：{exc}", type="negative")
@@ -382,11 +384,14 @@ class TagsPage:
             def confirm() -> None:
                 try:
                     self.service.delete(tag["id"])
-                    dialog.close()
-                    self._refresh()
-                    ui.notify("标签已删除", type="positive")
                 except Exception as exc:
-                    ui.notify(f"删除失败：{exc}", type="negative")
+                    safe_notify(f"删除失败：{exc}", type="negative")
+                    return
+                # 在旧卡片/按钮仍存在时完成通知。_refresh 会 clear() 旧卡片，
+                # 后续不可再从其事件 slot 获取 context.client。
+                safe_notify("标签已删除", type="positive")
+                dialog.close()
+                self._refresh()
 
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("取消", on_click=dialog.close).props("flat")
