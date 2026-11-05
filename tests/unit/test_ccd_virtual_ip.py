@@ -34,3 +34,47 @@ def test_list_ccd_virtual_ipv4_by_username(monkeypatch, tmp_path: Path):
     m = UserService().list_ccd_virtual_ipv4_by_username()
     assert m["alice"] == "10.8.1.10"
     assert "bob" not in m
+
+
+def test_group_pool_full_rejected_before_certificate_generation(monkeypatch, tmp_path):
+    """地址池满员时在 PKI / .ovpn 创建之前拒绝新用户。"""
+    from app.services.user import crud as mod
+    from app.storage.sqlite_store import SqliteStore
+    import pytest
+
+    store = SqliteStore(tmp_path / "store.sqlite")
+    service = UserService(store=store)
+    monkeypatch.setattr(service, "_user_exists", lambda name: False)
+    monkeypatch.setattr(
+        service, "_load_group",
+        lambda gid: {"id": gid, "subnet": "192.168.1.0/30"},
+    )
+    monkeypatch.setattr(
+        service, "_allocate_virtual_ip_for_group",
+        lambda group: (_ for _ in ()).throw(ValueError("没有可用 IP")),
+    )
+    with pytest.raises(ValueError, match="没有可用 IP"):
+        service._create_locked("new-user", "test-group")
+
+
+def test_ip_allocation_reserves_first_host_and_exhausts_without_overflow(monkeypatch, tmp_path):
+    from app.services.user import crud as mod
+    from app.storage.sqlite_store import SqliteStore
+    import pytest
+    from box import Box
+
+    store = SqliteStore(tmp_path / "store.sqlite")
+    monkeypatch.setattr(
+        mod, "load_config", lambda: Box({"global_subnet": "192.168.1.0/24"}),
+    )
+    service = UserService(store=store)
+    # /30 中 .1 保留，只有 .2 可以分配。
+    group = {"id": "g", "subnet": "192.168.1.0/30"}
+    monkeypatch.setattr(service, "_collect_used_ips_in_group", lambda *_: set())
+    ip, _ = service._allocate_virtual_ip_for_group(group)
+    assert ip == "192.168.1.2"
+    monkeypatch.setattr(
+        service, "_collect_used_ips_in_group", lambda *_: {"192.168.1.2"}
+    )
+    with pytest.raises(ValueError, match="所有地址已分配"):
+        service._allocate_virtual_ip_for_group(group)
