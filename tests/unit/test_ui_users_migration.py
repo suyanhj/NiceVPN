@@ -158,6 +158,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
         "批量停用",
         "批量踢下线",
         "批量切换组",
+        "批量关联标签",
         "批量重置绑定",
         "批量删除",
     } <= bar_labels
