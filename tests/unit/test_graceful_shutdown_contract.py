@@ -21,14 +21,14 @@ def test_main_does_not_force_os_exit_after_keyboard_interrupt() -> None:
 
 
 
-def test_main_uses_uvicorn_exit_state_for_early_cleanup() -> None:
+def test_main_uses_nicegui_native_shutdown_without_signal_polling() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / "main.py").read_text(encoding="utf-8")
 
-    assert "from nicegui.server import Server" in source
-    assert "server.should_exit" in source
-    assert "server.force_exit" in source
-    assert "_start_uvicorn_exit_watcher()" in source
+    assert "app.on_shutdown(_shutdown_background_services)" in source
+    assert "_start_uvicorn_exit_watcher" not in source
+    assert "server.should_exit" not in source
+    assert "server.force_exit" not in source
     assert "signal.signal(" not in source
 
 
