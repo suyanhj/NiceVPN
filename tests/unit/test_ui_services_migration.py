@@ -288,6 +288,40 @@ def test_service_log_dialog_lifecycle_and_log_paths_are_guarded() -> None:
     assert 'state["generation"]' in peer_source
 
 
+def test_service_log_dialog_shows_footer_actions_and_has_scrollable_layout() -> None:
+    async def verify() -> None:
+        page = ServicesPage()
+        async with user_simulation(
+            lambda: page._open_log_tail_dialog(
+                "OpenVPN 守护日志",
+                lambda: ("日志: /tmp/server.log", "recent line"),
+            )
+        ) as user:
+            await user.open("/")
+            await user.should_see("OpenVPN 守护日志")
+            await user.should_see("recent line")
+            await user.should_see("刷新")
+            await user.should_see("关闭")
+
+    asyncio.run(verify())
+
+
+def test_service_log_and_config_dialogs_have_reserved_footer_css() -> None:
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "app" / "ui" / "static" / "css" / "shell.css").read_text(
+        encoding="utf-8"
+    )
+    source = inspect.getsource(ServicesPage)
+    assert "services-log-dialog__actions" in source
+    assert "services-log-dialog" in source
+    assert "services-config-editor-dialog" in source
+    assert "services-config-editor-textarea" in source
+    assert ".q-dialog .q-card.services-log-dialog" in css
+    assert ".services-log-dialog__actions" in css
+    assert ".q-dialog .q-card.vpn-form-dialog.services-config-editor-dialog" in css
+    assert ".services-config-editor-dialog .vpn-form-dialog__body" in css
+
+
 def test_status_log_viewer_tolerates_missing_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

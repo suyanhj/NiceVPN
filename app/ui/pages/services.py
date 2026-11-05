@@ -3,7 +3,6 @@
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +31,7 @@ from app.ui.adapters.services import adapt_local_service_view, adapt_peer_servic
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import secondary_action
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.log_reader import read_log_tail_lines
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 
@@ -44,6 +44,10 @@ _LOG_TAIL_STICK_PX = 48
 _LOG_SNAPSHOT_MAX_LINES = 200
 _LOG_REALTIME_MAX_LINES = 500
 _LOG_REALTIME_POLL_SEC = 1.0
+# 日志可能持续写入多年；任何快照或实时读取均限制最大读取字节数。
+_LOG_TAIL_MAX_BYTES = 512 * 1024
+# 实时刷新每秒发生，进一步约束单次推送到浏览器的数据量。
+_LOG_REALTIME_MAX_BYTES = 128 * 1024
 
 
 class ServicesPage:
@@ -507,39 +511,17 @@ class ServicesPage:
 
     @staticmethod
     def _read_log_tail(path: Path, max_lines: int = _LOG_SNAPSHOT_MAX_LINES) -> str:
-        """读取文本日志末尾若干行（整文件读入，仅用于小快照）。"""
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        content = path.read_text(encoding="utf-8", errors="replace")
-        lines = content.splitlines()
-        tail_lines = lines[-max_lines:] if len(lines) > max_lines else lines
-        return "\n".join(tail_lines)
+        """只读取文件尾部；绝不将整份守护进程日志加载到内存。"""
+        return ServicesPage._read_log_last_lines(path, max_lines)
 
     @staticmethod
-    def _read_log_last_lines(path: Path, max_lines: int) -> str:
-        """从文件末尾逆向块读至多 max_lines 行，避免大日志整文件读入内存。"""
-        if max_lines <= 0:
-            return ""
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        block = 65536
-        chunks: list[bytes] = []
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            pos = f.tell()
-            total_nl = 0
-            while pos > 0 and total_nl <= max_lines:
-                step = min(block, pos)
-                pos -= step
-                f.seek(pos)
-                chunks.insert(0, f.read(step))
-                total_nl = sum(c.count(b"\n") for c in chunks)
-                if total_nl > max_lines + 200:
-                    break
-        raw = b"".join(chunks)
-        parts = raw.splitlines()
-        tail = parts[-max_lines:] if len(parts) > max_lines else parts
-        return "\n".join(p.decode("utf-8", errors="replace") for p in tail)
+    def _read_log_last_lines(
+        path: Path,
+        max_lines: int,
+        max_bytes: int = _LOG_TAIL_MAX_BYTES,
+    ) -> str:
+        """按行数和字节双重限制逆向读取，超长单行也不会导致 OOM。"""
+        return read_log_tail_lines(path, max_lines, max_bytes=max_bytes)
 
     def _open_log_tail_dialog(
         self,
@@ -576,7 +558,9 @@ class ServicesPage:
             else:
                 initial = load()
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "w-full services-view-dialog services-log-dialog"
+        ):
             ui.label(title).classes("text-h6 services-view-dialog__title")
             header_ctrl = header_widget() if header_widget else None
             path_caption = ui.label(initial[0] if initial else "").classes("section-caption services-view-dialog__caption")
@@ -639,7 +623,9 @@ class ServicesPage:
                     return
                 path_caption.text = cap(p)
                 try:
-                    body = self._read_log_last_lines(p, _LOG_REALTIME_MAX_LINES)
+                    body = self._read_log_last_lines(
+                        p, _LOG_REALTIME_MAX_LINES, max_bytes=_LOG_REALTIME_MAX_BYTES
+                    )
                 except FileNotFoundError:
                     body = f"(尚无文件)\n{p}"
                 except OSError as exc:
@@ -690,7 +676,9 @@ class ServicesPage:
 
             dialog.on("hide", lambda _event: cleanup_log_dialog())
 
-            with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
+            with ui.row().classes(
+                "services-log-dialog__actions w-full justify-end gap-sm items-center"
+            ):
                 secondary_action("刷新", icon="refresh", on_click=do_manual_refresh)
                 secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
@@ -1368,8 +1356,8 @@ class ServicesPage:
             ui.label("保存成功后需要重启实例才能生效。").classes("section-caption")
             fields["content"] = (
                 ui.textarea(value=content)
-                .classes("w-full font-mono")
-                .props("outlined rows=20")
+                .classes("w-full font-mono services-config-editor-textarea")
+                .props("outlined rows=28")
             )
 
         def submit() -> bool:
@@ -1385,7 +1373,7 @@ class ServicesPage:
             submit_label="保存",
             close_on_success=True,
         )
-        form.card.classes("w-full max-w-4xl")
+        form.card.classes("services-config-editor-dialog")
         form.open()
 
     def _save_config_content(self, conf_path: str, new_content: str) -> bool:

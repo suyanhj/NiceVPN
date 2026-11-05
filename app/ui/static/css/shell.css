@@ -2390,6 +2390,86 @@ body {
   color: #15bde8 !important;
 }
 
+
+/* Log viewers: reserve a fixed footer while the log viewport alone scrolls. */
+.q-dialog .q-card.services-log-dialog {
+  width: min(96vw, 1160px) !important;
+  max-width: 1160px !important;
+  height: min(86dvh, 820px);
+  max-height: 90dvh !important;
+  display: flex !important;
+  flex-direction: column;
+  overflow: hidden !important;
+  min-height: 0;
+}
+
+.q-dialog .q-card.services-log-dialog > .services-log-frame {
+  flex: 1 1 0;
+  min-height: 0 !important;
+  height: 0 !important;
+  max-height: none !important;
+  overflow: hidden;
+}
+
+.services-log-dialog .services-log-frame > .vpn-log-tail-viewport {
+  flex: 1 1 0;
+  min-height: 0 !important;
+  overflow-y: auto;
+}
+
+.services-log-dialog__actions {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-top: 8px;
+  margin-top: 0 !important;
+  border-top: 1px solid rgba(187, 190, 201, 0.08);
+}
+
+.services-log-dialog .services-view-dialog__title,
+.services-log-dialog .services-view-dialog__caption,
+.services-log-dialog .q-toggle {
+  flex: 0 0 auto;
+}
+
+/* Service configuration uses an editor layout, not the narrow shared form. */
+.q-dialog .q-card.vpn-form-dialog.services-config-editor-dialog {
+  width: min(96vw, 1240px) !important;
+  max-width: 1240px !important;
+  height: min(88dvh, 960px);
+  max-height: 92dvh !important;
+  display: flex !important;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
+.services-config-editor-dialog .vpn-form-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.services-config-editor-dialog .vpn-form-dialog__actions {
+  flex: 0 0 auto;
+}
+
+.services-config-editor-dialog .services-config-editor-textarea .q-field__native {
+  min-height: clamp(240px, 52dvh, 650px) !important;
+  resize: vertical;
+}
+
+@media (max-width: 767px) {
+  .q-dialog .q-card.services-log-dialog {
+    width: 98vw !important;
+    height: 88dvh;
+    padding: 12px !important;
+  }
+  .q-dialog .q-card.vpn-form-dialog.services-config-editor-dialog {
+    width: 98vw !important;
+    height: 90dvh;
+  }
+}
+
+
 @media (max-width: 767px) {
   .services-page--v2 {
     overflow: visible;
