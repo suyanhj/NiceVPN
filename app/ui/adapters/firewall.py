@@ -67,9 +67,9 @@ def adapt_center_rule_row(
     ).strip()
 
     if owner_type == "group":
-        owner_label = str(groups.get(owner_id) or owner_id or "—")
+        owner_label = str(groups.get(owner_id) or (f"已删除的组 · {owner_id}" if owner_id else "—"))
     elif owner_type == "tag":
-        owner_label = f"标签 · {tags.get(owner_id) or owner_id or '—'}"
+        owner_label = (f"标签 · {tags[owner_id]}" if tags.get(owner_id) else f"已删除的标签 · {owner_id or '—'}")
     elif owner_type == "peer" or row_kind == "center_peer":
         peer_name = str(peers.get(peer_id or owner_id) or "").strip()
         if peer_name and (peer_id or owner_id):
