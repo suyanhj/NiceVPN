@@ -15,7 +15,7 @@
     delaycompress
     dateext
     dateformat -%Y%m%d-%H%M%S
-    su root root
+    su @LOG_OWNER@ @LOG_GROUP@
     create 0644 @LOG_OWNER@ @LOG_GROUP@
 }
 
@@ -30,7 +30,7 @@
     delaycompress
     dateext
     dateformat -%Y%m%d-%H%M%S
-    su root root
+    su @LOG_OWNER@ @LOG_GROUP@
     create 0644 @LOG_OWNER@ @LOG_GROUP@
 }
 
@@ -45,6 +45,6 @@
     delaycompress
     dateext
     dateformat -%Y%m%d-%H%M%S
-    su root root
+    su @LOG_OWNER@ @LOG_GROUP@
     create 0644 @LOG_OWNER@ @LOG_GROUP@
 }
