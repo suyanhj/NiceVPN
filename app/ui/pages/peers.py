@@ -834,7 +834,7 @@ class PeersPage:
     def _refresh_list(self) -> None:
         """刷新当前 SQLite 对端页，并隔离列表读取异常。"""
 
-        if self.list_container is None:
+        if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
         try:
             peers, total = self._load_peer_page()
