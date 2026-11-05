@@ -129,4 +129,3 @@ class PeerRepositoryMixin:
     def count_peers(self) -> int:
         with self.connection() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM peers").fetchone()["n"])
-
