@@ -2,6 +2,8 @@
 """经 SSH 将客户端 .ovpn 上传到对端（中心成品路径或本机任意路径）。"""
 from __future__ import annotations
 
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
+
 import io
 import logging
 import shlex
@@ -14,14 +16,6 @@ from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_
 logger = logging.getLogger("peer.remote")
 
 _PEER_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "peer"
-
-
-def _exec_ssh(client, command: str, *, timeout: int) -> tuple[str, str, int]:
-    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    out_b = stdout.read()
-    err_b = stderr.read()
-    code = stdout.channel.recv_exit_status()
-    return out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace"), code
 
 
 OFFICIAL_OPENVPN_CLIENT_TEMPLATE = "openvpn-client@.service"
