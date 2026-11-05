@@ -2,8 +2,6 @@
 """经 SSH 将客户端 .ovpn 上传到对端（中心成品路径或本机任意路径）。"""
 from __future__ import annotations
 
-from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
-
 import io
 import logging
 import shlex
@@ -12,6 +10,7 @@ from pathlib import Path, PurePosixPath
 
 from app.core.constants import LOG_RETENTION_DAYS, OVPN_PROFILES_DIR
 from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_from_row
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
 
 logger = logging.getLogger("peer.remote")
 
