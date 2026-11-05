@@ -56,7 +56,7 @@ NICEVPN_OPENVPN_LOG_DIR=/path/to/host/openvpn/log bash deploy/shell/install-nice
 ```
 
 注意容器内的 nobody UID/GID 与宿主机可能不同，应验证实际目录权限。
-如果服务器已有其他 logrotate 配置管理同一路径，必须先排除重复配置。
+安装器会先检查主配置是否包含 /etc/logrotate.d，并在写入新规则后执行 logrotate -d /etc/logrotate.conf 全局校验。若发现其他策略重复管理同一日志或全局配置不合法，则自动恢复原有 NiceVPN 规则（新安装时移除刚写入的配置），不会保留冲突规则。需要先修复系统其他配置再重新安装。
 
 ## 验证
 
