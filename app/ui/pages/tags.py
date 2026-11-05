@@ -149,8 +149,7 @@ class TagsPage:
                 with ui.button(
                     on_click=lambda tid=tag_id: self._toggle_tag(tid),
                 ).props(
-                    f"flat no-caps align=left aria-label='"
-                    f"{'收起' if expanded else '展开'}标签 {tag['name']}'"
+                    f"flat no-caps align=left aria-label='展开或收起标签'"
                     f" aria-expanded={'true' if expanded else 'false'}"
                 ).classes("flex-1 min-w-0 !justify-start !px-2"):
                     with ui.row().classes("items-center gap-3 w-full flex-wrap"):
