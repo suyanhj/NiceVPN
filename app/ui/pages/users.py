@@ -615,7 +615,7 @@ class UsersPage:
                 "width": 142,
                 "minWidth": 120,
                 "maxWidth": 172,
-                "cellClass": "vpn-grid-primary-cell",
+                "cellClass": "vpn-grid-primary-cell vpn-grid-copyable-cell",
                 **multi_text_filter_column("输入用户名后按 Enter"),
             },
             {
@@ -655,7 +655,7 @@ class UsersPage:
                 "headerName": "虚拟 IP",
                 "flex": 0.82,
                 "minWidth": 122,
-                "cellClass": "vpn-grid-mono",
+                "cellClass": "vpn-grid-mono vpn-grid-copyable-cell",
                 **multi_text_filter_column("输入 IP 后按 Enter"),
             },
             {
@@ -663,6 +663,7 @@ class UsersPage:
                 "headerName": "用户组",
                 "flex": 0.78,
                 "minWidth": 110,
+                "cellClass": "vpn-grid-copyable-cell",
                 ":filter": "window.NiceVpnSetFilter",
                 "filterParams": {
                     "searchPlaceholder": "搜索用户组...",
@@ -707,7 +708,7 @@ class UsersPage:
                 "headerName": "来源 IP",
                 "flex": 0.95,
                 "minWidth": 158,
-                "cellClass": "vpn-grid-mono",
+                "cellClass": "vpn-grid-mono vpn-grid-copyable-cell",
                 **multi_text_filter_column("输入来源 IP 后按 Enter"),
             },
             {
@@ -924,8 +925,27 @@ class UsersPage:
             else:
                 button.disable()
 
-    def _on_grid_cell_clicked(self, event) -> None:
-        """点击固定操作列时打开当前用户操作面板。"""
+    _GRID_COPY_COLUMNS = {
+        "username": ("username", "用户名已复制"),
+        "virtual_ip": ("virtual_ip", "虚拟 IP 已复制"),
+        "group": ("group", "用户组名称已复制"),
+        "source": ("source", "来源 IP 已复制"),
+    }
+
+    @classmethod
+    def _grid_copy_target(cls, col_id: str, row: dict) -> tuple[str, str] | None:
+        """只复制可见标识字段，跳过空值、占位符与非数据列。"""
+        spec = cls._GRID_COPY_COLUMNS.get(col_id)
+        if spec is None:
+            return None
+        field, message = spec
+        value = str(row.get(field) or "").strip()
+        if not value or value in {"—", "*"}:
+            return None
+        return value, message
+
+    async def _on_grid_cell_clicked(self, event) -> None:
+        """操作列打开面板；用户名、IP、用户组等字段点击复制。"""
 
         args = getattr(event, "args", None) or {}
         if not isinstance(args, dict):
@@ -933,11 +953,16 @@ class UsersPage:
         column = args.get("colId")
         if column is None and isinstance(args.get("column"), dict):
             column = args["column"].get("colId")
-        if column != "actions":
-            return
         row = args.get("data") or {}
-        if isinstance(row, dict) and row.get("username"):
-            self._show_user_actions(row)
+        if not isinstance(row, dict):
+            return
+        if column == "actions":
+            if row.get("username"):
+                self._show_user_actions(row)
+            return
+        target = self._grid_copy_target(str(column or ""), row)
+        if target is not None:
+            await self._copy_text(*target)
 
     def _show_user_actions(self, row: dict) -> None:
         """集中承载单用户操作；主表只保留一个稳定操作入口。"""
