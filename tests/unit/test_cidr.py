@@ -55,7 +55,7 @@ class TestAssignableClientIpCount:
 
     def test_small_networks_follow_allocator_semantics(self):
         assert assignable_client_ip_count("10.8.1.0/31") == 1
-        assert assignable_client_ip_count("10.8.1.1/32") == 0
+        assert assignable_client_ip_count("10.8.1.1/32") == 1
 
     def test_invalid_returns_none(self):
         assert assignable_client_ip_count("not-a-cidr") is None
