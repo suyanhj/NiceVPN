@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.ui.components import feedback
@@ -45,3 +47,19 @@ def test_async_cert_refresh_does_not_touch_deleted_container(monkeypatch):
     page._load_rows = lambda: []
     asyncio.run(page._refresh_cert_list_async())
     assert page._refresh_running is False
+
+
+def test_management_pages_do_not_use_slot_bound_ui_notify():
+    """Management callbacks should use safe_notify or their captured page client."""
+    root = Path(__file__).resolve().parents[2] / "app" / "ui" / "pages"
+    for file in root.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        direct_notifications = [
+            node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "notify"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ui"
+        ]
+        assert not direct_notifications, f"{file.name}: direct ui.notify at {direct_notifications}"
