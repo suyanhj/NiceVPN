@@ -2413,7 +2413,6 @@ body {
 
 .services-log-dialog .services-log-frame > .vpn-log-tail-viewport {
   flex: 1 1 0;
-  max-height: 100% !important;
   min-height: 0 !important;
   overflow-y: auto;
 }
