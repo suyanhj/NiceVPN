@@ -323,6 +323,18 @@ class GroupService:
                 f"根组「{data.get('name', '')}」是全局组，不允许删除，只允许修改子网"
             )
 
+        # 组被中心规则引用时禁止删除，避免留下仍可能生效的孤儿规则。
+        # 包含停用规则：否则启用后同样无法解析原归属。
+        linked_rules = [
+            rule for rule in self.store.get_firewall_owner(group_id)
+            if str(rule.get("owner_type") or "group") == "group"
+        ]
+        if linked_rules:
+            raise ValueError(
+                f"用户组仍被 {len(linked_rules)} 条中心防火墙规则引用，"
+                "请先在防火墙管理中处理这些规则再删除组"
+            )
+
         from app.services.firewall.tag_service import TagService
         tag_service = TagService(self.store)
         affected_tags = tag_service.get_entity_tag_ids("group", group_id)
