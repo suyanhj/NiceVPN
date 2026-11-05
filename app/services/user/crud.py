@@ -713,7 +713,8 @@ class UserService:
                     if len(parts) >= 2 and parts[0] == "ifconfig-push":
                         result[ccd_file.name] = parts[1]
                         break
-            except OSError:
+            except (OSError, UnicodeError):
+                # CCD 目录若混入二进制或非 UTF-8 文件，不应阻断 IP 分配。
                 continue
         return result
 
