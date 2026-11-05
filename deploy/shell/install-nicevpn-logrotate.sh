@@ -47,12 +47,38 @@ sed \
     -e "s|@LOG_GROUP@|$(escape_sed "$LOG_GROUP")|g" \
     "$CONF_TEMPLATE" > "$tmp_conf"
 
-# 校验配置后再覆盖系统策略；-d 不实际轮转。
+# 确保系统调度执行的主配置确实包含 /etc/logrotate.d。
+# 只校验独立模板是不够的：系统其他配置可能已管理相同文件路径。
+[[ -f /etc/logrotate.conf ]] || fail "系统缺少 /etc/logrotate.conf"
+grep -Eq '^[[:space:]]*include[[:space:]]+/etc/logrotate[.]d([[:space:]]|$)' /etc/logrotate.conf ||
+    fail "/etc/logrotate.conf 未 include /etc/logrotate.d，新策略不会自动运行"
+
 "$LOGROTATE_BIN" -d "$tmp_conf" >/dev/null ||
-    fail "logrotate 配置校验失败，没有变更系统文件"
+    fail "logrotate 独立策略校验失败，没有变更系统配置"
 
 install -d -m 0755 /etc/logrotate.d
+# 保存现有策略以便全局校验失败后恢复，不破坏已有部署。
+tmp_backup="$(mktemp)"
+tmp_check="$(mktemp)"
+trap 'rm -f -- "$tmp_conf" "$tmp_backup" "$tmp_check"' EXIT
+had_previous=0
+if [[ -e "$CONF_TARGET" ]]; then
+    [[ -f "$CONF_TARGET" && ! -L "$CONF_TARGET" ]] ||
+        fail "目标路径不是普通文件：$CONF_TARGET"
+    cp -p -- "$CONF_TARGET" "$tmp_backup"
+    had_previous=1
+fi
+
 install -m 0644 "$tmp_conf" "$CONF_TARGET"
+if ! "$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1; then
+    if [[ "$had_previous" = "1" ]]; then
+        install -m 0644 "$tmp_backup" "$CONF_TARGET"
+    else
+        rm -f -- "$CONF_TARGET"
+    fi
+    tail -n 12 "$tmp_check" >&2
+    fail "系统全局 logrotate 校验失败（可能有重复路径配置），已恢复原策略"
+fi
 
 # 兼容此前独立 timer 试验版，防止两个定时器同时操作同一文件。
 if [[ -f /etc/systemd/system/nicevpn-audit-logrotate.timer ]] &&
