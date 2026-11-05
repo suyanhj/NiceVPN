@@ -26,6 +26,9 @@ install_source_dependencies() {
         gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
         openssl-devel libnl3-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
         pkcs11-helper-devel systemd-devel which conntrack-tools
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
+        ${PM} install -y logrotate
+    fi
 }
 
 _log "RHEL 系安装：pm=${PM} min_version=${OPENVPN_MIN_VERSION}"
@@ -44,7 +47,11 @@ PKG_VERSION="$(${PM} -q info openvpn 2>/dev/null \
 
 if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION}"; then
     _log "仓库 openvpn ${PKG_VERSION} 满足 ${OPENVPN_MIN_VERSION}+，使用系统包安装"
-    ${PM} install -y openvpn conntrack-tools
+    packages=(openvpn conntrack-tools)
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
+        packages+=(logrotate)
+    fi
+    ${PM} install -y "${packages[@]}"
     openvpn_install_server_systemd_override
     if [ "${INSTALL_EASYRSA}" = "1" ]; then
         easyrsa_download_and_install
