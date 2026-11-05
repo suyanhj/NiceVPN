@@ -127,9 +127,9 @@ class FirewallCenterGridMixin:
             if not owner_id:
                 continue
             if owner_type == "group":
-                label = group_names.get(owner_id) or owner_id
+                label = group_names.get(owner_id) or f"已删除的组 · {owner_id}"
             elif owner_type == "tag":
-                label = f"标签 · {tag_names.get(owner_id) or owner_id}"
+                label = (f"标签 · {tag_names[owner_id]}" if tag_names.get(owner_id) else f"已删除的标签 · {owner_id}")
             elif owner_type == "peer":
                 peer_name = peer_names.get(owner_id) or ""
                 label = (
