@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nicegui import run, ui
+from app.ui.components.feedback import safe_notify
 
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.cert.cert_service import CertService
@@ -217,7 +218,7 @@ class CertsPage:
         if self.data_container is None:
             return
         if self._refresh_running:
-            ui.notify("证书列表正在刷新，请稍候", type="info")
+            safe_notify("证书列表正在刷新，请稍候", type="info")
             return
 
         self._refresh_running = True
@@ -449,7 +450,7 @@ class CertsPage:
     def _begin_operation(self) -> bool:
         if self._operation_guard.try_start():
             return True
-        ui.notify("证书操作正在执行，请稍候", type="info")
+        safe_notify("证书操作正在执行，请稍候", type="info")
         return False
 
     def _finish_operation(self) -> None:
@@ -470,13 +471,13 @@ class CertsPage:
             return
         try:
             success = self.cert_service.renew(common_name)
-            ui.notify(
+            safe_notify(
                 f"{'已续签' if success else '续签失败'}: {common_name}",
                 type="positive" if success else "negative",
             )
         except Exception as exc:
             logger.exception("续签证书失败 cn=%s", common_name)
-            ui.notify(f"续签失败: {common_name}: {exc}", type="negative")
+            safe_notify(f"续签失败: {common_name}: {exc}", type="negative")
         finally:
             self._finish_operation()
         self._refresh_cert_list()
@@ -496,20 +497,20 @@ class CertsPage:
             return
         try:
             success = self.cert_service.revoke(common_name)
-            ui.notify(
+            safe_notify(
                 f"{'已吊销' if success else '吊销失败'}: {common_name}",
                 type="positive" if success else "negative",
             )
         except Exception as exc:
             logger.exception("吊销证书失败 cn=%s", common_name)
-            ui.notify(f"吊销失败: {common_name}: {exc}", type="negative")
+            safe_notify(f"吊销失败: {common_name}: {exc}", type="negative")
         finally:
             self._finish_operation()
         self._refresh_cert_list()
 
     def _batch_renew(self):
         if not self.selected_certs:
-            ui.notify("请先选择证书", type="warning")
+            safe_notify("请先选择证书", type="warning")
             return
         confirm_dialog.show(
             message="确定续签所选证书？",
@@ -538,7 +539,7 @@ class CertsPage:
         finally:
             self._finish_operation()
         self.selected_certs.clear()
-        ui.notify(
+        safe_notify(
             f"批量续签完成：成功 {success_count}，失败 {len(failed)}",
             type="positive" if not failed else "warning",
         )
@@ -546,7 +547,7 @@ class CertsPage:
 
     def _batch_revoke(self):
         if not self.selected_certs:
-            ui.notify("请先选择证书", type="warning")
+            safe_notify("请先选择证书", type="warning")
             return
         confirm_dialog.show(
             message="确定吊销所选证书？",
@@ -575,7 +576,7 @@ class CertsPage:
         finally:
             self._finish_operation()
         self.selected_certs.clear()
-        ui.notify(
+        safe_notify(
             f"批量吊销完成：成功 {success_count}，失败 {len(failed)}",
             type="positive" if not failed else "warning",
         )
@@ -596,10 +597,10 @@ class CertsPage:
             return
         try:
             self.cert_service._get_wrapper().gen_crl()
-            ui.notify("CRL 已更新", type="positive")
+            safe_notify("CRL 已更新", type="positive")
         except Exception as exc:
             logger.exception("CRL 生成失败")
-            ui.notify(f"CRL 生成失败: {exc}", type="negative")
+            safe_notify(f"CRL 生成失败: {exc}", type="negative")
         finally:
             self._finish_operation()
         self._refresh_cert_list()
@@ -621,10 +622,10 @@ class CertsPage:
             wrapper = self.cert_service._get_wrapper()
             wrapper.build_ca()
             wrapper.gen_crl()
-            ui.notify("CA 已重建；请让用户重新拉取配置", type="positive")
+            safe_notify("CA 已重建；请让用户重新拉取配置", type="positive")
         except Exception as exc:
             logger.exception("CA 重建失败")
-            ui.notify(f"CA 重建失败: {exc}", type="negative")
+            safe_notify(f"CA 重建失败: {exc}", type="negative")
         finally:
             self._finish_operation()
         self._refresh_cert_list()
@@ -647,7 +648,7 @@ class CertsPage:
 
     def _do_rebuild_ca(self, dialog, confirm_text: str):
         if confirm_text != "REBUILD":
-            ui.notify("请输入 REBUILD 确认", type="warning")
+            safe_notify("请输入 REBUILD 确认", type="warning")
             return
         dialog.close()
         self._do_rebuild_ca_confirmed()
