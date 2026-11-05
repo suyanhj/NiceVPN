@@ -1,62 +1,81 @@
-# NiceVPN 审计日志轮转
+# NiceVPN / OpenVPN 日志轮转
 
-本配置只管理 NiceVPN 写入的三个文件，不管理 OpenVPN 自己的 server.log / server-status.log，也不修改现有 JSONL 内容。
+## 目的与范围
 
-| 文件 | maxsize | 写入入口 |
-| --- | --- | --- |
-| openvpn-device-bind.log | 16MiB | device-bind.sh |
-| openvpn-session-audit.jsonl | 64MiB | vpn_session_audit.py |
-| openvpn-connection-audit.jsonl | 128MiB | conntrack 审计线程 |
+使用系统标准的 `/etc/logrotate.d/nicevpn-openvpn`，由发行版的
+`logrotate.timer` 或 `cron.daily` 调度；不再安装额外的 NiceVPN 轮转定时器。
+系统的 `/etc/logrotate.conf` 需包含 `include /etc/logrotate.d`。
 
-## 轮转行为
+| 文件（默认目录 /etc/openvpn/log） | 最大轮转触发值 | 写入机制 | 轮转方式 |
+| --- | ---: | --- | --- |
+| openvpn-device-bind.log | 16MiB | NiceVPN Shell 连接钩子 | rename + create |
+| openvpn-session-audit.jsonl | 64MiB | NiceVPN Python 连接/断开钩子 | rename + create |
+| openvpn-connection-audit.jsonl | 128MiB | NiceVPN conntrack 审计线程 | rename + create |
+| server.log | 128MiB | OpenVPN log-append 持续写入 | copytruncate |
 
-- systemd timer 每 10 分钟检查；daily + maxsize，文件非空时至少按日检查并轮转，达到容量阈值时可提前轮转。
-- 最多 14 份归档，最多 7 天，压缩且延迟一轮压缩，给 Fluent Bit 留读取机会。
-- 使用 rename + create 而非 copytruncate；三个写入器每个事件重新打开文件并追加，不要求重启 OpenVPN 或 NiceVPN。
-- 新文件创建为 0644 nobody:主属组；不同发行版可能是 nobody 或 nogroup，安装器动态识别。
-- 阈值是每次检查时判断，**不是严格文件大小硬上限**。
-- 不采用 /etc/logrotate.d 以免和系统默认轮转进程双重执行；独立配置及独立 state 文件。
+**server-status.log 不轮转**：OpenVPN 每 30 秒重写一次的当前状态文件，不是历史日志。
+
+- `daily` + `maxsize`，由系统调度周期触发检查；
+  `maxsize` 不是严格硬上限。发行版通常每日检查一次，高流量环境在检查间隔内可能长到几百 MB。
+- `compress` 默认通过 gzip 压缩成 `.gz`，`delaycompress` 延迟一轮，留出 Fluent Bit 消费时间。
+- `rotate 14`、`maxage 7` 控制保留上限；无新轮转时，历史文件的到期清理可能要等下一次轮转。
+- OpenVPN server.log 持有长期打开的文件描述符，使用 `copytruncate` 避免重启 VPN，
+  但复制和截断之间存在极小的丢日志窗口。NiceVPN 三个按事件重新打开的文件无需 `copytruncate`。
+- 新建的 NiceVPN 三个日志使用 `nobody` 用户及系统实际的主属组；旧的应用定时清理不会主动删除这四个活动文件。
 
 ## 安装
 
-在有 systemd 的宿主机使用 root 执行：
+OpenVPN **服务端**安装器（Debian/Ubuntu、RHEL/Rocky）会一并安装系统 logrotate 包，
+本地安装结束后尝试部署配置；执行 `./start.sh daemon` 也会更新系统轮转配置。
+如果尚未安装包或目录权限不满足，会输出警告，不影响 OpenVPN 服务运行。
 
-    # Debian/Ubuntu
-    apt-get install -y logrotate
+对于现有安装，可手动执行：
 
-    # Rocky/RHEL
-    dnf install -y logrotate
+```bash
+# Debian / Ubuntu
+apt-get install -y logrotate
+# RHEL / Rocky / AlmaLinux
+dnf install -y logrotate
 
-    bash deploy/shell/install-nicevpn-audit-logrotate.sh
-    systemctl list-timers nicevpn-audit-logrotate.timer
+bash deploy/shell/install-nicevpn-logrotate.sh
+```
 
-重新执行 ./start.sh daemon 时会自动尝试安装/更新这个定时器。没有 logrotate 时只提示警告，不阻断主服务。
+systemd 主机可检查：
 
-Docker 部署应在**宿主机**启用定时器，而不是在无 systemd 的容器内：
+```bash
+systemctl status logrotate.timer --no-pager
+systemctl list-timers logrotate.timer
+grep -E '^[[:space:]]*include[[:space:]]+/etc/logrotate.d' /etc/logrotate.conf
+```
 
-    NICEVPN_AUDIT_LOG_DIR=/path/on/host/openvpn/log \
-      bash deploy/shell/install-nicevpn-audit-logrotate.sh
+在容器运行的 NiceVPN 不应在无 systemd 的容器里装定时器；需在有调度器的宿主机
+安装 `logrotate` 并操作宿主机实际挂载目录，例如：
 
-确保宿主机日志目录的实际所有者/权限可供 nobody 用户重命名文件（尤其容器 UID 映射）。
+```bash
+NICEVPN_OPENVPN_LOG_DIR=/path/to/host/openvpn/log bash deploy/shell/install-nicevpn-logrotate.sh
+```
+
+注意容器内的 nobody UID/GID 与宿主机可能不同，应验证实际目录权限。
+如果服务器已有其他 logrotate 配置管理同一路径，必须先排除重复配置。
 
 ## 验证
 
-    # 仅模拟，不修改生产文件
-    logrotate -d -s /var/lib/logrotate/nicevpn-audit.status \
-      /etc/nicevpn/logrotate-audit.conf
+```bash
+# 模拟校验所有系统策略，不做实际轮转
+logrotate -d /etc/logrotate.conf
 
-    # 只检查是否达到阈值，不强制轮转
-    systemctl start nicevpn-audit-logrotate.service
+# 仅实际检查标准调度该次是否达到阈值，不强制轮转
+logrotate /etc/logrotate.conf
 
-    systemctl status nicevpn-audit-logrotate.timer --no-pager
-    journalctl -u nicevpn-audit-logrotate.service -n 50 --no-pager
-    ls -lh /etc/openvpn/log/openvpn-*.log* /etc/openvpn/log/openvpn-*.jsonl*
+ls -lh /etc/openvpn/log/server.log /etc/openvpn/log/openvpn-*
+```
 
-不建议用 logrotate -f 直接强制处理生产审计文件，避免在 Fluent Bit 已积压时提前移动日志。
+不要在有 Fluent Bit 未消费积压时运行 `logrotate -f` 强制轮转。
+`logrotate` 不会备份数据库，也不会更改 VPN status 文件。
 
-## Fluent Bit / VictoriaLogs 兼容性
+## Fluent Bit / VictoriaLogs
 
-- 对各个 Tail 输入配置独立稳定的 DB 来保存 inode/offset，并检查 Rotate_Wait（例如 30 秒）。
-- Tail Path 应仅包含当前活动文件，不要匹配归档，防止重复消费。
-- 高流量或采集积压场景应评估归档保留时间、数量和压缩时机；启用轮转前确认现有积压已追平。
-- rename + create 可以避免 copytruncate 的复制/截断窗口，但不能保证审计事件零丢失：竞态、采集积压和磁盘/进程故障仍有风险。严格无损需要独立的可靠采集及持久化确认。
+- Tail Input 各自使用稳定 `DB` 路径持久化 inode/offset，配置适当的 `Rotate_Wait`。
+- 采集 Path 精确指向活动 JSONL 文件；不要同时采集压缩归档，防止重复消费。
+- 首次启用时已有 700MB 级别的日志，请先确认日志采集没有积压，合理配置归档数量、压缩延迟。
+- 单纯基于文件轮转并不构成端到端零丢失审计保证；对审计完整性有严格要求时需要额外持久化与可靠采集设计。
