@@ -361,4 +361,3 @@ class FirewallRepositoryMixin:
             return int(
                 conn.execute("SELECT COUNT(*) AS n FROM firewall_rules").fetchone()["n"]
             )
-
