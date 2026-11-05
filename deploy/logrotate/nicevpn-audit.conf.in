@@ -1,0 +1,50 @@
+# 仅轮转 NiceVPN 生成的三类 OpenVPN 审计/设备日志。
+# 本配置由 deploy/shell/install-nicevpn-audit-logrotate.sh 安装并渲染。
+# server.log / server-status.log 归 OpenVPN 管理，不在此列。
+# 使用 rename+create（不是 copytruncate）；写入方均按事件打开文件并追加。
+# 注意 Fluent Bit 的 tail DB、rotate_wait 和归档文件匹配规则。
+
+@OPENVPN_LOG_DIR@/openvpn-device-bind.log {
+    daily
+    maxsize 16M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su root root
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
+
+@OPENVPN_LOG_DIR@/openvpn-session-audit.jsonl {
+    daily
+    maxsize 64M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su root root
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
+
+@OPENVPN_LOG_DIR@/openvpn-connection-audit.jsonl {
+    daily
+    maxsize 128M
+    rotate 14
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    su root root
+    create 0644 @LOG_OWNER@ @LOG_GROUP@
+}
