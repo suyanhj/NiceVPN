@@ -78,6 +78,9 @@ class UserService:
         if password_enabled and not str(password or ""):
             raise ValueError("启用客户端私钥密码时必须填写密码")
 
+        # 在生成证书/客户端配置前检查组地址容量，避免池满后遗留 PKI 产物。
+        self._allocate_virtual_ip_for_group(group)
+
         config = load_config()
         now = datetime.now(timezone.utc).isoformat()
 
@@ -619,12 +622,14 @@ class UserService:
         """从组子网分配一个未占用的虚拟 IP，并返回对应 ifconfig-push 掩码。"""
         subnet = group.get("subnet", "10.8.1.0/24")
         network = IPv4Network(subnet, strict=False)
-        hosts = list(network.hosts())
-        if not hosts:
-            raise ValueError(f"组子网 {subnet} 没有可用的主机地址")
-
+        # 避免大子网 list(network.hosts()) 导致高内存占用。
+        # 当前策略保留首个主机地址供网关（/24 中通常是 .1），从第二个开始分配。
+        if network.num_addresses <= 2:
+            raise ValueError(f"组子网 {subnet} 没有可分配的客户端地址")
         used_ips = self._collect_used_ips_in_group(group["id"], network)
-        for host in hosts[1:]:
+        hosts = iter(network.hosts())
+        next(hosts, None)
+        for host in hosts:
             if str(host) not in used_ips:
                 return str(host), _ifconfig_push_netmask(network)
         raise ValueError(f"组子网 {subnet} 内没有可用 IP，所有地址已分配")
