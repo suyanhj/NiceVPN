@@ -1,0 +1,8 @@
+[Unit]
+Description=Rotate NiceVPN-managed OpenVPN audit and device-bind logs
+Documentation=man:logrotate(8)
+ConditionPathExists=/etc/nicevpn/logrotate-audit.conf
+
+[Service]
+Type=oneshot
+ExecStart=@LOGROTATE_BIN@ -s /var/lib/logrotate/nicevpn-audit.status /etc/nicevpn/logrotate-audit.conf
