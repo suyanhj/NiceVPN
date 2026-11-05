@@ -376,22 +376,25 @@ class TagsPage:
         dialog.card.classes("w-[min(95vw,32rem)]")
         dialog.open()
 
+    def _delete_tag_and_refresh(self, tag_id: str, dialog) -> bool:
+        """成功时先通知再销毁卡片，防止使用已删除的事件 slot。"""
+        try:
+            self.service.delete(tag_id)
+        except Exception as exc:
+            safe_notify(f"删除失败：{exc}", type="negative")
+            return False
+        safe_notify("标签已删除", type="positive")
+        dialog.close()
+        self._refresh()
+        return True
+
     def _show_delete_dialog(self, tag: dict) -> None:
         with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
             ui.label(f"确认删除标签「{tag['name']}」？").classes("text-lg font-medium")
             ui.label("删除后，用户和用户组的标签关联也会一并删除。").classes("section-caption")
 
             def confirm() -> None:
-                try:
-                    self.service.delete(tag["id"])
-                except Exception as exc:
-                    safe_notify(f"删除失败：{exc}", type="negative")
-                    return
-                # 在旧卡片/按钮仍存在时完成通知。_refresh 会 clear() 旧卡片，
-                # 后续不可再从其事件 slot 获取 context.client。
-                safe_notify("标签已删除", type="positive")
-                dialog.close()
-                self._refresh()
+                self._delete_tag_and_refresh(str(tag["id"]), dialog)
 
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("取消", on_click=dialog.close).props("flat")
