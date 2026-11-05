@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from nicegui import ui
+from app.ui.components.feedback import safe_notify
 
 from app.services.firewall.tag_service import TagService
 
@@ -29,7 +30,7 @@ def show_entity_tags_dialog(entity_type: str, entity_id: str) -> None:
         def create_tag() -> None:
             name = str(tag_name.value or "").strip()
             if not name:
-                ui.notify("请输入标签名称", type="warning")
+                safe_notify("请输入标签名称", type="warning")
                 return
             try:
                 tag = service.create(name)
@@ -37,9 +38,9 @@ def show_entity_tags_dialog(entity_type: str, entity_id: str) -> None:
                 tag_select.set_options(choices)
                 tag_select.set_value(list(dict.fromkeys([*(tag_select.value or []), tag["id"]])))
                 tag_name.set_value("")
-                ui.notify("标签已创建，请保存关联", type="positive")
+                safe_notify("标签已创建，请保存关联", type="positive")
             except Exception as exc:
-                ui.notify(f"创建标签失败：{exc}", type="negative")
+                safe_notify(f"创建标签失败：{exc}", type="negative")
 
         def save() -> None:
             try:
@@ -47,9 +48,9 @@ def show_entity_tags_dialog(entity_type: str, entity_id: str) -> None:
                     entity_type, entity_id, tag_select.value or [],
                 )
             except Exception as exc:
-                ui.notify(f"保存标签失败：{exc}", type="negative")
+                safe_notify(f"保存标签失败：{exc}", type="negative")
                 return
-            ui.notify("标签关联已更新，防火墙已刷新", type="positive")
+            safe_notify("标签关联已更新，防火墙已刷新", type="positive")
             dialog.close()
 
         with ui.row().classes("w-full items-center justify-between gap-2"):

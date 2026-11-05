@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from nicegui import ui
+from app.ui.components.feedback import safe_notify
 
 from app.services.firewall.tag_service import TagService
 from app.ui.components.form_dialog import create_form_dialog
@@ -14,13 +15,13 @@ def show_batch_tags_dialog(entity_type: str, entity_ids, *, on_success=None) -> 
     if entity_type not in ("user", "group"):
         raise ValueError("仅支持 user/group")
     if not ids:
-        ui.notify("请先选择用户或组", type="warning")
+        safe_notify("请先选择用户或组", type="warning")
         return
 
     service = TagService()
     options = {str(tag["id"]): str(tag["name"]) for tag in service.list_all()}
     if not options:
-        ui.notify("尚无可关联的标签，请先在标签管理页创建", type="warning")
+        safe_notify("尚无可关联的标签，请先在标签管理页创建", type="warning")
         return
 
     fields = {}
@@ -43,7 +44,7 @@ def show_batch_tags_dialog(entity_type: str, entity_ids, *, on_success=None) -> 
     def submit() -> bool:
         selected = fields["tags"].value or []
         if not selected:
-            ui.notify("请至少选择一个标签", type="warning")
+            safe_notify("请至少选择一个标签", type="warning")
             return False
         try:
             count = service.batch_change_entities(
@@ -51,9 +52,9 @@ def show_batch_tags_dialog(entity_type: str, entity_ids, *, on_success=None) -> 
                 operation=str(fields["operation"].value or "add"),
             )
         except Exception as exc:
-            ui.notify(f"批量标签操作失败：{exc}", type="negative")
+            safe_notify(f"批量标签操作失败：{exc}", type="negative")
             return False
-        ui.notify(f"已更新 {count} 个{label}的标签", type="positive")
+        safe_notify(f"已更新 {count} 个{label}的标签", type="positive")
         if on_success is not None:
             on_success()
         return True

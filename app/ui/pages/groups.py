@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from nicegui import ui
+from app.ui.components.feedback import safe_notify
 from nicegui.elements.checkbox import Checkbox
 
 from app.core.config import load_config
@@ -163,7 +164,7 @@ class GroupsPage:
         return [dict(group) for group in groups], int(total), root_id
 
     def _refresh_group_page(self) -> None:
-        if self.list_container is None:
+        if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
         try:
             groups, total, root_id = self._load_group_page()
@@ -445,7 +446,7 @@ class GroupsPage:
         """兼容旧入口：复制完整用户组 ID。"""
 
         if await copy_text_to_clipboard(group_id):
-            ui.notify("组 ID 已复制", type="positive")
+            safe_notify("组 ID 已复制", type="positive")
 
     def _show_create_dialog(self):
         """显示新建用户组表单。"""
@@ -530,15 +531,15 @@ class GroupsPage:
         """执行用户组创建并返回表单是否可关闭。"""
 
         if not name or not subnet:
-            ui.notify("请填写完整信息", type="negative")
+            safe_notify("请填写完整信息", type="negative")
             return False
         try:
             self.group_service.create(name, subnet)
-            ui.notify(f"用户组 {name} 已创建", type="positive")
+            safe_notify(f"用户组 {name} 已创建", type="positive")
             ui.navigate.to("/groups")
             return True
         except ValueError as exc:
-            ui.notify(f"创建失败: {exc}", type="negative")
+            safe_notify(f"创建失败: {exc}", type="negative")
             return False
 
     def _do_create(self, dialog, name: str, subnet: str):
@@ -659,18 +660,18 @@ class GroupsPage:
         """保存用户组名称和子网。"""
 
         if not name:
-            ui.notify("组名称不能为空", type="negative")
+            safe_notify("组名称不能为空", type="negative")
             return False
         if not subnet:
-            ui.notify("子网不能为空", type="negative")
+            safe_notify("子网不能为空", type="negative")
             return False
         try:
             self.group_service.update_details(group_id, name=name, subnet=subnet)
-            ui.notify("用户组已更新", type="positive")
+            safe_notify("用户组已更新", type="positive")
             ui.navigate.to("/groups")
             return True
         except ValueError as exc:
-            ui.notify(f"修改失败: {exc}", type="negative")
+            safe_notify(f"修改失败: {exc}", type="negative")
             return False
 
     def _do_update_subnet(self, dialog, group_id: str, new_subnet: str, old_subnet: str):
@@ -678,7 +679,7 @@ class GroupsPage:
 
         current = self.group_service.get(group_id)
         if not current:
-            ui.notify("用户组不存在", type="negative")
+            safe_notify("用户组不存在", type="negative")
             return False
         if new_subnet == old_subnet:
             dialog.close()
@@ -710,7 +711,7 @@ class GroupsPage:
         name = str(group.get("name") or group["id"])
         user_count = int(group.get("user_count") or 0)
         if user_count > 0:
-            ui.notify(f"「{name}」内有 {user_count} 个用户，无法删除", type="warning")
+            safe_notify(f"「{name}」内有 {user_count} 个用户，无法删除", type="warning")
             return
         confirm_dialog.show(
             f"确定删除用户组「{name}」？",
@@ -725,16 +726,16 @@ class GroupsPage:
 
         try:
             self.group_service.delete(group_id)
-            ui.notify("用户组已删除", type="positive")
+            safe_notify("用户组已删除", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
-            ui.notify(f"删除失败: {exc}", type="negative")
+            safe_notify(f"删除失败: {exc}", type="negative")
 
     def _batch_delete_confirm(self):
         """批量删除前显示数量和影响范围。"""
 
         if not self.selected_ids:
-            ui.notify("请先选择用户组", type="warning")
+            safe_notify("请先选择用户组", type="warning")
             return
         confirm_dialog.show(
             "确定删除所选用户组？",
@@ -751,9 +752,9 @@ class GroupsPage:
         success = sum(1 for item in results if item["success"])
         failed = len(results) - success
         if failed:
-            ui.notify(f"批量删除完成：成功 {success}，失败 {failed}", type="warning")
+            safe_notify(f"批量删除完成：成功 {success}，失败 {failed}", type="warning")
         else:
-            ui.notify(f"成功删除 {success} 个用户组", type="positive")
+            safe_notify(f"成功删除 {success} 个用户组", type="positive")
         self.selected_ids.clear()
         ui.navigate.to("/groups")
 
@@ -762,31 +763,31 @@ class GroupsPage:
 
         try:
             self.group_service.enable(group_id)
-            ui.notify("用户组已启用", type="positive")
+            safe_notify("用户组已启用", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
-            ui.notify(f"操作失败: {exc}", type="negative")
+            safe_notify(f"操作失败: {exc}", type="negative")
 
     def _do_disable(self, group_id: str):
         """停用单个用户组。"""
 
         try:
             self.group_service.disable(group_id)
-            ui.notify("用户组已停用", type="positive")
+            safe_notify("用户组已停用", type="positive")
             ui.navigate.to("/groups")
         except ValueError as exc:
-            ui.notify(f"操作失败: {exc}", type="negative")
+            safe_notify(f"操作失败: {exc}", type="negative")
 
     def _batch_enable(self):
         """批量启用所选用户组。"""
 
         if not self.selected_ids:
-            ui.notify("请先选择用户组", type="warning")
+            safe_notify("请先选择用户组", type="warning")
             return
         results = self.group_service.bulk_enable(list(self.selected_ids))
         success = sum(1 for item in results if item["success"])
         failed = len(results) - success
-        ui.notify(
+        safe_notify(
             f"批量启用完成：成功 {success}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )
@@ -797,7 +798,7 @@ class GroupsPage:
         """批量停用前确认影响范围。"""
 
         if not self.selected_ids:
-            ui.notify("请先选择用户组", type="warning")
+            safe_notify("请先选择用户组", type="warning")
             return
         confirm_dialog.show(
             "确定停用所选用户组？",
@@ -811,12 +812,12 @@ class GroupsPage:
         """批量停用所选用户组。"""
 
         if not self.selected_ids:
-            ui.notify("请先选择用户组", type="warning")
+            safe_notify("请先选择用户组", type="warning")
             return
         results = self.group_service.bulk_disable(list(self.selected_ids))
         success = sum(1 for item in results if item["success"])
         failed = len(results) - success
-        ui.notify(
+        safe_notify(
             f"批量停用完成：成功 {success}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )

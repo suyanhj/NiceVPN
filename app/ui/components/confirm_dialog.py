@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Literal
 from nicegui import ui
 
 
+
 DangerLevel = Literal["normal", "warning", "danger"]
 _LEVEL_COLOR: dict[DangerLevel, str] = {
     "normal": "primary",
@@ -54,12 +55,17 @@ def build(
 
     async def handle_confirm() -> None:
         button = holder["confirm_button"]
+        if getattr(button, "is_deleted", False) or getattr(dialog, "is_deleted", False):
+            return
         if required_text:
             confirm_input = holder["confirm_input"]
+            if getattr(confirm_input, "is_deleted", False):
+                return
             if str(confirm_input.value or "").strip() != required_text:
                 return
         button.disable()
-        dialog.close()
+        if not getattr(dialog, "is_deleted", False):
+            dialog.close()
         if on_confirm is None:
             return
         result = on_confirm()
@@ -68,7 +74,10 @@ def build(
 
     def update_confirmation(event: Any) -> None:
         button = holder.get("confirm_button")
-        if button is None or required_text is None:
+        if (
+            button is None or required_text is None
+            or getattr(button, "is_deleted", False)
+        ):
             return
         if str(event.value or "").strip() == required_text:
             button.enable()

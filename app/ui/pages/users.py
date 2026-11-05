@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 
 from nicegui import run, ui
+from app.ui.components.feedback import safe_notify
 from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
@@ -732,7 +733,7 @@ class UsersPage:
         if self.data_container is None:
             return
         if self._refresh_running:
-            ui.notify("用户列表正在刷新，请稍候", type="info")
+            safe_notify("用户列表正在刷新，请稍候", type="info")
             return
 
         self._refresh_running = True
@@ -751,7 +752,7 @@ class UsersPage:
             rows, warnings, total = await self._load_user_grid_rows_async()
         except Exception as exc:
             logger.exception("加载用户列表失败")
-            if self.data_container is not None:
+            if self.data_container is not None and not getattr(self.data_container, "is_deleted", False):
                 self.data_container.clear()
                 with self.data_container:
                     error_state(
@@ -763,7 +764,7 @@ class UsersPage:
         finally:
             self._refresh_running = False
 
-        if self.data_container is None:
+        if self.data_container is None or getattr(self.data_container, "is_deleted", False):
             return
 
         self.total_rows = int(total)
@@ -1096,7 +1097,7 @@ class UsersPage:
         """批量设置账号启用状态并汇总成功、跳过和失败。"""
 
         if not self.selected_users:
-            ui.notify("请先选择用户", type="warning")
+            safe_notify("请先选择用户", type="warning")
             return
         target = "active" if enabled else "disabled"
         success = skipped = failed = 0
@@ -1114,7 +1115,7 @@ class UsersPage:
             except Exception:
                 logger.exception("批量修改用户状态失败 user=%s target=%s", username, target)
                 failed += 1
-        ui.notify(
+        safe_notify(
             f"批量{'启用' if enabled else '停用'}完成：成功 {success}，跳过 {skipped}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )
@@ -1122,7 +1123,7 @@ class UsersPage:
 
     def _batch_disable_confirm(self) -> None:
         if not self.selected_users:
-            ui.notify("请先选择用户", type="warning")
+            safe_notify("请先选择用户", type="warning")
             return
         confirm_dialog.show(
             "确定停用所选用户？",
@@ -1134,7 +1135,7 @@ class UsersPage:
 
     def _batch_kick_offline(self) -> None:
         if not self.selected_users:
-            ui.notify("请先选择用户", type="warning")
+            safe_notify("请先选择用户", type="warning")
             return
         success = skipped = failed = 0
         for username in list(self.selected_users):
@@ -1146,7 +1147,7 @@ class UsersPage:
             except Exception:
                 logger.exception("批量踢下线失败 user=%s", username)
                 failed += 1
-        ui.notify(
+        safe_notify(
             f"批量下线完成：成功 {success}，跳过 {skipped}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )
@@ -1154,14 +1155,14 @@ class UsersPage:
 
     def _show_batch_change_group_dialog(self) -> None:
         if not self.selected_users:
-            ui.notify("请先选择用户", type="warning")
+            safe_notify("请先选择用户", type="warning")
             return
 
         from app.services.group.crud import GroupService
 
         groups = [g for g in GroupService().list_all() if g.get("status") == "active"]
         if not groups:
-            ui.notify("没有可用的启用用户组", type="warning")
+            safe_notify("没有可用的启用用户组", type="warning")
             return
         options = {
             str(group["id"]): f"{group['name']} ({group['subnet']})"
@@ -1187,7 +1188,7 @@ class UsersPage:
 
     def _batch_change_group(self, group_id: str) -> bool:
         if not group_id:
-            ui.notify("请选择目标用户组", type="warning")
+            safe_notify("请选择目标用户组", type="warning")
             return False
         success = skipped = failed = 0
         for username in list(self.selected_users):
@@ -1204,7 +1205,7 @@ class UsersPage:
             except Exception:
                 logger.exception("批量切换用户组失败 user=%s group=%s", username, group_id)
                 failed += 1
-        ui.notify(
+        safe_notify(
             f"批量切换完成：成功 {success}，跳过 {skipped}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )
@@ -1213,7 +1214,7 @@ class UsersPage:
 
     def _batch_delete_confirm(self) -> None:
         if not self.selected_users:
-            ui.notify("请先选择用户", type="warning")
+            safe_notify("请先选择用户", type="warning")
             return
         confirm_dialog.show(
             "确定删除所选用户？",
@@ -1232,7 +1233,7 @@ class UsersPage:
             except Exception:
                 logger.exception("批量删除用户失败 user=%s", username)
                 failed += 1
-        ui.notify(
+        safe_notify(
             f"批量删除完成：成功 {success}，失败 {failed}",
             type="positive" if failed == 0 else "warning",
         )
@@ -1319,19 +1320,19 @@ class UsersPage:
         try:
             new_status = self.user_service.toggle_status(username)
             label = "已启用" if new_status == "active" else "已停用"
-            ui.notify(f"用户 {username} {label}", type="positive")
+            safe_notify(f"用户 {username} {label}", type="positive")
             self._refresh_user_list()
         except Exception as exc:
-            ui.notify(f"操作失败: {exc}", type="negative")
+            safe_notify(f"操作失败: {exc}", type="negative")
 
     def _kick_offline(self, username: str):
         """踢掉用户当前在线会话。"""
         try:
             self.user_service.kick_offline(username)
-            ui.notify(f"已踢下线: {username}", type="positive")
+            safe_notify(f"已踢下线: {username}", type="positive")
             self._refresh_user_list()
         except Exception as exc:
-            ui.notify(f"踢下线失败: {exc}", type="negative")
+            safe_notify(f"踢下线失败: {exc}", type="negative")
 
     def _show_change_group_dialog(self, username: str):
         """显示用户切换组弹窗。"""
@@ -1339,7 +1340,7 @@ class UsersPage:
 
         user = self.user_service.get(username)
         if not user:
-            ui.notify(f"用户不存在: {username}", type="negative")
+            safe_notify(f"用户不存在: {username}", type="negative")
             return
         current_group_id = str(user.get("group_id") or "").strip()
         groups = [
@@ -1347,7 +1348,7 @@ class UsersPage:
             if g.get("status") == "active" and str(g.get("id") or "") != current_group_id
         ]
         if not groups:
-            ui.notify("没有可切换的启用用户组", type="warning")
+            safe_notify("没有可切换的启用用户组", type="warning")
             return
 
         group_options = {group["id"]: f"{group['name']} ({group['subnet']})" for group in groups}
@@ -1377,7 +1378,7 @@ class UsersPage:
     def _do_change_group(self, dialog, username: str, new_group_id: str):
         """执行用户切换组。"""
         if not new_group_id:
-            ui.notify("请选择目标组", type="negative")
+            safe_notify("请选择目标组", type="negative")
             return
         try:
             result = self.user_service.change_group(username, new_group_id)
@@ -1385,37 +1386,37 @@ class UsersPage:
             if result.get("changed"):
                 old_ip = result.get("old_virtual_ip") or "无"
                 new_ip = result.get("new_virtual_ip") or "无"
-                ui.notify(f"已切换 {username} 的用户组，虚拟 IP: {old_ip} -> {new_ip}", type="positive")
+                safe_notify(f"已切换 {username} 的用户组，虚拟 IP: {old_ip} -> {new_ip}", type="positive")
             else:
-                ui.notify(f"{username} 已在目标组，无需切换", type="warning")
+                safe_notify(f"{username} 已在目标组，无需切换", type="warning")
             self._refresh_user_list()
         except Exception as exc:
-            ui.notify(f"切换组失败: {exc}", type="negative")
+            safe_notify(f"切换组失败: {exc}", type="negative")
 
     def _download_ovpn(self, username: str):
         """直接下载用户的 .ovpn 配置文件。"""
         from app.services.user.bulk_download import BulkDownloadService
         ovpn_path = BulkDownloadService._find_ovpn(username)
         if not ovpn_path:
-            ui.notify(f"用户 {username} 的 .ovpn 文件不存在", type="negative")
+            safe_notify(f"用户 {username} 的 .ovpn 文件不存在", type="negative")
             return
         try:
             content = ovpn_path.read_bytes()
             ui.download(content, f"{username}.ovpn")
         except Exception as exc:
-            ui.notify(f"下载失败: {exc}", type="negative")
+            safe_notify(f"下载失败: {exc}", type="negative")
 
     def _edit_ovpn(self, username: str):
         """打开编辑器修改用户 .ovpn 配置文件。"""
         from app.services.user.bulk_download import BulkDownloadService
         ovpn_path = BulkDownloadService._find_ovpn(username)
         if not ovpn_path:
-            ui.notify(f"用户 {username} 的 .ovpn 文件不存在，请先确认已生成", type="negative")
+            safe_notify(f"用户 {username} 的 .ovpn 文件不存在，请先确认已生成", type="negative")
             return
         try:
             content = ovpn_path.read_text(encoding="utf-8")
         except Exception as exc:
-            ui.notify(f"读取文件失败: {exc}", type="negative")
+            safe_notify(f"读取文件失败: {exc}", type="negative")
             return
 
         with ui.dialog().props("position=right maximized") as dialog, ui.card().classes(
@@ -1444,22 +1445,22 @@ class UsersPage:
     def _save_ovpn(self, dialog, username: str, ovpn_path, new_content: str):
         """保存编辑后的 .ovpn 配置文件。"""
         if not new_content or not new_content.strip():
-            ui.notify("内容不能为空", type="negative")
+            safe_notify("内容不能为空", type="negative")
             return
         try:
             ovpn_path.write_text(new_content, encoding="utf-8")
             dialog.close()
-            ui.notify(f"用户 {username} 的 .ovpn 配置已保存", type="positive")
+            safe_notify(f"用户 {username} 的 .ovpn 配置已保存", type="positive")
         except Exception as exc:
-            ui.notify(f"保存失败: {exc}", type="negative")
+            safe_notify(f"保存失败: {exc}", type="negative")
 
     async def _copy_text(self, text: str, message: str):
         """复制文本并提示。"""
         if not text or text == "—":
-            ui.notify("没有可复制的内容", type="warning")
+            safe_notify("没有可复制的内容", type="warning")
             return
         if await copy_text_to_clipboard(text):
-            ui.notify(message, type="positive")
+            safe_notify(message, type="positive")
 
     def _toggle_select(self, username: str, selected: bool):
         """切换用户选中状态。"""
@@ -1499,14 +1500,14 @@ class UsersPage:
         """执行单用户设备绑定重置。"""
         svc = DeviceBindingService()
         if svc.reset_binding(username):
-            ui.notify(f"已重置 {username} 的设备绑定", type="positive")
+            safe_notify(f"已重置 {username} 的设备绑定", type="positive")
         else:
-            ui.notify(f"{username} 无绑定记录", type="warning")
+            safe_notify(f"{username} 无绑定记录", type="warning")
 
     def _batch_reset_binding_confirm(self):
         """批量重置选中用户的设备绑定。"""
         if not self.selected_users:
-            ui.notify("请先勾选用户", type="warning")
+            safe_notify("请先勾选用户", type="warning")
             return
         confirm_dialog.show(
             "确定重置所选用户的设备绑定？",
@@ -1524,7 +1525,7 @@ class UsersPage:
         for name in list(self.selected_users):
             if svc.reset_binding(name):
                 ok += 1
-        ui.notify(f"已处理 {ok} 个绑定记录", type="positive")
+        safe_notify(f"已处理 {ok} 个绑定记录", type="positive")
         self.selected_users.clear()
         self._refresh_user_list()
 
@@ -1633,13 +1634,13 @@ class UsersPage:
         """执行用户创建（支持批量命名）并展示可见进度。"""
 
         if self._create_running:
-            ui.notify("用户正在后台创建，请稍候", type="warning")
+            safe_notify("用户正在后台创建，请稍候", type="warning")
             return False
         if not username or not group_id:
-            ui.notify("请填写完整信息", type="negative")
+            safe_notify("请填写完整信息", type="negative")
             return False
         if count < 1:
-            ui.notify("创建数量无效", type="negative")
+            safe_notify("创建数量无效", type="negative")
             return False
 
         base = username.strip()
@@ -1721,13 +1722,13 @@ class UsersPage:
 
         if result.get("ok"):
             summary = f"创建完成：成功 {len(created)}，失败 0"
-            ui.notify(summary, type="positive")
+            safe_notify(summary, type="positive")
         else:
             summary = (
                 f"创建中断：成功 {len(created)}，失败 {max(1, total - len(created))}。"
                 f"{result.get('error') or '创建失败'}"
             )
-            ui.notify(summary, type="warning")
+            safe_notify(summary, type="warning")
 
         self._update_progress_dialog(
             self._create_progress_ui,
@@ -1748,7 +1749,7 @@ class UsersPage:
         config = load_config()
         user_data = self.user_service.get(username)
         if not user_data or not user_data.get("ovpn_file_path"):
-            ui.notify("用户配置文件不存在", type="negative")
+            safe_notify("用户配置文件不存在", type="negative")
             logger.warning("一次性下载链接：用户 %s 无 ovpn 路径", username)
             return None
 
@@ -1758,7 +1759,7 @@ class UsersPage:
         req = get_ui_request()
         base_url = resolve_download_base_url(req, config.download_base_url)
         if not base_url:
-            ui.notify(
+            safe_notify(
                 "无法生成下载链接：未解析到可达地址或仅监听本机。请到「系统设置」→「下载配置」填写基础 URL，或用局域网 IP 打开控制台。",
                 type="warning",
             )
@@ -1773,7 +1774,7 @@ class UsersPage:
             )
         except Exception as exc:
             logger.exception("一次性下载链接生成失败 user=%s", username)
-            ui.notify(f"生成下载链接失败: {exc}", type="negative")
+            safe_notify(f"生成下载链接失败: {exc}", type="negative")
             return None
 
         logger.info("已生成一次性下载链接 user=%s", username)
@@ -1799,10 +1800,10 @@ class UsersPage:
 
         success = send_download_link(username, url)
         if success:
-            ui.notify(f"已推送下载链接: {username}", type="positive")
+            safe_notify(f"已推送下载链接: {username}", type="positive")
             logger.info("notify 下载链接推送成功 user=%s", username)
         else:
-            ui.notify(
+            safe_notify(
                 "推送失败：请确认「系统设置 → 通知」已启用并选对通道（钉钉 / 企业微信 / Rocket.Chat 需配置 Webhook）",
                 type="negative",
             )
@@ -1822,15 +1823,15 @@ class UsersPage:
         """执行用户删除。"""
         try:
             self.user_service.delete(username)
-            ui.notify(f"用户 {username} 已删除", type="positive")
+            safe_notify(f"用户 {username} 已删除", type="positive")
             ui.navigate.to("/users")
         except Exception as exc:
-            ui.notify(f"删除失败: {exc}", type="negative")
+            safe_notify(f"删除失败: {exc}", type="negative")
 
     def _batch_download(self):
         """批量下载选中用户的 VPN 文件（ZIP 按时间戳命名）。"""
         if not self.selected_users:
-            ui.notify("请先勾选要下载的用户", type="warning")
+            safe_notify("请先勾选要下载的用户", type="warning")
             return
 
         from app.services.user.bulk_download import BulkDownloadService
@@ -1839,12 +1840,12 @@ class UsersPage:
         zip_bytes, warnings, zip_filename = service.create_zip(list(self.selected_users))
 
         for warning in warnings:
-            ui.notify(f"跳过: {warning}", type="warning")
+            safe_notify(f"跳过: {warning}", type="warning")
 
         if zip_bytes:
             ui.download(zip_bytes, zip_filename)
         else:
-            ui.notify("没有可下载的文件", type="negative")
+            safe_notify("没有可下载的文件", type="negative")
 
     def _show_import_dialog(self):
         """显示批量导入弹窗：支持 CSV/TXT 文件及可选创建数量。"""
@@ -1869,11 +1870,11 @@ class UsersPage:
                     data = await e.file.read()
                     content = data.decode("utf-8")
                     textarea.set_value(content)
-                    ui.notify(f"已载入文件: {e.file.name}", type="positive")
+                    safe_notify(f"已载入文件: {e.file.name}", type="positive")
                 except Exception as exc:
                     fname = getattr(e.file, "name", "")
                     logger.exception("批量导入：读取上传文件失败 file=%s", fname)
-                    ui.notify(f"读取上传文件失败 ({fname}): {exc}", type="negative")
+                    safe_notify(f"读取上传文件失败 ({fname}): {exc}", type="negative")
                     raise RuntimeError(f"读取上传文件失败: {exc}") from exc
 
             ui.upload(
@@ -1898,10 +1899,10 @@ class UsersPage:
         """预检查全部导入数据，通过后在后台逐条创建并展示进度。"""
 
         if self._import_running:
-            ui.notify("批量导入正在执行，请稍候", type="warning")
+            safe_notify("批量导入正在执行，请稍候", type="warning")
             return
         if not raw_text or not raw_text.strip():
-            ui.notify("导入内容为空", type="warning")
+            safe_notify("导入内容为空", type="warning")
             return
 
         service = BulkImportService()
@@ -1909,7 +1910,7 @@ class UsersPage:
             rows = service.parse_text(raw_text)
         except ValueError as exc:
             logger.error("批量导入内容解析失败: %s", exc)
-            ui.notify(str(exc), type="negative")
+            safe_notify(str(exc), type="negative")
             return
 
         all_groups = group_service.list_all()
@@ -1920,9 +1921,9 @@ class UsersPage:
         if not validation.valid:
             logger.error("批量导入预检查失败 errors=%s", validation.errors)
             for error in validation.errors[:5]:
-                ui.notify(error, type="negative")
+                safe_notify(error, type="negative")
             if len(validation.errors) > 5:
-                ui.notify(
+                safe_notify(
                     f"还有 {len(validation.errors) - 5} 条错误未显示",
                     type="warning",
                 )
@@ -2003,13 +2004,13 @@ class UsersPage:
 
         if result.get("ok"):
             summary = f"导入完成：成功 {len(created)}，失败 0"
-            ui.notify(summary, type="positive")
+            safe_notify(summary, type="positive")
         else:
             summary = (
                 f"导入中断：成功 {len(created)}，失败 {max(1, total - len(created))}。"
                 f"{result.get('error') or '导入失败'}"
             )
-            ui.notify(summary, type="warning")
+            safe_notify(summary, type="warning")
 
         self._update_progress_dialog(
             self._import_progress_ui,

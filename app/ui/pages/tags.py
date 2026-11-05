@@ -6,6 +6,8 @@ import logging
 
 from nicegui import ui
 
+from app.ui.components.feedback import safe_notify
+
 from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
 from app.services.user.crud import UserService
@@ -81,7 +83,7 @@ class TagsPage:
         self._refresh()
 
     def _refresh(self) -> None:
-        if self.list_container is None:
+        if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
         self.list_container.clear()
         try:
@@ -283,15 +285,15 @@ class TagsPage:
         def submit() -> bool:
             name = str(fields["name"].value or "").strip()
             if not name:
-                ui.notify("请输入标签名称", type="warning")
+                safe_notify("请输入标签名称", type="warning")
                 return False
             try:
                 self.service.create(name, str(fields["description"].value or "").strip())
+                safe_notify("标签已创建", type="positive")
                 self._refresh()
-                ui.notify("标签已创建", type="positive")
                 return True
             except Exception as exc:
-                ui.notify(f"创建失败：{exc}", type="negative")
+                safe_notify(f"创建失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog("新建标签", body=body, on_submit=submit)
@@ -312,11 +314,11 @@ class TagsPage:
                     tag["id"], name=fields["name"].value,
                     description=fields["description"].value,
                 )
+                safe_notify("标签已更新", type="positive")
                 self._refresh()
-                ui.notify("标签已更新", type="positive")
                 return True
             except Exception as exc:
-                ui.notify(f"更新失败：{exc}", type="negative")
+                safe_notify(f"更新失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog("编辑标签", body=body, on_submit=submit)
@@ -325,14 +327,14 @@ class TagsPage:
     def _show_members_dialog(self, tag_id: str) -> None:
         tag = self.service.store.get_tag(tag_id)
         if not tag:
-            ui.notify("标签已不存在", type="negative")
+            safe_notify("标签已不存在", type="negative")
             return
         try:
             current = self.service.store.get_tag_members(tag_id)
             users = UserService(store=self.service.store).list_all()
             groups = GroupService(store=self.service.store).list_all()
         except Exception as exc:
-            ui.notify(f"读取成员失败：{exc}", type="negative")
+            safe_notify(f"读取成员失败：{exc}", type="negative")
             return
 
         def body() -> None:
@@ -361,11 +363,11 @@ class TagsPage:
                     usernames=fields["users"].value or [],
                     group_ids=fields["groups"].value or [],
                 )
+                safe_notify("标签成员已更新", type="positive")
                 self._refresh()
-                ui.notify("标签成员已更新", type="positive")
                 return True
             except Exception as exc:
-                ui.notify(f"更新成员失败：{exc}", type="negative")
+                safe_notify(f"更新成员失败：{exc}", type="negative")
                 return False
 
         dialog = create_form_dialog(
@@ -374,19 +376,25 @@ class TagsPage:
         dialog.card.classes("w-[min(95vw,32rem)]")
         dialog.open()
 
+    def _delete_tag_and_refresh(self, tag_id: str, dialog) -> bool:
+        """成功时先通知再销毁卡片，防止使用已删除的事件 slot。"""
+        try:
+            self.service.delete(tag_id)
+        except Exception as exc:
+            safe_notify(f"删除失败：{exc}", type="negative")
+            return False
+        safe_notify("标签已删除", type="positive")
+        dialog.close()
+        self._refresh()
+        return True
+
     def _show_delete_dialog(self, tag: dict) -> None:
         with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
             ui.label(f"确认删除标签「{tag['name']}」？").classes("text-lg font-medium")
             ui.label("删除后，用户和用户组的标签关联也会一并删除。").classes("section-caption")
 
             def confirm() -> None:
-                try:
-                    self.service.delete(tag["id"])
-                    dialog.close()
-                    self._refresh()
-                    ui.notify("标签已删除", type="positive")
-                except Exception as exc:
-                    ui.notify(f"删除失败：{exc}", type="negative")
+                self._delete_tag_and_refresh(str(tag["id"]), dialog)
 
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("取消", on_click=dialog.close).props("flat")
