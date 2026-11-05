@@ -30,6 +30,7 @@ from app.ui.components.server_pager import page_after_size_change, render_server
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_page_toolbar
 from app.ui.copy_clipboard import copy_text_to_clipboard
+from app.ui.log_reader import read_log_tail_lines
 
 logger = logging.getLogger(__name__)
 peer_remote_log = logging.getLogger("peer.remote")
@@ -165,26 +166,8 @@ class PeersPage:
 
     @staticmethod
     def _read_log_last_lines(path: Path, max_lines: int) -> str:
-        """从文件尾部读取日志，避免安装日志较大时整文件读入。"""
-        if max_lines <= 0:
-            return ""
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        block = 65536
-        chunks: list[bytes] = []
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            pos = f.tell()
-            total_nl = 0
-            while pos > 0 and total_nl <= max_lines:
-                step = min(block, pos)
-                pos -= step
-                f.seek(pos)
-                chunks.insert(0, f.read(step))
-                total_nl = sum(c.count(b"\n") for c in chunks)
-        lines = b"".join(chunks).splitlines()
-        tail = lines[-max_lines:] if len(lines) > max_lines else lines
-        return "\n".join(line.decode("utf-8", errors="replace") for line in tail)
+        """对端远程操作日志共享有界尾部读取，防止超长单行导致 OOM。"""
+        return read_log_tail_lines(path, max_lines)
 
     @staticmethod
     def _markdown_for_probe_payload(data: dict, *, eff_bin: str | None = None) -> str:
