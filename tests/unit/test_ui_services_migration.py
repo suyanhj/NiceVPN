@@ -12,7 +12,7 @@ import pytest
 from nicegui.testing import user_simulation
 
 from app.services.monitor.service_monitor import InstanceStatus
-from app.ui.components import confirm_dialog
+from app.ui.components import confirm_dialog, service_log_dialog
 from app.ui.pages.services import ServicesPage
 
 
@@ -277,7 +277,7 @@ def test_service_log_dialog_lifecycle_and_log_paths_are_guarded() -> None:
     source = inspect.getsource(ServicesPage._open_log_tail_dialog)
     assert 'dialog.on("hide"' in source
     assert "poll_timer.deactivate()" in source
-    assert "ui.scroll_area" in source
+    assert "log_scroll_area(on_scroll=on_log_scroll)" in source
     assert ".scroll_to(percent=1.0)" in source
 
     peer_source = inspect.getsource(ServicesPage._show_peer_client_file_log_viewer)
@@ -312,8 +312,15 @@ def test_service_log_and_config_dialogs_have_reserved_footer_css() -> None:
         encoding="utf-8"
     )
     source = inspect.getsource(ServicesPage)
-    assert "services-log-dialog__actions" in source
-    assert "services-log-dialog" in source
+    peer_source = inspect.getsource(ServicesPage._show_peer_client_file_log_viewer)
+    shared_source = inspect.getsource(service_log_dialog)
+    assert "log_dialog_card()" in source
+    assert "log_dialog_card()" in peer_source
+    assert "log_scroll_area" in source and "log_scroll_area" in peer_source
+    assert "log_action_row()" in source and "log_action_row()" in peer_source
+    assert "ui.column().classes(\"w-full log-frame services-log-frame\")" not in peer_source
+    assert "services-log-dialog__actions" in shared_source
+    assert "services-log-dialog" in shared_source
     assert "services-config-editor-dialog" in source
     assert "services-config-editor-textarea" in source
     assert ".q-dialog .q-card.services-log-dialog" in css
