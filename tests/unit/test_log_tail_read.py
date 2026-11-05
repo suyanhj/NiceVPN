@@ -4,6 +4,7 @@
 from pathlib import Path
 
 from app.ui.pages.services import ServicesPage
+from app.ui.pages.peers import PeersPage
 
 
 def test_read_log_last_lines_caps_count(tmp_path: Path) -> None:
@@ -56,3 +57,13 @@ def test_log_missing_file_remains_file_not_found(tmp_path: Path) -> None:
 
     with raises(FileNotFoundError):
         ServicesPage._read_log_tail(tmp_path / "missing.log")
+
+
+def test_peer_remote_log_reader_is_bounded_too(tmp_path: Path) -> None:
+    """对端管理页查看安装/远程日志也不能被超长单行撑爆。"""
+    p = tmp_path / "peer-remote.log"
+    p.write_bytes(b"a" * (2 * 1024 * 1024) + b"\nlast peer message")
+    result = PeersPage._read_log_last_lines(p, 180)
+    assert "日志过大" in result
+    assert result.endswith("last peer message")
+    assert len(result.encode("utf-8")) <= 512 * 1024 + 100
