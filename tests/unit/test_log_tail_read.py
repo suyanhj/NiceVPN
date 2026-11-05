@@ -22,20 +22,20 @@ def test_log_snapshot_never_uses_full_file_read(tmp_path: Path, monkeypatch) -> 
     p = tmp_path / "large.log"
     with p.open("wb") as stream:
         stream.seek(2 * 1024 * 1024 * 1024)
-        stream.write(b"older\\nlatest\\n")
+        stream.write(b"older\nlatest\n")
 
     def forbid_full_read(*_args, **_kwargs):
         raise AssertionError("must not call Path.read_text for log snapshots")
 
     monkeypatch.setattr(Path, "read_text", forbid_full_read)
     assert ServicesPage._read_log_tail(p, 1) == "latest"
-    assert ServicesPage._read_log_tail(p, 2) == "older\\nlatest"
+    assert ServicesPage._read_log_tail(p, 2) == "older\nlatest"
 
 
 def test_log_reader_bounds_single_giant_line(tmp_path: Path) -> None:
     """只有一条超长日志时也应按字节截断，避免大量分配。"""
     p = tmp_path / "one-long-line.log"
-    p.write_bytes(b"x" * (4 * 1024 * 1024) + b"\\nEND")
+    p.write_bytes(b"x" * (4 * 1024 * 1024) + b"\nEND")
     out = ServicesPage._read_log_tail(p)
     assert out.startswith("(日志过大，仅读取末尾 ")
     assert out.endswith("END")
@@ -44,7 +44,7 @@ def test_log_reader_bounds_single_giant_line(tmp_path: Path) -> None:
 
 def test_realtime_log_reader_respects_explicit_byte_cap(tmp_path: Path) -> None:
     p = tmp_path / "tail.log"
-    p.write_bytes(b"A" * (2 * 1024 * 1024) + b"\\nnewest")
+    p.write_bytes(b"A" * (2 * 1024 * 1024) + b"\nnewest")
     output = ServicesPage._read_log_last_lines(p, 500, max_bytes=4096)
     assert output.startswith("(日志过大，仅读取末尾 4 KiB)")
     assert output.endswith("newest")
