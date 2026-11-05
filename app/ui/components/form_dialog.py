@@ -22,22 +22,29 @@ class FormDialog:
     guard: AsyncOperationGuard
 
     def set_busy(self, busy: bool) -> None:
-        """同步提交按钮的 loading/disable 状态。"""
+        """仅更新仍存在的元素；保存回调可能已清空它们的父容器。"""
 
-        if busy:
-            self.submit_button.props(add="loading")
-            self.submit_button.disable()
-            self.cancel_button.disable()
-        else:
-            self.submit_button.props(remove="loading")
-            self.submit_button.enable()
-            self.cancel_button.enable()
+        # 检查每个按钮，避免父组件被 clear() 后继续更改被删除的按钮。
+        for button in (self.submit_button, self.cancel_button):
+            if getattr(button, "is_deleted", False):
+                continue
+            client = getattr(button, "client", None)
+            if client is not None and getattr(client, "is_deleted", False):
+                continue
+            if button is self.submit_button:
+                button.props(add="loading" if busy else None, remove=None if busy else "loading")
+            if busy:
+                button.disable()
+            else:
+                button.enable()
 
     def open(self) -> None:
-        self.dialog.open()
+        if not getattr(self.dialog, "is_deleted", False):
+            self.dialog.open()
 
     def close(self) -> None:
-        self.dialog.close()
+        if not getattr(self.dialog, "is_deleted", False):
+            self.dialog.close()
 
 
 def create_form_dialog(
@@ -62,15 +69,15 @@ def create_form_dialog(
         handle = holder["handle"]
         if not handle.guard.try_start():
             return
-        handle.set_busy(True)
         try:
+            handle.set_busy(True)
             result = None
             if on_submit is not None:
                 result = on_submit()
                 if inspect.isawaitable(result):
                     result = await result
             if close_on_success and result is not False:
-                handle.dialog.close()
+                handle.close()
         except Exception as exc:
             safe_notify(f"保存失败: {exc}", type="negative")
         finally:
