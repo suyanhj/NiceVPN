@@ -148,7 +148,7 @@ PY
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}" >/dev/null
     systemctl restart "${SERVICE_NAME}"
- 
+
     # 运行主机上的审计日志轮转，避免把轮转逻辑插入 conntrack/连接钩子。
     # 重复执行 daemon 安装只会更新配置和同一个 systemd timer。
     if command -v logrotate >/dev/null 2>&1; then
