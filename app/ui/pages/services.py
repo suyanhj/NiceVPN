@@ -534,14 +534,14 @@ class ServicesPage:
                 stream.seek(position)
                 chunk = stream.read(step)
                 chunks.append(chunk)
-                total_newlines += chunk.count(b"\\n")
+                total_newlines += chunk.count(b"\n")
                 total_bytes += len(chunk)
 
         raw = b"".join(reversed(chunks))
         tail_lines = raw.splitlines()[-max_lines:]
-        body = "\\n".join(line.decode("utf-8", errors="replace") for line in tail_lines)
+        body = "\n".join(line.decode("utf-8", errors="replace") for line in tail_lines)
         if position > 0 and total_bytes >= max_bytes:
-            return f"(日志过大，仅读取末尾 {max_bytes // 1024} KiB)\\n{body}"
+            return f"(日志过大，仅读取末尾 {max_bytes // 1024} KiB)\n{body}"
         return body
 
     def _open_log_tail_dialog(
