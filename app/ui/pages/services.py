@@ -44,6 +44,8 @@ _LOG_TAIL_STICK_PX = 48
 _LOG_SNAPSHOT_MAX_LINES = 200
 _LOG_REALTIME_MAX_LINES = 500
 _LOG_REALTIME_POLL_SEC = 1.0
+# 日志可能持续写入多年；任何快照或实时读取均限制最大读取字节数。
+_LOG_TAIL_MAX_BYTES = 512 * 1024
 
 
 class ServicesPage:
@@ -507,39 +509,40 @@ class ServicesPage:
 
     @staticmethod
     def _read_log_tail(path: Path, max_lines: int = _LOG_SNAPSHOT_MAX_LINES) -> str:
-        """读取文本日志末尾若干行（整文件读入，仅用于小快照）。"""
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        content = path.read_text(encoding="utf-8", errors="replace")
-        lines = content.splitlines()
-        tail_lines = lines[-max_lines:] if len(lines) > max_lines else lines
-        return "\n".join(tail_lines)
+        """只读取文件尾部；绝不将整份守护进程日志加载到内存。"""
+        return ServicesPage._read_log_last_lines(path, max_lines)
 
     @staticmethod
-    def _read_log_last_lines(path: Path, max_lines: int) -> str:
-        """从文件末尾逆向块读至多 max_lines 行，避免大日志整文件读入内存。"""
-        if max_lines <= 0:
+    def _read_log_last_lines(
+        path: Path,
+        max_lines: int,
+        max_bytes: int = _LOG_TAIL_MAX_BYTES,
+    ) -> str:
+        """按行数和字节双重限制逆向读取，超长单行也不会导致 OOM。"""
+        if max_lines <= 0 or max_bytes <= 0:
             return ""
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        block = 65536
+        block_size = 65536
         chunks: list[bytes] = []
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            pos = f.tell()
-            total_nl = 0
-            while pos > 0 and total_nl <= max_lines:
-                step = min(block, pos)
-                pos -= step
-                f.seek(pos)
-                chunks.insert(0, f.read(step))
-                total_nl = sum(c.count(b"\n") for c in chunks)
-                if total_nl > max_lines + 200:
-                    break
-        raw = b"".join(chunks)
-        parts = raw.splitlines()
-        tail = parts[-max_lines:] if len(parts) > max_lines else parts
-        return "\n".join(p.decode("utf-8", errors="replace") for p in tail)
+        total_newlines = 0
+        total_bytes = 0
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            position = stream.tell()
+            while position > 0 and total_newlines <= max_lines and total_bytes < max_bytes:
+                step = min(block_size, position, max_bytes - total_bytes)
+                position -= step
+                stream.seek(position)
+                chunk = stream.read(step)
+                chunks.append(chunk)
+                total_newlines += chunk.count(b"\\n")
+                total_bytes += len(chunk)
+
+        raw = b"".join(reversed(chunks))
+        tail_lines = raw.splitlines()[-max_lines:]
+        body = "\\n".join(line.decode("utf-8", errors="replace") for line in tail_lines)
+        if position > 0 and total_bytes >= max_bytes:
+            return f"(日志过大，仅读取末尾 {max_bytes // 1024} KiB)\\n{body}"
+        return body
 
     def _open_log_tail_dialog(
         self,
@@ -576,7 +579,9 @@ class ServicesPage:
             else:
                 initial = load()
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+        with ui.dialog() as dialog, ui.card().classes(
+            "w-full services-view-dialog services-log-dialog"
+        ):
             ui.label(title).classes("text-h6 services-view-dialog__title")
             header_ctrl = header_widget() if header_widget else None
             path_caption = ui.label(initial[0] if initial else "").classes("section-caption services-view-dialog__caption")
@@ -690,7 +695,9 @@ class ServicesPage:
 
             dialog.on("hide", lambda _event: cleanup_log_dialog())
 
-            with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
+            with ui.row().classes(
+                "services-log-dialog__actions w-full justify-end gap-sm items-center"
+            ):
                 secondary_action("刷新", icon="refresh", on_click=do_manual_refresh)
                 secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
@@ -1368,8 +1375,8 @@ class ServicesPage:
             ui.label("保存成功后需要重启实例才能生效。").classes("section-caption")
             fields["content"] = (
                 ui.textarea(value=content)
-                .classes("w-full font-mono")
-                .props("outlined rows=20")
+                .classes("w-full font-mono services-config-editor-textarea")
+                .props("outlined rows=28")
             )
 
         def submit() -> bool:
@@ -1385,7 +1392,7 @@ class ServicesPage:
             submit_label="保存",
             close_on_success=True,
         )
-        form.card.classes("w-full max-w-4xl")
+        form.card.classes("services-config-editor-dialog")
         form.open()
 
     def _save_config_content(self, conf_path: str, new_content: str) -> bool:
