@@ -32,7 +32,10 @@ class FormDialog:
             if client is not None and getattr(client, "is_deleted", False):
                 continue
             if button is self.submit_button:
-                button.props(add="loading" if busy else None, remove=None if busy else "loading")
+                if busy:
+                    button.props(add="loading")
+                else:
+                    button.props(remove="loading")
             if busy:
                 button.disable()
             else:
