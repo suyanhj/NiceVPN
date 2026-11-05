@@ -206,7 +206,8 @@ def test_users_grid_columns_follow_certs_v2_table_template() -> None:
     username = columns["username"]
     assert username["pinned"] == "left"
     assert username["lockPinned"] is True
-    assert username["cellClass"] == "vpn-grid-primary-cell"
+    assert "vpn-grid-primary-cell" in username["cellClass"].split()
+    assert "vpn-grid-copyable-cell" in username["cellClass"].split()
     assert username[":filter"] == "window.NiceVpnMultiTextFilter"
     assert username["filterParams"]["inputPlaceholder"] == "输入用户名后按 Enter"
 
