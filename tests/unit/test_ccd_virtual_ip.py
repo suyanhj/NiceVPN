@@ -57,24 +57,26 @@ def test_group_pool_full_rejected_before_certificate_generation(monkeypatch, tmp
         service._create_locked("new-user", "test-group")
 
 
-def test_ip_allocation_reserves_first_host_and_exhausts_without_overflow(monkeypatch, tmp_path):
+def test_ip_allocation_reserves_server_ip_and_exhausts_without_overflow(monkeypatch, tmp_path):
     from app.services.user import crud as mod
     from app.storage.sqlite_store import SqliteStore
     import pytest
     from box import Box
 
+    ccd = tmp_path / "ccd"
+    ccd.mkdir()
+    monkeypatch.setattr(mod, "CCD_DIR", ccd)
     store = SqliteStore(tmp_path / "store.sqlite")
     monkeypatch.setattr(
         mod, "load_config", lambda: Box({"global_subnet": "192.168.1.0/24"}),
     )
     service = UserService(store=store)
-    # 全局池根网关 .1 仍预留，/30 中仅 .2 可分配。
+    # 实际全局服务端 .1 保留：/30 中只有 .2 可分配。
     group = {"id": "g", "subnet": "192.168.1.0/30"}
-    monkeypatch.setattr(service, "_collect_used_ips_in_group", lambda *_: set())
     ip, _ = service._allocate_virtual_ip_for_group(group)
     assert ip == "192.168.1.2"
-    monkeypatch.setattr(
-        service, "_collect_used_ips_in_group", lambda *_: {"192.168.1.2"}
+    (ccd / "existing-user").write_text(
+        "ifconfig-push 192.168.1.2 255.255.255.0\\n", encoding="utf-8"
     )
     with pytest.raises(ValueError, match="所有地址已分配"):
         service._allocate_virtual_ip_for_group(group)
