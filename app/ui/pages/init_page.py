@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 from nicegui import context, ui
+from app.ui.components.feedback import safe_notify
 
 from app.core.init_wizard import InitWizard, StepResult, WizardStep
 from app.ui.adapters.init_wizard import (
@@ -342,7 +343,7 @@ class InitPage:
         """后台执行 OpenVPN 安装，并统一进度/重复提交状态。"""
 
         if self._install_running:
-            ui.notify("OpenVPN 正在安装，请稍候", type="warning")
+            safe_notify("OpenVPN 正在安装，请稍候", type="warning")
             return
 
         logger.info("步骤 2/5：开始安装 OpenVPN（按钮触发）")
@@ -445,7 +446,7 @@ class InitPage:
         """后台执行 PKI 初始化，并保护重复提交与 UI 生命周期。"""
 
         if self._pki_running:
-            ui.notify("证书体系初始化进行中，请稍候", type="warning")
+            safe_notify("证书体系初始化进行中，请稍候", type="warning")
             return
 
         # 不允许空白或相对路径意外落在进程工作目录中。
@@ -453,7 +454,7 @@ class InitPage:
             self._pki_selected_path or self._pki_default_path()
         )).strip()
         if not selected or not Path(selected).is_absolute():
-            ui.notify("PKI 目录必须是绝对路径", type="warning")
+            safe_notify("PKI 目录必须是绝对路径", type="warning")
             return
         self._pki_selected_path = selected
 
