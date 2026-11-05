@@ -34,7 +34,7 @@ def test_common_ssh_executor_returns_decoded_streams_and_exit_status() -> None:
 
     assert client.calls == [("id -u", 15)]
     assert stdout == "正常"
-    assert stderr == "�warn"
+    assert stderr == chr(0xFFFD) + "warn"
     assert status == 23
 
 
