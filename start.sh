@@ -149,16 +149,15 @@ PY
     systemctl enable "${SERVICE_NAME}" >/dev/null
     systemctl restart "${SERVICE_NAME}"
 
-    # 运行主机上的审计日志轮转，避免把轮转逻辑插入 conntrack/连接钩子。
-    # 重复执行 daemon 安装只会更新配置和同一个 systemd timer。
+    # 使用系统 logrotate.timer/cron，直接在 /etc/logrotate.d 下配置。
     if command -v logrotate >/dev/null 2>&1; then
-        if bash "$ROOT_DIR/deploy/shell/install-nicevpn-audit-logrotate.sh"; then
-            log "NiceVPN 审计日志轮转已启用。"
+        if bash "$ROOT_DIR/deploy/shell/install-nicevpn-logrotate.sh"; then
+            log "NiceVPN/OpenVPN 日志轮转配置已安装。"
         else
-            log "WARNING: 审计日志轮转安装失败，主服务不受影响；请检查安装日志。"
+            log "WARNING: 日志轮转配置安装失败，主服务不受影响；请检查安装日志。"
         fi
     else
-        log "WARNING: logrotate 未安装，NiceVPN 审计日志不会自动按大小轮转。"
+        log "WARNING: logrotate 未安装，OpenVPN/NiceVPN 日志不会自动轮转。"
     fi
 
     log "NiceVPN 已由 systemd 托管。"
