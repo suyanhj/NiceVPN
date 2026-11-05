@@ -90,3 +90,47 @@ def test_logrotate_config_parses_with_real_binary_when_installed(tmp_path):
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_expiry_cleanup_keeps_active_nicevpn_logs(monkeypatch, tmp_path):
+    """老时间戳的 NiceVPN 活动审计日志由 logrotate 管理，不能直接 unlink。"""
+    import time
+    from app.utils import log_cleanup
+
+    logs = tmp_path / "openvpn" / "log"
+    logs.mkdir(parents=True)
+    data_logs = tmp_path / "data" / "logs"
+    audit = tmp_path / "data" / "audit"
+    data_logs.mkdir(parents=True)
+    audit.mkdir(parents=True)
+
+    monkeypatch.setattr(log_cleanup, "OPENVPN_DAEMON_LOG_DIR", logs)
+    monkeypatch.setattr(log_cleanup, "OPENVPN_LOG_ROOT", logs)
+    monkeypatch.setattr(log_cleanup, "LOGS_DIR", data_logs)
+    monkeypatch.setattr(log_cleanup, "AUDIT_DIR", audit)
+    for name, attribute in (
+        ("openvpn-device-bind.log", "DEVICE_BIND_LOG_FILE"),
+        ("openvpn-session-audit.jsonl", "VPN_SESSION_AUDIT_LOG_FILE"),
+        ("openvpn-connection-audit.jsonl", "VPN_CONNECTION_AUDIT_LOG_FILE"),
+    ):
+        file = logs / name
+        file.write_text("old log", encoding="utf-8")
+        monkeypatch.setattr(log_cleanup, attribute, file)
+
+    old = time.time() - 15 * 86400
+    for file in logs.iterdir():
+        os.utime(file, (old, old))
+
+    # 既有 OpenVPN 日志继续走按时间清理逻辑；NiceVPN 三个文件必须保留。
+    old_daemon = logs / "server.log"
+    old_daemon.write_text("older", encoding="utf-8")
+    os.utime(old_daemon, (old, old))
+
+    log_cleanup.cleanup_expired_logs(retention_days=7)
+    assert not old_daemon.exists()
+    for name in (
+        "openvpn-device-bind.log",
+        "openvpn-session-audit.jsonl",
+        "openvpn-connection-audit.jsonl",
+    ):
+        assert (logs / name).exists()
