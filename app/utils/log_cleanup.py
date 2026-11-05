@@ -4,7 +4,7 @@
 说明：
 - app.log / openvpn-install.log / openvpn-upgrade.log 由 TimedRotatingFileHandler 按天轮转，backupCount=LOG_RETENTION_DAYS；
   此处额外按 mtime 清理遗留的 *.log.*，防止历史 Rotating 后缀堆积。
-- /etc/openvpn/log 下守护进程、device-bind 与 VPN 审计日志：按 mtime 超过保留期则删除（活跃文件 mtime 会更新，一般不会被删）。
+- /etc/openvpn/log 下其他 OpenVPN 日志按 mtime 清理；NiceVPN 三类活动审计日志由独立 logrotate 管理，不能在这里 unlink。
 - 审计 audit-YYYY-MM-DD.jsonl：按文件名日期早于保留期则删除。
 """
 from __future__ import annotations
