@@ -60,15 +60,6 @@ class CertsPage:
         self.bulk_revoke_button = None
         self._operation_guard = AsyncOperationGuard()
 
-        # 兼容旧页面属性，避免外部测试/调用依赖失效。
-        self.advanced_open = False
-        self.advanced_icon = None
-        self.advanced_body = None
-        self.list_container = None
-        self.pagination_container = None
-        self.select_all_checkbox = None
-        self.visible_cert_names: list[str] = []
-        self.cert_checkboxes: dict[str, Any] = {}
         self.page = 1
         self._refresh_running = False
 
@@ -126,18 +117,6 @@ class CertsPage:
             )
 
         self._refresh_cert_list()
-
-    @classmethod
-    def _adapt_cert_row(
-        cls,
-        cert: dict,
-        *,
-        now: datetime | None = None,
-        warn_days: int = CERT_EXPIRY_WARN_DAYS,
-    ) -> dict[str, Any]:
-        """兼容页面调用；证书展示语义由纯适配层统一维护。"""
-
-        return adapt_cert_row(cert, now=now, warn_days=warn_days)
 
     @staticmethod
     def _grid_columns() -> tuple[dict, ...]:
@@ -654,28 +633,6 @@ class CertsPage:
             self._finish_operation()
         self._refresh_cert_list()
 
-    # ---- 旧接口兼容 ----
-
-    @staticmethod
-    def _short_serial(serial: str) -> str:
-        """兼容旧调用入口。"""
-
-        return short_serial(serial)
-
-    def _refresh_table(self):
-        self._refresh_cert_list()
-
-    def _toggle_advanced_panel(self):
-        self.advanced_open = not self.advanced_open
-        if self.advanced_body is not None:
-            self.advanced_body.set_visibility(self.advanced_open)
-
-    def _do_rebuild_ca(self, dialog, confirm_text: str):
-        if confirm_text != "REBUILD":
-            safe_notify("请输入 REBUILD 确认", type="warning")
-            return
-        dialog.close()
-        self._do_rebuild_ca_confirmed()
 
     def _toggle_cert_selection(self, common_name: str, checked: bool):
         if checked:
