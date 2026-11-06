@@ -28,7 +28,6 @@ from app.ui.components.states import empty_state, error_state
 from app.ui.components.server_pager import page_after_size_change, render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
-from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.utils.cidr import assignable_client_ip_count, normalize_cidr
 
 logger = logging.getLogger(__name__)
