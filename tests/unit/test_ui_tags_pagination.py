@@ -39,8 +39,17 @@ def test_tags_page_and_member_dialog_build_with_only_paginated_queries(tmp_path,
         page._show_members_dialog("tag1")
 
     async def verify():
-        async with user_simulation(builder) as user:
-            response = await user.open("/")
-            assert response.status_code == 200
+        # 新会话隔离不同操作，避免模拟器选中隐藏组 Tab 的同名按钮。
+        for initial, action, expected in (
+            (names, "取消搜索结果已选", 0),
+            ([], "全选本页", 20),
+            ([], "全选搜索结果（35）", 35),
+        ):
+            store.set_tag_members("tag1", usernames=initial, group_ids=["g1"])
+            async with user_simulation(builder) as user:
+                response = await user.open("/")
+                assert response.status_code == 200
+                user.find(action).click()
+                await user.should_see(f"已选 {expected} 项（跨页保留）")
 
     asyncio.run(verify())
