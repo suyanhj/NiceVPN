@@ -1222,16 +1222,6 @@ class ServicesPage:
             danger_level="warning",
         )
 
-    def _do_start(self, name: str):
-        """兼容旧调用入口。"""
-
-        self._queue_local_action(name, "start")
-
-    def _do_stop(self, name: str):
-        """兼容旧调用入口。"""
-
-        self._queue_local_action(name, "stop")
-
     def _do_restart(self, name: str):
         """兼容旧调用入口。"""
 
