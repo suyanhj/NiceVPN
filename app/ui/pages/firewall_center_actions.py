@@ -439,35 +439,6 @@ class FirewallCenterActionsMixin:
         self._refresh_rules()
         return True
 
-    def _do_edit(
-        self,
-        dialog,
-        original: dict,
-        *,
-        action: str,
-        protocol: str,
-        source_input: str,
-        dest_ip,
-        dest_port,
-        description,
-        enabled: bool,
-    ) -> bool:
-        """兼容旧测试/调用入口。"""
-
-        success = self._save_center_rule_edit(
-            original,
-            action=action,
-            protocol=protocol,
-            source_input=source_input,
-            dest_ip=dest_ip,
-            dest_port=dest_port,
-            description=description,
-            enabled=enabled,
-        )
-        if success and dialog is not None:
-            dialog.close()
-        return success
-
     def _confirm_delete(self, rule_id: str) -> None:
         raw = self._center_raw_by_id.get(str(rule_id), {})
         is_center_peer = (
