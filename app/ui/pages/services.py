@@ -1222,10 +1222,6 @@ class ServicesPage:
             danger_level="warning",
         )
 
-    def _do_restart(self, name: str):
-        """兼容旧调用入口。"""
-
-        self._queue_local_action(name, "restart")
 
     def _queue_local_action(self, name: str, action: str) -> bool:
         """在创建后台任务前占用实例，消除重复点击竞态。"""
@@ -1362,12 +1358,4 @@ class ServicesPage:
             return False
         safe_notify("已保存配置；请重启实例使新配置生效", type="warning")
         return True
-
-    def _do_save_config(self, dialog, conf_path: str, new_content: str):
-        """兼容旧调用入口。"""
-
-        success = self._save_config_content(conf_path, new_content)
-        if success and dialog is not None:
-            dialog.close()
-        return success
 
