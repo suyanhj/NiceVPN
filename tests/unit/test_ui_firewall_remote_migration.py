@@ -360,7 +360,7 @@ def test_remote_grid_columns_keep_raw_in_details_and_preserve_operations() -> No
     assert columns["extra_matches"]["tooltipField"] == "extra_matches"
 
     source = inspect.getsource(FirewallPage._show_remote_rule_actions)
-    assert 'ui.expansion("查看原始 iptables 规则"' in source
+    assert 'ui.label(str(row.get("rest") or ""))' in source
     assert '"复制原始规则"' in source
 
 
