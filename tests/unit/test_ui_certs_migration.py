@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from nicegui.testing import user_simulation
 
+from app.ui.adapters.certs import adapt_cert_row
 from app.ui.pages.certs import CertsPage
 
 
@@ -26,11 +27,11 @@ def _cert(name: str, status: str, *, days: int = 90, serial: str | None = None) 
 def test_cert_adapter_covers_valid_expiring_expired_revoked_and_invalid_fields() -> None:
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
 
-    valid = CertsPage._adapt_cert_row(_cert("valid", "valid", days=90), now=now)
-    expiring = CertsPage._adapt_cert_row(_cert("soon", "valid", days=5), now=now)
-    expired = CertsPage._adapt_cert_row(_cert("old", "valid", days=-1), now=now)
-    revoked = CertsPage._adapt_cert_row(_cert("revoked", "revoked", days=90), now=now)
-    partial = CertsPage._adapt_cert_row({"common_name": "partial", "status": "x"}, now=now)
+    valid = adapt_cert_row(_cert("valid", "valid", days=90), now=now)
+    expiring = adapt_cert_row(_cert("soon", "valid", days=5), now=now)
+    expired = adapt_cert_row(_cert("old", "valid", days=-1), now=now)
+    revoked = adapt_cert_row(_cert("revoked", "revoked", days=90), now=now)
+    partial = adapt_cert_row({"common_name": "partial", "status": "x"}, now=now)
 
     assert valid["status"] == "valid"
     assert valid["status_label"] == "有效"
@@ -51,7 +52,7 @@ def test_certs_page_uses_shared_grid_bulk_state_and_native_filters(monkeypatch: 
         _cert("revoked-user", "revoked", days=90),
     ]
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
-    rows = [page._adapt_cert_row(cert, now=now) for cert in sample]
+    rows = [adapt_cert_row(cert, now=now) for cert in sample]
     monkeypatch.setattr(page, "_load_rows", lambda: rows)
 
     async def verify_page() -> None:
@@ -82,9 +83,9 @@ def test_cert_actionability_disables_expired_and_revoked_actions() -> None:
     """过期/吊销状态的单项动作语义由适配行稳定提供。"""
 
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
-    revoked = CertsPage._adapt_cert_row(_cert("r", "revoked"), now=now)
-    expired = CertsPage._adapt_cert_row(_cert("e", "expired", days=-5), now=now)
-    valid = CertsPage._adapt_cert_row(_cert("v", "valid"), now=now)
+    revoked = adapt_cert_row(_cert("r", "revoked"), now=now)
+    expired = adapt_cert_row(_cert("e", "expired", days=-5), now=now)
+    valid = adapt_cert_row(_cert("v", "valid"), now=now)
 
     assert revoked["status"] == "revoked"
     assert expired["status"] == "expired"
@@ -154,7 +155,7 @@ def test_rebuild_ca_uses_shared_required_text_confirmation(monkeypatch: pytest.M
 def test_cert_adapter_handles_5000_rows_as_lightweight_grid_data() -> None:
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     rows = [
-        CertsPage._adapt_cert_row(
+        adapt_cert_row(
             _cert(f"user-{index:04d}", "valid", days=90),
             now=now,
         )
