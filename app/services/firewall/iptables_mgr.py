@@ -13,14 +13,14 @@
 
 FORWARD 默认策略常为 DROP 时，必须在 FORWARD 中跳转至 VPN_FORWARD，否则 VPN_FORWARD 显示
 「0 references」、其中 ACCEPT 永不生效。重建成功后会自动补齐（顺序有语义）：
-- ``-i tun+ -j VPN_FORWARD``（中心业务 JSON + **对端内网放行**，对端相关规则注释 ``ovpn-mgmt-center-peer``）
+- ``-i tun+ -j VPN_FORWARD``（中心业务规则 + **对端内网放行**，对端相关规则注释 ``ovpn-mgmt-center-peer``）
 - 再 RELATED,ESTABLISHED -j ACCEPT（未在 VPN_FORWARD 命中的已建连/相关流在链尾放行）
 - **说明**：对端本机上的 ``VPN_PEER_<hash>`` 仅由 **SSH** 创建；中心进程不创建该链名。
 - 上述固定钩子与 INPUT / nat MASQUERADE 的 iptables 注释均带 ``inst=<本机实例标识>``（见
   ``get_local_openvpn_instance_id`` / ``SystemConfig.vpn_instance_id``），便于未来多机组网时与远端规则区分。
 - INPUT：仅当 filter INPUT 默认策略为 DROP（或非 ACCEPT）时，追加从 tun+ 进入且源为 global_subnet
   的放行（访问本机 eth0 等走 INPUT）；若 INPUT 已为 ACCEPT，则不追加（默认已允许全部入站）
-- VPN_FORWARD：界面 JSON 启用规则与对端内网放行合并写入（注释 ``ovpn-mgmt-center-peer peer=…``）；JSON 规则仅当填写「规则描述」时附加 ``--comment``
+- VPN_FORWARD：界面启用规则与对端内网放行合并写入（注释 ``ovpn-mgmt-center-peer peer=…``）；中心规则仅当填写「规则描述」时附加 ``--comment``
 - net.ipv4.ip_forward=1（可写时写入）
 - nat POSTROUTING：对 **源为 global_subnet** 的流量做 **MASQUERADE**，
   **不依赖出网网卡名**；便于多网卡环境。旧版 ``-o`` MASQUERADE 或固定 SNAT 由重建前清理逻辑删除。
@@ -41,8 +41,6 @@ from pydantic import ValidationError
 
 from app.models.firewall import FirewallRule
 from app.services.firewall.ipset_mgr import (
-    IPSET_PREFIX,
-    IPSET_PREFIX_PEER,
     IpsetManager,
     IpsetReconcileTransaction,
     IpsetSpec,
@@ -50,13 +48,12 @@ from app.services.firewall.ipset_mgr import (
 
 logger = logging.getLogger(__name__)
 
-# 自定义链名称，中心业务 JSON 规则放入此链
+# 自定义链名称，中心业务规则放入此链
 CHAIN_NAME = "VPN_FORWARD"
 # 旧版共享链名（仅迁移清理用）
 LEGACY_CHAIN_PEER = "VPN_PEER"
 # 对端专用链前缀（后缀为 md5 短哈希，总长 ≤ iptables 链名限制）
 PEER_CHAIN_PREFIX = "VPN_PEER_"
-# ipset 集合名前缀由 ipset_mgr 统一定义；这里重新导入以兼容历史引用。
 # xt_comment 整条注释通常 ≤256；前缀 ``ovpn-mgmt-… inst=`` 约占 40 字节，inst 值单独限长
 _IPTABLES_INST_COMMENT_MAX = 96
 
