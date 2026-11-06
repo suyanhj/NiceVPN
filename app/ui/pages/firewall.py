@@ -58,7 +58,7 @@ class FirewallPage(
     FirewallRemoteImportBatchMixin,
     FirewallRemoteMixin,
 ):
-    """中心 JSON 规则、中心侧对端虚拟行、以及对端机 filter 用户链的本地工作副本与 UI。
+    """中心防火墙规则、中心侧对端虚拟行、以及对端机 filter 用户链的本地工作副本与 UI。
 
     对端机链的交互顺序见模块 docstring；本页在「对端远端」下通过 :meth:`_remote_fetch_chain_via_ssh` 与
     :meth:`_apply_remote_cache_to_peer` 落实「先拉后改再推」。"""
