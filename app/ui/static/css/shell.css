@@ -3707,6 +3707,27 @@ body {
   gap: 0;
   width: 100%;
 }
+/* 管理关联复用统一表单弹窗；只有当前页候选项可以滚动，操作按钮保持可见。 */
+.q-dialog .q-card.vpn-form-dialog.tags-members-dialog {
+  width: min(95vw, 640px);
+  max-width: 640px;
+  max-height: 92vh;
+}
+.tags-members-dialog .vpn-form-dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+.tags-members-dialog .tags-member-choice-list {
+  max-height: min(44vh, 380px);
+  overflow-y: auto;
+  gap: 0;
+}
+.tags-members-dialog .tags-member-choice-list .q-checkbox {
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07);
+}
 .tags-page--v2 .tags-detail-row {
   min-height: 49px;
   padding: 10px 12px;
