@@ -56,7 +56,7 @@ class UserService:
         2. 调用 EasyRSA 生成证书和 tls-crypt-v2 客户端密钥
         3. 生成 .ovpn 配置文件（内联所有证书和密钥）
         4. 写入 CCD 文件（固定 IP 分配）
-        5. 保存用户 JSON 记录
+        5. 保存用户 SQLite 元数据
         6. 写入审计日志
         """
         with _USER_CREATE_LOCK:
