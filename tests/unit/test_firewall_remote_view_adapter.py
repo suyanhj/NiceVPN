@@ -27,6 +27,35 @@ def test_parse_remote_rule_hints_covers_protocol_flow_port_action_comment() -> N
     }
 
 
+def test_parse_remote_advanced_matches_are_visible_without_changing_rest() -> None:
+    hints = parse_remote_rule_hints(
+        '-m set --match-set admin_allow src -m conntrack '
+        '--ctstate NEW,ESTABLISHED -i tun0 -j ACCEPT'
+    )
+    assert hints["action"] == "ACCEPT"
+    assert hints["extra"] == (
+        "IPSet admin_allow (src) · 连接状态 NEW,ESTABLISHED · 入接口 tun0"
+    )
+
+    row = adapt_remote_rule_row(
+        {"rest": '-m set --match-set admin_allow src -j ACCEPT'},
+        index=0,
+        peer_id="peer-a",
+    )
+    assert row["source"] == "*"
+    assert row["extra_matches"] == "IPSet admin_allow (src)"
+    assert "admin_allow" in row["search_text"]
+    assert row["raw_rest"] == '-m set --match-set admin_allow src -j ACCEPT'
+
+
+def test_remote_unhandled_match_module_and_invalid_quotes_are_not_silent() -> None:
+    assert parse_remote_rule_hints("-m owner --uid-owner 1000 -j ACCEPT")["extra"] == "模块 owner"
+    assert parse_remote_rule_hints('-m comment --comment "unfinished')["extra"] == (
+        "复杂语法（查看原始规则）"
+    )
+    assert "extra" not in parse_remote_rule_hints("-p tcp --dport 443 -j ACCEPT")
+
+
 def test_remote_rule_adapter_keeps_raw_and_parsed_traceability() -> None:
     row = adapt_remote_rule_row(
         {
