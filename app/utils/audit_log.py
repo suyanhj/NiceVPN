@@ -8,16 +8,12 @@
 
 import hashlib
 import json
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from app.core.constants import AUDIT_DIR
-
-if os.name == "posix":
-    import fcntl
 
 
 class AuditLogger:
@@ -46,7 +42,7 @@ class AuditLogger:
     def __init__(self) -> None:
         if self._initialized:
             return
-        # 同进程线程锁；不同 NiceVPN 进程使用下方的 flock 协调。
+        # 写入锁，保证多线程追加写入的顺序性
         self._write_lock = threading.Lock()
         # 当前日期字符串，用于检测日期切换
         self._current_date: str = ""
@@ -82,32 +78,34 @@ class AuditLogger:
         with self._write_lock:
             now = datetime.now(timezone.utc)
             today = now.strftime("%Y-%m-%d")
+
+            # 日期切换时重新加载当天文件的最后哈希
+            if today != self._current_date:
+                self._current_date = today
+                self._prev_hash = self._load_last_hash(today)
+
+            # 构造日志条目
+            entry = {
+                "timestamp": now.isoformat(),
+                "action": action,
+                "target_type": target_type,
+                "target_id": target_id,
+                "detail": detail,
+                "result": result,
+                "prev_hash": self._prev_hash,
+            }
+            if error_message is not None:
+                entry["error_message"] = error_message
+
+            # 序列化并计算本条哈希
+            line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+            current_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            self._prev_hash = current_hash
+
+            # 追加写入当天的 JSONL 文件
             log_file = self._get_log_path(today)
             with open(log_file, "a", encoding="utf-8") as f:
-                if os.name == "posix":
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    # 每次在锁内取最新的末条哈希，避免 API 与管理进程各自缓存旧值。
-                    self._current_date = today
-                    self._prev_hash = self._load_last_hash(today)
-                    entry = {
-                        "timestamp": now.isoformat(),
-                        "action": action,
-                        "target_type": target_type,
-                        "target_id": target_id,
-                        "detail": detail,
-                        "result": result,
-                        "prev_hash": self._prev_hash,
-                    }
-                    if error_message is not None:
-                        entry["error_message"] = error_message
-                    line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
-                    self._prev_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
-                    f.write(line + "\n")
-                    f.flush()
-                finally:
-                    if os.name == "posix":
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                f.write(line + "\n")
 
     # ---- 内部方法 ----
 
@@ -125,30 +123,20 @@ class AuditLogger:
         if not log_file.exists():
             return self._GENESIS_HASH
 
-        last_line = b""
+        last_line = ""
         try:
-            # 从尾部读取完整最后一行，避免每次审计记录都线性扫描整份日志。
-            with open(log_file, "rb") as f:
-                f.seek(0, os.SEEK_END)
-                offset = f.tell()
-                tail = b""
-                while offset:
-                    count = min(4096, offset)
-                    offset -= count
-                    f.seek(offset)
-                    tail = f.read(count) + tail
-                    content = tail.rstrip(b"\r\n")
-                    last_newline = content.rfind(b"\n")
-                    if last_newline >= 0 or offset == 0:
-                        last_line = content[last_newline + 1:].strip()
-                        break
+            with open(log_file, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    stripped = raw_line.strip()
+                    if stripped:
+                        last_line = stripped
         except OSError:
             return self._GENESIS_HASH
 
         if not last_line:
             return self._GENESIS_HASH
 
-        return hashlib.sha256(last_line).hexdigest()
+        return hashlib.sha256(last_line.encode("utf-8")).hexdigest()
 
     def _restore_chain(self) -> None:
         """启动时从最新的日志文件恢复哈希链状态。"""

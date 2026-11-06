@@ -8,7 +8,6 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 START = ROOT / "start.sh"
 SERVICE = ROOT / "deploy" / "systemd" / "openvpn-mgmt.service"
-API_SERVICE = ROOT / "deploy" / "systemd" / "openvpn-mgmt-api.service"
 
 
 def test_start_sh_bash_syntax() -> None:
@@ -33,9 +32,9 @@ def test_start_sh_supports_python_discovery_and_daemon_mode() -> None:
     assert "systemctl daemon-reload" in text
     assert 'systemctl enable "${SERVICE_NAME}"' in text
     assert 'systemctl restart "${SERVICE_NAME}"' in text
-    assert 'systemctl restart "${API_SERVICE_NAME}"' in text
-    assert 'systemctl enable "${API_SERVICE_NAME}"' in text
-    assert 'exec "${PYTHON_BIN}" -m app.api.server' in text
+    assert 'systemctl restart "${API_SERVICE_NAME}"' not in text
+    assert 'systemctl enable "${API_SERVICE_NAME}"' not in text
+    assert 'exec "${PYTHON_BIN}" -m app.api.server' not in text
 
 
 def test_systemd_template_runs_python_main_directly() -> None:
@@ -48,12 +47,11 @@ def test_systemd_template_runs_python_main_directly() -> None:
     )
 
 
-def test_api_service_template_runs_independent_uvicorn_process() -> None:
-    text = API_SERVICE.read_text(encoding="utf-8")
-    assert "WorkingDirectory=@NICEVPN_ROOT@" in text
-    assert 'ExecStart="@PYTHON_BIN@" -m app.api.server' in text
-    assert "After=network-online.target openvpn-mgmt.service" in text
-
+def test_systemd_template_runs_one_process_for_two_ports() -> None:
+    text = SERVICE.read_text(encoding="utf-8")
+    assert 'ExecStart="@PYTHON_BIN@" main.py' in text
+    assert "EnvironmentFile=-/etc/nicevpn/listen.env" in text
+    assert not (ROOT / "deploy" / "systemd" / "openvpn-mgmt-api.service").exists()
 
 
 def test_start_sh_uses_precompiled_vue_assets_by_default() -> None:

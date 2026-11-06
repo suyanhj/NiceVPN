@@ -15,9 +15,10 @@ _shutdown_hook_registered = False
 _background_shutdown_started = threading.Event()
 
 from app.core.config import load_config
-from app.core.constants import DEFAULT_HOST, DEFAULT_PORT
+from app.core.constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_API_HOST, DEFAULT_API_PORT
 from app.core.scheduler import start_scheduler
 from app.api.download import router as download_router
+from app.api.server import PublicApiListener
 from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
@@ -70,7 +71,7 @@ def init():
     ensure_storage_ready()
 
     app.include_router(download_router)
-    # 公网 VPN API 由独立的 app.api.server 进程监听，不再挂载到管理端口。
+    # 公网 VPN API 由同进程的第二个 Uvicorn 监听端口提供，不挂载到管理端口。
 
     if config.initialized:
         ensure_api_basic_credentials_file()
@@ -186,12 +187,18 @@ def _register_scheduled_tasks(config) -> None:
 
 
 def run_web() -> None:
-    """启动 Web UI。"""
+    """单个 NiceVPN 进程监听管理端口及独立 API 端口。"""
     setup_logging()
     config = init()
     web_host = os.environ.get("NICEVPN_UI_HOST", DEFAULT_HOST)
     web_port = int(os.environ.get("NICEVPN_UI_PORT", DEFAULT_PORT))
-    set_listen_http_base("http", web_host, web_port)
+    api_host = os.environ.get("NICEVPN_API_HOST", DEFAULT_API_HOST)
+    api_port = int(os.environ.get("NICEVPN_API_PORT", str(DEFAULT_API_PORT)))
+    if api_port == web_port and (api_host == web_host or "0.0.0.0" in (api_host, web_host)):
+        raise ValueError("公网 API 与管理端不能绑定同一端口，请修改 NICEVPN_API_PORT")
+    # 当调用方从 localhost 访问、又未配置 download_base_url 时，
+    # 下载链接应回退到 API 端口，而不是已对公网关闭的管理端口。
+    set_listen_http_base("http", api_host, api_port)
     auth_enabled = bool(config.get("admin_username") and config.get("admin_password_hash"))
     storage_secret = load_or_create_session_secret() if auth_enabled else None
     session_middleware_kwargs = (
@@ -204,7 +211,9 @@ def run_web() -> None:
         else None
     )
 
+    api_listener = PublicApiListener(host=api_host, port=api_port)
     try:
+        api_listener.start()
         ui.run(
             host=web_host,
             port=web_port,
@@ -222,6 +231,9 @@ def run_web() -> None:
         # 正常情况下 app.on_shutdown 已先完成后台资源清理；此处仅作兜底。
         _shutdown_background_services()
         logger.info("收到键盘中断，Web 服务已停止")
+    finally:
+        api_listener.stop()
+        _shutdown_background_services()
         logging.shutdown()
 
 

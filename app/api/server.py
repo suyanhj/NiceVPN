@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-"""独立公网 VPN API 服务入口：与 NiceGUI 管理站点隔离监听。"""
+"""同一 NiceVPN 进程内的第二个端口：只服务公网 VPN API。"""
 
 from __future__ import annotations
 
 import logging
-import os
+import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI
 
 from app.api.download import router as download_router
 from app.api.vpn_ops import router as vpn_ops_router
-from app.core.constants import DEFAULT_API_HOST, DEFAULT_API_PORT
+
+logger = logging.getLogger(__name__)
 
 
 def create_api_app() -> FastAPI:
@@ -27,18 +29,51 @@ def create_api_app() -> FastAPI:
     return api_app
 
 
-def run_api() -> None:
-    """使用 Uvicorn 原生信号与 lifespan 机制运行独立 API 进程。"""
-    # 与管理进程的 TimedRotatingFileHandler 分离，避免多进程同时轮转 app.log。
-    # systemd / Docker 均会收集标准输出上的 API 运行日志。
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    host = os.environ.get("NICEVPN_API_HOST", DEFAULT_API_HOST)
-    port = int(os.environ.get("NICEVPN_API_PORT", str(DEFAULT_API_PORT)))
-    uvicorn.run(create_api_app(), host=host, port=port, log_level="info")
+class PublicApiListener:
+    """复用 Uvicorn，在守护线程上为 API 增加独立监听端口。
 
+    Web Uvicorn 仍在主线程处理 SIGINT/SIGTERM；API 线程只接收显式退出通知，
+    不重复注册信号处理器，也不启动 NiceGUI 调度器或 conntrack 审计。
+    """
 
-if __name__ == "__main__":
-    run_api()
+    def __init__(self, *, host: str, port: int) -> None:
+        self.server = uvicorn.Server(
+            uvicorn.Config(
+                create_api_app(),
+                host=host,
+                port=port,
+                log_level="info",
+                log_config=None,
+                timeout_graceful_shutdown=5,
+            )
+        )
+        self.thread: threading.Thread | None = None
+
+    def start(self, *, timeout: float = 5.0) -> None:
+        """等待 API 完成监听；端口占用等启动错误须中止主服务启动。"""
+        if self.thread is not None:
+            raise RuntimeError("公网 API 监听器不能重复启动")
+        self.thread = threading.Thread(
+            target=self.server.run,
+            name="nicevpn-public-api",
+            daemon=True,
+        )
+        self.thread.start()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.server.started:
+                logger.info("VPN 公网 API 已监听 %s:%s", self.server.config.host, self.server.config.port)
+                return
+            if not self.thread.is_alive():
+                raise RuntimeError("公网 API 启动失败，请检查监听端口是否被占用")
+            time.sleep(0.02)
+        self.stop()
+        raise RuntimeError("公网 API 监听启动超时")
+
+    def stop(self) -> None:
+        if self.thread is None:
+            return
+        self.server.should_exit = True
+        self.thread.join(timeout=8)
+        if self.thread.is_alive():
+            logger.warning("公网 API 未在预期时间内停止")
