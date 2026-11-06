@@ -296,18 +296,19 @@ class TagRepositoryMixin:
             ], total
         return [dict(row) for row in rows], total
 
-    def list_tag_candidates_page(
-        self, kind: str, *, search: str = "", offset: int = 0, limit: int = 20,
-    ) -> tuple[list[dict[str, Any]], int]:
-        """关联编辑候选项服务端搜索，避免一次送出全部用户名与组。"""
+    @staticmethod
+    def _tag_candidate_query(kind: str, search: str) -> tuple[str, str, str, str, str, list[Any]]:
+        """分页列表与全选搜索结果共用同一过滤条件，避免选择范围不一致。"""
         if kind == "users":
             table, where, key, order = (
                 "users", "status <> 'deleted'", "username", "username COLLATE NOCASE"
             )
             projection = "username, status"
+            id_column = "username"
         elif kind == "groups":
             table, where, key, order = "groups", "1=1", "name", "name COLLATE NOCASE, id"
             projection = "id, name, payload"
+            id_column = "id"
         else:
             raise ValueError("未知候选成员类型")
         params: list[Any] = []
@@ -319,6 +320,13 @@ class TagRepositoryMixin:
             else:
                 where += f" AND {key} LIKE ? ESCAPE '\\'"
                 params.append(pattern)
+        return table, where, projection, order, id_column, params
+
+    def list_tag_candidates_page(
+        self, kind: str, *, search: str = "", offset: int = 0, limit: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """关联编辑候选项服务端搜索，避免一次送出全部用户名与组。"""
+        table, where, projection, order, _, params = self._tag_candidate_query(kind, search)
         with self.connection() as conn:
             total = int(conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE {where}", params,
@@ -331,3 +339,13 @@ class TagRepositoryMixin:
         if kind == "groups":
             return [_load_payload(row["payload"]) for row in rows], total
         return [dict(row) for row in rows], total
+
+    def list_tag_candidate_ids(self, kind: str, *, search: str = "") -> list[str]:
+        """用户主动执行「全选搜索结果」时才查询全部匹配 ID，不加载 payload。"""
+        table, where, _, order, id_column, params = self._tag_candidate_query(kind, search)
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"SELECT {id_column} FROM {table} WHERE {where} ORDER BY {order}",
+                params,
+            ).fetchall()
+        return [str(row[0]) for row in rows]
