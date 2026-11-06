@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
@@ -173,6 +174,55 @@ def adapt_center_rule_rows(
 _TZ_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
+def _parse_remote_extra_matches(text: str) -> str:
+    """Show meaningful non-column iptables constraints without changing the raw rule.
+
+    Standard protocol/source/destination/target port and comments have dedicated
+    columns. Everything else relevant must remain visible instead of implying an
+    unrestricted match from a '*' cell.
+    """
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return "复杂语法（查看原始规则）"
+
+    details: list[str] = []
+    known_modules = {"tcp", "udp", "icmp", "comment", "set", "conntrack", "state", "multiport"}
+    values = {
+        "--ctstate": "连接状态",
+        "--state": "连接状态",
+        "-i": "入接口",
+        "-o": "出接口",
+        "--src-range": "源范围",
+        "--dst-range": "目标范围",
+        "--sport": "源端口",
+        "--sports": "源端口",
+        "--icmp-type": "ICMP 类型",
+        "--mark": "Mark",
+        "--ctmark": "Conntrack Mark",
+    }
+    for i, token in enumerate(tokens):
+        if token == "--match-set" and i + 2 < len(tokens):
+            name, direction = tokens[i + 1 : i + 3]
+            details.append(f"IPSet {name} ({direction})")
+        elif token in values and i + 1 < len(tokens):
+            details.append(f"{values[token]} {tokens[i + 1]}")
+        elif token == "-m" and i + 1 < len(tokens):
+            module = tokens[i + 1]
+            if module not in known_modules:
+                details.append(f"模块 {module}")
+        elif token == "!":
+            details.append("含取反匹配")
+
+    # A known module may still use options that have no dedicated display
+    # column. Keep an explicit marker so the original rest can be inspected.
+    if not details and any(token == "-m" and i + 1 < len(tokens) and
+                           tokens[i + 1] not in {"tcp", "udp", "icmp", "comment"}
+                           for i, token in enumerate(tokens)):
+        details.append("含扩展匹配（查看原始规则）")
+    return " · ".join(dict.fromkeys(details))
+
+
 def parse_remote_rule_hints(rest: object) -> dict[str, str]:
     """从对端 iptables rest 片段抽取常用展示字段；保留原始文本作为事实依据。"""
 
@@ -201,6 +251,9 @@ def parse_remote_rule_hints(rest: object) -> dict[str, str]:
     if comment:
         value = comment.group(1).replace("\\'", "'")
         out["comment"] = value if len(value) <= 120 else value[:117] + "…"
+    extra = _parse_remote_extra_matches(text)
+    if extra:
+        out["extra"] = extra
     return out
 
 
@@ -273,6 +326,7 @@ def adapt_remote_rule_row(
         "dest_port": dest_port,
         "rule_expression": f"{source} → {dest}:{dest_port}",
         "description": description,
+        "extra_matches": str(hints.get("extra") or "—"),
         "raw_rest": raw_rest,
         "parsed_hints": hints,
         "can_toggle": bool(raw_rest),
@@ -288,6 +342,7 @@ def adapt_remote_rule_row(
                 dest,
                 dest_port,
                 description,
+                str(hints.get("extra") or ""),
                 raw_rest,
                 "启用" if enabled else "停用",
             ]
