@@ -18,7 +18,6 @@ from app.core.config import load_config
 from app.core.constants import DEFAULT_HOST, DEFAULT_PORT
 from app.core.scheduler import start_scheduler
 from app.api.download import router as download_router
-from app.api.vpn_ops import router as vpn_ops_router
 from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
@@ -71,7 +70,7 @@ def init():
     ensure_storage_ready()
 
     app.include_router(download_router)
-    app.include_router(vpn_ops_router, prefix="/api")
+    # 公网 VPN API 由独立的 app.api.server 进程监听，不再挂载到管理端口。
 
     if config.initialized:
         ensure_api_basic_credentials_file()
@@ -190,7 +189,9 @@ def run_web() -> None:
     """启动 Web UI。"""
     setup_logging()
     config = init()
-    set_listen_http_base("http", DEFAULT_HOST, DEFAULT_PORT)
+    web_host = os.environ.get("NICEVPN_UI_HOST", DEFAULT_HOST)
+    web_port = int(os.environ.get("NICEVPN_UI_PORT", DEFAULT_PORT))
+    set_listen_http_base("http", web_host, web_port)
     auth_enabled = bool(config.get("admin_username") and config.get("admin_password_hash"))
     storage_secret = load_or_create_session_secret() if auth_enabled else None
     session_middleware_kwargs = (
@@ -205,8 +206,8 @@ def run_web() -> None:
 
     try:
         ui.run(
-            host=DEFAULT_HOST,
-            port=DEFAULT_PORT,
+            host=web_host,
+            port=web_port,
             title="OpenVPN 管理系统",
             favicon="🔐",
             dark=None,

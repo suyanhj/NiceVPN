@@ -6,12 +6,19 @@
 """
 
 import secrets
+import os
+import threading
 from datetime import datetime, timezone, timedelta
 
 # 须用模块对象访问，便于单测 monkeypatch ``constants.DOWNLOAD_LINKS_DIR`` 等（勿 ``from … import X`` 绑死快照）
 from app.core import constants
 from app.models.download_link import DownloadLink
 from app.utils.file_lock import write_json_atomic, read_json
+
+if os.name == "posix":
+    import fcntl
+
+_consume_thread_lock = threading.Lock()
 
 
 def create_link(
@@ -71,40 +78,43 @@ def consume_link(token: str) -> dict | None:
         令牌不存在返回 None
     """
     file_path = constants.DOWNLOAD_LINKS_DIR / f"{token}.json"
-
     if not file_path.exists():
         return None
 
-    data = read_json(file_path)
-    if not data:
-        return None
+    # 共享 data 目录下两个监听进程都能消费下载令牌；以固定锁文件保护整个读-改-写。
+    # 不复用 read_json/write_json_atomic 的单次读写锁，因为组合操作也必须原子。
+    with _consume_thread_lock:
+        lock_path = constants.DOWNLOAD_LINKS_DIR / ".consume.lock"
+        with open(lock_path, "a+b") as lock_file:
+            if os.name == "posix":
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                data = read_json(file_path)
+                if not data:
+                    return None
 
-    # 校验是否已使用
-    if data.get("used", False):
-        return {"username": None, "file_path": None, "error": "链接已被使用"}
+                if data.get("used", False):
+                    return {"username": None, "file_path": None, "error": "链接已被使用"}
 
-    # 校验是否过期
-    expires_at = datetime.fromisoformat(data["expires_at"])
-    now = datetime.now(timezone.utc)
+                expires_at = datetime.fromisoformat(data["expires_at"])
+                now = datetime.now(timezone.utc)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if now > expires_at:
+                    return {"username": None, "file_path": None, "error": "链接已过期"}
 
-    # 如果 expires_at 没有时区信息，视为 UTC
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    if now > expires_at:
-        return {"username": None, "file_path": None, "error": "链接已过期"}
-
-    # 原子更新：标记为已使用
-    data["used"] = True
-    data["used_at"] = now.isoformat()
-    write_json_atomic(file_path, data)
-
-    return {
-        "username": data["username"],
-        "file_path": data["file_path"],
-        "download_filename": data.get("download_filename"),
-        "error": None,
-    }
+                data["used"] = True
+                data["used_at"] = now.isoformat()
+                write_json_atomic(file_path, data)
+                return {
+                    "username": data["username"],
+                    "file_path": data["file_path"],
+                    "download_filename": data.get("download_filename"),
+                    "error": None,
+                }
+            finally:
+                if os.name == "posix":
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def get_link_info(token: str) -> dict | None:

@@ -23,7 +23,7 @@ from app.utils.audit_log import AuditLogger
 logger = logging.getLogger(__name__)
 
 _PUBLIC_EXACT_PATHS = frozenset({"/login", "/favicon.ico"})
-_PUBLIC_PATH_PREFIXES = ("/_nicegui", "/static", "/api", "/download")
+_PUBLIC_PATH_PREFIXES = ("/_nicegui", "/static", "/download")
 
 
 @dataclass(slots=True)

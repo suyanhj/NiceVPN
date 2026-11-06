@@ -1,0 +1,22 @@
+[Unit]
+Description=NiceVPN 公网 API（独立于管理界面）
+After=network-online.target openvpn-mgmt.service
+Wants=network-online.target openvpn-mgmt.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=@NICEVPN_ROOT@
+EnvironmentFile=-/etc/nicevpn/listen.env
+ExecStart="@PYTHON_BIN@" -m app.api.server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20s
+StandardOutput=journal
+StandardError=journal
+
+# 只运行 FastAPI/Uvicorn，不启动 NiceGUI、后台审计监听或任务调度器。
+# 默认监听 0.0.0.0:8881，可通过 NICEVPN_API_HOST / NICEVPN_API_PORT 配置。
+
+[Install]
+WantedBy=multi-user.target

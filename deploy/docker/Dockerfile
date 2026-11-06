@@ -53,7 +53,7 @@ RUN test -s app/ui/vue/dist/VpnSpotlightSurface.js \
     && test -s app/ui/vue/dist/VpnInteractiveGrid.js \
     && test -s app/ui/vue/dist/frontend-build.json
 
-EXPOSE 8880
+EXPOSE 8880 8881
 
 # 需要 --privileged 权限以支持 iptables；推荐配合 --network host。
 CMD ["python", "main.py"]

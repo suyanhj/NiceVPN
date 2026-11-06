@@ -6,6 +6,9 @@ DIST_DIR="${ROOT_DIR}/app/ui/vue/dist"
 SERVICE_TEMPLATE="${ROOT_DIR}/deploy/systemd/openvpn-mgmt.service"
 SERVICE_PATH="/etc/systemd/system/openvpn-mgmt.service"
 SERVICE_NAME="openvpn-mgmt"
+API_SERVICE_TEMPLATE="${ROOT_DIR}/deploy/systemd/openvpn-mgmt-api.service"
+API_SERVICE_PATH="/etc/systemd/system/openvpn-mgmt-api.service"
+API_SERVICE_NAME="openvpn-mgmt-api"
 BUILD_UI="${NICEVPN_BUILD_UI:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
@@ -122,32 +125,38 @@ prepare_ui() {
 install_daemon() {
     [[ "${EUID}" -eq 0 ]] || fail "daemon 模式需要 root 权限，请使用 sudo -E ./start.sh daemon，或显式传入 PYTHON_BIN。"
     [[ -f "${SERVICE_TEMPLATE}" ]] || fail "systemd 模板不存在：${SERVICE_TEMPLATE}"
+    [[ -f "${API_SERVICE_TEMPLATE}" ]] || fail "API systemd 模板不存在：${API_SERVICE_TEMPLATE}"
     command -v systemctl >/dev/null 2>&1 || fail "当前系统未找到 systemctl，无法使用 daemon 模式。"
 
-    local temp_service
+    local temp_service temp_api_service
     temp_service="$(mktemp "${TMPDIR:-/tmp}/nicevpn-systemd.XXXXXX")"
-    trap 'rm -f "${temp_service:-}"' RETURN
+    temp_api_service="$(mktemp "${TMPDIR:-/tmp}/nicevpn-api-systemd.XXXXXX")"
+    trap 'rm -f "${temp_service:-}" "${temp_api_service:-}"' RETURN
 
-    "${PYTHON_BIN}" - "${SERVICE_TEMPLATE}" "${temp_service}" "${ROOT_DIR}" "${PYTHON_BIN}" <<'PY'
+    "${PYTHON_BIN}" - "${SERVICE_TEMPLATE}" "${temp_service}" "${API_SERVICE_TEMPLATE}" "${temp_api_service}" "${ROOT_DIR}" "${PYTHON_BIN}" <<'PY'
 from pathlib import Path
 import sys
 
-template_path, output_path, root_dir, python_bin = sys.argv[1:]
-text = Path(template_path).read_text(encoding="utf-8")
-text = text.replace("@NICEVPN_ROOT@", root_dir)
-text = text.replace("@PYTHON_BIN@", python_bin)
-Path(output_path).write_text(text, encoding="utf-8")
+web_template, web_output, api_template, api_output, root_dir, python_bin = sys.argv[1:]
+for template_path, output_path in ((web_template, web_output), (api_template, api_output)):
+    text = Path(template_path).read_text(encoding="utf-8")
+    text = text.replace("@NICEVPN_ROOT@", root_dir)
+    text = text.replace("@PYTHON_BIN@", python_bin)
+    Path(output_path).write_text(text, encoding="utf-8")
 PY
 
     install -m 0644 "${temp_service}" "${SERVICE_PATH}"
+    install -m 0644 "${temp_api_service}" "${API_SERVICE_PATH}"
 
-    log "已安装 systemd 服务：${SERVICE_PATH}"
+    log "已安装 systemd 服务：${SERVICE_PATH}、${API_SERVICE_PATH}"
     log "WorkingDirectory=${ROOT_DIR}"
     log "Python=${PYTHON_BIN}"
 
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}" >/dev/null
+    systemctl enable "${API_SERVICE_NAME}" >/dev/null
     systemctl restart "${SERVICE_NAME}"
+    systemctl restart "${API_SERVICE_NAME}"
 
     # 使用系统 logrotate.timer/cron，直接在 /etc/logrotate.d 下配置。
     if command -v logrotate >/dev/null 2>&1; then
@@ -160,8 +169,9 @@ PY
         log "WARNING: logrotate 未安装，OpenVPN/NiceVPN 日志不会自动轮转。"
     fi
 
-    log "NiceVPN 已由 systemd 托管。"
+    log "NiceVPN 管理端与独立 API 已由 systemd 托管。"
     systemctl --no-pager --full status "${SERVICE_NAME}" || true
+    systemctl --no-pager --full status "${API_SERVICE_NAME}" || true
 }
 
 main() {
@@ -188,8 +198,8 @@ main() {
     select_python
     log "使用 Python $(python_version "${PYTHON_BIN}")：${PYTHON_BIN}"
 
-    # CLI 不渲染 Web UI，不需要构建前端。
-    if [[ "${1:-}" != "cli" ]]; then
+    # CLI / 独立 API 都不渲染 Web UI，不需要构建前端。
+    if [[ "${1:-}" != "cli" && "${1:-}" != "api" ]]; then
         prepare_ui
     fi
 
@@ -198,7 +208,14 @@ main() {
         return 0
     fi
 
-    log "启动 NiceVPN..."
+    if [[ "${1:-}" == "api" ]]; then
+        shift
+        [[ "$#" -eq 0 ]] || fail "api 模式不接受额外参数。使用 NICEVPN_API_HOST / NICEVPN_API_PORT 设置监听地址。"
+        log "启动独立 VPN API..."
+        exec "${PYTHON_BIN}" -m app.api.server
+    fi
+
+    log "启动 NiceVPN 管理端..."
     exec "${PYTHON_BIN}" "${ROOT_DIR}/main.py" "$@"
 }
 

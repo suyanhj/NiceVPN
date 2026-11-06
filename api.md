@@ -1,6 +1,15 @@
 # VPN 公网管理 API 说明
 
-基础路径：`/api/vpn`（与 NiceGUI 进程同机、同源挂载；反代时把 `/api` 指到该服务即可）
+基础路径：`/api/vpn`（**独立 FastAPI/Uvicorn 服务**，默认 `0.0.0.0:8881`；NiceGUI 管理端仍为 `8880`，不再提供 `/api/vpn/*`）
+
+## 启动与网络隔离
+
+- 生产 systemd：`sudo -E ./start.sh daemon` 自动安装并启动 `openvpn-mgmt` 和 `openvpn-mgmt-api` 两个服务。分别用 `systemctl status openvpn-mgmt`、`systemctl status openvpn-mgmt-api` 查看状态。
+- 本地手动运行：一个终端 `./start.sh`，另一个终端 `./start.sh api`。API 进程不加载 NiceGUI、调度器和 conntrack 监听器。
+- API 端口可设置 `NICEVPN_API_HOST` / `NICEVPN_API_PORT`，Web 端口可设置 `NICEVPN_UI_HOST` / `NICEVPN_UI_PORT`；systemd 从可选的 `/etc/nicevpn/listen.env` 读取。
+- API 进程只开放 `/api/vpn/*` 与一次性 `/download/{token}`。没有管理页面、静态资源、`/docs`、`/redoc` 或 `/openapi.json`。
+- **务必限制公网仅能访问 API 入口，管理端 `8880` 仅内网/VPN 可访问。** HTTP Basic 会传输可还原的凭据，必须在外层使用 HTTPS/TLS 终结；推荐 Nginx 监听公网 HTTPS 端口，把 API 转发到 `127.0.0.1:8881`，并限制代理路径。不要将明文 `http://公网:8881` 直接开放。
+- 在系统设置中将 `download_base_url` 配为 API 的公网 HTTPS 域名（若已设置），或留空从代理请求头自动推断；API 返回的下载令牌可经公开端口下载。
 
 ## 认证
 

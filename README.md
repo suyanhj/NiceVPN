@@ -3,7 +3,7 @@
 基于 **NiceGUI** 与 **FastAPI** 的 OpenVPN 运维控制台：Web 管理用户、组、证书、防火墙与对端站点；并提供 **HTTP Basic** 下的 `**/api/vpn`** 创建账号、批量分发、删除与重置设备绑定等接口。
 
 - **Python**：3.10+（GitHub Actions 当前以 Python 3.14 作为唯一测试基线）
-- **默认监听**：`0.0.0.0:8880`（`app/core/constants.py`）
+- **默认监听**：管理界面 `0.0.0.0:8880`；独立公网 API `0.0.0.0:8881`。两者为不同进程，公网只需按网络策略开放 API 入口。
 
 ## 主要能力（摘要）
 
@@ -43,13 +43,28 @@ pip install -r requirements.txt
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
 
+公网 API 与管理端**分进程、分端口**：本地直接运行时，需要另开一个终端执行 `./start.sh api`，才能在 `8881` 上提供 `/api/vpn/*` 与 `/download/{token}`；原来的 `./start.sh` 仍只启动管理界面。API 端口不会返回管理页面、登录页、NiceGUI 资源或 Swagger 文档。管理端口不再提供 `/api/vpn/*`，已有调用方需切换到新端口。
+
 生产环境可直接使用 daemon 模式。它会直接使用仓库内预编译前端资源，再将当前代码真实目录和实际 Python 解释器路径写入 systemd unit，随后 enable + restart：
 
 ```bash
 sudo -E ./start.sh daemon
 ```
 
-daemon 模式是幂等的。更新代码后再次执行即可同步 service 并重启服务；systemd 本身只运行 `python main.py`，不会在服务重启时构建 Vue。
+daemon 模式是幂等的。更新代码后再次执行即可同步并重启两个独立服务：`openvpn-mgmt`（Web）与 `openvpn-mgmt-api`（API）；systemd 本身不会在服务重启时构建 Vue。首次初始化及 SQLite 数据升级由管理端完成，API 进程不重复执行初始化迁移或定时任务。
+
+可在 `/etc/nicevpn/listen.env`（root 可读）中配置独立监听地址，随后重启对应服务：
+
+```ini
+# 管理端可绑定内网 IP，仅允许可信网段访问 8880
+NICEVPN_UI_HOST=0.0.0.0
+NICEVPN_UI_PORT=8880
+# 公网 API 对应的内部监听地址/端口
+NICEVPN_API_HOST=0.0.0.0
+NICEVPN_API_PORT=8881
+```
+
+推荐防火墙**拒绝公网访问管理端 `8880`**；API 基于 HTTP Basic，必须通过 HTTPS 入口或支持 TLS 的反向代理传输凭据，不能直接把明文 HTTP `8881` 暴露给公网。若使用 Nginx 终结 TLS，可把 `NICEVPN_API_HOST` 设为 `127.0.0.1`，让 Nginx 的公开端口仅代理 `/api/vpn/` 和 `/download/`。注意系统设置中的 `download_base_url` 应使用 API 的公网 HTTPS 地址（或留空让其根据反代请求推断），避免一次性下载链接指向内网 `8880`。
 
 正常生产启动不需要构建前端。开发或需要强制重建时可使用：
 
@@ -207,7 +222,7 @@ docker run -d \
   nicevpn:latest
 ```
 
-- 默认 Web UI 监听 `0.0.0.0:8880`；使用 `--network host` 时无需额外 `-p`。
+- 默认 Web UI 监听 `0.0.0.0:8880`；容器 CMD 只启动管理端，若要 API 服务需另起 `python -m app.api.server` 进程或容器，并共享 `data/`、OpenVPN 配置/证书与系统网络权限。使用 `--network host` 时无需额外 `-p`。
 - 目标环境以 **Linux + OpenVPN + EasyRSA** 与控制台能力匹配为准。
 - 须配置 `download_base_url` 或反代 `Host` / `X-Forwarded-*`，否则创建用户可能无法生成可达下载链接。
 
