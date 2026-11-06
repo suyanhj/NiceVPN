@@ -12,10 +12,6 @@ class User(BaseModel):
         default=False,
         description="是否使用密码加密客户端私钥（兼容旧字段名）",
     )
-    password_hash: Optional[str] = Field(
-        default=None,
-        description="旧版密码哈希兼容字段；新版本不再写入",
-    )
     status: Literal['active', 'disabled', 'deleted'] = Field(
         default='active', description="用户状态"
     )
