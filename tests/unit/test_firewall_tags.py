@@ -29,6 +29,74 @@ def test_schema_v4_tag_members_and_replace_are_idempotent(store):
     assert [tag["name"] for tag in store.list_tags()] == ["办公"]
 
 
+def test_tag_summary_and_detail_pages_only_return_requested_slice(store):
+    store.create_tag("tag1", "办公")
+    store.create_tag("tag2", "隔离")
+    for i in range(45):
+        store.upsert_user({"username": f"person-{i:03}", "group_id": "g1", "status": "active"})
+    names = [f"person-{i:03}" for i in range(45)]
+    store.set_tag_members("tag1", usernames=names, group_ids=["g1"])
+    store.replace_firewall_owner("tag1", [
+        FirewallRule(id="tag-rule", owner_type="tag", owner_id="tag1",
+                     action="drop", priority=10).model_dump()
+    ])
+
+    counts = store.list_tag_counts()
+    assert counts["tag1"] == {"users": 45, "groups": 1, "rules": 1}
+    assert "tag2" not in counts  # 空标签由页面默认零计数处理
+
+    first, total = store.list_tag_detail_page("tag1", "users", limit=20)
+    second, again = store.list_tag_detail_page("tag1", "users", offset=20, limit=20)
+    final, _ = store.list_tag_detail_page("tag1", "users", offset=40, limit=20)
+    assert total == again == 45
+    assert list(map(lambda row: row["username"], first)) == names[:20]
+    assert list(map(lambda row: row["username"], second)) == names[20:40]
+    assert len(final) == 5
+    assert store.list_tag_detail_page("tag1", "users", search="person-044")[1] == 1
+    groups, total_groups = store.list_tag_detail_page("tag1", "groups")
+    assert total_groups == 1 and groups[0]["id"] == "g1"
+    rules, total_rules = store.list_tag_detail_page("tag1", "rules")
+    assert total_rules == 1 and rules[0]["id"] == "tag-rule"
+    assert store.list_tag_detail_page("tag2", "users") == ([], 0)
+
+
+def test_member_candidate_pagination_and_search_escape(store):
+    store.upsert_user({"username": "u%literal", "group_id": "g1", "status": "active"})
+    store.upsert_user({"username": "x_deleted", "group_id": "g1", "status": "deleted"})
+    store.upsert_group({"id": "g2", "name": "研发二组", "subnet": "10.8.2.0/24"})
+    rows, total = store.list_tag_candidates_page("users", search="%", limit=20)
+    assert total == 1 and rows[0]["username"] == "u%literal"
+    assert store.list_tag_candidate_ids("users", search="%") == ["u%literal"]
+    assert store.list_tag_candidate_ids("users", search="") == ["alice", "bob", "u%literal"]
+    rows, total = store.list_tag_candidates_page("users", search="", limit=1)
+    assert len(rows) == 1 and total == 3  # alice、bob、u%literal
+    groups, total = store.list_tag_candidates_page("groups", search="研发")
+    assert total == 1 and groups[0]["id"] == "g2"
+    assert store.list_tag_candidate_ids("groups", search="研发") == ["g2"]
+    with pytest.raises(ValueError, match="未知"):
+        store.list_tag_candidates_page("invalid")
+    with pytest.raises(ValueError, match="未知"):
+        store.list_tag_candidate_ids("invalid")
+    with pytest.raises(ValueError, match="未知"):
+        store.list_tag_detail_page("tag1", "invalid")
+
+
+def test_more_than_sqlite_legacy_variable_limit_associations(store):
+    store.create_tag("large", "多用户")
+    names = [f"large-{i:04}" for i in range(1200)]
+    with store.connection(write=True) as conn:
+        conn.executemany(
+            "INSERT INTO users(username,group_id,status,payload) VALUES (?,'g1','active',?)",
+            [(name, '{"username":"' + name + '","status":"active"}') for name in names],
+        )
+    store.set_tag_members("large", usernames=names, group_ids=["g1"])
+    assert store.list_tag_counts()["large"]["users"] == 1200
+    last, total = store.list_tag_detail_page("large", "users", offset=1180, limit=20)
+    assert len(last) == 20 and total == 1200
+    assert store.get_tag_members("large")["usernames"] == names
+    assert store.list_tag_candidate_ids("users", search="large-") == names
+
+
 def test_unknown_member_does_not_mutate_existing_associations(store):
     store.create_tag("tag1", "办公")
     store.set_tag_members("tag1", usernames=["alice"])

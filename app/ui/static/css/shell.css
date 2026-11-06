@@ -3707,6 +3707,78 @@ body {
   gap: 0;
   width: 100%;
 }
+/* 管理关联复用统一表单弹窗；只有当前页候选项可以滚动，操作按钮保持可见。 */
+.q-dialog .q-card.vpn-form-dialog.tags-members-dialog {
+  width: min(95vw, 640px);
+  max-width: 640px;
+  max-height: 92vh;
+}
+.tags-members-dialog .vpn-form-dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+.q-dialog .tags-members-dialog .q-tab-panels,
+.q-dialog .tags-members-dialog .q-tab-panel {
+  background: #111214 !important;
+  color: #bbbec9 !important;
+}
+.q-dialog .tags-members-dialog .q-tab-panel {
+  padding: 12px 0 0;
+}
+.tags-members-dialog .q-tabs {
+  min-height: 38px;
+  color: #8993a0;
+  background: transparent;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.12);
+}
+.tags-members-dialog .q-tab {
+  min-height: 38px;
+  text-transform: none;
+  font-size: 13px;
+}
+.tags-members-dialog .q-tab__content {
+  flex-direction: row !important;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.tags-members-dialog .q-tab--active,
+.tags-members-dialog .q-tab__indicator {
+  color: #49ccec !important;
+}
+.tags-members-dialog .tags-member-choice-list {
+  max-height: min(44vh, 380px);
+  overflow-y: auto;
+  gap: 0;
+  border: 1px solid rgba(187, 190, 201, 0.09);
+  border-radius: 8px;
+  background: #0f1113;
+}
+.tags-members-dialog .tags-member-choice-list .q-checkbox {
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.07);
+}
+.tags-members-dialog .tags-member-choice-list .q-checkbox:hover {
+  background: rgba(21, 189, 232, 0.045);
+}
+.tags-members-dialog .q-checkbox__inner--truthy {
+  color: #49ccec !important;
+}
+.tags-members-dialog .tags-member-bulk-actions {
+  padding: 5px 7px;
+  border-bottom: 1px solid rgba(187, 190, 201, 0.09);
+  background: #15191c;
+}
+.tags-members-dialog .tags-member-bulk-actions .q-btn {
+  font-size: 11px;
+}
+.tags-members-dialog .tags-member-info-icon {
+  color: #818895;
+}
+.tags-members-dialog .tags-member-info-icon:hover {
+  color: #49ccec;
+}
 .tags-page--v2 .tags-detail-row {
   min-height: 49px;
   padding: 10px 12px;
