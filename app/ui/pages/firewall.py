@@ -50,13 +50,6 @@ from app.ui.copy_clipboard import copy_text_to_clipboard
 
 logger = logging.getLogger(__name__)
 
-
-def _format_peer_cache_timestamp(raw: str | None) -> str:
-    """兼容旧调用入口；缓存时间格式化统一由纯适配层维护。"""
-
-    return format_remote_cache_timestamp(raw)
-
-
 class FirewallPage(
     FirewallCenterGridMixin,
     FirewallCenterActionsMixin,
@@ -400,17 +393,6 @@ class FirewallPage(
                 continue
             opts[pid] = f"{p.get('name', '')} ({pid[:8]}…)"
         return opts
-
-    def _switch_owner(self, owner_id: str) -> None:
-        """兼容旧跳转入口：把归属条件写入 Grid 的多选筛选模型。"""
-
-        normalized = str(owner_id or "").strip()
-        self.current_owner_id = normalized
-        self._pending_center_owner_id = normalized
-        if not normalized:
-            self._center_filter_model.pop("owner_label", None)
-        self._center_page = 1
-        self._refresh_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""
