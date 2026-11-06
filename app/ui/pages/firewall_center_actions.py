@@ -160,7 +160,7 @@ class FirewallCenterActionsMixin:
         return True
 
     def _show_edit_dialog(self, rule: dict) -> None:
-        """使用统一表单编辑中心 JSON 规则或 center_peer 虚拟行。"""
+        """使用统一表单编辑中心规则或 center_peer 虚拟行。"""
 
         if not self._require_center_strategy_tab():
             return
