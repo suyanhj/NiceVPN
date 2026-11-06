@@ -3,7 +3,7 @@
 基于 **NiceGUI** 与 **FastAPI** 的 OpenVPN 运维控制台：Web 管理用户、组、证书、防火墙与对端站点；并提供 **HTTP Basic** 下的 `**/api/vpn`** 创建账号、批量分发、删除与重置设备绑定等接口。
 
 - **Python**：3.10+（GitHub Actions 当前以 Python 3.14 作为唯一测试基线）
-- **默认监听**：`0.0.0.0:8880`（`app/core/constants.py`）
+- **默认监听**：管理界面 `0.0.0.0:8880`；公网 API `0.0.0.0:8881`。同一进程、两个端口，仅需保留一个 NiceVPN 服务。
 
 ## 主要能力（摘要）
 
@@ -43,13 +43,28 @@ pip install -r requirements.txt
 
 浏览器访问 `http://<主机>:8880/`；未完成初始化时进入 **First Run Setup**。
 
+只需运行一次 `./start.sh`，同一 Python 进程内的 NiceGUI 与 FastAPI/Uvicorn 就会分别监听 `8880` 与 `8881`。公网 API 端口只提供 `/api/vpn/*` 和 `/download/{token}`，不会返回管理页面、登录页、NiceGUI 资源或 Swagger 文档。管理端口不再提供 `/api/vpn/*`，已有调用方需切换到新端口。
+
 生产环境可直接使用 daemon 模式。它会直接使用仓库内预编译前端资源，再将当前代码真实目录和实际 Python 解释器路径写入 systemd unit，随后 enable + restart：
 
 ```bash
 sudo -E ./start.sh daemon
 ```
 
-daemon 模式是幂等的。更新代码后再次执行即可同步 service 并重启服务；systemd 本身只运行 `python main.py`，不会在服务重启时构建 Vue。
+daemon 模式是幂等的。更新代码后再次执行仅重启 `openvpn-mgmt` 一个服务，它同时启动两个端口；systemd 本身不会在服务重启时构建 Vue。SQLite 数据升级和调度器仅执行一次，API 监听线程不重复初始化。曾安装过双服务试验版的机器会自动停用旧 `openvpn-mgmt-api` unit，避免占用端口（unit 文件保留，可人工检查）。
+
+可在 `/etc/nicevpn/listen.env`（root 可读）中配置独立监听地址，随后重启 `openvpn-mgmt`：
+
+```ini
+# 管理端可绑定内网 IP，仅允许可信网段访问 8880
+NICEVPN_UI_HOST=0.0.0.0
+NICEVPN_UI_PORT=8880
+# 公网 API 对应的内部监听地址/端口
+NICEVPN_API_HOST=0.0.0.0
+NICEVPN_API_PORT=8881
+```
+
+推荐防火墙**拒绝公网访问管理端 `8880`**；API 基于 HTTP Basic，必须通过 HTTPS 入口或支持 TLS 的反向代理传输凭据，不能直接把明文 HTTP `8881` 暴露给公网。若使用 Nginx 终结 TLS，可把 `NICEVPN_API_HOST` 设为 `127.0.0.1`，让 Nginx 的公开端口仅代理 `/api/vpn/` 和 `/download/`。注意系统设置中的 `download_base_url` 应使用 API 的公网 HTTPS 地址（或留空让其根据反代请求推断），避免一次性下载链接指向内网 `8880`。
 
 正常生产启动不需要构建前端。开发或需要强制重建时可使用：
 
@@ -113,12 +128,12 @@ CLI 不需要前端构建：
 
 ### Python 解释器选择
 
-NiceVPN 要求 **Python 3.10+**。启动脚本会校验真实解释器版本，并按以下优先级选择：
+NiceVPN 要求 **Python 3.10+**。启动脚本会校验解释器版本，并按以下优先级选择：
 
 1. 显式环境变量 `PYTHON_BIN`
-2. 当前激活的 `VIRTUAL_ENV`
-3. 当前激活的 `CONDA_PREFIX`
-4. 项目目录下的 `.venv/bin/python`
+2. 项目目录下的 `.venv/bin/python`
+3. 当前激活的 `VIRTUAL_ENV`
+4. 当前激活的 `CONDA_PREFIX`
 5. 当前 PATH 中满足版本要求的 Python
 
 例如：
@@ -128,7 +143,7 @@ PYTHON_BIN=/usr/local/bin/python3.14 ./start.sh
 PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
 ```
 
-daemon 安装时会把解释器的**绝对真实路径**固化到 systemd unit 中，因此 systemd 不依赖登录 shell 的 PATH 或虚拟环境激活状态。
+daemon 安装时会把解释器的**绝对可执行路径**固化到 systemd unit 中，因此 systemd 不依赖登录 shell 的 PATH 或虚拟环境激活状态。若使用 `.venv`，会保留 `.venv/bin/python` 路径而不解析到 uv 的基础解释器，以确保依赖来自对应虚拟环境。若项目存在损坏的 `.venv`（缺少 `bin/python`），启动将明确报错，避免静默使用系统 Python。
 
 ## 文档
 
@@ -207,7 +222,7 @@ docker run -d \
   nicevpn:latest
 ```
 
-- 默认 Web UI 监听 `0.0.0.0:8880`；使用 `--network host` 时无需额外 `-p`。
+- 同一个容器进程同时监听 `8880`（Web UI）与 `8881`（公网 API），无需额外容器或启动命令。使用 `--network host` 时无需额外 `-p`。
 - 目标环境以 **Linux + OpenVPN + EasyRSA** 与控制台能力匹配为准。
 - 须配置 `download_base_url` 或反代 `Host` / `X-Forwarded-*`，否则创建用户可能无法生成可达下载链接。
 

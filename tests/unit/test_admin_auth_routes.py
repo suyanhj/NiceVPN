@@ -46,7 +46,6 @@ def test_redirect_target_only_allows_internal_paths(value, expected) -> None:
         "/favicon.ico",
         "/_nicegui/client/abc",
         "/static/css/tokens.css",
-        "/api/vpn/users",
         "/download/token-value",
     ),
 )
@@ -61,6 +60,11 @@ def test_management_pages_are_protected(path: str) -> None:
     """所有后台管理页面都必须经过会话认证。"""
 
     assert is_public_auth_path(path) is False
+
+
+def test_old_api_path_is_not_exempt_from_admin_auth() -> None:
+    """旧管理端口上的 /api 不应继续成为无需会话认证的保留前缀。"""
+    assert is_public_auth_path("/api/vpn/users") is False
 
 
 def test_session_requires_authentication_flag_and_future_expiry() -> None:
@@ -135,7 +139,7 @@ def test_auth_middleware_redirects_anonymous_page_and_keeps_target(monkeypatch) 
     assert session == {"redirect_after_login": "/users?page=2"}
 
 
-@pytest.mark.parametrize("path", ("/static/css/tokens.css", "/api/vpn/users", "/download/abc"))
+@pytest.mark.parametrize("path", ("/static/css/tokens.css", "/download/abc"))
 def test_auth_middleware_does_not_replace_existing_endpoint_security(
     path: str,
     monkeypatch,
