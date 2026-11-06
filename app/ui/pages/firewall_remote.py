@@ -686,10 +686,9 @@ class FirewallRemoteMixin:
             "vpn-form-dialog firewall-action-dialog w-full max-w-md"
         ):
             ui.label(f"对端规则 #{index + 1}").classes("text-h6")
-            with ui.expansion("查看原始 iptables 规则", icon="code").classes("w-full"):
-                ui.label(str(row.get("rest") or "")).classes(
-                    "w-full font-mono text-caption break-all whitespace-pre-wrap"
-                )
+            ui.label(str(row.get("rest") or "")).classes(
+                "font-mono text-caption break-all"
+            )
             with ui.column().classes("w-full gap-2 q-mt-sm"):
                 secondary_action(
                     "编辑",
