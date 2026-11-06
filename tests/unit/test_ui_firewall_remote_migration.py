@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 
 import pytest
 from nicegui import ui
