@@ -28,7 +28,6 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
-from app.ui.adapters.firewall import format_remote_cache_timestamp
 from app.ui.firewall_helpers import (
     firewall_export_json_filename,
     second_line_comment_text,
