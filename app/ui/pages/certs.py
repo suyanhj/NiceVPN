@@ -633,23 +633,3 @@ class CertsPage:
         self._refresh_cert_list()
 
 
-    def _toggle_cert_selection(self, common_name: str, checked: bool):
-        if checked:
-            self.selected_certs.add(common_name)
-        else:
-            self.selected_certs.discard(common_name)
-        self._sync_bulk_state()
-
-    def _toggle_select_all(self, checked: bool):
-        if checked:
-            self.selected_certs.update(
-                row["common_name"]
-                for row in self.all_rows
-                if row.get("common_name") not in {None, "", "—"}
-            )
-        else:
-            self.selected_certs.clear()
-        self._sync_bulk_state()
-
-    def _sync_select_all(self):
-        self._sync_bulk_state()
