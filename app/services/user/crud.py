@@ -125,15 +125,12 @@ class UserService:
         self._write_ccd(username, group)
 
         # 客户端私钥密码只在 EasyRSA gen-req 时使用，不由 NiceVPN 保存。
-        # password_hash 字段仅为旧数据兼容保留，新用户始终写空。
-        password_hash = None
 
         # 构造用户对象
         user = User(
             username=username,
             group_id=group_id,
             password_enabled=password_enabled,
-            password_hash=password_hash,
             status="active",
             ovpn_file_path=ovpn_path,
             cert_serial=cert_serial,
