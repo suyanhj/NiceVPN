@@ -144,4 +144,3 @@ def show(
     )
     handle.dialog.open()
     return handle.dialog
-
