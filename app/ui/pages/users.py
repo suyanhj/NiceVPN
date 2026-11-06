@@ -62,9 +62,6 @@ class UsersPage:
         self.bulk_enable_button = None
         self.bulk_icon_buttons: list[object] = []
 
-        # 兼容旧列表选择辅助与既有测试；AG Grid 迁移后不再作为主视图。
-        self.list_container = None
-        self.pagination_container = None
         self.select_all_checkbox = None
         self.visible_usernames: list[str] = []
         self.user_checkboxes: dict[str, Checkbox] = {}
