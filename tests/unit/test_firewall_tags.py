@@ -66,12 +66,17 @@ def test_member_candidate_pagination_and_search_escape(store):
     store.upsert_group({"id": "g2", "name": "研发二组", "subnet": "10.8.2.0/24"})
     rows, total = store.list_tag_candidates_page("users", search="%", limit=20)
     assert total == 1 and rows[0]["username"] == "u%literal"
+    assert store.list_tag_candidate_ids("users", search="%") == ["u%literal"]
+    assert store.list_tag_candidate_ids("users", search="") == ["alice", "bob", "u%literal"]
     rows, total = store.list_tag_candidates_page("users", search="", limit=1)
     assert len(rows) == 1 and total == 3  # alice、bob、u%literal
     groups, total = store.list_tag_candidates_page("groups", search="研发")
     assert total == 1 and groups[0]["id"] == "g2"
+    assert store.list_tag_candidate_ids("groups", search="研发") == ["g2"]
     with pytest.raises(ValueError, match="未知"):
         store.list_tag_candidates_page("invalid")
+    with pytest.raises(ValueError, match="未知"):
+        store.list_tag_candidate_ids("invalid")
     with pytest.raises(ValueError, match="未知"):
         store.list_tag_detail_page("tag1", "invalid")
 
@@ -89,6 +94,7 @@ def test_more_than_sqlite_legacy_variable_limit_associations(store):
     last, total = store.list_tag_detail_page("large", "users", offset=1180, limit=20)
     assert len(last) == 20 and total == 1200
     assert store.get_tag_members("large")["usernames"] == names
+    assert store.list_tag_candidate_ids("users", search="large-") == names
 
 
 def test_unknown_member_does_not_mutate_existing_associations(store):
