@@ -9,7 +9,6 @@ from datetime import datetime
 
 from nicegui import run, ui
 from app.ui.components.feedback import safe_notify
-from nicegui.elements.checkbox import Checkbox
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +38,6 @@ from app.ui.grid_query import (
 from app.ui.components.states import empty_state, error_state, loading_state
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
-from app.ui.components.list_selection import (
-    apply_row_checkboxes,
-    sync_select_all_checkbox,
-    update_visible_selection,
-)
 from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.services.user.crud import UserService
 
@@ -62,9 +56,6 @@ class UsersPage:
         self.bulk_enable_button = None
         self.bulk_icon_buttons: list[object] = []
 
-        self.select_all_checkbox = None
-        self.visible_usernames: list[str] = []
-        self.user_checkboxes: dict[str, Checkbox] = {}
 
         self._create_running = False
         self._create_result: dict | None = None
@@ -1484,28 +1475,6 @@ class UsersPage:
         if await copy_text_to_clipboard(text):
             safe_notify(message, type="positive")
 
-    def _toggle_select(self, username: str, selected: bool):
-        """切换用户选中状态。"""
-        if selected:
-            self.selected_users.add(username)
-        else:
-            self.selected_users.discard(username)
-        self._sync_select_all()
-
-    def _toggle_select_all(self, selected: bool):
-        """选择或取消选择当前页全部用户。"""
-        update_visible_selection(self.selected_users, self.visible_usernames, selected)
-        apply_row_checkboxes(self.user_checkboxes, self.selected_users)
-        self._sync_select_all()
-
-    def _sync_select_all(self):
-        """同步用户列表全选复选框。"""
-        if self.select_all_checkbox is not None:
-            sync_select_all_checkbox(
-                self.select_all_checkbox,
-                self.visible_usernames,
-                self.selected_users,
-            )
 
     def _confirm_reset_binding(self, username: str):
         """单用户重置设备绑定确认。"""
