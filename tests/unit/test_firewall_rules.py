@@ -301,7 +301,7 @@ class TestIptablesIpsetStrategy:
         manager = IptablesManager()
         lines = manager._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert f"--match-set {IpsetManager.stable_name("rule", "r-mixed", "dst")} dst" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('rule', 'r-mixed', 'dst')} dst" in lines[0]
         merged, _ = manager._build_merged_forward_entries([rule])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
@@ -319,7 +319,7 @@ class TestIptablesIpsetStrategy:
         manager = IptablesManager()
         lines = manager._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert f"--match-set {IpsetManager.stable_name("rule", "r-mixed-src", "src")} src" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('rule', 'r-mixed-src', 'src')} src" in lines[0]
         merged, _ = manager._build_merged_forward_entries([rule])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
@@ -333,7 +333,7 @@ class TestIptablesIpsetStrategy:
         cidrs = ["192.168.0.0/24", "10.10.0.0/16"]
         lines = manager._expand_center_peer_forward_lines("peer-cidr", cidrs)
         assert len(lines) == 1
-        assert f"--match-set {IpsetManager.stable_name("peer", "peer-cidr", "lan")} src" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('peer', 'peer-cidr', 'lan')} src" in lines[0]
         merged, _ = manager._build_merged_forward_entries([], [("peer-cidr", cidrs, 100, {})])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
