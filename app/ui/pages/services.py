@@ -5,7 +5,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from nicegui import background_tasks, context, run, ui
 from app.ui.components.feedback import safe_notify
@@ -31,14 +31,18 @@ from app.ui.adapters.services import adapt_local_service_view, adapt_peer_servic
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import secondary_action
 from app.ui.components.form_dialog import create_form_dialog
+from app.ui.components.service_log_dialog import (
+    log_action_row,
+    log_dialog_card,
+    log_scroll_area,
+    log_text_label,
+)
 from app.ui.log_reader import read_log_tail_lines
 from app.ui.components.states import empty_state, error_state
 from app.ui.components.status import status_badge, structured_value
 
 logger = logging.getLogger(__name__)
 
-# 日志正文外层可滚动视口（供实时 tail 判断是否贴底并自动跟随）
-_LOG_TAIL_CODE_STYLE = "height: min(500px, 55vh); font-size: 12px;"
 _LOG_TAIL_STICK_PX = 48
 # 非实时「刷新」展示行数；实时模式仅保留最新若干行，控制内存与 DOM
 _LOG_SNAPSHOT_MAX_LINES = 200
@@ -558,9 +562,7 @@ class ServicesPage:
             else:
                 initial = load()
 
-        with ui.dialog() as dialog, ui.card().classes(
-            "w-full services-view-dialog services-log-dialog"
-        ):
+        with ui.dialog() as dialog, log_dialog_card():
             ui.label(title).classes("text-h6 services-view-dialog__title")
             header_ctrl = header_widget() if header_widget else None
             path_caption = ui.label(initial[0] if initial else "").classes("section-caption services-view-dialog__caption")
@@ -577,12 +579,8 @@ class ServicesPage:
                 )
                 follow_tail = remaining <= _LOG_TAIL_STICK_PX
 
-            with ui.scroll_area(on_scroll=on_log_scroll).classes(
-                "w-full log-frame vpn-log-tail-viewport services-log-frame"
-            ).style(_LOG_TAIL_CODE_STYLE) as log_viewport:
-                log_label = ui.label(initial[1] if initial else "").classes(
-                    "w-full whitespace-pre-wrap break-words font-mono text-left"
-                ).style("font-size: 12px;")
+            with log_scroll_area(on_scroll=on_log_scroll) as log_viewport:
+                log_label = log_text_label(initial[1] if initial else "")
 
             def set_log_body(text: str, *, follow_tail_after: bool) -> None:
                 """更新日志正文，并仅在用户仍贴底时滚到最新内容。"""
@@ -676,9 +674,7 @@ class ServicesPage:
 
             dialog.on("hide", lambda _event: cleanup_log_dialog())
 
-            with ui.row().classes(
-                "services-log-dialog__actions w-full justify-end gap-sm items-center"
-            ):
+            with log_action_row():
                 secondary_action("刷新", icon="refresh", on_click=do_manual_refresh)
                 secondary_action("关闭", on_click=close_log_dialog)
         dialog.open()
@@ -1028,27 +1024,16 @@ class ServicesPage:
 
         state = {"open": True, "generation": 0}
 
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-4xl services-view-dialog"):
+        with ui.dialog() as dialog, log_dialog_card():
             dialog.on("hide", lambda _event: state.update(open=False, generation=state["generation"] + 1))
             ui.label(f"对端日志 — {peer_name}").classes("text-h6 services-view-dialog__title")
             path_caption = ui.label("/etc/openvpn/log/client.log").classes("section-caption services-view-dialog__caption")
-            log_container = ui.column().classes("w-full log-frame services-log-frame")
-            log_ref: dict[str, Any] = {"label": None}
+            with log_scroll_area():
+                log_label = log_text_label("读取…")
 
             def set_body(text: str) -> None:
-                if not state["open"]:
-                    return
-                if log_ref["label"] is None:
-                    log_container.clear()
-                    with log_container:
-                        with ui.element("div").classes("w-full vpn-log-tail-viewport").style(
-                            _LOG_TAIL_CODE_STYLE
-                        ):
-                            log_ref["label"] = ui.label(text).classes(
-                                "w-full whitespace-pre-wrap break-words font-mono text-left"
-                            ).style("font-size: 12px;")
-                else:
-                    cast(Any, log_ref["label"]).text = text
+                if state["open"]:
+                    log_label.text = text
 
             async def refresh_log() -> None:
                 if not state["open"]:
@@ -1079,7 +1064,7 @@ class ServicesPage:
                 set_body(str(data.get("log") or "(空)"))
 
             ui.timer(0.1, refresh_log, once=True)
-            with ui.row().classes("justify-end q-mt-md gap-sm items-center"):
+            with log_action_row():
                 secondary_action("刷新", icon="refresh", on_click=refresh_log)
                 secondary_action("关闭", on_click=dialog.close)
 

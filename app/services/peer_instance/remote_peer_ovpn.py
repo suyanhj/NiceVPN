@@ -10,18 +10,11 @@ from pathlib import Path, PurePosixPath
 
 from app.core.constants import LOG_RETENTION_DAYS, OVPN_PROFILES_DIR
 from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_from_row
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
 
 logger = logging.getLogger("peer.remote")
 
 _PEER_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "peer"
-
-
-def _exec_ssh(client, command: str, *, timeout: int) -> tuple[str, str, int]:
-    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    out_b = stdout.read()
-    err_b = stderr.read()
-    code = stdout.channel.recv_exit_status()
-    return out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace"), code
 
 
 OFFICIAL_OPENVPN_CLIENT_TEMPLATE = "openvpn-client@.service"

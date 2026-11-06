@@ -112,7 +112,9 @@ def test_services_uses_nicegui_scroll_area_without_inline_scroll_script() -> Non
     """日志跟随滚动只使用 NiceGUI 滚动区事件与方法。"""
 
     source = (UI_DIR / "pages" / "services.py").read_text(encoding="utf-8")
-    assert "ui.scroll_area(" in source
+    helper_source = (UI_DIR / "components" / "service_log_dialog.py").read_text(encoding="utf-8")
+    assert "log_scroll_area(" in source
+    assert "ui.scroll_area(" in helper_source
     assert ".scroll_to(percent=1.0)" in source
     assert "ui.run_javascript" not in source
     assert "document.addEventListener" not in source

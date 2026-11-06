@@ -15,6 +15,7 @@ from paramiko.ssh_exception import SSHException
 from packaging.version import Version
 
 from app.core.constants import OPENVPN_MIN_VERSION, OPENVPN_SEARCH_PATHS
+from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
 
 logger = logging.getLogger("peer.remote")
 
@@ -91,19 +92,6 @@ def _parse_remote_os_release(text: str) -> dict[str, str]:
         "pretty_name": info.get("pretty_name", ""),
         "name": info.get("name", ""),
     }
-
-
-def _exec_ssh(
-    client: paramiko.SSHClient,
-    command: str,
-    *,
-    timeout: int,
-) -> tuple[str, str, int]:
-    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    out_b = stdout.read()
-    err_b = stderr.read()
-    code = stdout.channel.recv_exit_status()
-    return out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace"), code
 
 
 def detect_openvpn_via_ssh(
