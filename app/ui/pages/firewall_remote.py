@@ -642,7 +642,7 @@ class FirewallRemoteMixin:
             return
 
     async def _on_remote_grid_cell_click(self, event) -> None:
-        """复制原始/结构化字段，操作列暂复用现有编辑表单。"""
+        """复制结构化字段；原始规则通过单行操作详情查看。"""
 
         args = getattr(event, "args", None) or {}
         if not isinstance(args, dict):
@@ -658,9 +658,7 @@ class FirewallRemoteMixin:
             return
 
         value = ""
-        if col_id == "raw_rest":
-            value = str(data.get("raw_rest") or "")
-        elif col_id in {"source", "dest", "dest_port"}:
+        if col_id in {"source", "dest", "dest_port", "extra_matches"}:
             value = str(data.get(col_id) or "")
         if value and value not in {"—", "*"}:
             await self._copy_text_to_clipboard(value)
