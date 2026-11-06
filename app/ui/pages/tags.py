@@ -408,6 +408,25 @@ class TagsPage:
                 selected[kind].discard(item_id)
             count_labels[kind].text = f"已选 {len(selected[kind])} 项（跨页保留）"
 
+        def set_selected_many(kind: str, item_ids: list[str], checked: bool) -> None:
+            if checked:
+                selected[kind].update(item_ids)
+            else:
+                selected[kind].difference_update(item_ids)
+            count_labels[kind].text = f"已选 {len(selected[kind])} 项（跨页保留）"
+            render_choices(kind)
+
+        def set_matching_selected(kind: str, checked: bool) -> None:
+            # 明确涵盖所有搜索结果，而非仅当前页；仅获取 ID，避免加载全量用户 payload。
+            try:
+                ids = self.service.store.list_tag_candidate_ids(
+                    kind, search=str(state[kind]["search"]),
+                )
+            except Exception as exc:
+                safe_notify(f"批量选择失败：{exc}", type="negative")
+                return
+            set_selected_many(kind, ids, checked)
+
         def render_choices(kind: str) -> None:
             container = containers[kind]
             if getattr(container, "is_deleted", False):
@@ -440,6 +459,37 @@ class TagsPage:
             with container:
                 if not rows:
                     ui.label("暂无匹配成员").classes("tags-detail-empty")
+                else:
+                    with ui.row().classes(
+                        "tags-member-bulk-actions w-full items-center gap-1 flex-wrap"
+                    ):
+                        page_ids = [
+                            str(row["username" if kind == "users" else "id"])
+                            for row in rows
+                        ]
+                        if config["selected_only"]:
+                            ui.button(
+                                "取消本页选择",
+                                on_click=lambda: set_selected_many(kind, page_ids, False),
+                            ).props("flat dense no-caps color=primary")
+                            ui.button(
+                                "清空已选",
+                                on_click=lambda: set_selected_many(kind, list(selected[kind]), False),
+                            ).props("flat dense no-caps color=primary")
+                        else:
+                            ui.button(
+                                "全选本页",
+                                on_click=lambda: set_selected_many(kind, page_ids, True),
+                            ).props("flat dense no-caps color=primary")
+                            all_button = ui.button(
+                                f"全选搜索结果（{total}）",
+                                on_click=lambda: set_matching_selected(kind, True),
+                            ).props("flat dense no-caps color=primary")
+                            all_button.tooltip("包含符合当前搜索条件的所有分页记录")
+                            ui.button(
+                                "取消搜索结果已选",
+                                on_click=lambda: set_matching_selected(kind, False),
+                            ).props("flat dense no-caps color=primary")
                 for row in rows:
                     item_id = str(row["username" if kind == "users" else "id"])
                     label = (
@@ -470,6 +520,10 @@ class TagsPage:
             state[kind]["selected_only"] = checked
             render_choices(kind)
 
+        def search_click(kind: str, field):
+            # 生成零参回调，避免 NiceGUI 把点击事件注入捕获参数。
+            return lambda: apply_search(kind, field.value)
+
         def body() -> None:
             with ui.tabs(value="users").classes("w-full firewall-compact-tabs") as tabs:
                 ui.tab("users", label="关联用户", icon="people")
@@ -483,7 +537,7 @@ class TagsPage:
                             ).props("outlined dense clearable").classes("flex-grow")
                             secondary_action(
                                 "搜索", icon="search",
-                                on_click=lambda k=kind, field=search_input: apply_search(k, field.value),
+                                on_click=search_click(kind, search_input),
                             ).props("dense")
                         with ui.row().classes("w-full items-center justify-between"):
                             count_labels[kind] = ui.label(
@@ -497,9 +551,13 @@ class TagsPage:
                             "w-full tags-detail-list tags-member-choice-list"
                         )
                         render_choices(kind)
-            ui.label("变更成员后，仅被启用防火墙规则引用的标签才会触发 VPN_FORWARD 刷新。").classes(
-                "section-caption"
-            )
+            with ui.row().classes("w-full justify-end items-center"):
+                info = ui.icon("info_outline", size="19px").classes(
+                    "tags-member-info-icon cursor-help"
+                ).props("aria-label='标签生效说明'")
+                info.tooltip(
+                    "变更成员后，仅被启用防火墙规则引用的标签才会触发 VPN_FORWARD 刷新。"
+                )
 
         def submit() -> bool:
             try:
