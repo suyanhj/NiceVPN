@@ -80,7 +80,7 @@ sudo -E ./start.sh daemon --build-ui
 ./build-ui.sh /tmp/nicevpn-ui-dist
 ```
 
-`--no-build` 与 `NICEVPN_BUILD_UI=0` 继续保留兼容，但现在已经是默认行为。
+也可以设置 `NICEVPN_BUILD_UI=1` 强制执行本机前端重建。
 
 CLI 不需要前端构建：
 
