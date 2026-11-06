@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Sequence
-from app.storage.repository_helpers import _now_iso
+from app.storage.repository_helpers import _now_iso, _load_payload, _like_pattern
 
 
 class TagRepositoryMixin:
@@ -62,17 +62,24 @@ class TagRepositoryMixin:
             if conn.execute("SELECT 1 FROM tags WHERE id=?", (tid,)).fetchone() is None:
                 raise ValueError("标签不存在")
             if users:
-                placeholders = ",".join("?" for _ in users)
-                found = {r[0] for r in conn.execute(
-                    f"SELECT username FROM users WHERE username IN ({placeholders})", users
-                )}
+                found = set()
+                # 兼容 SQLite 较低的绑定参数上限（部分系统仍为 999）。
+                for start in range(0, len(users), 500):
+                    part = users[start:start + 500]
+                    placeholders = ",".join("?" for _ in part)
+                    found.update(r[0] for r in conn.execute(
+                        f"SELECT username FROM users WHERE username IN ({placeholders})", part
+                    ))
                 if len(found) != len(users):
                     raise ValueError("关联用户不存在")
             if groups:
-                placeholders = ",".join("?" for _ in groups)
-                found = {r[0] for r in conn.execute(
-                    f"SELECT id FROM groups WHERE id IN ({placeholders})", groups
-                )}
+                found = set()
+                for start in range(0, len(groups), 500):
+                    part = groups[start:start + 500]
+                    placeholders = ",".join("?" for _ in part)
+                    found.update(r[0] for r in conn.execute(
+                        f"SELECT id FROM groups WHERE id IN ({placeholders})", part
+                    ))
                 if len(found) != len(groups):
                     raise ValueError("关联用户组不存在")
             conn.execute("DELETE FROM user_tags WHERE tag_id=?", (tid,))
@@ -214,3 +221,113 @@ class TagRepositoryMixin:
             "usernames": [r[0] for r in users],
             "group_ids": [r[0] for r in groups],
         }
+
+    def list_tag_counts(self) -> dict[str, dict[str, int]]:
+        """一次读取全部标签的关联数量，不反复打开连接或加载成员 payload。"""
+        result: dict[str, dict[str, int]] = {}
+        specs = (
+            ("user_tags", "tag_id", "users", ""),
+            ("group_tags", "tag_id", "groups", ""),
+            ("firewall_rules", "owner_id", "rules", "WHERE owner_type='tag'"),
+        )
+        with self.connection() as conn:
+            for table, column, key, where in specs:
+                rows = conn.execute(
+                    f"SELECT {column} AS tag_id, COUNT(*) AS n "
+                    f"FROM {table} {where} GROUP BY {column}"
+                ).fetchall()
+                for row in rows:
+                    result.setdefault(str(row["tag_id"]), {"users": 0, "groups": 0, "rules": 0})[
+                        key
+                    ] = int(row["n"])
+        return result
+
+    def list_tag_detail_page(
+        self, tag_id: str, kind: str, *, offset: int = 0, limit: int = 20,
+        search: str = "",
+    ) -> tuple[list[dict[str, Any]], int]:
+        """只查展开标签的当前选项卡；用户/组/规则统一服务端分页。"""
+        if kind not in ("users", "groups", "rules"):
+            raise ValueError("未知标签详情类型")
+        tid = str(tag_id)
+        where = ""
+        params: list[Any] = [tid]
+        if kind == "users":
+            table = "user_tags AS t LEFT JOIN users AS u ON u.username=t.username"
+            match = "t.tag_id=?"
+            expression = "t.username"
+            projection = "t.username, COALESCE(u.status, 'unknown') AS status"
+            ordering = "t.username COLLATE NOCASE"
+        elif kind == "groups":
+            table = "group_tags AS t LEFT JOIN groups AS g ON g.id=t.group_id"
+            match = "t.tag_id=?"
+            expression = "g.name"
+            projection = "t.group_id, g.payload"
+            ordering = "g.name COLLATE NOCASE, t.group_id"
+        else:
+            table = "firewall_rules AS t"
+            match = "t.owner_id=? AND t.owner_type='tag'"
+            expression = "COALESCE(json_extract(t.payload, '$.description'), '')"
+            projection = "t.payload"
+            ordering = "t.priority, t.id"
+        query = str(search or "").strip()
+        if query:
+            if kind == "groups":
+                where = f" AND ({expression} LIKE ? ESCAPE '\\' OR t.group_id LIKE ? ESCAPE '\\')"
+                params.extend([_like_pattern(query)] * 2)
+            else:
+                where = f" AND {expression} LIKE ? ESCAPE '\\'"
+                params.append(_like_pattern(query))
+        with self.connection() as conn:
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {match}{where}", params,
+            ).fetchone()[0])
+            rows = conn.execute(
+                f"SELECT {projection} FROM {table} WHERE {match}{where} "
+                f"ORDER BY {ordering} LIMIT ? OFFSET ?",
+                [*params, max(1, int(limit)), max(0, int(offset))],
+            ).fetchall()
+        if kind == "rules":
+            return [_load_payload(row["payload"]) for row in rows], total
+        if kind == "groups":
+            return [
+                (_load_payload(row["payload"]) if row["payload"] else {"id": row["group_id"]})
+                for row in rows
+            ], total
+        return [dict(row) for row in rows], total
+
+    def list_tag_candidates_page(
+        self, kind: str, *, search: str = "", offset: int = 0, limit: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """关联编辑候选项服务端搜索，避免一次送出全部用户名与组。"""
+        if kind == "users":
+            table, where, key, order = (
+                "users", "status <> 'deleted'", "username", "username COLLATE NOCASE"
+            )
+            projection = "username, status"
+        elif kind == "groups":
+            table, where, key, order = "groups", "1=1", "name", "name COLLATE NOCASE, id"
+            projection = "id, name, payload"
+        else:
+            raise ValueError("未知候选成员类型")
+        params: list[Any] = []
+        if str(search or "").strip():
+            pattern = _like_pattern(str(search).strip())
+            if kind == "groups":
+                where += " AND (name LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')"
+                params.extend([pattern, pattern])
+            else:
+                where += f" AND {key} LIKE ? ESCAPE '\\'"
+                params.append(pattern)
+        with self.connection() as conn:
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {where}", params,
+            ).fetchone()[0])
+            rows = conn.execute(
+                f"SELECT {projection} FROM {table} WHERE {where} ORDER BY {order} "
+                "LIMIT ? OFFSET ?",
+                [*params, max(1, int(limit)), max(0, int(offset))],
+            ).fetchall()
+        if kind == "groups":
+            return [_load_payload(row["payload"]) for row in rows], total
+        return [dict(row) for row in rows], total
