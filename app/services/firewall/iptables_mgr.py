@@ -349,11 +349,6 @@ class IptablesManager:
         return IpsetManager.stable_name("rule", rule.id, "src")
 
     @staticmethod
-    def _rule_ipset_name(rule_id: str, direction: str = "src") -> str:
-        """兼容旧调用；stable name 由 IpsetManager 统一生成。"""
-        return IpsetManager.stable_name("rule", rule_id, direction)
-
-    @staticmethod
     def _is_specific_ip(token: str) -> bool:
         """判断是否为“具体 IP”（非 CIDR）。"""
         t = str(token or "").strip()
@@ -1119,11 +1114,6 @@ class IptablesManager:
         except (OSError, subprocess.TimeoutExpired) as e:
             logger.warning("flush 链 %s 失败（链可能不存在）: %s", CHAIN_NAME, e)
 
-    @staticmethod
-    def _peer_lan_ipset_name(peer_id: str) -> str:
-        """兼容旧调用；对端 LAN stable name 由 IpsetManager 统一生成。"""
-        return IpsetManager.stable_name("peer", peer_id, "lan")
-
     def sync_peer_vpn_center_rule(self, peer_id: str, lan_cidrs: list[str]) -> bool:
         """已由 ``FirewallRuleService`` 合并写入 ``VPN_FORWARD``；此处只刷新该链。"""
         if os.name == "nt":
@@ -1210,7 +1200,7 @@ class IptablesManager:
         if not has_l4_match:
             out: list[str] = []
             if self._has_multiple_addresses(cleaned):
-                set_name = self._peer_lan_ipset_name(pid)
+                set_name = IpsetManager.stable_name("peer", pid, "lan")
                 line = (
                     f"-A {CHAIN_NAME} -m set --match-set {set_name} src "
                     f'-m comment --comment "{final_comment}" -j ACCEPT'
@@ -1253,12 +1243,12 @@ class IptablesManager:
             dest_loop = list(dest_tokens)
         out2: list[str] = []
         if self._has_multiple_addresses(cleaned):
-            set_src = self._peer_lan_ipset_name(pid)
+            set_src = IpsetManager.stable_name("peer", pid, "lan")
             for dest in dest_loop:
                 for pv in pvs:
                     parts = [f"-A {CHAIN_NAME}", f"-m set --match-set {set_src} src"]
                     if use_dest_ipset:
-                        parts.append(f"-m set --match-set {self._rule_ipset_name(rule_id, 'dst')} dst")
+                        parts.append(f"-m set --match-set {IpsetManager.stable_name("rule", rule_id, "dst")} dst")
                     elif dest:
                         parts.append(f"-d {dest}")
                     if pv.get("proto"):
@@ -1278,7 +1268,7 @@ class IptablesManager:
                         parts = [f"-A {CHAIN_NAME}", f"-s {tok}"]
                         if use_dest_ipset:
                             parts.append(
-                                f"-m set --match-set {self._rule_ipset_name(rule_id, 'dst')} dst"
+                                f"-m set --match-set {IpsetManager.stable_name("rule", rule_id, "dst")} dst"
                             )
                         elif dest:
                             parts.append(f"-d {dest}")
@@ -1340,7 +1330,7 @@ class IptablesManager:
                     elif src:
                         parts.append(f"-s {src}")
                     if use_dest_ipset:
-                        parts.append(f"-m set --match-set {self._rule_ipset_name(rule.id, 'dst')} dst")
+                        parts.append(f"-m set --match-set {IpsetManager.stable_name("rule", rule.id, "dst")} dst")
                     elif dest:
                         parts.append(f"-d {dest}")
                     if pv["proto"]:
