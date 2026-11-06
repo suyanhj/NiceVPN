@@ -128,12 +128,12 @@ CLI 不需要前端构建：
 
 ### Python 解释器选择
 
-NiceVPN 要求 **Python 3.10+**。启动脚本会校验真实解释器版本，并按以下优先级选择：
+NiceVPN 要求 **Python 3.10+**。启动脚本会校验解释器版本，并按以下优先级选择：
 
 1. 显式环境变量 `PYTHON_BIN`
-2. 当前激活的 `VIRTUAL_ENV`
-3. 当前激活的 `CONDA_PREFIX`
-4. 项目目录下的 `.venv/bin/python`
+2. 项目目录下的 `.venv/bin/python`
+3. 当前激活的 `VIRTUAL_ENV`
+4. 当前激活的 `CONDA_PREFIX`
 5. 当前 PATH 中满足版本要求的 Python
 
 例如：
@@ -143,7 +143,7 @@ PYTHON_BIN=/usr/local/bin/python3.14 ./start.sh
 PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
 ```
 
-daemon 安装时会把解释器的**绝对真实路径**固化到 systemd unit 中，因此 systemd 不依赖登录 shell 的 PATH 或虚拟环境激活状态。
+daemon 安装时会把解释器的**绝对可执行路径**固化到 systemd unit 中，因此 systemd 不依赖登录 shell 的 PATH 或虚拟环境激活状态。若使用 `.venv`，会保留 `.venv/bin/python` 路径而不解析到 uv 的基础解释器，以确保依赖来自对应虚拟环境。若项目存在损坏的 `.venv`（缺少 `bin/python`），启动将明确报错，避免静默使用系统 Python。
 
 ## 文档
 

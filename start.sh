@@ -28,8 +28,9 @@ python_version() {
     "$1" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))'
 }
 
-python_realpath() {
-    "$1" -c 'import os, sys; print(os.path.realpath(sys.executable))'
+python_executable_path() {
+    # 保留 .venv/bin/python 符号链接：realpath 会跳到 uv 的基础 Python，丢失虚拟环境依赖。
+    "$1" -c 'import os, sys; print(os.path.abspath(sys.executable))'
 }
 
 resolve_candidate() {
@@ -50,33 +51,34 @@ select_python() {
     if [[ -n "${PYTHON_BIN}" ]]; then
         resolved="$(resolve_candidate "${PYTHON_BIN}")" || fail "PYTHON_BIN 不可执行或不存在：${PYTHON_BIN}"
         python_supported "${resolved}" || fail "PYTHON_BIN 的 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_realpath "${resolved}")"
+        PYTHON_BIN="$(python_executable_path "${resolved}")"
         return 0
     fi
 
-    # 2. 优先复用当前激活的虚拟环境 / Conda 环境。
+    # 2. 项目 .venv 优先于外部已激活环境与系统 Python。
+    if [[ -d "${ROOT_DIR}/.venv" ]]; then
+        [[ -x "${ROOT_DIR}/.venv/bin/python" ]] || fail "项目 .venv 存在，但 bin/python 不可执行；请修复 .venv 或显式指定 PYTHON_BIN。"
+        resolved="${ROOT_DIR}/.venv/bin/python"
+        python_supported "${resolved}" || fail "项目 .venv Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
+        PYTHON_BIN="$(python_executable_path "${resolved}")"
+        return 0
+    fi
+
+    # 3. 无项目 .venv 时，复用当前激活的虚拟环境 / Conda 环境。
     if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
         resolved="${VIRTUAL_ENV}/bin/python"
         python_supported "${resolved}" || fail "当前虚拟环境 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_realpath "${resolved}")"
+        PYTHON_BIN="$(python_executable_path "${resolved}")"
         return 0
     fi
     if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
         resolved="${CONDA_PREFIX}/bin/python"
         python_supported "${resolved}" || fail "当前 Conda 环境 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_realpath "${resolved}")"
+        PYTHON_BIN="$(python_executable_path "${resolved}")"
         return 0
     fi
 
-    # 3. 项目内 .venv 优先于系统 Python。
-    if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
-        resolved="${ROOT_DIR}/.venv/bin/python"
-        python_supported "${resolved}" || fail "项目 .venv Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_realpath "${resolved}")"
-        return 0
-    fi
-
-    # 4. 再从当前 PATH 和常见版本命令中选择第一个满足要求的解释器。
+    # 5. 再从当前 PATH 和常见版本命令中选择第一个满足要求的解释器。
     auto_candidates=(
         python
         python3
@@ -90,7 +92,7 @@ select_python() {
         resolved="$(resolve_candidate "${candidate}" || true)"
         [[ -n "${resolved}" ]] || continue
         if python_supported "${resolved}"; then
-            PYTHON_BIN="$(python_realpath "${resolved}")"
+            PYTHON_BIN="$(python_executable_path "${resolved}")"
             return 0
         fi
     done
