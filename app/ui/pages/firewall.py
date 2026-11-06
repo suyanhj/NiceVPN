@@ -28,7 +28,6 @@ from app.services.firewall.simple_rule_import import (
 )
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
-from app.ui.adapters.firewall import format_remote_cache_timestamp
 from app.ui.firewall_helpers import (
     firewall_export_json_filename,
     second_line_comment_text,
@@ -50,13 +49,6 @@ from app.ui.copy_clipboard import copy_text_to_clipboard
 
 logger = logging.getLogger(__name__)
 
-
-def _format_peer_cache_timestamp(raw: str | None) -> str:
-    """兼容旧调用入口；缓存时间格式化统一由纯适配层维护。"""
-
-    return format_remote_cache_timestamp(raw)
-
-
 class FirewallPage(
     FirewallCenterGridMixin,
     FirewallCenterActionsMixin,
@@ -65,7 +57,7 @@ class FirewallPage(
     FirewallRemoteImportBatchMixin,
     FirewallRemoteMixin,
 ):
-    """中心 JSON 规则、中心侧对端虚拟行、以及对端机 filter 用户链的本地工作副本与 UI。
+    """中心防火墙规则、中心侧对端虚拟行、以及对端机 filter 用户链的本地工作副本与 UI。
 
     对端机链的交互顺序见模块 docstring；本页在「对端远端」下通过 :meth:`_remote_fetch_chain_via_ssh` 与
     :meth:`_apply_remote_cache_to_peer` 落实「先拉后改再推」。"""
@@ -400,17 +392,6 @@ class FirewallPage(
                 continue
             opts[pid] = f"{p.get('name', '')} ({pid[:8]}…)"
         return opts
-
-    def _switch_owner(self, owner_id: str) -> None:
-        """兼容旧跳转入口：把归属条件写入 Grid 的多选筛选模型。"""
-
-        normalized = str(owner_id or "").strip()
-        self.current_owner_id = normalized
-        self._pending_center_owner_id = normalized
-        if not normalized:
-            self._center_filter_model.pop("owner_label", None)
-        self._center_page = 1
-        self._refresh_rules()
 
     async def _copy_text_to_clipboard(self, text: str) -> None:
         """将文本写入浏览器剪贴板并轻提示；供归属等可点击区域使用。"""

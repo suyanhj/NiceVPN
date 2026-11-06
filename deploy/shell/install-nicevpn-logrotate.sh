@@ -80,16 +80,6 @@ if ! "$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1; then
     fail "系统全局 logrotate 校验失败（可能有重复路径配置），已恢复原策略"
 fi
 
-# 兼容此前独立 timer 试验版，防止两个定时器同时操作同一文件。
-if [[ -f /etc/systemd/system/nicevpn-audit-logrotate.timer ]] &&
-   command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now nicevpn-audit-logrotate.timer >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/nicevpn-audit-logrotate.timer \
-          /etc/systemd/system/nicevpn-audit-logrotate.service \
-          /etc/nicevpn/logrotate-audit.conf
-    systemctl daemon-reload
-fi
-
 # 系统原生 timer 可用时确保启用；没有 timer 的发行版沿用 cron.daily。
 if command -v systemctl >/dev/null 2>&1 &&
    [[ -d /run/systemd/system ]] &&

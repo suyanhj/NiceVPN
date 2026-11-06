@@ -38,7 +38,7 @@ GROUPS_DIR = DATA_DIR / "groups"
 FIREWALL_DIR = DATA_DIR / "firewall"
 # 远端 filter 用户链工作副本与同步状态（与 SSH 拉取/写回配合）
 REMOTE_PEER_CHAINS_DIR = DATA_DIR / "remote_peer_chains"
-# 对端站点实例（组网）元数据 JSON：data/peers/<peer_id>.json
+# 旧版对端站点 JSON 目录；仅供 JSON -> SQLite 启动迁移读取。
 PEERS_DIR = DATA_DIR / "peers"
 DOWNLOAD_LINKS_DIR = DATA_DIR / "download_links"
 # API 批量创建用户时生成的 zip 包（一次性下载令牌指向此目录下的文件）

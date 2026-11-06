@@ -125,10 +125,6 @@ class SystemConfig(BaseModel):
             "可多行多条。不推 redirect-gateway，仅这些网段走 VPN，其余仍走客户端默认上网路由。"
         ),
     )
-    masquerade_out_interfaces: list[str] = Field(
-        default_factory=list,
-        description="已废弃：中心侧改为按 global_subnet 自动 MASQUERADE，此项不再读取，仅保留兼容旧配置 JSON",
-    )
     device_bind_mode: Literal["weak_log", "weak_fingerprint", "strict_hwaddr"] = Field(
         default="weak_fingerprint",
         description=(
@@ -255,28 +251,6 @@ class SystemConfig(BaseModel):
                 raise ValueError(f"push_lan_routes 仅支持 IPv4: {item}")
             out.append(str(net))
         return out
-
-    @field_validator("masquerade_out_interfaces", mode="before")
-    @classmethod
-    def parse_masquerade_ifaces(cls, value):
-        """兼容多行字符串或列表。"""
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [line.strip() for line in value.splitlines() if line.strip()]
-        if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
-        return []
-
-    @field_validator("masquerade_out_interfaces", mode="after")
-    @classmethod
-    def validate_masquerade_ifaces(cls, value: list[str]) -> list[str]:
-        """网卡名仅允许常见字符，避免注入 shell/iptables 参数。"""
-        pat = re.compile(r"^[a-zA-Z0-9._-]+$")
-        for name in value:
-            if not pat.match(name):
-                raise ValueError(f"非法网卡名: {name}")
-        return value
 
     @field_validator("github_proxy_urls", mode="before")
     @classmethod

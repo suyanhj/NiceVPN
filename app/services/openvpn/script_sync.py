@@ -14,8 +14,6 @@ OPENVPN_SCRIPT_NAMES = (
     "vpn_session_audit.py",
     "vpn-session-disconnect.sh",
 )
-# 兼容既有内部引用/测试。
-_SCRIPT_NAMES = OPENVPN_SCRIPT_NAMES
 
 
 def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
@@ -28,7 +26,7 @@ def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
     scripts_dir = base / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     scripts_pkg = Path(__file__).resolve().parent.parent.parent / "scripts"
-    for script_name in _SCRIPT_NAMES:
+    for script_name in OPENVPN_SCRIPT_NAMES:
         src = scripts_pkg / script_name
         if not src.is_file():
             logger.warning("打包脚本不存在，跳过同步: %s", src)

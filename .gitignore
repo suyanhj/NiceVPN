@@ -188,3 +188,6 @@ password
 # NiceVPN Vue 正式运行产物由 GitHub Actions 构建并提交，生产机无需 Node/npm/Docker。
 !app/ui/vue/dist/
 !app/ui/vue/dist/**
+
+# Local assistant/runtime settings
+.claude/settings.local.json

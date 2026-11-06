@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.firewall import FirewallRule
+from app.services.firewall.ipset_mgr import IpsetManager
 
 
 # 创建 FirewallRule 的最小必填字段
@@ -289,7 +290,7 @@ class TestIptablesIpsetStrategy:
         )
         lines = IptablesManager()._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert "--match-set " + IptablesManager._rule_ipset_name("r-cidr", "dst") + " dst" in lines[0]
+        assert "--match-set " + IpsetManager.stable_name("rule", "r-cidr", "dst") + " dst" in lines[0]
         assert "-d 172.16.0.0/16" not in lines[0]
 
     def test_mixed_target_ip_and_cidr_uses_ipset(self):
@@ -300,11 +301,11 @@ class TestIptablesIpsetStrategy:
         manager = IptablesManager()
         lines = manager._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert f"--match-set {manager._rule_ipset_name('r-mixed', 'dst')} dst" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('rule', 'r-mixed', 'dst')} dst" in lines[0]
         merged, _ = manager._build_merged_forward_entries([rule])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
-        assert specs[0].name == manager._rule_ipset_name("r-mixed", "dst")
+        assert specs[0].name == IpsetManager.stable_name("rule", "r-mixed", "dst")
         assert specs[0].entries == ("1.1.1.1/32", "2.2.2.0/24")
 
     def test_mixed_source_ip_and_cidr_uses_ipset(self):
@@ -318,7 +319,7 @@ class TestIptablesIpsetStrategy:
         manager = IptablesManager()
         lines = manager._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert f"--match-set {manager._rule_ipset_name('r-mixed-src', 'src')} src" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('rule', 'r-mixed-src', 'src')} src" in lines[0]
         merged, _ = manager._build_merged_forward_entries([rule])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
@@ -332,7 +333,7 @@ class TestIptablesIpsetStrategy:
         cidrs = ["192.168.0.0/24", "10.10.0.0/16"]
         lines = manager._expand_center_peer_forward_lines("peer-cidr", cidrs)
         assert len(lines) == 1
-        assert f"--match-set {manager._peer_lan_ipset_name('peer-cidr')} src" in lines[0]
+        assert f"--match-set {IpsetManager.stable_name('peer', 'peer-cidr', 'lan')} src" in lines[0]
         merged, _ = manager._build_merged_forward_entries([], [("peer-cidr", cidrs, 100, {})])
         specs = manager._desired_ipsets_for_merged_forward(merged)
         assert len(specs) == 1
@@ -349,7 +350,7 @@ class TestIptablesIpsetStrategy:
         )
         lines = IptablesManager()._expand_rule_lines(rule)
         assert len(lines) == 1
-        assert "--match-set " + IptablesManager._rule_ipset_name("r-src-ipset", "src") + " src" in lines[0]
+        assert "--match-set " + IpsetManager.stable_name("rule", "r-src-ipset", "src") + " src" in lines[0]
         assert "-d 172.16.0.0/16" in lines[0]
 
     def test_expand_rule_lines_src_single_ip_dest_multi_specific_ip(self):
@@ -364,7 +365,7 @@ class TestIptablesIpsetStrategy:
         lines = IptablesManager()._expand_rule_lines(rule)
         assert len(lines) == 1
         assert "-s 10.0.0.1" in lines[0]
-        assert "--match-set " + IptablesManager._rule_ipset_name("r-dst-ipset", "dst") + " dst" in lines[0]
+        assert "--match-set " + IpsetManager.stable_name("rule", "r-dst-ipset", "dst") + " dst" in lines[0]
 
 
 class TestRemoteRestsFromCreateFields:

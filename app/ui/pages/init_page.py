@@ -174,7 +174,7 @@ class InitPage:
         if self.step_container is None:
             return
 
-        current_index = self._progress_index(self.current_step)
+        current_index = wizard_progress_index(self.current_step)
         self.step_container.clear()
 
         with self.step_container:
@@ -188,12 +188,6 @@ class InitPage:
                 with ui.element("div").classes(classes):
                     ui.label(f"{index:02d}").classes("step-chip-index")
                     ui.label(title).classes("step-chip-title")
-
-    @staticmethod
-    def _progress_index(step: WizardStep) -> int:
-        """兼容入口：使用统一步骤映射。"""
-
-        return wizard_progress_index(step)
 
     def _cleanup_timers(self) -> None:
         """页面删除时停止安装/PKI UI 轮询，避免向已销毁 client 写入。"""

@@ -21,7 +21,6 @@ from app.ui.adapters.firewall import (
     adapt_remote_cache_status,
     adapt_remote_peer_capability,
     adapt_remote_rule_rows,
-    parse_remote_rule_hints,
 )
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import danger_action, primary_action, secondary_action
@@ -442,12 +441,6 @@ class FirewallRemoteMixin:
             self._refresh_remote_toolbar_state()
             self._refresh_remote_view()
 
-    async def _on_remote_row_enabled_change(self, idx: int, e) -> None:
-        """兼容旧开关入口。"""
-
-        await self._set_remote_row_enabled(idx, bool(e.value))
-
-    @staticmethod
     def _rows_from_remote_import_payload(raw: dict) -> list[dict]:
         return rows_from_remote_import_payload(raw)
 

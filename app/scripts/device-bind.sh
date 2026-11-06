@@ -104,7 +104,6 @@ if [ "${DEVICE_BIND_MODE}" = "strict_hwaddr" ]; then
     FINGERPRINT="${IV_HWADDR}"
     FINGERPRINT_SOURCE="IV_HWADDR"
 else
-    # 历史 B 模式（IV_HWADDR → IV_PLAT_VER|IV_GUI_VER 等）备份：同目录 device-bind.weak_b_mode.legacy.bash.inc，自行粘贴替换本节。
     # ---------- 模式 B：弱指纹（全体 HW；再按平台：iOS/Mac/Win→UV_UUID，安卓→IV_PLAT|IV_PLAT_VER，其它→弱串）----------
     if [ -n "${IV_HWADDR:-}" ]; then
         FINGERPRINT="${IV_HWADDR}"

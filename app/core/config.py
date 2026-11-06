@@ -3,7 +3,6 @@
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from box import Box
 
@@ -37,8 +36,8 @@ _OPTIONAL_STRING_FIELDS = {
 
 def _ensure_data_dirs():
     """确保管理端 data/ 目录存在；OpenVPN 状态目录在 /etc/openvpn（见 ensure_openvpn_runtime_dirs）。"""
-    for subdir in ["groups", "users", "firewall", "peers", "download_links", "audit", "logs"]:
-        (DATA_DIR / subdir).mkdir(parents=True, exist_ok=True)
+    # 业务元数据已迁移到 SQLite；具体运行时子目录由各服务按需创建。
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
         ensure_openvpn_runtime_dirs()
 

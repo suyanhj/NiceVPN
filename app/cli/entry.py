@@ -161,7 +161,7 @@ def cmd_add_group(args: argparse.Namespace) -> int:
                     "action": "add-group",
                     "name": name,
                     "subnet": subnet,
-                    "note": "校验已通过；未写入 data/groups，未生成 UUID",
+                    "note": "校验已通过；未写入 SQLite，未生成 UUID",
                 },
                 ensure_ascii=False,
             )
@@ -203,7 +203,7 @@ def cmd_add_user(args: argparse.Namespace) -> int:
                     "username": username,
                     "group_id": gid,
                     "password_enabled": pwd_en,
-                    "note": "校验已通过；未生成证书、未写用户 JSON、未更新组计数",
+                    "note": "校验已通过；未生成证书、未写用户元数据、未更新组计数",
                 },
                 ensure_ascii=False,
             )
@@ -307,7 +307,7 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
                     "dry_run": True,
                     "action": "add-firewall",
                     "rules": payload_rows,
-                    "note": "校验已通过；未写入 data/firewall，未执行 iptables 重建",
+                    "note": "校验已通过；未写入 SQLite，未执行 iptables 重建",
                 },
                 ensure_ascii=False,
                 indent=2,

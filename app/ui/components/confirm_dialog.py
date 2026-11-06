@@ -38,9 +38,8 @@ def build(
     object_count: int | None = None,
     confirm_text: str | None = None,
     danger_level: DangerLevel = "danger",
-    confirm_color: str | None = None,
 ) -> ConfirmDialog:
-    """构建确认对话框但不自动打开；旧颜色参数继续兼容。"""
+    """构建确认对话框但不自动打开。"""
 
     if danger_level not in _LEVEL_COLOR:
         raise ValueError(f"不支持的危险级别: {danger_level}")
@@ -84,7 +83,7 @@ def build(
         else:
             button.disable()
 
-    color = confirm_color or _LEVEL_COLOR[danger_level]
+    color = _LEVEL_COLOR[danger_level]
     with ui.dialog() as dialog, ui.card().classes("vpn-confirm-dialog"):
         ui.label(str(title).strip() or "确认操作").classes("vpn-confirm-dialog__title")
         ui.label(normalized_message).classes("vpn-confirm-dialog__message")
@@ -131,9 +130,8 @@ def show(
     object_count: int | None = None,
     confirm_text: str | None = None,
     danger_level: DangerLevel = "danger",
-    confirm_color: str | None = None,
 ):
-    """显示确认对话框，并保持旧接口返回 dialog 的兼容行为。"""
+    """显示确认对话框并返回 dialog。"""
 
     handle = build(
         message,
@@ -143,15 +141,6 @@ def show(
         object_count=object_count,
         confirm_text=confirm_text,
         danger_level=danger_level,
-        confirm_color=confirm_color,
     )
     handle.dialog.open()
     return handle.dialog
-
-
-def _handle_confirm(dialog, on_confirm):
-    """兼容旧测试或外部调用的同步确认辅助。"""
-
-    dialog.close()
-    if on_confirm:
-        on_confirm()

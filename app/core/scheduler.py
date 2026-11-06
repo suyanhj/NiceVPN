@@ -19,7 +19,7 @@ def start_scheduler():
     - 证书到期检查：每小时执行一次，更新 data/alerts.json
     - 首页流量快照：每分钟采样一次，仅在内存保留最近 5 个点
     - 日志过期清理：每天 03:30 执行（OpenVPN 日志、审计 JSONL、遗留轮转文件）
-    - 已初始化且非 Windows：同步 device_bind_mode 文件、从 data/firewall/*.json 重建 iptables/ipset（与重启前逻辑一致；重建成功后随 `FirewallRuleService` 同步对端 `VPN_PEER`；并尝试将 mesh `push route` 写入各用户 CCD；sysctl 由 sysctl.d 持久化，不在此重复写入）
+    - 已初始化且非 Windows：同步 device_bind_mode 文件、从 SQLite 中心规则重建 iptables/ipset（与重启前逻辑一致；重建成功后随 `FirewallRuleService` 同步对端 `VPN_PEER`；并尝试将 mesh `push route` 写入各用户 CCD；sysctl 由 sysctl.d 持久化，不在此重复写入）
     """
     from app.core.config import load_config
     from app.services.cert.cert_service import CertService

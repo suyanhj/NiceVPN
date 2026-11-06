@@ -28,7 +28,6 @@ from app.ui.components.states import empty_state, error_state
 from app.ui.components.server_pager import page_after_size_change, render_server_pager
 from app.ui.components.status import status_badge, structured_value
 from app.ui.components.toolbars import render_bulk_action_bar
-from app.ui.copy_clipboard import copy_text_to_clipboard
 from app.utils.cidr import assignable_client_ip_count, normalize_cidr
 
 logger = logging.getLogger(__name__)
@@ -442,12 +441,6 @@ class GroupsPage:
             else:
                 button.disable()
 
-    async def _copy_group_id(self, group_id: str):
-        """兼容旧入口：复制完整用户组 ID。"""
-
-        if await copy_text_to_clipboard(group_id):
-            safe_notify("组 ID 已复制", type="positive")
-
     def _show_create_dialog(self):
         """显示新建用户组表单。"""
 
@@ -541,14 +534,6 @@ class GroupsPage:
         except ValueError as exc:
             safe_notify(f"创建失败: {exc}", type="negative")
             return False
-
-    def _do_create(self, dialog, name: str, subnet: str):
-        """兼容旧调用：执行用户组创建。"""
-
-        success = self._create_group(name, subnet)
-        if success:
-            dialog.close()
-        return success
 
     def _show_edit_dialog(self, group: dict):
         """显示可同时修改名称与子网的编辑表单。"""
@@ -673,25 +658,6 @@ class GroupsPage:
         except ValueError as exc:
             safe_notify(f"修改失败: {exc}", type="negative")
             return False
-
-    def _do_update_subnet(self, dialog, group_id: str, new_subnet: str, old_subnet: str):
-        """兼容旧调用：仅修改子网。"""
-
-        current = self.group_service.get(group_id)
-        if not current:
-            safe_notify("用户组不存在", type="negative")
-            return False
-        if new_subnet == old_subnet:
-            dialog.close()
-            return True
-        success = self._update_group_details(
-            group_id,
-            str(current.get("name") or ""),
-            new_subnet,
-        )
-        if success:
-            dialog.close()
-        return success
 
     def _confirm_disable(self, group: dict) -> None:
         """停用单个用户组前明确影响范围。"""

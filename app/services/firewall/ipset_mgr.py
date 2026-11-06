@@ -384,50 +384,6 @@ class IpsetManager:
                     ok = False
         return ok
 
-    def create_set(self, name: str, subnet: str) -> bool:
-        """兼容旧接口；新业务应使用 spec + reconcile。"""
-        try:
-            self._create_empty(name, set_type="hash:net", family="inet", exist_ok=True)
-            entry = self.normalize_entries([subnet])[0]
-            self._run(["ipset", "add", name, entry, "-exist"], timeout=10)
-            return True
-        except (RuntimeError, ValueError) as exc:
-            logger.error("创建 ipset 集合 %s 失败: %s", name, exc)
-            return False
-
-    def update_set(self, name: str, subnet: str) -> bool:
-        """兼容旧接口；通过 stage/swap 原子替换单集合内容，不执行全局 GC。"""
-        stage = self._stage_name(name)
-        stable_existed = False
-        try:
-            stable_existed = name in self.list_names()
-            self._create_empty(stage, set_type="hash:net", family="inet", exist_ok=False)
-            entry = self.normalize_entries([subnet])[0]
-            self._run(["ipset", "add", stage, entry, "-exist"], timeout=10)
-            if not stable_existed:
-                self._create_empty(name, set_type="hash:net", family="inet", exist_ok=True)
-            self._run(["ipset", "swap", stage, name], timeout=10)
-            self._destroy_best_effort(stage)
-            return True
-        except (RuntimeError, ValueError) as exc:
-            logger.error("更新 ipset 集合 %s 失败: %s", name, exc)
-            self._destroy_best_effort(stage)
-            if not stable_existed:
-                self._destroy_best_effort(name)
-            return False
-
-    def delete_set(self, name: str) -> bool:
-        """兼容旧接口；集合不存在视为成功。"""
-        try:
-            names = self.list_names()
-            if name not in names:
-                return True
-            self._run(["ipset", "destroy", name], timeout=10)
-            return True
-        except RuntimeError as exc:
-            logger.error("删除 ipset 集合 %s 失败: %s", name, exc)
-            return False
-
     def _validate_spec(self, spec: IpsetSpec) -> None:
         if not self.is_stable_managed_name(spec.name):
             raise ValueError(f"拒绝管理 NiceVPN 命名空间外的 ipset: {spec.name}")

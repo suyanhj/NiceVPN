@@ -1,7 +1,7 @@
 """用户组 CRUD 服务
 
 提供组的增删改查、批量操作、启用/禁用等全部管理功能。
-每个组以独立 JSON 文件存储在 data/groups/ 目录下，文件名为 {group_id}.json。
+结构化用户组元数据统一存储在 SQLite。
 """
 
 import logging

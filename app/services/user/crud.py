@@ -56,7 +56,7 @@ class UserService:
         2. 调用 EasyRSA 生成证书和 tls-crypt-v2 客户端密钥
         3. 生成 .ovpn 配置文件（内联所有证书和密钥）
         4. 写入 CCD 文件（固定 IP 分配）
-        5. 保存用户 JSON 记录
+        5. 保存用户 SQLite 元数据
         6. 写入审计日志
         """
         with _USER_CREATE_LOCK:
@@ -125,15 +125,12 @@ class UserService:
         self._write_ccd(username, group)
 
         # 客户端私钥密码只在 EasyRSA gen-req 时使用，不由 NiceVPN 保存。
-        # password_hash 字段仅为旧数据兼容保留，新用户始终写空。
-        password_hash = None
 
         # 构造用户对象
         user = User(
             username=username,
             group_id=group_id,
             password_enabled=password_enabled,
-            password_hash=password_hash,
             status="active",
             ovpn_file_path=ovpn_path,
             cert_serial=cert_serial,

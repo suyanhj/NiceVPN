@@ -90,8 +90,6 @@ def test_stable_names_are_compatible_short_and_tag_ready():
     peer_lan = IpsetManager.stable_name("peer", "peer-1", "lan")
     tag_src = IpsetManager.stable_name("tag", "tag-1", "src")
 
-    assert rule_src == IptablesManager._rule_ipset_name("rule-1", "src")
-    assert peer_lan == IptablesManager._peer_lan_ipset_name("peer-1")
     assert rule_src.startswith(f"{IPSET_PREFIX}s")
     assert rule_dst.startswith(f"{IPSET_PREFIX}d")
     assert peer_lan.startswith(f"{IPSET_PREFIX_PEER}l")
