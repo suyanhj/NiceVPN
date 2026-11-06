@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from nicegui import run, ui
@@ -12,7 +11,7 @@ from app.ui.components.feedback import safe_notify
 
 from app.core.constants import CERT_EXPIRY_WARN_DAYS
 from app.services.cert.cert_service import CertService
-from app.ui.adapters.certs import adapt_cert_row, short_serial
+from app.ui.adapters.certs import adapt_cert_row
 from app.ui.components import alert_card, confirm_dialog
 from app.ui.components.actions import (
     MenuAction,
@@ -190,7 +189,7 @@ class CertsPage:
         )
 
     def _load_rows(self) -> list[dict[str, Any]]:
-        return [self._adapt_cert_row(cert) for cert in self.cert_service.list_all()]
+        return [adapt_cert_row(cert) for cert in self.cert_service.list_all()]
 
     def _refresh_cert_list(self):
         """先呈现页面骨架，再异步刷新证书数据。"""
