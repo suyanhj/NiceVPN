@@ -1248,7 +1248,7 @@ class IptablesManager:
                 for pv in pvs:
                     parts = [f"-A {CHAIN_NAME}", f"-m set --match-set {set_src} src"]
                     if use_dest_ipset:
-                        parts.append(f"-m set --match-set {IpsetManager.stable_name("rule", rule_id, "dst")} dst")
+                        parts.append(f"-m set --match-set {IpsetManager.stable_name('rule', rule_id, 'dst')} dst")
                     elif dest:
                         parts.append(f"-d {dest}")
                     if pv.get("proto"):
@@ -1268,7 +1268,7 @@ class IptablesManager:
                         parts = [f"-A {CHAIN_NAME}", f"-s {tok}"]
                         if use_dest_ipset:
                             parts.append(
-                                f"-m set --match-set {IpsetManager.stable_name("rule", rule_id, "dst")} dst"
+                                f"-m set --match-set {IpsetManager.stable_name('rule', rule_id, 'dst')} dst"
                             )
                         elif dest:
                             parts.append(f"-d {dest}")
@@ -1330,7 +1330,7 @@ class IptablesManager:
                     elif src:
                         parts.append(f"-s {src}")
                     if use_dest_ipset:
-                        parts.append(f"-m set --match-set {IpsetManager.stable_name("rule", rule.id, "dst")} dst")
+                        parts.append(f"-m set --match-set {IpsetManager.stable_name('rule', rule.id, 'dst')} dst")
                     elif dest:
                         parts.append(f"-d {dest}")
                     if pv["proto"]:
