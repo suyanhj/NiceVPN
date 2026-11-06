@@ -331,34 +331,36 @@ def test_remote_grid_selection_maps_rows_back_to_cache_indices() -> None:
     assert page._selected_remote_indices == {0, 2}
 
 
-def test_remote_grid_columns_preserve_raw_rest_and_operations() -> None:
-    fields = [
-        column["field"]
-        for column in FirewallPage._remote_grid_columns()
-    ]
+def test_remote_grid_columns_keep_raw_in_details_and_preserve_operations() -> None:
+    fields = [column["field"] for column in FirewallPage._remote_grid_columns()]
 
     assert fields == [
         "row_number",
         "status_label",
-        "priority",
         "protocol",
         "action_label",
         "source",
         "dest",
         "dest_port",
         "description",
-        "raw_rest",
+        "extra_matches",
         "actions",
     ]
+    assert "priority" not in fields
+    assert "raw_rest" not in fields
     assert "checkboxSelection" not in FirewallPage._remote_grid_columns()[0]
     assert "headerCheckboxSelection" not in FirewallPage._remote_grid_columns()[0]
     columns = {column["field"]: column for column in FirewallPage._remote_grid_columns()}
     for field in ("status_label", "protocol", "action_label"):
         assert columns[field][":filter"] == "window.NiceVpnSetFilter"
         assert columns[field]["filterParams"]["selectAllLabel"] == "(全选)"
-    for field in ("source", "dest", "dest_port", "description", "raw_rest"):
+    for field in ("source", "dest", "dest_port", "description", "extra_matches"):
         assert columns[field][":filter"] == "window.NiceVpnMultiTextFilter"
-    assert columns["priority"]["filter"] is False
+    assert columns["extra_matches"]["tooltipField"] == "extra_matches"
+
+    source = inspect.getsource(FirewallPage._show_remote_rule_actions)
+    assert 'ui.expansion("查看原始 iptables 规则"' in source
+    assert '"复制原始规则"' in source
 
 
 def test_remote_grid_drag_uses_cache_indices_and_schedules_reorder(
