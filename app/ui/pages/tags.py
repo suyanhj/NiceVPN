@@ -7,10 +7,9 @@ import logging
 from nicegui import ui
 
 from app.ui.components.feedback import safe_notify
+from app.ui.components.server_pager import render_server_pager
 
 from app.services.firewall.tag_service import TagService
-from app.services.group.crud import GroupService
-from app.services.user.crud import UserService
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.actions import create_action, secondary_action, danger_action
 
@@ -18,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class TagsPage:
+    TAG_PAGE_SIZE = 12
+    DETAIL_PAGE_SIZE = 20
+
     def __init__(self):
         self.service = TagService()
         self.list_container = None
@@ -40,6 +42,11 @@ class TagsPage:
 
     def render(self) -> None:
         self.expanded_tags: set[str] = set()
+        self.tag_page = 1
+        self.detail_pages: dict[tuple[str, str], int] = {}
+        self.detail_tabs: dict[str, str] = {}
+        self.detail_search: dict[tuple[str, str], str] = {}
+        self.detail_containers: dict[str, object] = {}
         self.query = ""
         self.filter_mode = "all"
         with ui.column().classes("page-shell mgmt-page tags-page--v2"):
@@ -69,11 +76,40 @@ class TagsPage:
 
     def _on_search(self, event) -> None:
         self.query = str(event.value or "")
+        self.tag_page = 1
         self._refresh()
 
     def _on_filter(self, event) -> None:
         self.filter_mode = str(event.value or "all")
+        self.tag_page = 1
         self._refresh()
+
+    def _change_tag_page(self, page: int) -> None:
+        self.tag_page = max(1, int(page))
+        self._refresh()
+
+    def _change_detail_tab(self, tag_id: str, kind: str) -> None:
+        if kind not in ("users", "groups", "rules"):
+            return
+        self.detail_tabs[tag_id] = kind
+        self._refresh_detail(tag_id)
+
+    def _change_detail_page(self, tag_id: str, kind: str, page: int) -> None:
+        self.detail_pages[(tag_id, kind)] = max(1, int(page))
+        self._refresh_detail(tag_id)
+
+    def _apply_detail_search(self, tag_id: str, kind: str, query: str) -> None:
+        self.detail_search[(tag_id, kind)] = str(query or "").strip()
+        self.detail_pages[(tag_id, kind)] = 1
+        self._refresh_detail(tag_id)
+
+    def _refresh_detail(self, tag_id: str) -> None:
+        container = self.detail_containers.get(tag_id)
+        if container is None or getattr(container, "is_deleted", False):
+            return
+        container.clear()
+        with container:
+            self._render_detail_page(tag_id, self.detail_tabs.get(tag_id, "users"))
 
     def _toggle_tag(self, tag_id: str) -> None:
         if tag_id in self.expanded_tags:
@@ -85,35 +121,20 @@ class TagsPage:
     def _refresh(self) -> None:
         if self.list_container is None or getattr(self.list_container, "is_deleted", False):
             return
+        self.detail_containers.clear()
         self.list_container.clear()
         try:
             tags = self.service.list_all()
-            rules = self.service.store.list_firewall_rules()
-            all_users = UserService(store=self.service.store).list_all()
-            all_groups = GroupService(store=self.service.store).list_all()
-            users_by_name = {
-                str(user.get("username") or ""): user for user in all_users
-            }
-            groups_by_id = {
-                str(group.get("id") or ""): group for group in all_groups
-            }
-            rules_by_tag: dict[str, list[dict]] = {}
-            for rule in rules:
-                if rule.get("owner_type") == "tag":
-                    rules_by_tag.setdefault(str(rule.get("owner_id") or ""), []).append(rule)
-
+            counts_by_tag = self.service.store.list_tag_counts()
             cards = []
             for tag in tags:
                 tag_id = str(tag["id"])
-                members = self.service.store.get_tag_members(tag_id)
-                linked_rules = rules_by_tag.get(tag_id, [])
+                counts = counts_by_tag.get(tag_id, {"users": 0, "groups": 0, "rules": 0})
                 if self._matches_filter(
                     tag, self.query, self.filter_mode,
-                    users=len(members["usernames"]),
-                    groups=len(members["group_ids"]),
-                    rules=len(linked_rules),
+                    users=counts["users"], groups=counts["groups"], rules=counts["rules"],
                 ):
-                    cards.append((tag, members, linked_rules))
+                    cards.append((tag, counts))
             if hasattr(self, "total_label"):
                 self.total_label.text = f"共 {len(cards)} / {len(tags)} 个标签" if self.query or self.filter_mode != "all" else f"共 {len(tags)} 个标签"
             with self.list_container:
@@ -127,23 +148,23 @@ class TagsPage:
                     with ui.element("section").classes("mgmt-panel"):
                         ui.label("没有符合筛选条件的标签。").classes("section-caption")
                     return
-                for tag, members, linked_rules in cards:
-                    self._render_card(
-                        tag, members, linked_rules,
-                        users_by_name=users_by_name, groups_by_id=groups_by_id,
+                total_pages = max(1, (len(cards) + self.TAG_PAGE_SIZE - 1) // self.TAG_PAGE_SIZE)
+                self.tag_page = min(max(1, self.tag_page), total_pages)
+                start = (self.tag_page - 1) * self.TAG_PAGE_SIZE
+                for tag, counts in cards[start:start + self.TAG_PAGE_SIZE]:
+                    self._render_card(tag, counts)
+                if len(cards) > self.TAG_PAGE_SIZE:
+                    render_server_pager(
+                        total=len(cards), page=self.tag_page,
+                        page_size=self.TAG_PAGE_SIZE, on_change=self._change_tag_page,
                     )
         except Exception as exc:
             logger.exception("加载防火墙标签失败")
             with self.list_container:
                 ui.label(f"加载标签失败：{exc}").classes("text-negative")
 
-    def _render_card(
-        self, tag: dict, members: dict[str, list[str]], rules: list[dict],
-        *, users_by_name: dict[str, dict], groups_by_id: dict[str, dict],
-    ) -> None:
+    def _render_card(self, tag: dict, counts: dict[str, int]) -> None:
         tag_id = str(tag["id"])
-        usernames = members["usernames"]
-        group_ids = members["group_ids"]
         expanded = tag_id in self.expanded_tags
 
         with ui.element("section").classes(
@@ -170,13 +191,13 @@ class TagsPage:
                 with ui.row().classes("tags-record-meta items-center"):
                     with ui.element("span").classes("mgmt-meta-item"):
                         ui.icon("person_outline", size="14px")
-                        ui.label(f"用户 {len(usernames)}")
+                        ui.label(f"用户 {counts['users']}")
                     with ui.element("span").classes("mgmt-meta-item"):
                         ui.icon("folder_shared", size="14px")
-                        ui.label(f"组 {len(group_ids)}")
+                        ui.label(f"组 {counts['groups']}")
                     with ui.element("span").classes("mgmt-meta-item"):
                         ui.icon("shield", size="14px")
-                        ui.label(f"规则 {len(rules)}")
+                        ui.label(f"规则 {counts['rules']}")
                 with ui.element("div").classes("mgmt-actions tags-record-actions"):
                     secondary_action(
                         "编辑", icon="edit",
@@ -185,8 +206,8 @@ class TagsPage:
                     danger_action(
                         "删除", icon="delete",
                         on_click=lambda data=dict(tag): self._show_delete_dialog(data),
-                        disabled=bool(rules),
-                        tooltip="该标签被防火墙规则引用，请先删除规则" if rules else None,
+                        disabled=bool(counts["rules"]),
+                        tooltip="该标签被防火墙规则引用，请先删除规则" if counts["rules"] else None,
                     ).props("dense")
             if expanded:
                 with ui.column().classes("tags-record-details"):
@@ -196,30 +217,63 @@ class TagsPage:
                             "管理关联", icon="group_add",
                             on_click=lambda tid=tag_id: self._show_members_dialog(tid),
                         ).props("dense")
-                    with ui.tabs().classes("firewall-compact-tabs tags-detail-tabs w-full").props(
+                    kind = self.detail_tabs.get(tag_id, "users")
+                    with ui.tabs(value=kind, on_change=lambda e, tid=tag_id: self._change_detail_tab(tid, str(e.value))).classes("firewall-compact-tabs tags-detail-tabs w-full").props(
                         "dense align=left inline-label"
-                    ) as tabs:
-                        user_tab = ui.tab(f"关联用户 ({len(usernames)})", icon="people")
-                        group_tab = ui.tab(f"关联组 ({len(group_ids)})", icon="folder_shared")
-                        rule_tab = ui.tab(f"引用规则 ({len(rules)})", icon="shield")
-                    with ui.tab_panels(tabs, value=user_tab).classes(
-                        "tags-detail-panels w-full"
-                    ).props("animated=False"):
-                        with ui.tab_panel(user_tab).classes("tags-detail-panel"):
-                            self._render_user_members(usernames, users_by_name)
-                        with ui.tab_panel(group_tab).classes("tags-detail-panel"):
-                            self._render_group_members(group_ids, groups_by_id)
-                        with ui.tab_panel(rule_tab).classes("tags-detail-panel"):
-                            self._render_rule_refs(rules)
+                    ):
+                        ui.tab("users", label=f"关联用户 ({counts['users']})", icon="people")
+                        ui.tab("groups", label=f"关联组 ({counts['groups']})", icon="folder_shared")
+                        ui.tab("rules", label=f"引用规则 ({counts['rules']})", icon="shield")
+                    with ui.column().classes("tags-detail-panel tags-detail-panels w-full") as detail:
+                        self.detail_containers[tag_id] = detail
+                        self._render_detail_page(tag_id, kind)
+
+    def _render_detail_page(self, tag_id: str, kind: str) -> None:
+        key = (tag_id, kind)
+        page = self.detail_pages.get(key, 1)
+        search = self.detail_search.get(key, "")
+        if kind in ("users", "groups"):
+            with ui.row().classes("w-full items-center gap-2"):
+                search_input = ui.input(
+                    placeholder="搜索用户名" if kind == "users" else "搜索组名称或 ID",
+                    value=search,
+                ).props("outlined dense clearable").classes("flex-grow")
+                secondary_action(
+                    "查询", icon="search",
+                    on_click=lambda: self._apply_detail_search(tag_id, kind, search_input.value),
+                ).props("dense")
+        rows, total = self.service.store.list_tag_detail_page(
+            tag_id, kind, offset=(page - 1) * self.DETAIL_PAGE_SIZE,
+            limit=self.DETAIL_PAGE_SIZE, search=search,
+        )
+        last_page = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
+        if page > last_page:
+            page = last_page
+            self.detail_pages[key] = page
+            rows, total = self.service.store.list_tag_detail_page(
+                tag_id, kind, offset=(page - 1) * self.DETAIL_PAGE_SIZE,
+                limit=self.DETAIL_PAGE_SIZE, search=search,
+            )
+        if kind == "users":
+            self._render_user_members(rows)
+        elif kind == "groups":
+            self._render_group_members(rows)
+        else:
+            self._render_rule_refs(rows)
+        if total > self.DETAIL_PAGE_SIZE:
+            render_server_pager(
+                total=total, page=page, page_size=self.DETAIL_PAGE_SIZE,
+                on_change=lambda target: self._change_detail_page(tag_id, kind, target),
+            )
 
     @staticmethod
-    def _render_user_members(names: list[str], lookup: dict[str, dict]) -> None:
-        if not names:
+    def _render_user_members(users: list[dict]) -> None:
+        if not users:
             ui.label("暂无关联用户").classes("tags-detail-empty")
             return
         with ui.column().classes("tags-detail-list w-full"):
-            for username in names:
-                info = lookup.get(username, {})
+            for info in users:
+                username = str(info.get("username") or "")
                 status = str(info.get("status") or "unknown")
                 with ui.row().classes(
                     "tags-detail-row w-full items-center justify-between gap-3"
@@ -233,13 +287,13 @@ class TagsPage:
                     ).props("outline")
 
     @staticmethod
-    def _render_group_members(ids: list[str], lookup: dict[str, dict]) -> None:
-        if not ids:
+    def _render_group_members(groups: list[dict]) -> None:
+        if not groups:
             ui.label("暂无关联用户组").classes("tags-detail-empty")
             return
         with ui.column().classes("tags-detail-list w-full"):
-            for group_id in ids:
-                info = lookup.get(group_id, {})
+            for info in groups:
+                group_id = str(info.get("id") or "")
                 with ui.row().classes(
                     "tags-detail-row w-full items-center justify-between gap-3 flex-wrap"
                 ):
@@ -331,37 +385,128 @@ class TagsPage:
             return
         try:
             current = self.service.store.get_tag_members(tag_id)
-            users = UserService(store=self.service.store).list_all()
-            groups = GroupService(store=self.service.store).list_all()
         except Exception as exc:
             safe_notify(f"读取成员失败：{exc}", type="negative")
             return
 
+        # 仅当前页候选项进入 UI。已选集合独立维护，搜索、翻页均不丢失选择。
+        selected = {
+            "users": set(current["usernames"]),
+            "groups": set(current["group_ids"]),
+        }
+        state = {
+            kind: {"page": 1, "search": "", "selected_only": False}
+            for kind in ("users", "groups")
+        }
+        containers = {}
+        count_labels = {}
+
+        def set_selected(kind: str, item_id: str, checked: bool) -> None:
+            if checked:
+                selected[kind].add(item_id)
+            else:
+                selected[kind].discard(item_id)
+            count_labels[kind].text = f"已选 {len(selected[kind])} 项（跨页保留）"
+
+        def render_choices(kind: str) -> None:
+            container = containers[kind]
+            if getattr(container, "is_deleted", False):
+                return
+            container.clear()
+            config = state[kind]
+            page = int(config["page"])
+            if config["selected_only"]:
+                ids = sorted(selected[kind])
+                total = len(ids)
+                last = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
+                page = min(page, last)
+                start = (page - 1) * self.DETAIL_PAGE_SIZE
+                rows = [{"username" if kind == "users" else "id": value} for value in ids[start:start + self.DETAIL_PAGE_SIZE]]
+            else:
+                rows, total = self.service.store.list_tag_candidates_page(
+                    kind, search=str(config["search"]),
+                    offset=(page - 1) * self.DETAIL_PAGE_SIZE,
+                    limit=self.DETAIL_PAGE_SIZE,
+                )
+                last = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
+                if page > last:
+                    page = last
+                    rows, total = self.service.store.list_tag_candidates_page(
+                        kind, search=str(config["search"]),
+                        offset=(page - 1) * self.DETAIL_PAGE_SIZE,
+                        limit=self.DETAIL_PAGE_SIZE,
+                    )
+            config["page"] = page
+            with container:
+                if not rows:
+                    ui.label("暂无匹配成员").classes("tags-detail-empty")
+                for row in rows:
+                    item_id = str(row["username" if kind == "users" else "id"])
+                    label = (
+                        item_id if kind == "users"
+                        else f"{row.get('name') or item_id} ({item_id})"
+                    )
+                    ui.checkbox(
+                        label, value=item_id in selected[kind],
+                        on_change=lambda e, k=kind, ident=item_id: set_selected(k, ident, bool(e.value)),
+                    ).classes("w-full")
+                if total > self.DETAIL_PAGE_SIZE:
+                    render_server_pager(
+                        total=total, page=page, page_size=self.DETAIL_PAGE_SIZE,
+                        on_change=lambda target, k=kind: change_page(k, target),
+                    )
+
+        def change_page(kind: str, page: int) -> None:
+            state[kind]["page"] = max(1, int(page))
+            render_choices(kind)
+
+        def apply_search(kind: str, search: str) -> None:
+            state[kind]["page"] = 1
+            state[kind]["search"] = str(search or "").strip()
+            render_choices(kind)
+
+        def toggle_selected_only(kind: str, checked: bool) -> None:
+            state[kind]["page"] = 1
+            state[kind]["selected_only"] = checked
+            render_choices(kind)
+
         def body() -> None:
-            fields["users"] = ui.select(
-                {u["username"]: u["username"] for u in users},
-                label="关联用户（多选）",
-                value=list(current["usernames"]),
-                multiple=True, with_input=True,
-            ).classes("w-full")
-            fields["groups"] = ui.select(
-                {g["id"]: f"{g.get('name') or g['id']} ({g.get('subnet') or '—'})" for g in groups},
-                label="关联用户组（多选）",
-                value=list(current["group_ids"]),
-                multiple=True, with_input=True,
-            ).classes("w-full")
+            with ui.tabs(value="users").classes("w-full firewall-compact-tabs") as tabs:
+                ui.tab("users", label="关联用户", icon="people")
+                ui.tab("groups", label="关联组", icon="folder_shared")
+            with ui.tab_panels(tabs, value="users").classes("w-full"):
+                for kind, title in (("users", "用户名"), ("groups", "组名称或 ID")):
+                    with ui.tab_panel(kind).classes("w-full"):
+                        with ui.row().classes("w-full items-center gap-2"):
+                            search_input = ui.input(
+                                placeholder=f"搜索{title}",
+                            ).props("outlined dense clearable").classes("flex-grow")
+                            secondary_action(
+                                "搜索", icon="search",
+                                on_click=lambda k=kind, field=search_input: apply_search(k, field.value),
+                            ).props("dense")
+                        with ui.row().classes("w-full items-center justify-between"):
+                            count_labels[kind] = ui.label(
+                                f"已选 {len(selected[kind])} 项（跨页保留）"
+                            ).classes("tags-detail-muted")
+                            ui.checkbox(
+                                "只看已选", value=False,
+                                on_change=lambda e, k=kind: toggle_selected_only(k, bool(e.value)),
+                            ).props("dense")
+                        containers[kind] = ui.column().classes(
+                            "w-full tags-detail-list tags-member-choice-list"
+                        )
+                        render_choices(kind)
             ui.label("变更成员后，仅被启用防火墙规则引用的标签才会触发 VPN_FORWARD 刷新。").classes(
                 "section-caption"
             )
-
-        fields = {}
 
         def submit() -> bool:
             try:
                 self.service.set_members(
                     tag_id,
-                    usernames=fields["users"].value or [],
-                    group_ids=fields["groups"].value or [],
+                    usernames=sorted(selected["users"]),
+                    group_ids=sorted(selected["groups"]),
                 )
                 safe_notify("标签成员已更新", type="positive")
                 self._refresh()
@@ -373,7 +518,7 @@ class TagsPage:
         dialog = create_form_dialog(
             f"管理标签成员 · {tag['name']}", body=body, on_submit=submit
         )
-        dialog.card.classes("w-[min(95vw,32rem)]")
+        dialog.card.classes("tags-members-dialog")
         dialog.open()
 
     def _delete_tag_and_refresh(self, tag_id: str, dialog) -> bool:
