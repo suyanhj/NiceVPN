@@ -6,8 +6,6 @@ DIST_DIR="${ROOT_DIR}/app/ui/vue/dist"
 SERVICE_TEMPLATE="${ROOT_DIR}/deploy/systemd/openvpn-mgmt.service"
 SERVICE_PATH="/etc/systemd/system/openvpn-mgmt.service"
 SERVICE_NAME="openvpn-mgmt"
-API_SERVICE_PATH="/etc/systemd/system/openvpn-mgmt-api.service"
-API_SERVICE_NAME="openvpn-mgmt-api"
 BUILD_UI="${NICEVPN_BUILD_UI:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
@@ -151,12 +149,6 @@ PY
 
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}" >/dev/null
-    # 若用户曾测试过双 unit 的试验版，先停用旧 API 服务以免抢占 8881。
-    # 不删除已有 unit 文件，避免破坏人工修改的部署配置。
-    if [[ -f "${API_SERVICE_PATH}" ]] && grep -Fq ' -m app.api.server' "${API_SERVICE_PATH}"; then
-        systemctl disable --now "${API_SERVICE_NAME}" >/dev/null
-        log "旧独立 API systemd 服务已停用；现由主服务同时监听两个端口。"
-    fi
     systemctl restart "${SERVICE_NAME}"
 
     # 使用系统 logrotate.timer/cron，直接在 /etc/logrotate.d 下配置。

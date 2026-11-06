@@ -98,8 +98,9 @@ def test_start_sh_supports_python_discovery_and_daemon_mode() -> None:
     assert "systemctl daemon-reload" in text
     assert 'systemctl enable "${SERVICE_NAME}"' in text
     assert 'systemctl restart "${SERVICE_NAME}"' in text
-    assert 'systemctl restart "${API_SERVICE_NAME}"' not in text
-    assert 'systemctl enable "${API_SERVICE_NAME}"' not in text
+    assert "openvpn-mgmt-api" not in text
+    assert "API_SERVICE_PATH" not in text
+    assert "API_SERVICE_NAME" not in text
     assert 'exec "${PYTHON_BIN}" -m app.api.server' not in text
 
 

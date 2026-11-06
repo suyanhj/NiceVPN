@@ -51,7 +51,7 @@ pip install -r requirements.txt
 sudo -E ./start.sh daemon
 ```
 
-daemon 模式是幂等的。更新代码后再次执行仅重启 `openvpn-mgmt` 一个服务，它同时启动两个端口；systemd 本身不会在服务重启时构建 Vue。SQLite 数据升级和调度器仅执行一次，API 监听线程不重复初始化。曾安装过双服务试验版的机器会自动停用旧 `openvpn-mgmt-api` unit，避免占用端口（unit 文件保留，可人工检查）。
+daemon 模式是幂等的。更新代码后再次执行仅重启 `openvpn-mgmt` 一个服务，它同时启动两个端口；systemd 本身不会在服务重启时构建 Vue。SQLite 数据升级和调度器仅执行一次，API 监听线程不重复初始化。
 
 可在 `/etc/nicevpn/listen.env`（root 可读）中配置独立监听地址，随后重启 `openvpn-mgmt`：
 
