@@ -631,5 +631,3 @@ class CertsPage:
         finally:
             self._finish_operation()
         self._refresh_cert_list()
-
-
