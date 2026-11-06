@@ -323,7 +323,7 @@ class IptablesManager:
             center_json = sum(1 for _p, k, _ in merged if k == "j")
             center_peer = sum(1 for _p, k, _ in merged if k == "p")
             logger.info(
-                "iptables 已原子重建 VPN_FORWARD：JSON 中心 %d 条；对端内网放行 %d 段；规划对端 JSON %d 条未下发",
+                "iptables 已原子重建 VPN_FORWARD：中心规则 %d 条；对端内网放行 %d 段；规划对端规则 %d 条未下发",
                 center_json,
                 center_peer,
                 peer_plan,
