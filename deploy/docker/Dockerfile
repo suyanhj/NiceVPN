@@ -41,7 +41,7 @@ FROM python-deps AS runtime
 WORKDIR /app
 
 RUN mkdir -p \
-        data/groups data/users data/firewall data/download_links data/audit data/logs backups \
+        data backups \
         /etc/openvpn/ccd /etc/openvpn/mgmt/device_bindings /etc/openvpn/mgmt/ovpn \
         /etc/openvpn/log /etc/openvpn/scripts
 
