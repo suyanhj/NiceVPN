@@ -178,13 +178,10 @@ main() {
     if [[ "${1:-}" == "--build-ui" ]]; then
         BUILD_UI=1
         shift
-    elif [[ "${1:-}" == "--no-build" ]]; then
-        BUILD_UI=0
-        shift
     fi
 
     if [[ "${mode}" == "daemon" && "$#" -gt 0 ]]; then
-        fail "daemon 模式不接受额外参数。支持：./start.sh daemon [--build-ui|--no-build]"
+        fail "daemon 模式不接受额外参数。支持：./start.sh daemon [--build-ui]"
     fi
 
     select_python
