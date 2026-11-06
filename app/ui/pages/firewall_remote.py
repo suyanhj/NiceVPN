@@ -21,7 +21,6 @@ from app.ui.adapters.firewall import (
     adapt_remote_cache_status,
     adapt_remote_peer_capability,
     adapt_remote_rule_rows,
-    parse_remote_rule_hints,
 )
 from app.ui.components import confirm_dialog
 from app.ui.components.actions import danger_action, primary_action, secondary_action
