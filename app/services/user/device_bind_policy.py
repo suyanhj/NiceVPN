@@ -7,7 +7,11 @@ import logging
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
+
+if os.name == "posix":
+    import fcntl
 
 from app.core.constants import (
     DEVICE_BIND_MODE_FILE, DEVICE_BIND_EXEMPTIONS_FILE,
@@ -18,18 +22,43 @@ _ALLOWED = frozenset({"weak_log", "weak_fingerprint", "strict_hwaddr"})
 _SYNC_LOCK = threading.RLock()
 
 
-def _write_atomic(path: Path, content: str) -> None:
-    """保护并发读者不遇到半成品；模式与快照只能由管理端发布。"""
+@contextmanager
+def _publication_lock():
+    """跨进程保护读取 SQLite -> 原子发布快照，避免过期写覆盖新策略。"""
+    with _SYNC_LOCK:
+        lock_path = DEVICE_BIND_EXEMPTIONS_FILE.with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+def _write_atomic(path: Path, content: str) -> bool:
+    """只在内容真正改变时原子替换，减少 SSD 写入和 Hook 文件刷新。"""
     path.parent.mkdir(parents=True, exist_ok=True)
+    raw = content.encode("utf-8")
+    try:
+        if path.read_bytes() == raw:
+            return False
+    except FileNotFoundError:
+        pass
+
     fd, temp_path = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         os.fchmod(fd, 0o644)
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            out.write(content)
+        with os.fdopen(fd, "wb") as out:
+            out.write(raw)
+            out.flush()
+            os.fsync(out.fileno())
         os.replace(temp_path, path)
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+    return True
 
 
 def build_device_bind_exemptions(store) -> dict[str, str]:
@@ -75,18 +104,26 @@ def build_device_bind_exemptions(store) -> dict[str, str]:
     return allowed
 
 
+def _publish_exemptions_unlocked(store) -> bool:
+    """只在持有跨进程锁时执行；一律基于 SQLite 当前完整状态重建。"""
+    data = {"version": 1, "users": build_device_bind_exemptions(store)}
+    changed = _write_atomic(
+        DEVICE_BIND_EXEMPTIONS_FILE,
+        json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+    )
+    if changed:
+        logger.info("设备绑定豁免快照更新：%s 人", len(data["users"]))
+    return changed
+
+
 def sync_device_bind_exemption_snapshot(store=None) -> None:
-    """生成 OpenVPN 可读的精简名单；绝不放开 SQLite 或 config.json 权限。"""
+    """不暴露主数据库给 OpenVPN；重建快照并跳过无变化的磁盘写入。"""
     from app.storage.sqlite_store import get_default_store
     if os.name == "nt":
         return
-    with _SYNC_LOCK:
-        resolved_store = store if store is not None else get_default_store()
-        data = {"version": 1, "users": build_device_bind_exemptions(resolved_store)}
-        _write_atomic(
-            DEVICE_BIND_EXEMPTIONS_FILE,
-            json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        )
+    with _publication_lock():
+        resolved = store if store is not None else get_default_store()
+        _publish_exemptions_unlocked(resolved)
 
 
 def refresh_device_bind_exemption_snapshot(store) -> None:
@@ -119,9 +156,10 @@ def sync_device_bind_mode_file(mode: str, *, exemption_enabled: bool | None = No
         from app.core.config import load_config
         exemption_enabled = bool(load_config().get("device_bind_exemption_enabled"))
     effective = bool(exemption_enabled and m != "weak_log")
-    with _SYNC_LOCK:
+    with _publication_lock():
         if effective:
-            sync_device_bind_exemption_snapshot()
+            from app.storage.sqlite_store import get_default_store
+            _publish_exemptions_unlocked(get_default_store())
         _write_atomic(
             DEVICE_BIND_MODE_FILE,
             m + "\n" + f"exemptions_enabled={int(effective)}\n",
