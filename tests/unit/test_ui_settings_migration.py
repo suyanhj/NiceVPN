@@ -589,7 +589,7 @@ def test_save_download_base_url_validates_and_allows_auto(
     page.base_url_input = _input("")
     assert page._save_base_url() is True
     assert saved[-1].download_base_url is None
-    assert "自动解析" in messages[-1][0]
+    assert "自动使用本机 IP 和 API 监听端口" in messages[-1][0]
 
 
 def _prepare_notify_page() -> SettingsPage:
