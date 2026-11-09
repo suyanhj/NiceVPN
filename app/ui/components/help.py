@@ -47,15 +47,22 @@ def field_with_help(
     if align not in {"center", "start"}:
         raise ValueError("帮助图标对齐方式必须为 center 或 start")
 
-    row_classes = "w-full no-wrap vpn-field-help-row"
-    row_classes += " vpn-field-help-row--start" if align == "start" else " items-center"
+    row_classes = [
+        "w-full",
+        "no-wrap",
+        "vpn-field-help-row",
+        "vpn-field-help-row--start" if align == "start" else "items-center",
+    ]
 
-    with ui.row().classes(row_classes):
+    with ui.row().classes(" ".join(row_classes)):
         field = render_field()
-        field.classes(
-            "vpn-field-help__control"
-            + (" vpn-field-help__control--grow" if control_grow else " vpn-field-help__control--intrinsic")
+        control_class = "vpn-field-help__control"
+        control_class += (
+            " vpn-field-help__control--grow"
+            if control_grow
+            else " vpn-field-help__control--intrinsic"
         )
+        field.classes(control_class)
         help_hint(text, aria_label=aria_label)
 
     return field
