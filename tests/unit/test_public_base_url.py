@@ -128,4 +128,3 @@ def test_configured_management_port_is_not_used(monkeypatch):
     assert resolve_download_base_url(
         None, "http://192.168.1.10:8880",
     ) is None
-
