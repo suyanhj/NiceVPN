@@ -46,10 +46,10 @@ def test_redirect_target_only_allows_internal_paths(value, expected) -> None:
         "/favicon.ico",
         "/_nicegui/client/abc",
         "/static/css/tokens.css",
-     ),
+    ),
 )
 def test_public_paths_keep_their_existing_security_boundary(path: str) -> None:
-    """登录页、框架资源、静态资源、API 与下载令牌不改用页面会话认证。"""
+    """登录页、框架资源和静态资源不改用页面会话认证。"""
 
     assert is_public_auth_path(path) is True
 
@@ -138,7 +138,7 @@ def test_auth_middleware_redirects_anonymous_page_and_keeps_target(monkeypatch) 
     assert session == {"redirect_after_login": "/users?page=2"}
 
 
-@pytest.mark.parametrize("path", ("/static/css/tokens.css",))
+@pytest.mark.parametrize("path", ["/static/css/tokens.css"])
 def test_auth_middleware_does_not_replace_existing_endpoint_security(
     path: str,
     monkeypatch,
