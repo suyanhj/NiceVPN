@@ -333,6 +333,8 @@ class GroupsPage:
                         ui.label(str(group["name"])).classes("mgmt-record-title")
                         if is_root:
                             ui.badge("根组").props("outline").classes("groups-root-badge")
+                        if group.get("device_binding_exempt"):
+                            ui.badge("免设备绑定").props("outline color=positive")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
