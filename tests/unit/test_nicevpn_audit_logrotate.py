@@ -76,7 +76,8 @@ def test_logrotate_installer_detects_duplicate_system_policy_and_rolls_back():
     # 独立策略校验之外还要检查系统入口，发现重名条目后恢复旧配置。
     assert 'grep -Eq' in installer
     assert 'include /etc/logrotate.d' in installer
-    assert '"$LOGROTATE_BIN" -d /etc/logrotate.conf' in installer
+    assert '"$LOGROTATE_BIN" -d "$tmp_conf" > "$tmp_check" 2>&1' in installer
+    assert '"$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1' in installer
     assert 'had_previous=0' in installer
     assert 'cp -p -- "$CONF_TARGET" "$tmp_backup"' in installer
     assert 'install -m 0644 "$tmp_backup" "$CONF_TARGET"' in installer
