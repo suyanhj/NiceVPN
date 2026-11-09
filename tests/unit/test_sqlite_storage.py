@@ -176,6 +176,15 @@ def test_legacy_json_migrates_once_and_is_archived(
     (paths["users"] / "alice.json.lock").write_text("", encoding="utf-8")
     (paths["firewall"] / "g1.prepush.bak").write_text("legacy", encoding="utf-8")
 
+    # Calling get_default_store() from a migration write can re-enter its
+    # initialization lock and hang the entire test process. No default-store
+    # lookup is permitted while importing an explicit legacy database.
+    from app.storage import sqlite_store
+
+    def forbidden_default_store():
+        raise AssertionError("legacy migration must not recurse into get_default_store")
+
+    monkeypatch.setattr(sqlite_store, "get_default_store", forbidden_default_store)
     result = migration.ensure_storage_ready(paths["db"])
 
     assert result.migrated is True
