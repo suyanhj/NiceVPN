@@ -1,4 +1,4 @@
-# OpenVPN 管理系统 — 产品与能力说明
+# NiceVPN — 产品与能力说明
 
 面向 **希望了解能做什么、怎么做** 的读者；实现细节以代码与 [OpenSpec 变更目录](../openspec/changes/) 为准。
 
