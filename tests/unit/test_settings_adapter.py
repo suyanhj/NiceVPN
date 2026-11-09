@@ -154,6 +154,7 @@ def test_openvpn_device_and_ssh_builders_preserve_other_config() -> None:
         mode="strict_hwaddr",
     )
     assert device_cfg.device_bind_mode == "strict_hwaddr"
+    assert device_cfg.device_bind_exemption_enabled is False
 
     ssh_cfg = build_global_ssh_config(
         device_cfg,

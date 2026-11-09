@@ -16,6 +16,7 @@ def test_sync_replaces_device_bind_log_placeholder(tmp_path: Path) -> None:
     assert sh.is_file()
     assert disconnect.is_file()
     assert audit_py.is_file()
+    assert (tmp_path / "scripts" / "device_bind_exemption.py").is_file()
     text = sh.read_text(encoding="utf-8")
     assert "__DEVICE_BIND_LOG_FILE__" not in text
     assert "__VPN_SESSION_AUDIT_LOG_FILE__" not in text

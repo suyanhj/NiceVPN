@@ -2,12 +2,12 @@
 
 ## 设计边界
 
-NiceVPN 继续使用 Python `sqlite3`，不引入 ORM，不修改 v4 数据库格式、业务接口或 JSON → SQLite 的历史迁移行为。
+NiceVPN 继续使用 Python `sqlite3`，不引入 ORM，保留 v1-v4 历史迁移兼容性、业务接口或 JSON → SQLite 的历史迁移行为。
 
 - `app/storage/sqlite_store.py`：连接、WAL、事务、权限、初始化，继续提供兼容的 `SqliteStore` 公共接口。
 - `app/storage/schema_manager.py`：版本检查、SQL 文件读取、显式事务与失败回滚。
-- `app/storage/schema_migrations.py`：v2/v3/v4 的历史迁移代码；v3 包含 Python CIDR 数据转换。
-- `app/storage/sql/*.sql`：不可变的历史建表/索引 SQL（v1、v2、v4）。
+- `app/storage/schema_migrations.py`：v2/v3/v4/v5 的历史迁移代码；v3 包含 Python CIDR 数据转换。
+- `app/storage/sql/*.sql`：不可变的历史建表/索引 SQL（v1、v2、v4、v5）。
 - `app/storage/repositories/`：用户、组、对端、标签、防火墙五个 CRUD 模块。
 - `app/storage/repository_helpers.py`：JSON payload、筛选与索引字段规范化。
 - `app/storage/migration.py`：既有 JSON → SQLite 一次性导入流程，保持独立。
@@ -32,7 +32,7 @@ NiceVPN 继续使用 Python `sqlite3`，不引入 ORM，不修改 v4 数据库�
 
 ## 回归验证
 
-- 空数据库创建 v4 Schema。
+- 空数据库创建 v5 Schema。
 - 从历史 v1/v2/v3 升级，验证旧 JSON payload、索引列和外键。
 - 重复启动幂等、较新 Schema 拒绝旧程序。
 - DDL 中途出错时回滚结构和版本号。
