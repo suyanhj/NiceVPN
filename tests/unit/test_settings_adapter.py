@@ -154,6 +154,7 @@ def test_openvpn_device_and_ssh_builders_preserve_other_config() -> None:
         mode="strict_hwaddr",
     )
     assert device_cfg.device_bind_mode == "strict_hwaddr"
+    assert device_cfg.device_bind_exemption_enabled is False
 
     ssh_cfg = build_global_ssh_config(
         device_cfg,
@@ -238,6 +239,8 @@ def test_download_base_url_blank_and_normalization() -> None:
         "https://user:pass@vpn.example.com",
         "https://vpn.example.com/?token=x",
         "https://vpn.example.com/#frag",
+        "http://vpn.example.com:8880",
+        "https://admin.example.com:8880",
     ],
 )
 def test_download_base_url_rejects_unsafe_values(value: str) -> None:

@@ -357,6 +357,43 @@ body {
   outline: none;
 }
 
+/* Settings field help stays beside the control it describes, never as a detached row. */
+.vpn-field-help-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 9px;
+}
+
+.vpn-field-help-row.vpn-field-help-row--start {
+  align-items: flex-start;
+}
+
+.vpn-field-help__control--grow {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+.vpn-field-help__control--intrinsic {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.vpn-field-help-row > .vpn-help-hint {
+  display: inline-flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.vpn-field-help-row--start > .vpn-help-hint {
+  margin-top: 12px;
+}
+
 .dashboard-status-strip {
   display: grid !important;
   grid-template-columns: repeat(6, minmax(0, 1fr));

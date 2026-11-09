@@ -15,13 +15,14 @@ from app.storage.schema_manager import (
 from app.storage.sqlite_store import SqliteStore
 
 
-def test_schema_ddl_is_packaged_and_initializes_v4(tmp_path):
-    assert SCHEMA_VERSION == 4
+def test_schema_ddl_is_packaged_and_initializes_v5(tmp_path):
+    assert SCHEMA_VERSION == 5
     for name in ("001_initial.sql", "002_query_indexes.sql", "004_firewall_tags.sql"):
         assert "CREATE" in read_sql(name)
+    assert "ALTER TABLE tags" in read_sql("005_device_binding_exempt.sql")
     store = SqliteStore(tmp_path / "nicevpn.sqlite")
     store.initialize()
-    assert store.schema_version() == 4
+    assert store.schema_version() == 5
     with store.connection() as conn:
         tables = {
             row[0] for row in conn.execute(
@@ -31,7 +32,7 @@ def test_schema_ddl_is_packaged_and_initializes_v4(tmp_path):
     assert {"users", "groups", "peers", "firewall_rules",
             "tags", "user_tags", "group_tags", "schema_migrations"} <= tables
     store.initialize()
-    assert store.schema_version() == 4
+    assert store.schema_version() == 5
 
 
 def test_ddl_migrations_roll_back_entire_new_database_on_failure(tmp_path):
@@ -46,7 +47,8 @@ def test_ddl_migrations_roll_back_entire_new_database_on_failure(tmp_path):
         with pytest.raises(RuntimeError, match="injected migration failure"):
             ensure_schema(
                 conn, migrate_v2=fail_v2, migrate_v3=lambda _: None,
-                migrate_v4=lambda _: None, now_iso=lambda: "test",
+                migrate_v4=lambda _: None, migrate_v5=lambda _: None,
+                now_iso=lambda: "test",
             )
         assert conn.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='table' "
@@ -80,7 +82,7 @@ def test_v4_failure_restores_existing_v3_schema(tmp_path):
             ensure_schema(
                 conn, migrate_v2=lambda _: None,
                 migrate_v3=lambda _: None,
-                migrate_v4=fail_v4,
+                migrate_v4=fail_v4, migrate_v5=lambda _: None,
                 now_iso=lambda: "test",
             )
         assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3

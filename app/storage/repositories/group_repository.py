@@ -18,7 +18,21 @@ class GroupRepositoryMixin:
             raise ValueError("group.id 不能为空")
         payload = _normalize_group_payload(data)
         payload["id"] = group_id
-        with self.connection(write=True) as conn:
+        changed = [False]
+        new_status = str(payload.get("status") or "active")
+        new_exempt = bool(payload.get("device_binding_exempt", False))
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            old = conn.execute(
+                "SELECT status,payload FROM groups WHERE id=?", (group_id,)
+            ).fetchone()
+            changed[0] = (
+                old is None
+                or str(old["status"]) != new_status
+                or bool(_load_payload(old["payload"]).get("device_binding_exempt"))
+                != new_exempt
+            )
             conn.execute(
                 """
                 INSERT INTO groups(id, name, status, created_at, updated_at, payload)
@@ -33,7 +47,7 @@ class GroupRepositoryMixin:
                 (
                     group_id,
                     str(payload.get("name") or ""),
-                    str(payload.get("status") or "active"),
+                    new_status,
                     str(payload.get("created_at") or ""),
                     str(payload.get("updated_at") or ""),
                     _dump_payload(payload),
@@ -131,8 +145,14 @@ class GroupRepositoryMixin:
         return str(row["id"]) if row else ""
 
     def delete_group(self, group_id: str) -> None:
-        with self.connection(write=True) as conn:
-            conn.execute("DELETE FROM groups WHERE id = ?", (str(group_id),))
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            result = conn.execute(
+                "DELETE FROM groups WHERE id = ?", (str(group_id),)
+            )
+            changed[0] = result.rowcount > 0
 
     def group_name_exists(self, name: str, *, exclude_id: str | None = None) -> bool:
         sql = "SELECT 1 FROM groups WHERE name = ?"

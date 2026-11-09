@@ -15,6 +15,7 @@ CCD_DIR = OPENVPN_ETC_DIR / "ccd"
 DEVICE_BINDINGS_DIR = OPENVPN_MGMT_DIR / "device_bindings"
 # client-connect 脚本读取，一行：weak_log | weak_fingerprint | strict_hwaddr（weak 见 device-bind.sh 头注释）
 DEVICE_BIND_MODE_FILE = OPENVPN_MGMT_DIR / "device_bind_mode"
+DEVICE_BIND_EXEMPTIONS_FILE = OPENVPN_MGMT_DIR / "device_bind_exemptions.json"
 # 客户端 .ovpn 成品（非管理端 JSON，与 OpenVPN 分发物同属系统区）
 OVPN_PROFILES_DIR = OPENVPN_MGMT_DIR / "ovpn"
 # 经 SSH 下发到对端主机上的客户端配置固定路径（官方 openvpn-client@client.service 默认读取）

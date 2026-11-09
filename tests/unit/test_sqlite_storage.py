@@ -176,6 +176,15 @@ def test_legacy_json_migrates_once_and_is_archived(
     (paths["users"] / "alice.json.lock").write_text("", encoding="utf-8")
     (paths["firewall"] / "g1.prepush.bak").write_text("legacy", encoding="utf-8")
 
+    # Calling get_default_store() from a migration write can re-enter its
+    # initialization lock and hang the entire test process. No default-store
+    # lookup is permitted while importing an explicit legacy database.
+    from app.storage import sqlite_store
+
+    def forbidden_default_store():
+        raise AssertionError("legacy migration must not recurse into get_default_store")
+
+    monkeypatch.setattr(sqlite_store, "get_default_store", forbidden_default_store)
     result = migration.ensure_storage_ready(paths["db"])
 
     assert result.migrated is True
@@ -268,7 +277,7 @@ def test_schema_v3_keeps_query_indexes_and_normalizes_group_cidrs(tmp_path: Path
     store = SqliteStore(tmp_path / "db.sqlite")
     store.initialize()
 
-    assert store.schema_version() == 4
+    assert store.schema_version() == 5
     with store.connection() as conn:
         peer_columns = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(peers)").fetchall()
@@ -342,7 +351,7 @@ def test_schema_v3_migrates_existing_group_payload_cidr(tmp_path: Path) -> None:
     store._initialized = False
     store.initialize()
 
-    assert store.schema_version() == 4
+    assert store.schema_version() == 5
     assert store.get_group("g-old")["subnet"] == "10.8.1.0/24"
 
 

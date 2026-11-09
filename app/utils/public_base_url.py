@@ -2,8 +2,11 @@
 """从 HTTP 请求解析对外访问基础 URL，用于生成一次性下载链接等。"""
 from __future__ import annotations
 
+import os
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
+
+from app.core.constants import DEFAULT_PORT
 
 from starlette.requests import Request
 
@@ -46,42 +49,33 @@ def resolve_download_base_url(
     request: Optional[Request],
     configured: Optional[str],
 ) -> Optional[str]:
-    """
-    解析下载链接使用的 scheme://host[:port][/prefix]。
+    """Resolve a one-time download URL from config or the startup API listener IP.
 
-    优先级：
-    1. 配置项 download_base_url 非空则直接使用
-    2. 根据当前请求推断（与浏览器地址栏一致）
-    3. 若主机为 localhost/127.0.0.1/::1，使用 Web 启动时缓存的本机监听侧地址（ifaddr，优先 eth0），并拼接请求中的 path 前缀（子路径反代）
-    4. 无缓存则返回 None
-
-    Args:
-        request: 当前 NiceGUI 客户端请求；不可用时传 None
-        configured: 系统配置中的 download_base_url
-
-    Returns:
-        无末尾斜杠的基础 URL；无法确定时 None
+    Configured URL takes priority. If omitted, always use the API listener
+    base captured at startup (local IP + API port). Do not infer it from the
+    admin browser address or untrusted forwarded headers.
+    `request` remains optional for compatibility with existing callers.
     """
     if configured and configured.strip():
-        return configured.strip().rstrip("/")
-
-    if request is None:
-        return None
-
-    base = public_base_url_from_request(request)
-    parsed = urlparse(base + "/")
-    host = parsed.hostname
-
-    if _is_loopback_host(host):
-        snap = get_listen_http_base()
-        if not snap:
+        url = configured.strip().rstrip("/")
+        try:
+            if urlsplit(url).port == int(
+                os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))
+            ):
+                return None
+        except ValueError:
             return None
-        path = (parsed.path or "").rstrip("/")
-        if path:
-            return f"{snap.rstrip('/')}{path}"
-        return snap
+        return url
 
-    return base
+    return get_listen_http_base()
+
+
+def resolve_ui_download_base_url(
+    request: Optional[Request],
+    configured: Optional[str],
+) -> Optional[str]:
+    """UI copy/push uses exactly the same download URL policy as the API."""
+    return resolve_download_base_url(request, configured)
 
 
 def get_ui_request() -> Optional[Request]:

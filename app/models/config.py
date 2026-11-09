@@ -106,8 +106,8 @@ class SystemConfig(BaseModel):
     download_base_url: Optional[str] = Field(
         default=None,
         description=(
-            "下载链接基础 URL；留空则按当前浏览器访问地址生成，"
-            "localhost 访问时用 Web 启动时解析的本机网卡地址（优先 eth0，与 NiceGUI 欢迎语同源）"
+            "下载链接基础 URL；配置后优先使用，留空则使用启动时识别的"
+            "本机 IP（优先 eth0）和 API 监听端口，无需域名"
         ),
     )
     github_proxy_urls: list[str] = Field(
@@ -132,6 +132,10 @@ class SystemConfig(BaseModel):
             "weak_fingerprint=全体IV_HWADDR；退化：iOS/Mac/Win用UV_UUID，安卓IV_PLAT|IV_PLAT_VER，其它IV_PLAT_VER|IV_GUI_VER；"
             "strict_hwaddr=必须 IV_HWADDR，无则拒绝（OpenVPN 2.x 核心安卓端常不兼容）"
         ),
+    )
+    device_bind_exemption_enabled: bool = Field(
+        default=False,
+        description="通用或强制模式允许组和标签豁免设备绑定",
     )
     global_ssh_private_key: Optional[str] = Field(
         default=None,

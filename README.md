@@ -100,7 +100,9 @@ NICEVPN_API_PORT=8881
 - 公网拒绝直接访问管理端 `8880`；
 - API 使用 HTTPS 反向代理后再转发到 `8881`；
 - 若由 Nginx 终结 TLS，可将 `NICEVPN_API_HOST=127.0.0.1`；
-- `download_base_url` 应配置为公网 API 的 HTTPS 地址，或确保代理正确传入 `Host` / `X-Forwarded-*`。
+- 一次性下载只走 8881 API 端口的 `/download/{token}`，8880 管理端不再提供下载路由；管理页的「复制」「推送」共享此下载链接。
+- `download_base_url` **可选**：配置后按指定的 IP/域名生成下载链接；留空时统一使用启动检测到的本机 IP + API 监听端口（默认 8881），包括复制、推送以及 API 返回的下载地址。无需域名即可部署和测试。
+- 如果 API 仅绑定 `127.0.0.1`、无法自动找到可访问的监听 IP，则应填写反代可访问的下载地址；外地用户无法访问私网 IP 时可配置公网 IP 或 HTTPS 域名。
 
 公网 API 详情见 [api.md](./api.md)。
 

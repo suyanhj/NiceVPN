@@ -163,7 +163,13 @@ jobs:
         run: python -m pip check
 
       - name: Run unit tests
-        run: python -m pytest tests/unit -q
+        # Show the exact stalled test and Python thread stack; fail faster
+        # than the job's 15-minute upper bound if a regression deadlocks.
+        run: >
+          timeout --signal=INT --kill-after=15s 8m
+          python -m pytest tests/unit -vv
+          -o faulthandler_timeout=45
+          --durations=15
 
   browser-smoke:
     name: Browser smoke (Chrome)

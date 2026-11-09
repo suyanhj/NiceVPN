@@ -239,7 +239,7 @@ def _execute_create_vpn_user(body: CreateVpnUserBody, request: Request) -> Creat
     if not base_url:
         raise HTTPException(
             status_code=400,
-            detail="无法生成下载链接：请在系统设置填写 download_base_url，或正确配置反向代理 Host/X-Forwarded-*",
+            detail="无法生成下载链接：未检测到 API 监听 IP，请检查监听配置或设置下载基础 URL（IP 或域名）",
         )
 
     created_paths: list[tuple[str, Path]] = []
@@ -327,7 +327,7 @@ def api_create_vpn_user(
     - 计划创建的任一站内账号已存在：整单跳过，created=false，不生成新链接。
     - 仅当全部为新用户时才创建；单用户为 .ovpn，多用户为 zip。
 
-    须在「系统设置」配置 download_base_url，或由反向代理传入可被解析的 Host（仅新建时需要）。
+    下载 URL 优先使用系统设置的 download_base_url；留空时使用启动时探测的本机 IP 与 API 端口（仅新建时需要）。
     """
     return _execute_create_vpn_user(body, request)
 
@@ -411,7 +411,7 @@ def _execute_batch_create_vpn_users(items: list[CreateVpnUserBody], request: Req
     if not base_url:
         raise HTTPException(
             status_code=400,
-            detail="无法生成下载链接：请在系统设置填写 download_base_url，或正确配置反向代理 Host/X-Forwarded-*",
+            detail="无法生成下载链接：未检测到 API 监听 IP，请检查监听配置或设置下载基础 URL（IP 或域名）",
         )
 
     try:

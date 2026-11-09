@@ -44,6 +44,7 @@ class PublicApiListener:
                 port=port,
                 log_level="info",
                 log_config=None,
+                access_log=False,  # 禁止 URL 中一次性令牌进入访问日志。
                 timeout_graceful_shutdown=5,
             )
         )

@@ -333,6 +333,8 @@ class GroupsPage:
                         ui.label(str(group["name"])).classes("mgmt-record-title")
                         if is_root:
                             ui.badge("根组").props("outline").classes("groups-root-badge")
+                        if group.get("device_binding_exempt"):
+                            ui.badge("免设备绑定").props("outline color=positive")
                     with ui.element("div").classes("mgmt-record-meta"):
                         with ui.element("span").classes("mgmt-meta-item"):
                             ui.icon("lan", size="14px")
@@ -467,6 +469,7 @@ class GroupsPage:
                 "子网 CIDR",
                 placeholder="例如：10.224.1.0/24",
             ).classes("w-full")
+            fields["device_binding_exempt"] = ui.switch("豁免设备绑定", value=False)
             fields["capacity"] = ui.label("").classes("text-caption text-grey-6")
             fields["capacity"].set_visibility(False)
             fields["conflict"] = ui.label("").classes("text-caption text-negative")
@@ -515,19 +518,20 @@ class GroupsPage:
             on_submit=lambda: self._create_group(
                 str(fields["name"].value or "").strip(),
                 str(fields["subnet"].value or "").strip(),
+                bool(fields["device_binding_exempt"].value),
             ),
             submit_label="创建",
         )
         form.open()
 
-    def _create_group(self, name: str, subnet: str) -> bool:
+    def _create_group(self, name: str, subnet: str, device_binding_exempt: bool = False) -> bool:
         """执行用户组创建并返回表单是否可关闭。"""
 
         if not name or not subnet:
             safe_notify("请填写完整信息", type="negative")
             return False
         try:
-            self.group_service.create(name, subnet)
+            self.group_service.create(name, subnet, device_binding_exempt=device_binding_exempt)
             safe_notify(f"用户组 {name} 已创建", type="positive")
             ui.navigate.to("/groups")
             return True
@@ -555,6 +559,9 @@ class GroupsPage:
                 "子网 CIDR",
                 value=str(group.get("subnet") or ""),
             ).classes("w-full")
+            fields["device_binding_exempt"] = ui.switch(
+                "豁免设备绑定", value=bool(group.get("device_binding_exempt", False))
+            )
 
             if not can_edit_subnet:
                 fields["subnet"].props("disable")
@@ -637,11 +644,12 @@ class GroupsPage:
                     if can_edit_subnet
                     else str(group.get("subnet") or "")
                 ),
+                bool(fields["device_binding_exempt"].value),
             ),
         )
         form.open()
 
-    def _update_group_details(self, group_id: str, name: str, subnet: str) -> bool:
+    def _update_group_details(self, group_id: str, name: str, subnet: str, device_binding_exempt: bool | None = None) -> bool:
         """保存用户组名称和子网。"""
 
         if not name:
@@ -651,7 +659,7 @@ class GroupsPage:
             safe_notify("子网不能为空", type="negative")
             return False
         try:
-            self.group_service.update_details(group_id, name=name, subnet=subnet)
+            self.group_service.update_details(group_id, name=name, subnet=subnet, device_binding_exempt=device_binding_exempt)
             safe_notify("用户组已更新", type="positive")
             ui.navigate.to("/groups")
             return True

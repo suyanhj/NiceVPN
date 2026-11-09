@@ -22,6 +22,7 @@ from app.utils.cidr import normalize_cidr
 from app.storage.schema_manager import SCHEMA_VERSION, ensure_schema
 from app.storage.schema_migrations import (
     migrate_v2_query_indexes, migrate_v3_normalize_group_cidrs, migrate_v4_tags,
+    migrate_v5_device_binding_exempt,
 )
 from app.storage.repository_helpers import (
     _now_iso, _dump_payload, _load_payload, _like_pattern,
@@ -99,6 +100,7 @@ class SqliteStore(
                     migrate_v2=self._migrate_v2_query_indexes,
                     migrate_v3=self._migrate_v3_normalize_group_cidrs,
                     migrate_v4=self._migrate_v4_tags,
+                    migrate_v5=self._migrate_v5_device_binding_exempt,
                     now_iso=_now_iso,
                 )
                 self._fix_permissions()
@@ -107,7 +109,15 @@ class SqliteStore(
     _migrate_v2_query_indexes = staticmethod(migrate_v2_query_indexes)
 
     @contextmanager
-    def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(
+        self, *, write: bool = False,
+        device_binding_changed: list[bool] | None = None,
+    ) -> Iterator[sqlite3.Connection]:
+        """Only policy-sensitive repository operations request an exemption snapshot refresh.
+
+        The dirty flag is set inside the transaction and observed only after a
+        successful commit. Unlike SQL trace callbacks, unrelated edits are ignored.
+        """
         self.initialize()
         conn = self._open()
         try:
@@ -123,6 +133,24 @@ class SqliteStore(
         finally:
             conn.close()
             self._fix_permissions()
+
+        if (
+            write and device_binding_changed and device_binding_changed[0]
+            and os.name != "nt"
+        ):
+            # Independent test stores must not overwrite OpenVPN's runtime snapshot.
+            # Avoid get_default_store() here: initializing the default store
+            # can itself migrate legacy JSON using this same write path.
+            # Calling it from a migration transaction recursively enters the
+            # initialization lock and deadlocks the Python test suite.
+            configured_path = Path(
+                os.environ.get("NICEVPN_DB_PATH") or SQLITE_DB_FILE
+            ).resolve()
+            if self.path.resolve() == configured_path:
+                from app.services.user.device_bind_policy import (
+                    refresh_device_bind_exemption_snapshot,
+                )
+                refresh_device_bind_exemption_snapshot(self)
 
     # ---- storage metadata ----
 
@@ -152,6 +180,7 @@ class SqliteStore(
 
     _migrate_v3_normalize_group_cidrs = staticmethod(migrate_v3_normalize_group_cidrs)
     _migrate_v4_tags = staticmethod(migrate_v4_tags)
+    _migrate_v5_device_binding_exempt = staticmethod(migrate_v5_device_binding_exempt)
 
 
 _default_store: SqliteStore | None = None

@@ -35,7 +35,7 @@ from app.ui.components import confirm_dialog
 from app.ui.components.actions import danger_action, primary_action, secondary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
-from app.ui.components.help import help_hint
+from app.ui.components.help import field_with_help
 from app.ui.components.states import error_state
 
 _EASYRSA_TEST_URL = "https://github.com/OpenVPN/easy-rsa/releases/download/v3.2.4/EasyRSA-3.2.4.tgz"
@@ -534,33 +534,34 @@ class SettingsPage:
                     label="协议",
                     value=self.config.proto or "udp",
                 ).classes("flex-1 min-w-[10rem]")
-            self.push_lan_routes_input = ui.textarea(
-                "内网 push route（每行 IPv4 CIDR）",
-                value="\n".join(
-                    self.config.get("push_lan_routes") or []
-                ),
-                placeholder=(
-                    "每行一条，如 172.16.22.0/24\n"
-                    "勿填 VPN 地址池。"
-                ),
-            ).classes("w-full")
-            help_hint(
+            self.push_lan_routes_input = field_with_help(
+                lambda: ui.textarea(
+                    "内网 push route（每行 IPv4 CIDR）",
+                    value="\n".join(
+                        self.config.get("push_lan_routes") or []
+                    ),
+                    placeholder=(
+                        "每行一条，如 172.16.22.0/24\n"
+                        "勿填 VPN 地址池。"
+                    ),
+                ).classes("w-full"),
                 "客户端只会把这里配置的物理网段经 VPN 路由；"
                 "中心侧按 VPN 源网段自动 MASQUERADE。",
                 aria_label="内网路由说明",
+                align="start",
             )
-            self.max_clients_input = ui.number(
-                "单实例最大并发连接数（max-clients）",
-                value=int(
-                    self.config.get("max_clients")
-                    or OPENVPN_DEFAULT_MAX_CLIENTS
-                ),
-                min=16,
-                max=65534,
-                step=1,
-                format="%.0f",
-            ).classes("w-full")
-            help_hint(
+            self.max_clients_input = field_with_help(
+                lambda: ui.number(
+                    "单实例最大并发连接数（max-clients）",
+                    value=int(
+                        self.config.get("max_clients")
+                        or OPENVPN_DEFAULT_MAX_CLIENTS
+                    ),
+                    min=16,
+                    max=65534,
+                    step=1,
+                    format="%.0f",
+                ).classes("w-full"),
                 "保存会重写 server.conf、刷新 VPN_FORWARD，并同步已有客户端 "
                 ".ovpn 的 remote/proto；OpenVPN 进程仍需在服务管理中重启。",
                 aria_label="保存生效说明",
@@ -592,22 +593,32 @@ class SettingsPage:
         """渲染 client-connect 设备绑定策略。"""
 
         def body() -> None:
-            self.device_bind_mode_input = ui.select(
-                {
-                    "weak_log": "A 弱绑定 · 仅记录",
-                    "weak_fingerprint": "B 弱指纹 · 分级匹配",
-                    "strict_hwaddr": "C 强绑定 · 须 IV_HWADDR",
-                },
-                label="策略",
-                value=(
-                    self.config.get("device_bind_mode")
-                    or "weak_fingerprint"
-                ),
-            ).classes("w-full")
-            help_hint(
+            self.device_bind_mode_input = field_with_help(
+                lambda: ui.select(
+                    {
+                        "weak_log": "A 弱绑定 · 仅记录",
+                        "weak_fingerprint": "B 弱指纹 · 分级匹配",
+                        "strict_hwaddr": "C 强绑定 · 须 IV_HWADDR",
+                    },
+                    label="策略",
+                    value=(
+                        self.config.get("device_bind_mode")
+                        or "weak_fingerprint"
+                    ),
+                ).classes("w-full"),
                 "A 仅审计；B 按 HW/UUID/平台信息分级匹配；"
                 "C 强制 IV_HWADDR。切换策略后旧设备可能需要重置绑定。",
                 aria_label="设备绑定策略说明",
+            )
+            self.device_bind_exemption_input = field_with_help(
+                lambda: ui.switch(
+                    "启用设备绑定豁免（组 / 标签）",
+                    value=bool(self.config.get("device_bind_exemption_enabled", False)),
+                ),
+                "仅通用和强制绑定模式生效；关闭时保留组和标签配置，"
+                "豁免用户不会产生或更新绑定 JSON，但保留会话及设备审计。",
+                aria_label="设备绑定豁免说明",
+                control_grow=False,
             )
 
         def actions() -> None:
@@ -640,18 +651,18 @@ class SettingsPage:
                     "或 BEGIN RSA / EC PRIVATE KEY-----"
                 ),
             ).classes("w-full").props("rows=8")
-            self.global_ssh_passphrase_input = ui.input(
-                "私钥口令（若密钥有加密）",
-                password=True,
-                password_toggle_button=True,
-                value=(
-                    self.config.get(
-                        "global_ssh_private_key_passphrase"
-                    )
-                    or ""
-                ),
-            ).classes("w-full")
-            help_hint(
+            self.global_ssh_passphrase_input = field_with_help(
+                lambda: ui.input(
+                    "私钥口令（若密钥有加密）",
+                    password=True,
+                    password_toggle_button=True,
+                    value=(
+                        self.config.get(
+                            "global_ssh_private_key_passphrase"
+                        )
+                        or ""
+                    ),
+                ).classes("w-full"),
                 "对端未单独配置私钥时才使用此处默认密钥；"
                 "保存反馈和日志不会回显 PEM 或口令。",
                 aria_label="SSH 默认密钥说明",
@@ -929,15 +940,15 @@ class SettingsPage:
         )
 
     def _render_download_panel(self):
-        """渲染固定下载基址；留空继续自动解析当前访问地址。"""
+        """渲染可选下载基址；留空时自动使用 API 监听的本机 IP。"""
 
         def body() -> None:
-            self.base_url_input = ui.input(
-                "基础 URL（可选）",
-                value=self.config.download_base_url or "",
-                placeholder="留空自动；例 https://vpn.example.com",
-            ).classes("w-full")
-            help_hint(
+            self.base_url_input = field_with_help(
+                lambda: ui.input(
+                    "基础 URL（可选）",
+                    value=self.config.download_base_url or "",
+                    placeholder="例 https://download.example.com 或 http://IP:8881",
+                ).classes("w-full"),
                 "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。",
                 aria_label="基础 URL 说明",
             )
@@ -953,7 +964,7 @@ class SettingsPage:
             "下载链接",
             kicker="Download",
             description=(
-                "留空时按当前请求与监听地址自动生成；固定域名或反代前缀可在此覆盖。"
+                "可选：填写自定义下载地址（IP 或域名）优先使用；留空时自动使用启动检测的本机 IP + API 端口（默认 8881）。",
             ),
             body=body,
             actions=actions,
@@ -1463,7 +1474,7 @@ class SettingsPage:
             )
         else:
             safe_notify(
-                "已清空固定基址，将按当前访问自动解析",
+                "已清空自定义下载地址，自动使用本机 IP 和 API 监听端口",
                 type="positive",
             )
         return True
@@ -1602,6 +1613,7 @@ class SettingsPage:
             merged = build_device_bind_config(
                 previous,
                 mode=str(self.device_bind_mode_input.value or ""),
+                exemption_enabled=bool(self.device_bind_exemption_input.value),
             )
         except Exception as exc:
             safe_notify(f"配置校验失败: {exc}", type="negative")
@@ -1615,14 +1627,21 @@ class SettingsPage:
             return False
 
         try:
-            sync_device_bind_mode_file(merged.device_bind_mode)
-        except OSError as exc:
+            sync_device_bind_mode_file(
+                merged.device_bind_mode,
+                exemption_enabled=merged.device_bind_exemption_enabled,
+            )
+        except Exception as exc:
             try:
                 save_config(previous)
+                sync_device_bind_mode_file(
+                    str(previous.get("device_bind_mode") or "weak_fingerprint"),
+                    exemption_enabled=bool(previous.get("device_bind_exemption_enabled", False)),
+                )
             except Exception:
                 logger.exception("设备绑定配置回滚失败")
             safe_notify(
-                "写入 device_bind_mode 失败，配置已尝试回滚: "
+                "写入设备绑定运行时策略失败，配置已尝试回滚: "
                 f"{exc}",
                 type="negative",
                 multi_line=True,

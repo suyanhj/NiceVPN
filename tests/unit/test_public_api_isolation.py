@@ -77,6 +77,7 @@ def test_api_listener_does_not_create_a_second_process() -> None:
 def test_management_app_no_longer_registers_public_vpn_router() -> None:
     main_source = (Path(__file__).resolve().parents[2] / "main.py").read_text(encoding="utf-8")
     assert 'app.include_router(vpn_ops_router' not in main_source
+    assert 'app.include_router(download_router' not in main_source
 
 
 def test_single_web_run_manages_both_listeners(monkeypatch) -> None:
@@ -115,3 +116,34 @@ def test_single_web_run_manages_both_listeners(monkeypatch) -> None:
         ("web", 18880),
         ("api_stop",),
     ]
+
+
+def test_api_token_download_is_private_and_one_time(tmp_path, monkeypatch) -> None:
+    """8881 下载只凭令牌；不向日志暴露明文 Token，并禁止缓存。"""
+    from app.core import constants
+    from app.services.download.link_mgr import create_link
+    import app.api.download as download_mod
+
+    monkeypatch.setattr(constants, "DOWNLOAD_LINKS_DIR", tmp_path)
+    profile = tmp_path / "alice.ovpn"
+    profile.write_text("client\n", encoding="utf-8")
+    url = create_link("alice", str(profile), "https://download.example.com")
+    token = url.rsplit("/", 1)[-1]
+    records = []
+
+    class FakeAudit:
+        def log(self, *args):
+            records.append(args)
+
+    monkeypatch.setattr(download_mod, "AuditLogger", FakeAudit)
+    client = TestClient(create_api_app())
+    response = client.get("/download/" + token)
+    assert response.status_code == 200
+    assert response.content == b"client\n"
+    assert response.headers["cache-control"].startswith("no-store")
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert records and all(token not in str(record) for record in records)
+    replay = client.get("/download/" + token)
+    assert replay.status_code == 410
+    assert client.get("/download/not_a_valid_token").status_code == 404
