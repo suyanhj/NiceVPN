@@ -239,6 +239,8 @@ def test_download_base_url_blank_and_normalization() -> None:
         "https://user:pass@vpn.example.com",
         "https://vpn.example.com/?token=x",
         "https://vpn.example.com/#frag",
+        "http://vpn.example.com:8880",
+        "https://admin.example.com:8880",
     ],
 )
 def test_download_base_url_rejects_unsafe_values(value: str) -> None:

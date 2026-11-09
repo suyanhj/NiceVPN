@@ -2,6 +2,7 @@
 """一次性下载链接单元测试"""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -59,7 +60,9 @@ class TestConsumeLink:
 
     def test_valid_consume(self, tmp_path):
         """正常消费：首次使用返回文件路径"""
-        url = create_link("alice", "/etc/openvpn/alice.ovpn", "https://vpn.example.com")
+        profile = tmp_path / "alice.ovpn"
+        profile.write_text("client\n")
+        url = create_link("alice", str(profile), "https://vpn.example.com")
         token = url.rsplit("/", 1)[-1]
 
         result = consume_link(token)
@@ -67,14 +70,16 @@ class TestConsumeLink:
         assert result is not None
         assert result["error"] is None
         assert result["username"] == "alice"
-        assert result["file_path"] == "/etc/openvpn/alice.ovpn"
+        assert result["file_path"] == str(profile)
         assert result.get("download_filename") is None
 
     def test_consume_custom_filename(self, tmp_path):
         """令牌带 download_filename 时原样返回，供 zip 等下载名"""
+        zip_file = tmp_path / "bundle.zip"
+        zip_file.write_bytes(b"ZIP")
         url = create_link(
             "batch",
-            "/data/bundle.zip",
+            str(zip_file),
             "https://vpn.example.com",
             download_filename="lisi_20260101_120000.zip",
         )
@@ -84,7 +89,9 @@ class TestConsumeLink:
         assert result["error"] is None
         assert result["download_filename"] == "lisi_20260101_120000.zip"
         """二次消费：返回已使用错误"""
-        url = create_link("alice", "/etc/openvpn/alice.ovpn", "https://vpn.example.com")
+        profile = tmp_path / "alice2.ovpn"
+        profile.write_text("client\n")
+        url = create_link("alice", str(profile), "https://vpn.example.com")
         token = url.rsplit("/", 1)[-1]
 
         # 第一次消费
@@ -120,3 +127,28 @@ class TestConsumeLink:
         """不存在的令牌：返回 None"""
         result = consume_link("nonexistent_token_abc123")
         assert result is None
+
+    def test_missing_download_file_does_not_consume_link(self, tmp_path):
+        profile = tmp_path / "not-yet-created.ovpn"
+        url = create_link("alice", str(profile), "https://download.example.com")
+        token = url.rsplit("/", 1)[-1]
+        result = consume_link(token)
+        assert result["error"] == "file_missing"
+        assert json.loads((tmp_path / f"{token}.json").read_text())["used"] is False
+        profile.write_text("client\n")
+        assert consume_link(token)["error"] is None
+        assert consume_link(token)["error"] == "already_used"
+
+    def test_simultaneous_requests_consume_only_once(self, tmp_path):
+        profile = tmp_path / "concurrent.ovpn"
+        profile.write_text("client\n")
+        url = create_link("alice", str(profile), "https://download.example.com")
+        token = url.rsplit("/", 1)[-1]
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            results = list(executor.map(consume_link, [token] * 12))
+        assert sum(r is not None and r.get("error") is None for r in results) == 1
+        assert sum(r is not None and r.get("error") == "already_used" for r in results) == 11
+
+    def test_invalid_token_is_not_interpreted_as_path(self, tmp_path):
+        assert consume_link("../invalid") is None
+        assert consume_link("A" * 1025) is None

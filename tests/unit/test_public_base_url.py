@@ -5,6 +5,7 @@ from starlette.requests import Request
 from app.utils.public_base_url import (
     public_base_url_from_request,
     resolve_download_base_url,
+    resolve_ui_download_base_url,
 )
 
 
@@ -106,3 +107,45 @@ def test_resolve_localhost_without_listen_snap(monkeypatch):
 
 def test_resolve_no_request_no_config():
     assert resolve_download_base_url(None, None) is None
+
+def test_ui_download_link_maps_direct_management_port_to_api(monkeypatch):
+    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
+    monkeypatch.setenv("NICEVPN_API_PORT", "8881")
+    direct = _make_request(host=b"192.168.1.5:8880")
+    assert resolve_ui_download_base_url(direct, None) == "http://192.168.1.5:8881"
+    assert resolve_ui_download_base_url(direct, "https://download.example.com") == (
+        "https://download.example.com"
+    )
+    assert resolve_ui_download_base_url(direct, "http://192.168.1.5:8880") is None
+
+
+def test_ui_download_link_respects_custom_api_port(monkeypatch):
+    monkeypatch.setenv("NICEVPN_UI_PORT", "18880")
+    monkeypatch.setenv("NICEVPN_API_PORT", "18881")
+    direct = _make_request(host=b"10.0.0.2:18880")
+    assert resolve_ui_download_base_url(direct, None) == "http://10.0.0.2:18881"
+
+
+def test_ui_download_link_requires_configured_domain_for_https_proxy(monkeypatch):
+    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
+    proxied = _make_request(
+        host=b"127.0.0.1:8880",
+        forwarded_host="admin.example.com",
+        forwarded_proto="https",
+    )
+    assert resolve_ui_download_base_url(proxied, None) is None
+    assert resolve_ui_download_base_url(
+        proxied, "https://download.example.com",
+    ) == "https://download.example.com"
+    secure = _make_request(host=b"admin.example.com", scheme="https")
+    assert resolve_ui_download_base_url(secure, None) is None
+
+
+def test_ui_download_link_localhost_uses_api_listener_snapshot(monkeypatch):
+    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
+    monkeypatch.setattr(
+        "app.utils.public_base_url.get_listen_http_base",
+        lambda: "http://192.168.0.10:8881",
+    )
+    direct = _make_request(host=b"localhost:8880")
+    assert resolve_ui_download_base_url(direct, None) == "http://192.168.0.10:8881"

@@ -9,9 +9,11 @@
 - 生产 systemd：`sudo -E ./start.sh daemon` 只安装并启动 `openvpn-mgmt` 一个服务，同时监听 `8880` 与 `8881`。用 `systemctl status openvpn-mgmt` 查看状态。
 - 本地手动运行：`./start.sh` 即启动两个监听端口，无需额外进程或终端。API 监听线程不重复启动 NiceGUI、调度器和 conntrack 监听器。
 - API 端口可设置 `NICEVPN_API_HOST` / `NICEVPN_API_PORT`，Web 端口可设置 `NICEVPN_UI_HOST` / `NICEVPN_UI_PORT`；systemd 从可选的 `/etc/nicevpn/listen.env` 读取。
-- API 端口只开放 `/api/vpn/*` 与一次性 `/download/{token}`。没有管理页面、静态资源、`/docs`、`/redoc` 或 `/openapi.json`。
+- API 端口只开放 `/api/vpn/*` 与一次性 `/download/{token}`。**管理端 8880 不再注册 `/download/{token}`**；API 端口没有管理页面、静态资源、`/docs`、`/redoc` 或 `/openapi.json`。
 - **务必限制公网仅能访问 API 入口，管理端 `8880` 仅内网/VPN 可访问。** HTTP Basic 会传输可还原的凭据，必须在外层使用 HTTPS/TLS 终结；推荐 Nginx 监听公网 HTTPS 端口，把 API 转发到 `127.0.0.1:8881`，并限制代理路径。不要将明文 `http://公网:8881` 直接开放。
-- 在系统设置中将 `download_base_url` 配为 API 的公网 HTTPS 域名（若已设置），或留空从代理请求头自动推断；API 返回的下载令牌可经公开端口下载。
+- 在系统设置中将 `download_base_url` 配为 API 的公网 HTTPS 下载域名。通过 HTTP 直连 `8880` 管理页时可自动生成相同主机 `8881` 链接；**通过 HTTPS 反代访问管理页时必须配置专用下载域名**，不能把管理页域名作为下载地址。
+- 用户管理页的「复制链接」「推送链接」以及公网业务 API 返回的 `download_url` 全部使用独立下载基址，不能再使用管理端口。
+- 令牌有效期为 1 小时、只允许原子消费一次；API Access Log 关闭以避免泄露 URL Token，应用审计仅记录 Token 哈希前缀。
 
 ## 认证
 
@@ -309,7 +311,7 @@ Authorization: Basic xxx
 - **不需要** Basic；链接 **一次性使用**，约 **1 小时** 过期（与系统常量一致）。
 - 成功时为文件流；错误常为 `404` / `410`，Body 为 `{"detail":"..."}`。
 
-管理员须在「系统设置」配置 **`download_base_url`**（或由反代正确传入 `Host` / `X-Forwarded-*`），否则创建接口可能返回 400（无法生成可达链接）。
+管理员通过 HTTPS 反代管理页面时，应在「系统设置」配置 **`download_base_url`**（例如 `https://download.example.com`）；公网 API 自己接收创建请求时，可使用其可信反代 `Host` / `X-Forwarded-*` 推断。不能把基础 URL 配置为管理端口 8880。
 
 ---
 
