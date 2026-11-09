@@ -1,5 +1,7 @@
 # VPN 公网管理 API 说明
 
+> 项目入口见 [README.md](./README.md)；本机命令行管理见 [cli.md](./cli.md)。
+
 基础路径：`/api/vpn`（**同一 NiceVPN 进程内的独立 API 监听端口**，默认 `0.0.0.0:8881`；NiceGUI 管理端仍为 `8880`，不再提供 `/api/vpn/*`）
 
 ## 启动与网络隔离

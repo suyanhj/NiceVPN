@@ -14,9 +14,9 @@
 #   eval "$(register-python-argcomplete /你的项目根/cli.py)"
 #
 # 补全行为示例（固定命令或上述 eval 指向的脚本一致时）：
-#   ovpn-cli <TAB><TAB>              → add-group add-user add-firewall、--dry-run
-#   ovpn-cli add-group --<TAB>       → --dry-run、--name、--subnet 等
-#   ovpn-cli add-firewall --owner-type <TAB>
+#   ovpn-cli <TAB><TAB>              → group user add-firewall hash-admin-password 等
+#   ovpn-cli group <TAB><TAB>        → list show add update enable disable delete
+#   ovpn-cli user <TAB><TAB>         → list show add move device ovpn 等
 #   ovpn-cli add-firewall --iptables-file <TAB>   → 路径补全（FilesCompleter）
 #
 # 将 eval 行写入 ~/.bashrc 后 source ~/.bashrc 可长期生效。
