@@ -15,6 +15,7 @@ from app.ui.components.charts import chart_options, render_chart_card
 from app.ui.components.confirm_dialog import build as build_confirm_dialog
 from app.ui.components.data_grid import render_data_grid
 from app.ui.components.feedback import AsyncOperationGuard, run_guarded, safe_notify
+from app.ui.components.help import field_with_help
 from app.ui.components.form_dialog import create_form_dialog
 from app.ui.components.server_pager import (
     SERVER_PAGE_SIZE_OPTIONS,
@@ -685,3 +686,40 @@ def test_ag_grid_page_size_options_are_centered_like_server_pager() -> None:
     assert ".ag-theme-quartz .ag-select-list-item" in shell_css
     assert "justify-content: center !important;" in shell_css
     assert "text-align: center !important;" in shell_css
+
+
+def test_field_help_keeps_tooltip_icon_attached_to_its_control() -> None:
+    """表单帮助图标必须与对应控件共处一行，不能成为纵向布局中的孤立元素。"""
+
+    state: dict[str, object] = {}
+
+    def page() -> None:
+        state["field"] = field_with_help(
+            lambda: ui.input("服务端地址", value="vpn.example.com"),
+            "这里填写 VPN 服务端地址。",
+            aria_label="服务端地址说明",
+        )
+
+    async def verify_page() -> None:
+        async with user_simulation(page) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            await user.should_see("服务端地址")
+
+    asyncio.run(verify_page())
+
+    field = state["field"]
+    assert "vpn-field-help__control" in field._classes
+    assert "vpn-field-help__control--grow" in field._classes
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    help_source = (
+        root / "app" / "ui" / "components" / "help.py"
+    ).read_text(encoding="utf-8")
+    shell_css = (
+        root / "app" / "ui" / "static" / "css" / "shell.css"
+    ).read_text(encoding="utf-8")
+    assert "vpn-field-help-row" in help_source
+    assert ".vpn-field-help-row > .vpn-help-hint" in shell_css
