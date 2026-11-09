@@ -11,7 +11,7 @@
 - API 端口可设置 `NICEVPN_API_HOST` / `NICEVPN_API_PORT`，Web 端口可设置 `NICEVPN_UI_HOST` / `NICEVPN_UI_PORT`；systemd 从可选的 `/etc/nicevpn/listen.env` 读取。
 - API 端口只开放 `/api/vpn/*` 与一次性 `/download/{token}`。**管理端 8880 不再注册 `/download/{token}`**；API 端口没有管理页面、静态资源、`/docs`、`/redoc` 或 `/openapi.json`。
 - **务必限制公网仅能访问 API 入口，管理端 `8880` 仅内网/VPN 可访问。** HTTP Basic 会传输可还原的凭据，必须在外层使用 HTTPS/TLS 终结；推荐 Nginx 监听公网 HTTPS 端口，把 API 转发到 `127.0.0.1:8881`，并限制代理路径。不要将明文 `http://公网:8881` 直接开放。
-- 在系统设置中将 `download_base_url` 配为 API 的公网 HTTPS 下载域名。通过 HTTP 直连 `8880` 管理页时可自动生成相同主机 `8881` 链接；**通过 HTTPS 反代访问管理页时必须配置专用下载域名**，不能把管理页域名作为下载地址。
+- `download_base_url` **可选**：填写时原样使用指定下载基址（IP 或域名）；不填写时使用服务启动时自动识别的本机 IP（优先 eth0）及 API 监听端口（默认 `8881`）。生成下载 URL 不依赖访问管理后台的 Host，也不要求域名。若 API 仅在回环地址监听，则需明确配置可通过反代访问的下载地址。
 - 用户管理页的「复制链接」「推送链接」以及公网业务 API 返回的 `download_url` 全部使用独立下载基址，不能再使用管理端口。
 - 令牌有效期为 1 小时、只允许原子消费一次；API Access Log 关闭以避免泄露 URL Token，应用审计仅记录 Token 哈希前缀。
 
@@ -311,7 +311,7 @@ Authorization: Basic xxx
 - **不需要** Basic；链接 **一次性使用**，约 **1 小时** 过期（与系统常量一致）。
 - 成功时为文件流；错误常为 `404` / `410`，Body 为 `{"detail":"..."}`。
 
-管理员通过 HTTPS 反代管理页面时，应在「系统设置」配置 **`download_base_url`**（例如 `https://download.example.com`）；公网 API 自己接收创建请求时，可使用其可信反代 `Host` / `X-Forwarded-*` 推断。不能把基础 URL 配置为管理端口 8880。
+`download_base_url` 留空时使用启动时探测的本机 IP + API 端口（例如 `http://192.168.1.5:8881`）；填写后可用任意可访问的 IP 或域名作为下载地址（不能是管理端口）。无须配置域名才能使用。局域网 IP 链接只能在可路由网络内访问；公网下载应保证外部网络能到达 API 服务，并优先使用 HTTPS。
 
 ---
 

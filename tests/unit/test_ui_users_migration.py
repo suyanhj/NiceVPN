@@ -627,7 +627,7 @@ def test_user_download_links_resolve_to_api_not_management_port() -> None:
     source = (
         Path(__file__).resolve().parents[2] / "app" / "ui" / "pages" / "users.py"
     ).read_text(encoding="utf-8")
-    assert "resolve_ui_download_base_url(req, config.download_base_url)" in source
+    assert "resolve_download_base_url(None, config.download_base_url)" in source
     assert "def _push_download_link_notify(self, username" in source
     assert "def _ensure_one_time_download_url(self, username" in source
     assert "url = self._ensure_one_time_download_url(username)" in source

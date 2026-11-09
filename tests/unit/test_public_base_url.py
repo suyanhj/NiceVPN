@@ -67,85 +67,65 @@ def test_public_base_forwarded():
     assert public_base_url_from_request(r) == "https://vpn.example.com/app/mgmt"
 
 
-def test_resolve_configured_overrides():
-    r = _make_request()
-    out = resolve_download_base_url(r, "https://fixed.example/download")
-    assert out == "https://fixed.example/download"
-
-
-def test_resolve_from_request_non_loopback():
-    r = _make_request()
-    assert resolve_download_base_url(r, None) == "http://192.168.1.5:8080"
-
-
-def test_resolve_localhost_with_listen_snap(monkeypatch):
+def test_resolve_configured_overrides(monkeypatch):
     monkeypatch.setattr(
         "app.utils.public_base_url.get_listen_http_base",
-        lambda: "http://172.16.22.247:8080",
+        lambda: "http://192.168.1.30:8881",
     )
-    r = _make_request(host=b"localhost:8080")
-    assert resolve_download_base_url(r, None) == "http://172.16.22.247:8080"
+    r = _make_request()
+    assert resolve_download_base_url(r, "https://fixed.example/download") == (
+        "https://fixed.example/download"
+    )
 
 
-def test_resolve_localhost_with_listen_snap_and_path(monkeypatch):
+def test_resolve_unconfigured_uses_startup_ip_for_any_browser_request(monkeypatch):
     monkeypatch.setattr(
         "app.utils.public_base_url.get_listen_http_base",
-        lambda: "http://172.16.22.247:8080",
+        lambda: "http://172.16.22.247:8881",
     )
-    r = _make_request(host=b"localhost:8080", root_path="/vpn")
-    assert resolve_download_base_url(r, None) == "http://172.16.22.247:8080/vpn"
+    for r in (
+        _make_request(host=b"192.168.1.5:8880"),
+        _make_request(host=b"localhost:8880"),
+        _make_request(host=b"admin.example.com", scheme="https"),
+        _make_request(
+            host=b"127.0.0.1:8880",
+            forwarded_host="admin.example.com",
+            forwarded_proto="https",
+        ),
+    ):
+        assert resolve_download_base_url(r, None) == "http://172.16.22.247:8881"
+        assert resolve_ui_download_base_url(r, None) == "http://172.16.22.247:8881"
+
+    assert resolve_download_base_url(None, None) == "http://172.16.22.247:8881"
+    assert resolve_ui_download_base_url(None, None) == "http://172.16.22.247:8881"
 
 
-def test_resolve_localhost_without_listen_snap(monkeypatch):
+def test_no_startup_address_and_no_config_returns_none(monkeypatch):
     monkeypatch.setattr(
         "app.utils.public_base_url.get_listen_http_base",
         lambda: None,
     )
-    r = _make_request(host=b"localhost:8080")
-    assert resolve_download_base_url(r, None) is None
-
-
-def test_resolve_no_request_no_config():
+    assert resolve_download_base_url(_make_request(), None) is None
     assert resolve_download_base_url(None, None) is None
 
-def test_ui_download_link_maps_direct_management_port_to_api(monkeypatch):
-    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
-    monkeypatch.setenv("NICEVPN_API_PORT", "8881")
-    direct = _make_request(host=b"192.168.1.5:8880")
-    assert resolve_ui_download_base_url(direct, None) == "http://192.168.1.5:8881"
-    assert resolve_ui_download_base_url(direct, "https://download.example.com") == (
-        "https://download.example.com"
-    )
-    assert resolve_ui_download_base_url(direct, "http://192.168.1.5:8880") is None
 
-
-def test_ui_download_link_respects_custom_api_port(monkeypatch):
-    monkeypatch.setenv("NICEVPN_UI_PORT", "18880")
-    monkeypatch.setenv("NICEVPN_API_PORT", "18881")
-    direct = _make_request(host=b"10.0.0.2:18880")
-    assert resolve_ui_download_base_url(direct, None) == "http://10.0.0.2:18881"
-
-
-def test_ui_download_link_requires_configured_domain_for_https_proxy(monkeypatch):
-    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
-    proxied = _make_request(
-        host=b"127.0.0.1:8880",
-        forwarded_host="admin.example.com",
-        forwarded_proto="https",
-    )
-    assert resolve_ui_download_base_url(proxied, None) is None
-    assert resolve_ui_download_base_url(
-        proxied, "https://download.example.com",
-    ) == "https://download.example.com"
-    secure = _make_request(host=b"admin.example.com", scheme="https")
-    assert resolve_ui_download_base_url(secure, None) is None
-
-
-def test_ui_download_link_localhost_uses_api_listener_snapshot(monkeypatch):
-    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
+def test_configured_ip_overrides_startup_ip_without_domain(monkeypatch):
     monkeypatch.setattr(
         "app.utils.public_base_url.get_listen_http_base",
-        lambda: "http://192.168.0.10:8881",
+        lambda: "http://172.16.22.247:8881",
     )
-    direct = _make_request(host=b"localhost:8880")
-    assert resolve_ui_download_base_url(direct, None) == "http://192.168.0.10:8881"
+    assert resolve_download_base_url(None, "http://10.0.0.11:18881/") == (
+        "http://10.0.0.11:18881"
+    )
+    assert resolve_ui_download_base_url(
+        _make_request(host=b"admin.example.com", scheme="https"),
+        "http://10.0.0.11:18881/",
+    ) == "http://10.0.0.11:18881"
+
+
+def test_configured_management_port_is_not_used(monkeypatch):
+    monkeypatch.setenv("NICEVPN_UI_PORT", "8880")
+    assert resolve_download_base_url(
+        None, "http://192.168.1.10:8880",
+    ) is None
+

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-from urllib.parse import urlparse, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
-from app.core.constants import DEFAULT_API_PORT, DEFAULT_PORT
+from app.core.constants import DEFAULT_PORT
 
 from starlette.requests import Request
 
@@ -49,85 +49,33 @@ def resolve_download_base_url(
     request: Optional[Request],
     configured: Optional[str],
 ) -> Optional[str]:
-    """
-    解析下载链接使用的 scheme://host[:port][/prefix]。
+    """Resolve a one-time download URL from config or the startup API listener IP.
 
-    优先级：
-    1. 配置项 download_base_url 非空则直接使用
-    2. 根据当前请求推断（与浏览器地址栏一致）
-    3. 若主机为 localhost/127.0.0.1/::1，使用 Web 启动时缓存的本机监听侧地址（ifaddr，优先 eth0），并拼接请求中的 path 前缀（子路径反代）
-    4. 无缓存则返回 None
-
-    Args:
-        request: 当前 NiceGUI 客户端请求；不可用时传 None
-        configured: 系统配置中的 download_base_url
-
-    Returns:
-        无末尾斜杠的基础 URL；无法确定时 None
+    Configured URL takes priority. If omitted, always use the API listener
+    base captured at startup (local IP + API port). Do not infer it from the
+    admin browser address or untrusted forwarded headers.
+    `request` remains optional for compatibility with existing callers.
     """
     if configured and configured.strip():
-        configured_url = configured.strip().rstrip("/")
+        url = configured.strip().rstrip("/")
         try:
-            configured_port = urlsplit(configured_url).port
+            if urlsplit(url).port == int(
+                os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))
+            ):
+                return None
         except ValueError:
             return None
-        if configured_port == int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))):
-            return None
-        return configured_url
+        return url
 
-    if request is None:
-        return None
-
-    base = public_base_url_from_request(request)
-    parsed = urlparse(base + "/")
-    host = parsed.hostname
-
-    if _is_loopback_host(host):
-        snap = get_listen_http_base()
-        if not snap:
-            return None
-        path = (parsed.path or "").rstrip("/")
-        if path:
-            return f"{snap.rstrip('/')}{path}"
-        return snap
-
-    return base
+    return get_listen_http_base()
 
 
 def resolve_ui_download_base_url(
     request: Optional[Request],
     configured: Optional[str],
 ) -> Optional[str]:
-    """管理页仅生成 API 端口或显式下载域名的链接。
-
-    直连 http://IP:UI_PORT 可推断 http://IP:API_PORT；
-    HTTPS 管理端反向代理下不猜公网下载域名，以免暴露后台域名。
-    """
-    if configured and str(configured).strip():
-        return resolve_download_base_url(request, configured)
-
-    if request is None:
-        return get_listen_http_base()
-
-    base = public_base_url_from_request(request)
-    parsed = urlsplit(base)
-    if request.headers.get("x-forwarded-host") or parsed.scheme != "http":
-        return None
-
-    ui_port = int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT)))
-    api_port = int(os.environ.get("NICEVPN_API_PORT", str(DEFAULT_API_PORT)))
-    try:
-        if parsed.port != ui_port or not parsed.hostname:
-            return None
-    except ValueError:
-        return None
-
-    if _is_loopback_host(parsed.hostname):
-        return get_listen_http_base()
-
-    host = parsed.hostname
-    netloc = f"[{host}]" if ":" in host else host
-    return urlunsplit(("http", f"{netloc}:{api_port}", "", "", ""))
+    """UI copy/push uses exactly the same download URL policy as the API."""
+    return resolve_download_base_url(request, configured)
 
 
 def get_ui_request() -> Optional[Request]:

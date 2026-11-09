@@ -1745,13 +1745,12 @@ class UsersPage:
             return None
 
         from app.services.download.link_mgr import create_link
-        from app.utils.public_base_url import get_ui_request, resolve_ui_download_base_url
+        from app.utils.public_base_url import resolve_download_base_url
 
-        req = get_ui_request()
-        base_url = resolve_ui_download_base_url(req, config.download_base_url)
+        base_url = resolve_download_base_url(None, config.download_base_url)
         if not base_url:
             safe_notify(
-                "无法生成下载链接：请在「系统设置」→「下载配置」填写 API 端口地址或独立 HTTPS 下载域名；管理后台地址不用于下载。",
+                "无法生成下载链接：未检测到可访问的 API 监听 IP。请检查 API 监听配置，或在「下载配置」中填写可访问的下载地址（IP 或域名）。",
                 type="warning",
             )
             logger.warning("一次性下载链接：用户 %s 无法解析 base_url", username)

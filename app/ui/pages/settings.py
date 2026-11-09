@@ -940,7 +940,7 @@ class SettingsPage:
         )
 
     def _render_download_panel(self):
-        """渲染独立 API 下载基址；反代管理端须配置专属下载域名。"""
+        """渲染可选下载基址；留空时自动使用 API 监听的本机 IP。"""
 
         def body() -> None:
             self.base_url_input = field_with_help(
@@ -964,7 +964,7 @@ class SettingsPage:
             "下载链接",
             kicker="Download",
             description=(
-                "下载仅走独立 API 端口（默认 8881）；管理端使用 HTTPS 反代时请填写独立下载域名。",
+                "可选：填写自定义下载地址（IP 或域名）优先使用；留空时自动使用启动检测的本机 IP + API 端口（默认 8881）。",
             ),
             body=body,
             actions=actions,
@@ -1474,7 +1474,7 @@ class SettingsPage:
             )
         else:
             safe_notify(
-                "已清空固定基址，将按当前访问自动解析",
+                "已清空自定义下载地址，自动使用本机 IP 和 API 监听端口",
                 type="positive",
             )
         return True

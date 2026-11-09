@@ -106,8 +106,8 @@ class SystemConfig(BaseModel):
     download_base_url: Optional[str] = Field(
         default=None,
         description=(
-            "下载链接基础 URL；留空则按当前浏览器访问地址生成，"
-            "localhost 访问时用 Web 启动时解析的本机网卡地址（优先 eth0，与 NiceGUI 欢迎语同源）"
+            "下载链接基础 URL；配置后优先使用，留空则使用启动时识别的"
+            "本机 IP（优先 eth0）和 API 监听端口，无需域名"
         ),
     )
     github_proxy_urls: list[str] = Field(
