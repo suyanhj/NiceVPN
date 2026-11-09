@@ -9,6 +9,16 @@ from app.storage.repository_helpers import _now_iso, _load_payload, _like_patter
 class TagRepositoryMixin:
     # ---- tags ----
 
+    @staticmethod
+    def _has_exemption_tag(conn, tag_ids) -> bool:
+        ids = set(tag_ids)
+        return bool(ids) and any(
+            str(row[0]) in ids for row in conn.execute(
+                "SELECT id FROM tags WHERE device_binding_exempt=1"
+            )
+        )
+
+
     def create_tag(self, tag_id: str, name: str, description: str = "", *, device_binding_exempt: bool = False) -> None:
         tag_id, name = str(tag_id).strip(), str(name).strip()
         if not tag_id or not name:
@@ -39,7 +49,17 @@ class TagRepositoryMixin:
         name = str(name).strip()
         if not name:
             raise ValueError("标签名称不能为空")
-        with self.connection(write=True) as conn:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            old = conn.execute(
+                "SELECT device_binding_exempt FROM tags WHERE id=?", (str(tag_id),)
+            ).fetchone()
+            changed[0] = (
+                old is not None and device_binding_exempt is not None
+                and bool(old[0]) != bool(device_binding_exempt)
+            )
             cur = conn.execute(
                 "UPDATE tags SET name=?,description=?,device_binding_exempt=COALESCE(?,device_binding_exempt),updated_at=? WHERE id=?",
                 (name, str(description), None if device_binding_exempt is None else int(device_binding_exempt), _now_iso(), str(tag_id)),
@@ -48,7 +68,14 @@ class TagRepositoryMixin:
                 raise ValueError("标签不存在")
 
     def delete_tag(self, tag_id: str) -> None:
-        with self.connection(write=True) as conn:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            old = conn.execute(
+                "SELECT device_binding_exempt FROM tags WHERE id=?", (str(tag_id),)
+            ).fetchone()
+            changed[0] = bool(old and old[0])
             conn.execute("DELETE FROM tags WHERE id=?", (str(tag_id),))
 
     def set_tag_members(
@@ -58,8 +85,14 @@ class TagRepositoryMixin:
         tid = str(tag_id)
         users = sorted({str(v).strip() for v in usernames if str(v).strip()})
         groups = sorted({str(v).strip() for v in group_ids if str(v).strip()})
-        with self.connection(write=True) as conn:
-            if conn.execute("SELECT 1 FROM tags WHERE id=?", (tid,)).fetchone() is None:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            tag = conn.execute(
+                "SELECT device_binding_exempt FROM tags WHERE id=?", (tid,)
+            ).fetchone()
+            if tag is None:
                 raise ValueError("标签不存在")
             if users:
                 found = set()
@@ -82,6 +115,19 @@ class TagRepositoryMixin:
                     ))
                 if len(found) != len(groups):
                     raise ValueError("关联用户组不存在")
+            old_users = {
+                str(row[0]) for row in conn.execute(
+                    "SELECT username FROM user_tags WHERE tag_id=?", (tid,)
+                )
+            }
+            old_groups = {
+                str(row[0]) for row in conn.execute(
+                    "SELECT group_id FROM group_tags WHERE tag_id=?", (tid,)
+                )
+            }
+            if old_users == set(users) and old_groups == set(groups):
+                return
+            changed[0] = bool(tag[0])
             conn.execute("DELETE FROM user_tags WHERE tag_id=?", (tid,))
             conn.execute("DELETE FROM group_tags WHERE tag_id=?", (tid,))
             conn.executemany(
@@ -117,7 +163,10 @@ class TagRepositoryMixin:
             raise ValueError("仅支持 user/group")
         eid = str(entity_id).strip()
         ids = sorted({str(value).strip() for value in tag_ids if str(value).strip()})
-        with self.connection(write=True) as conn:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
             if conn.execute(f"SELECT 1 FROM {entity_table} WHERE {entity_key}=?", (eid,)).fetchone() is None:
                 raise ValueError("关联用户或组不存在")
             if ids:
@@ -127,6 +176,16 @@ class TagRepositoryMixin:
                 ).fetchone()[0]
                 if int(count) != len(ids):
                     raise ValueError("存在未知标签")
+            before = {
+                str(row[0]) for row in conn.execute(
+                    f"SELECT tag_id FROM {table} WHERE {column}=?", (eid,)
+                )
+            }
+            if before == set(ids):
+                return
+            changed[0] = self._has_exemption_tag(
+                conn, before.symmetric_difference(ids),
+            )
             conn.execute(f"DELETE FROM {table} WHERE {column}=?", (eid,))
             conn.executemany(
                 f"INSERT INTO {table}(tag_id,{column}) VALUES (?,?)",
@@ -155,7 +214,11 @@ class TagRepositoryMixin:
             raise ValueError("请先选择用户或组")
         if not tags and operation != "replace":
             raise ValueError("请先选择标签")
-        with self.connection(write=True) as conn:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            modified_tags: set[str] = set()
             slots = ",".join("?" for _ in ids)
             found = {str(r[0]) for r in conn.execute(
                 f"SELECT {entity_key} FROM {entity_table} WHERE {entity_key} IN ({slots})", ids
@@ -182,11 +245,13 @@ class TagRepositoryMixin:
                 else:
                     desired = tags
                 if desired != old:
+                    modified_tags.update(set(old).symmetric_difference(desired))
                     conn.execute(f"DELETE FROM {table} WHERE {column}=?", (eid,))
                     conn.executemany(
                         f"INSERT INTO {table}(tag_id,{column}) VALUES (?,?)",
                         [(tag, eid) for tag in desired],
                     )
+            changed[0] = self._has_exemption_tag(conn, modified_tags)
         return previous
 
     def restore_entity_tag_snapshots(
@@ -199,13 +264,26 @@ class TagRepositoryMixin:
             table, column = "group_tags", "group_id"
         else:
             raise ValueError("仅支持 user/group")
-        with self.connection(write=True) as conn:
+        changed = [False]
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            modified_tags: set[str] = set()
             for eid, tags in snapshots.items():
+                before = {
+                    str(row[0]) for row in conn.execute(
+                        f"SELECT tag_id FROM {table} WHERE {column}=?", (eid,)
+                    )
+                }
+                if before == set(tags):
+                    continue
+                modified_tags.update(before.symmetric_difference(tags))
                 conn.execute(f"DELETE FROM {table} WHERE {column}=?", (eid,))
                 conn.executemany(
                     f"INSERT INTO {table}(tag_id,{column}) VALUES (?,?)",
                     [(tag, eid) for tag in tags],
                 )
+            changed[0] = self._has_exemption_tag(conn, modified_tags)
 
     def get_tag_members(self, tag_id: str) -> dict[str, list[str]]:
         with self.connection() as conn:
