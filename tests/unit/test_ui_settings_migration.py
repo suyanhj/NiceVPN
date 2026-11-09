@@ -328,6 +328,7 @@ def test_device_bind_failure_rolls_back_config(
     cfg = _config()
     page = SettingsPage()
     page.device_bind_mode_input = _input("strict_hwaddr")
+    page.device_bind_exemption_input = _input(True)
     messages = _capture_notify(monkeypatch)
     saved: list[object] = []
 
@@ -341,7 +342,7 @@ def test_device_bind_failure_rolls_back_config(
     )
     monkeypatch.setattr(
         "app.services.user.device_bind_policy.sync_device_bind_mode_file",
-        lambda _mode: (_ for _ in ()).throw(
+        lambda _mode, **_kwargs: (_ for _ in ()).throw(
             OSError("permission denied")
         ),
     )
