@@ -5,8 +5,41 @@
 令牌以 JSON 文件形式持久化到 data/download_links/ 目录。
 """
 
+import os
+import re
 import secrets
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+if os.name == "posix":
+    import fcntl
+
+_CONSUME_LOCK = threading.RLock()
+_VALID_TOKEN = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
+
+
+@contextmanager
+def _locked_token_consume():
+    """单目录常驻锁文件，避免双请求读到 used=false 后都成功。
+
+    不能使用读写各自加锁的两次操作；也不能释放时删除锁文件。
+    """
+    constants_dir = constants.DOWNLOAD_LINKS_DIR
+    constants_dir.mkdir(parents=True, exist_ok=True)
+    with _CONSUME_LOCK:
+        if os.name != "posix":
+            yield
+            return
+        fd = os.open(constants_dir / ".consume.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
 
 # 须用模块对象访问，便于单测 monkeypatch ``constants.DOWNLOAD_LINKS_DIR`` 等（勿 ``from … import X`` 绑死快照）
 from app.core import constants
@@ -60,51 +93,50 @@ def create_link(
 
 
 def consume_link(token: str) -> dict | None:
-    """消费令牌：校验未过期且未使用后，原子置 used=true。
+    """一次性原子消费：同一锁内完成查询、过期验证、文件校验和使用状态写入。
 
-    参数:
-        token: 下载令牌
-
-    返回:
-        成功时返回 {"username": ..., "file_path": ..., "error": None}
-        校验失败返回 {"username": None, "file_path": None, "error": "错误描述"}
-        令牌不存在返回 None
+    跨线程、跨进程最多只允许一个请求获得可下载的文件路径。
     """
-    file_path = constants.DOWNLOAD_LINKS_DIR / f"{token}.json"
-
-    if not file_path.exists():
+    if not _VALID_TOKEN.fullmatch(str(token)):
         return None
 
-    data = read_json(file_path)
-    if not data:
-        return None
+    token_file = constants.DOWNLOAD_LINKS_DIR / f"{token}.json"
+    with _locked_token_consume():
+        if not token_file.is_file():
+            return None
 
-    # 校验是否已使用
-    if data.get("used", False):
-        return {"username": None, "file_path": None, "error": "链接已被使用"}
+        data = read_json(token_file)
+        if not isinstance(data, dict) or data.get("token") != token:
+            return None
 
-    # 校验是否过期
-    expires_at = datetime.fromisoformat(data["expires_at"])
-    now = datetime.now(timezone.utc)
+        if data.get("used", False):
+            return {"error": "already_used", "username": data.get("username")}
 
-    # 如果 expires_at 没有时区信息，视为 UTC
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        try:
+            expires_at = datetime.fromisoformat(str(data["expires_at"]))
+        except (KeyError, ValueError, TypeError):
+            return None
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-    if now > expires_at:
-        return {"username": None, "file_path": None, "error": "链接已过期"}
+        now = datetime.now(timezone.utc)
+        if now > expires_at:
+            return {"error": "expired", "username": data.get("username")}
 
-    # 原子更新：标记为已使用
-    data["used"] = True
-    data["used_at"] = now.isoformat()
-    write_json_atomic(file_path, data)
+        target = Path(str(data.get("file_path") or ""))
+        if not target.is_file():
+            # 文件缺失不消费一次性链接；管理员恢复文件后仍可重试。
+            return {"error": "file_missing", "username": data.get("username")}
 
-    return {
-        "username": data["username"],
-        "file_path": data["file_path"],
-        "download_filename": data.get("download_filename"),
-        "error": None,
-    }
+        data["used"] = True
+        data["used_at"] = now.isoformat()
+        write_json_atomic(token_file, data)
+        return {
+            "username": data.get("username"),
+            "file_path": str(target),
+            "download_filename": data.get("download_filename"),
+            "error": None,
+        }
 
 
 def get_link_info(token: str) -> dict | None:
