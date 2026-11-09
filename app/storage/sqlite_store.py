@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -110,20 +109,17 @@ class SqliteStore(
     _migrate_v2_query_indexes = staticmethod(migrate_v2_query_indexes)
 
     @contextmanager
-    def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(
+        self, *, write: bool = False,
+        device_binding_changed: list[bool] | None = None,
+    ) -> Iterator[sqlite3.Connection]:
+        """Only policy-sensitive repository operations request an exemption snapshot refresh.
+
+        The dirty flag is set inside the transaction and observed only after a
+        successful commit. Unlike SQL trace callbacks, unrelated edits are ignored.
+        """
         self.initialize()
         conn = self._open()
-        changed = [False]
-        if write:
-            # 统一捕捉用户、组、标签的更新，避免 CLI 和批量入口遗漏豁免刷新。
-            watched = re.compile(
-                r"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
-                r"(?:users|groups|tags|user_tags|group_tags)\b", re.I,
-            )
-            conn.set_trace_callback(
-                lambda statement: changed.__setitem__(0, True)
-                if watched.search(statement) else None
-            )
         try:
             if write:
                 conn.execute("BEGIN IMMEDIATE")
@@ -137,10 +133,16 @@ class SqliteStore(
         finally:
             conn.close()
             self._fix_permissions()
-        if changed[0] and os.name != "nt":
-            # 单独创建的测试数据库不得更新机器上的 OpenVPN 运行时文件。
+
+        if (
+            write and device_binding_changed and device_binding_changed[0]
+            and os.name != "nt"
+        ):
+            # Independent test stores must not overwrite OpenVPN's runtime snapshot.
             if self.path.resolve() == get_default_store().path.resolve():
-                from app.services.user.device_bind_policy import refresh_device_bind_exemption_snapshot
+                from app.services.user.device_bind_policy import (
+                    refresh_device_bind_exemption_snapshot,
+                )
                 refresh_device_bind_exemption_snapshot(self)
 
     # ---- storage metadata ----
