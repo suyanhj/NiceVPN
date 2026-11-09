@@ -69,6 +69,10 @@ def test_native_logrotate_installer_and_openvpn_install_flow():
     assert "id -gn nobody" in installer
     assert "copytruncate" not in installer
     assert "systemctl enable --now nicevpn-audit-logrotate.timer" not in installer
+    assert 'SYSTEMD_DROPIN_TARGET="$SYSTEMD_DROPIN_DIR/nicevpn-openvpn.conf"' in installer
+    assert "systemctl cat logrotate.service" in installer
+    assert "ReadWritePaths=-$LOG_DIR" in installer
+    assert "systemctl daemon-reload" in installer
 
 
 def test_logrotate_installer_detects_duplicate_system_policy_and_rolls_back():

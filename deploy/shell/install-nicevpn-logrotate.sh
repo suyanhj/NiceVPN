@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CONF_TEMPLATE="$ROOT_DIR/deploy/logrotate/nicevpn-openvpn.conf.in"
 
 CONF_TARGET="/etc/logrotate.d/nicevpn-openvpn"
+SYSTEMD_DROPIN_DIR="/etc/systemd/system/logrotate.service.d"
+SYSTEMD_DROPIN_TARGET="$SYSTEMD_DROPIN_DIR/nicevpn-openvpn.conf"
 LOG_DIR="/etc/openvpn/log"
 if [[ -v NICEVPN_OPENVPN_LOG_DIR ]]; then LOG_DIR="$NICEVPN_OPENVPN_LOG_DIR"; fi
 
@@ -82,6 +84,21 @@ if ! "$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1; then
     fail "系统全局 logrotate 校验失败（可能有重复路径配置），已恢复原策略"
 fi
 
+# 发行版的 logrotate.service 常通过 ProtectSystem=full/strict 把 /etc 设为只读。
+# NiceVPN 日志位于 /etc/openvpn/log，因此只为实际日志目录增加最小写入例外；
+# 不修改 vendor unit，本地 drop-in 可随包升级稳定保留。
+if command -v systemctl >/dev/null 2>&1 &&
+   [[ -d /run/systemd/system ]] &&
+   systemctl cat logrotate.service >/dev/null 2>&1; then
+    install -d -m 0755 "$SYSTEMD_DROPIN_DIR"
+    cat > "$SYSTEMD_DROPIN_TARGET" <<EOF
+[Service]
+ReadWritePaths=-$LOG_DIR
+EOF
+    chmod 0644 "$SYSTEMD_DROPIN_TARGET"
+    systemctl daemon-reload
+fi
+
 # 系统原生 timer 可用时确保启用；没有 timer 的发行版沿用 cron.daily。
 if command -v systemctl >/dev/null 2>&1 &&
    [[ -d /run/systemd/system ]] &&
@@ -92,6 +109,9 @@ if command -v systemctl >/dev/null 2>&1 &&
 fi
 
 log "已安装 $CONF_TARGET，随系统 logrotate.timer / cron 自动检查"
+if [[ -f "$SYSTEMD_DROPIN_TARGET" ]]; then
+    log "已允许 logrotate.service 写入 $LOG_DIR（systemd ReadWritePaths）"
+fi
 log "设备绑定 16MiB，会话审计 64MiB，连接审计 128MiB，OpenVPN server.log 128MiB"
 log "旧日志按日期和大小轮转并压缩，保留 14 份 / 最多 7 天"
 log "server-status.log 不轮转；默认系统检查周期通常为每天一次"
