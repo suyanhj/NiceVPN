@@ -17,7 +17,6 @@ _background_shutdown_started = threading.Event()
 from app.core.config import load_config
 from app.core.constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_API_HOST, DEFAULT_API_PORT
 from app.core.scheduler import start_scheduler
-from app.api.download import router as download_router
 from app.api.server import PublicApiListener
 from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
@@ -70,8 +69,7 @@ def init():
     config = load_config()
     ensure_storage_ready()
 
-    app.include_router(download_router)
-    # 公网 VPN API 由同进程的第二个 Uvicorn 监听端口提供，不挂载到管理端口。
+    # 管理端不再注册下载和公网 VPN API；二者仅由第二监听端口提供。
 
     if config.initialized:
         ensure_api_basic_credentials_file()

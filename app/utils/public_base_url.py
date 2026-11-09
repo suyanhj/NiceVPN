@@ -2,8 +2,11 @@
 """从 HTTP 请求解析对外访问基础 URL，用于生成一次性下载链接等。"""
 from __future__ import annotations
 
+import os
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
+from app.core.constants import DEFAULT_API_PORT, DEFAULT_PORT
 
 from starlette.requests import Request
 
@@ -63,7 +66,14 @@ def resolve_download_base_url(
         无末尾斜杠的基础 URL；无法确定时 None
     """
     if configured and configured.strip():
-        return configured.strip().rstrip("/")
+        configured_url = configured.strip().rstrip("/")
+        try:
+            configured_port = urlsplit(configured_url).port
+        except ValueError:
+            return None
+        if configured_port == int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))):
+            return None
+        return configured_url
 
     if request is None:
         return None
@@ -82,6 +92,42 @@ def resolve_download_base_url(
         return snap
 
     return base
+
+
+def resolve_ui_download_base_url(
+    request: Optional[Request],
+    configured: Optional[str],
+) -> Optional[str]:
+    """管理页仅生成 API 端口或显式下载域名的链接。
+
+    直连 http://IP:UI_PORT 可推断 http://IP:API_PORT；
+    HTTPS 管理端反向代理下不猜公网下载域名，以免暴露后台域名。
+    """
+    if configured and str(configured).strip():
+        return resolve_download_base_url(request, configured)
+
+    if request is None:
+        return get_listen_http_base()
+
+    base = public_base_url_from_request(request)
+    parsed = urlsplit(base)
+    if request.headers.get("x-forwarded-host") or parsed.scheme != "http":
+        return None
+
+    ui_port = int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT)))
+    api_port = int(os.environ.get("NICEVPN_API_PORT", str(DEFAULT_API_PORT)))
+    try:
+        if parsed.port != ui_port or not parsed.hostname:
+            return None
+    except ValueError:
+        return None
+
+    if _is_loopback_host(parsed.hostname):
+        return get_listen_http_base()
+
+    host = parsed.hostname
+    netloc = f"[{host}]" if ":" in host else host
+    return urlunsplit(("http", f"{netloc}:{api_port}", "", "", ""))
 
 
 def get_ui_request() -> Optional[Request]:

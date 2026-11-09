@@ -940,14 +940,14 @@ class SettingsPage:
         )
 
     def _render_download_panel(self):
-        """渲染固定下载基址；留空继续自动解析当前访问地址。"""
+        """渲染独立 API 下载基址；反代管理端须配置专属下载域名。"""
 
         def body() -> None:
             self.base_url_input = field_with_help(
                 lambda: ui.input(
                     "基础 URL（可选）",
                     value=self.config.download_base_url or "",
-                    placeholder="留空自动；例 https://vpn.example.com",
+                    placeholder="例 https://download.example.com 或 http://IP:8881",
                 ).classes("w-full"),
                 "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。",
                 aria_label="基础 URL 说明",
@@ -964,7 +964,7 @@ class SettingsPage:
             "下载链接",
             kicker="Download",
             description=(
-                "留空时按当前请求与监听地址自动生成；固定域名或反代前缀可在此覆盖。"
+                "下载仅走独立 API 端口（默认 8881）；管理端使用 HTTPS 反代时请填写独立下载域名。",
             ),
             body=body,
             actions=actions,

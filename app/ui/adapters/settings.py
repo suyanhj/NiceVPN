@@ -253,6 +253,15 @@ def normalize_download_base_url(value: str) -> str | None:
         raise ValueError("下载基础 URL 不能包含 URL 用户名或密码")
     if parsed.query or parsed.fragment:
         raise ValueError("下载基础 URL 不能包含 query 或 fragment")
+    import os
+    from app.core.constants import DEFAULT_PORT
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("下载基础 URL 端口无效") from exc
+    if port == int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))):
+        raise ValueError("下载基础 URL 不能指向管理端口，请使用 API 端口或下载域名")
     return text.rstrip("/")
 
 
