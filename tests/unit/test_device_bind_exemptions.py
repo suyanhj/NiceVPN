@@ -114,3 +114,72 @@ def test_sqlite_commits_refresh_active_snapshot(store, tmp_path, monkeypatch):
     store.set_tag_members("t2", usernames=[])
     assert exemption_source(snapshot, "alice") is None
     assert exemption_source(snapshot, "boss") == "group:mgmt"
+
+
+def test_irrelevant_repository_updates_do_not_trigger_policy_rebuild(
+    store, monkeypatch,
+):
+    """修改普通用户描述、组名称、标签说明不应刷新运行时名单。"""
+    from app.storage import sqlite_store
+
+    monkeypatch.setattr(sqlite_store, "get_default_store", lambda: store)
+    refreshes: list[str] = []
+    monkeypatch.setattr(
+        policy, "refresh_device_bind_exemption_snapshot",
+        lambda _store: refreshes.append("refresh"),
+    )
+
+    # 初次写入的对象已存在；其有效豁免条件不发生变化。
+    store.upsert_user({
+        "username": "alice", "group_id": "root", "status": "active",
+        "description": "仅更新备注",
+    })
+    store.upsert_group({
+        "id": "root", "name": "普通员工（改名）",
+        "status": "active", "subnet": "10.8.0.0/16",
+        "device_binding_exempt": False,
+    })
+    store.create_tag("normal", "普通标签", device_binding_exempt=False)
+    store.update_tag("normal", name="普通标签修改", description="仅备注")
+    store.replace_entity_tags("user", "alice", ["normal"])
+    assert refreshes == []
+
+    store.create_tag("exempt", "豁免标签", device_binding_exempt=True)
+    store.replace_entity_tags("user", "alice", ["normal", "exempt"])
+    assert refreshes == ["refresh"]
+
+    store.replace_entity_tags("user", "alice", ["normal", "exempt"])
+    assert refreshes == ["refresh"]
+
+    store.upsert_user({
+        "username": "alice", "group_id": "mgmt", "status": "active",
+    })
+    assert refreshes == ["refresh", "refresh"]
+    store.update_tag("exempt", name="取消豁免", device_binding_exempt=False)
+    assert refreshes == ["refresh", "refresh", "refresh"]
+
+
+def test_atomic_snapshot_noop_preserves_file_mtime(store, tmp_path, monkeypatch):
+    """相同派生内容不产生新文件或更新时间；成员取消后原子覆盖删旧。"""
+    from app.storage import sqlite_store
+
+    snapshot = tmp_path / "exemptions.json"
+    monkeypatch.setattr(policy, "DEVICE_BIND_EXEMPTIONS_FILE", snapshot)
+    monkeypatch.setattr(sqlite_store, "get_default_store", lambda: store)
+
+    policy.sync_device_bind_exemption_snapshot()
+    first_mtime = snapshot.stat().st_mtime_ns
+    policy.sync_device_bind_exemption_snapshot()
+    assert snapshot.stat().st_mtime_ns == first_mtime
+
+    store.create_tag("another", "豁免", device_binding_exempt=True)
+    # 新标签还没有关联成员，不应产生新快照。
+    policy.sync_device_bind_exemption_snapshot()
+    assert snapshot.stat().st_mtime_ns == first_mtime
+    store.set_tag_members("another", usernames=["alice"])
+    policy.sync_device_bind_exemption_snapshot()
+    assert exemption_source(snapshot, "alice") == "tag:another"
+    store.set_tag_members("another", usernames=[])
+    policy.sync_device_bind_exemption_snapshot()
+    assert exemption_source(snapshot, "alice") is None
+    assert exemption_source(snapshot, "boss") == "group:mgmt"
