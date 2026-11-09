@@ -39,7 +39,8 @@ escape_sed() {
 }
 
 tmp_conf="$(mktemp)"
-trap 'rm -f -- "$tmp_conf"' EXIT
+tmp_check="$(mktemp)"
+trap 'rm -f -- "$tmp_conf" "$tmp_check"' EXIT
 
 sed \
     -e "s|@OPENVPN_LOG_DIR@|$(escape_sed "$LOG_DIR")|g" \
@@ -53,13 +54,14 @@ sed \
 grep -Eq '^[[:space:]]*include[[:space:]]+/etc/logrotate[.]d([[:space:]]|$)' /etc/logrotate.conf ||
     fail "/etc/logrotate.conf 未 include /etc/logrotate.d，新策略不会自动运行"
 
-"$LOGROTATE_BIN" -d "$tmp_conf" >/dev/null ||
+if ! "$LOGROTATE_BIN" -d "$tmp_conf" > "$tmp_check" 2>&1; then
+    tail -n 12 "$tmp_check" >&2
     fail "logrotate 独立策略校验失败，没有变更系统配置"
+fi
 
 install -d -m 0755 /etc/logrotate.d
 # 保存现有策略以便全局校验失败后恢复，不破坏已有部署。
 tmp_backup="$(mktemp)"
-tmp_check="$(mktemp)"
 trap 'rm -f -- "$tmp_conf" "$tmp_backup" "$tmp_check"' EXIT
 had_previous=0
 if [[ -e "$CONF_TARGET" ]]; then
