@@ -1,78 +1,237 @@
-﻿# OpenVPN 管理系统开发指南
+# NiceVPN 开发指南
 
-面向 AI / 开发者的结构与约定速查。**最后更新：2026-05-06**
+面向 AI / 开发者的当前架构、边界与常用命令速查。**最后更新：2026-11-09**。
 
-> **语言规范**：所有回复和文档使用中文（代码标识符使用英文）。
+> 文档、注释和对用户说明使用中文；代码标识符使用英文。
+
+## 当前架构
+
+### 运行模型
+
+NiceVPN 当前采用**单 Python 进程、单 systemd 服务、双 HTTP 监听端口**：
+
+```text
+openvpn-mgmt.service
+        │
+        └── Python main.py
+              ├── NiceGUI / 管理端       0.0.0.0:8880
+              └── PublicApiListener      0.0.0.0:8881
+```
+
+- `8880`：NiceGUI 管理界面。
+- `8881`：独立 FastAPI/Uvicorn 公网 API，仅暴露 `/api/vpn/*` 和 `/download/{token}`。
+- 两个监听器属于**同一进程**；不要重新拆回 `openvpn-mgmt-api.service`。
+- 管理端口不再提供 `/api/vpn/*`。
+- API 端口不提供 NiceGUI 页面、静态资源、Swagger / OpenAPI 文档。
+- `ui.run(... reload=False)` 为生产运行方式。
+
+### 数据存储
+
+结构化业务数据统一使用 SQLite：
+
+```text
+data/nicevpn.db
+```
+
+包括：
+
+- users
+- groups
+- peers
+- firewall rules
+- tags / user_tags / group_tags
+- 其它 schema migration 管理的结构化数据
+
+旧版 `data/users/*.json`、`data/groups/*.json`、`data/peers/*.json`、`data/firewall/*.json` **只用于启动迁移**，不是当前运行时主存储。
+
+以下仍然是文件型数据：
+
+- `config.json`
+- PKI / CRL
+- CCD
+- OVPN
+- device binding
+- remote chain cache
+- download token / bundle
+- audit / runtime logs
+
+不要为了“统一存储”把 OpenVPN 运行时必须直接访问的文件强行迁入 SQLite。
+
+### 前端
+
+- 管理壳：NiceGUI。
+- 表格：AG Grid。
+- Vue 正式运行产物：`app/ui/vue/dist/`。
+- 生产部署直接使用仓库中的预编译产物，不依赖 Node/npm。
+- 本地需要重新构建时使用 `./start.sh --build-ui` 或 `./build-ui.sh`。
 
 ## 活跃技术栈
 
-- **语言**: Python 3.10+
-- **Web UI**: NiceGUI 3.x（同进程内嵌 ASGI；含拖拽等交互）
-- **后端接口**: FastAPI（挂载于 NiceGUI 的 `app` 上；版本以 `requirements.txt` 为准，当前约 0.135）
-- **运行时**: uvicorn[standard]
-- **数据校验**: pydantic v2
-- **配置读取**: python-box（default_box=True）
-- **HTTP 客户端**: requests；通知侧另有钉钉 / 企业微信 Webhook 库（见 `notify`）
-- **定时任务**: schedule（证书到期检查等）
-- **测试**: pytest + pytest-asyncio（主路径：`tests/unit/`）
-- **防火墙**: iptables + ipset（subprocess）
-- **证书管理**: EasyRSA（subprocess 封装）
-- **对端组网**: paramiko（SSH）、netaddr 等（见 `peer_instance`）
-- **服务管理**: systemd / subprocess（依部署环境）
+- Python 3.10+；CI 基线 Python 3.14。
+- NiceGUI 3.x。
+- FastAPI。
+- Uvicorn。
+- Pydantic v2。
+- python-box。
+- SQLite。
+- schedule。
+- pytest / pytest-asyncio。
+- AG Grid / Vue 前端产物。
+- iptables + ipset。
+- EasyRSA / OpenVPN Community。
+- paramiko 等 SSH 能力。
 
-## 项目结构
+版本以 `requirements.txt` 和实际代码为准，不在本文件硬编码次版本号。
+
+## 目录结构
 
 ```text
+main.py                    # Web 主入口；启动 8880 + 8881
+cli.py                     # 独立 CLI 入口
 app/
-├── api/               # FastAPI：download.py（GET /download/{token}）、vpn_ops.py（/api/vpn/*，HTTP Basic）
-├── core/              # 配置、初始化向导、调度
-├── models/            # Pydantic 模型与配置形状
+├── api/
+│   ├── server.py          # PublicApiListener / 独立 API ASGI app
+│   ├── vpn_ops.py         # /api/vpn/*
+│   └── download.py        # /download/{token}
+├── cli/                   # CLI parser / commands
+├── core/                  # 配置、调度、初始化
+├── models/                # Pydantic 模型
+├── storage/               # SQLite、repositories、schema migration、旧 JSON 迁移
 ├── services/
-│   ├── openvpn/       # 安装检测、实例与 server.conf 生成
-│   ├── easyrsa/       # EasyRSA 封装
-│   ├── cert/          # 证书生命周期（与 UI 证书页配合）
-│   ├── firewall/      # iptables + ipset、规则服务、导入
-│   ├── user/          # 用户 CRUD、设备绑定、ovpn 生成、批量导入/下载
-│   ├── group/         # 组 CRUD、子网
-│   ├── peer_instance/ # 对端实例、CCD iroute/mesh、远端 SSH/OpenVPN/iptables
-│   ├── download/      # 一次性链接、bundle_zip（API 批量 zip）
-│   ├── notify/        # 注册表 + 插件（钉钉、企业微信等）
-│   ├── monitor/       # 服务监控辅助
-│   └── config_editor/ # 配置备份等
-├── ui/pages/          # NiceGUI 页面
-├── ui/components/     # 可复用组件
-├── ui/theme.py        # 全局样式（含初始化向导布局）
-├── utils/             # CIDR、文件锁、审计、api_basic_credentials、public_base_url 等
-└── cli/               # python main.py cli …
-data/                  # JSON 等运行时数据（勿入库）
-tests/unit/            # 单元测试（主要）
-tests/integration/     # 集成占位，以 unit 为准
-main.py                # python main.py → Web；python main.py cli …
-api.md                 # 公网 VPN API 说明（Basic、批量、下载）
-README.md              # 入门与文档导航
-docs/overview.md       # 产品能力说明（设备绑定、Mesh 等）
+│   ├── openvpn/
+│   ├── easyrsa/
+│   ├── cert/
+│   ├── user/
+│   ├── group/
+│   ├── firewall/
+│   ├── peer_instance/
+│   ├── download/
+│   ├── notify/
+│   └── monitor/
+├── ui/
+│   ├── pages/
+│   ├── components/
+│   ├── adapters/
+│   └── vue/
+└── utils/
+deploy/
+├── systemd/
+├── shell/
+├── docker/
+└── logrotate/
+tests/unit/
+README.md
+cli.md
+api.md
+docs/overview.md
+openspec/changes/
 ```
+
+## 开发边界
+
+### systemd / 启动
+
+- NiceVPN 正式服务名只有 `openvpn-mgmt.service`。
+- 不要新增第二个 API systemd unit。
+- `start.sh daemon` 必须保持幂等。
+- Python 选择顺序必须优先项目 `.venv/bin/python`，且不得 realpath 到 uv 的基础解释器。
+- systemd unit 中应固定实际项目目录和选定 Python 解释器路径。
+
+### Public API
+
+- API 与管理 UI 路由集合保持隔离。
+- API Basic 凭据属于运行时数据，不提交版本库。
+- HTTP Basic 对公网必须通过 HTTPS/TLS。
+- API 相关行为同步更新 [api.md](./api.md)。
+
+### SQLite
+
+- 新业务代码不得重新把 users/groups/peers/firewall 作为 JSON 主存储。
+- 旧 JSON 读取只允许存在于明确的迁移 / 历史文件 fallback 边界。
+- schema 改动必须走版本化 migration，不能在业务代码里临时 ALTER。
+- repository 层优先承载 SQL，避免页面或 service 内散落内嵌 SQL。
+
+### ipset / iptables
+
+- ipset 使用声明式 reconcile，不恢复旧的 create/update/delete 递增式生命周期。
+- stable name 统一由 `IpsetManager.stable_name` 等正式入口生成。
+- 历史 iptables chain / hook 清理代码如果仍承担升级清理职责，不应当作死代码删除。
+- 防火墙页面 CRUD 与系统级 rebuild 的边界保持清晰。
+
+### UI
+
+- 页面表格优先复用统一 AG Grid 组件。
+- 服务端分页、过滤器确认后查询、弹窗样式保持一致。
+- 不为了旧测试保留已经没有运行调用方的 UI wrapper；测试应直接验证正式 adapter/service。
+- 正式前端产物由 CI 构建并提交，生产机不应强制 npm/docker build。
+
+### 日志
+
+OpenVPN/NiceVPN 的四个 append 日志由 logrotate 管理：
+
+- `openvpn-device-bind.log`
+- `openvpn-session-audit.jsonl`
+- `openvpn-connection-audit.jsonl`
+- `server.log`
+
+前三个每次写入重新打开文件，可使用 rename + create；`server.log` 为 OpenVPN 长持有句柄，使用 `copytruncate`。
+
+历史文件轮转后立即 gzip，不使用 `delaycompress`。
+
+发行版 `logrotate.service` 若使用 `ProtectSystem`，通过 NiceVPN 安装的 drop-in 仅开放实际 OpenVPN 日志目录的 `ReadWritePaths`。
+
+## CLI
+
+完整 CLI 文档见 [cli.md](./cli.md)。
+
+常用入口：
+
+```bash
+./start.sh cli --help
+python main.py cli --help
+python cli.py --help
+```
+
+新自动化优先使用分层命令 `group ...`、`user ...`；`add-group`、`add-user` 仅作为历史兼容入口保留。
 
 ## 常用命令
 
 ```bash
-python main.py              # 启动 Web（默认 0.0.0.0:8880）
-python main.py cli --help   # 命令行子命令
-pytest tests/unit -q        # 单元测试（推荐）
 pip install -r requirements.txt
+
+./start.sh
+sudo -E ./start.sh daemon
+
+./start.sh cli --help
+
+python -m pytest tests/unit -q
+
+./start.sh --build-ui
+./build-ui.sh
 ```
 
-## 代码规范
+## CI / 测试
 
-- 标识符使用英文，遵循 PEP 8；**注释与文档字符串使用中文**（与本仓库 `AGENTS.md` 一致）。
-- 复杂逻辑（设备绑定、iptables 重建、EasyRSA/PKI 调用、对端同步）须有可读中文注释；关键点打日志。
-- 外部工具通过 subprocess 或既有封装调用，避免在业务里「手写 PKI / 包过滤核心逻辑」。
-- JSON 持久化使用 `utils/file_lock.py` 等既有并发安全方式。
+GitHub Actions 当前主要校验：
 
-## 最近变更
+- Python 3.14 unit tests；
+- OpenSpec strict validation；
+- whitespace / UTF-8 / shell entrypoint；
+- 需要时 Docker build；
+- 需要时 Chrome browser smoke。
 
-- 公网 **`/api/vpn`**：创建用户、批量合并 zip（`vpns_*.zip`）、按前缀删除与重置设备绑定；详情见 **api.md**。
-- **api** 层已与 **download** 分离；下载令牌仍为无 Basic 的 `GET /download/{token}`。
+修改测试契约时，优先修正测试去调用当前正式接口，不要为了旧测试重新引入死代码。
+
+## 文档职责
+
+- [README.md](./README.md)：项目入口、安装部署、文档导航。
+- [docs/overview.md](./docs/overview.md)：产品功能与模块能力。
+- [cli.md](./cli.md)：CLI 命令与自动化使用。
+- [api.md](./api.md)：公网 API 契约。
+- [CLAUDE.md](./CLAUDE.md)：当前开发架构、技术边界。
+- `openspec/changes/`：功能变更设计与历史归档。
+
+不要在 README、CLAUDE、OpenSpec 多处复制同一大段命令或 API 契约；详细内容放到对应单一文档，其他位置只做摘要和链接。
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
