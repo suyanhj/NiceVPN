@@ -9,40 +9,40 @@ from app.storage.repository_helpers import _now_iso, _load_payload, _like_patter
 class TagRepositoryMixin:
     # ---- tags ----
 
-    def create_tag(self, tag_id: str, name: str, description: str = "") -> None:
+    def create_tag(self, tag_id: str, name: str, description: str = "", *, device_binding_exempt: bool = False) -> None:
         tag_id, name = str(tag_id).strip(), str(name).strip()
         if not tag_id or not name:
             raise ValueError("标签 ID 与名称不能为空")
         now = _now_iso()
         with self.connection(write=True) as conn:
             conn.execute(
-                "INSERT INTO tags(id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (tag_id, name, str(description), now, now),
+                "INSERT INTO tags(id,name,description,device_binding_exempt,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (tag_id, name, str(description), int(device_binding_exempt), now, now),
             )
 
     def list_tags(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT id,name,description,created_at,updated_at FROM tags ORDER BY name,id"
+                "SELECT id,name,description,device_binding_exempt,created_at,updated_at FROM tags ORDER BY name,id"
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [{**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"])} for row in rows]
 
     def get_tag(self, tag_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT id,name,description,created_at,updated_at FROM tags WHERE id=?",
+                "SELECT id,name,description,device_binding_exempt,created_at,updated_at FROM tags WHERE id=?",
                 (str(tag_id),),
             ).fetchone()
-        return dict(row) if row else None
+        return {**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"])} if row else None
 
-    def update_tag(self, tag_id: str, *, name: str, description: str = "") -> None:
+    def update_tag(self, tag_id: str, *, name: str, description: str = "", device_binding_exempt: bool | None = None) -> None:
         name = str(name).strip()
         if not name:
             raise ValueError("标签名称不能为空")
         with self.connection(write=True) as conn:
             cur = conn.execute(
-                "UPDATE tags SET name=?,description=?,updated_at=? WHERE id=?",
-                (name, str(description), _now_iso(), str(tag_id)),
+                "UPDATE tags SET name=?,description=?,device_binding_exempt=COALESCE(?,device_binding_exempt),updated_at=? WHERE id=?",
+                (name, str(description), None if device_binding_exempt is None else int(device_binding_exempt), _now_iso(), str(tag_id)),
             )
             if cur.rowcount != 1:
                 raise ValueError("标签不存在")

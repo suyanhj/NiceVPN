@@ -124,6 +124,7 @@ def build_device_bind_config(
     base: Mapping[str, Any] | Any,
     *,
     mode: str,
+    exemption_enabled: bool | None = None,
 ) -> SystemConfig:
     """严格验证设备绑定策略，避免模型兼容逻辑静默回退。"""
 
@@ -133,6 +134,8 @@ def build_device_bind_config(
         raise ValueError("设备绑定策略无效")
     data = _base_dict(base)
     data["device_bind_mode"] = normalized
+    if exemption_enabled is not None:
+        data["device_bind_exemption_enabled"] = bool(exemption_enabled)
     return SystemConfig(**data)
 
 

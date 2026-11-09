@@ -133,6 +133,10 @@ class SystemConfig(BaseModel):
             "strict_hwaddr=必须 IV_HWADDR，无则拒绝（OpenVPN 2.x 核心安卓端常不兼容）"
         ),
     )
+    device_bind_exemption_enabled: bool = Field(
+        default=False,
+        description="通用或强制模式允许组和标签豁免设备绑定",
+    )
     global_ssh_private_key: Optional[str] = Field(
         default=None,
         description="对端未单独配置 SSH 私钥时使用的全局 PEM；与对端字段同落 data 配置，须控制文件权限",

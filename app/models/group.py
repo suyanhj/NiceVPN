@@ -12,6 +12,7 @@ class Group(BaseModel):
     subnet: str = Field(..., description="组子网CIDR")
     status: Literal['active', 'disabled'] = Field(default='active', description="组状态")
     user_count: int = Field(default=0, description="组内用户数量")
+    device_binding_exempt: bool = Field(default=False, description="组内用户免设备绑定")
     firewall_rule_ids: list[str] = Field(default_factory=list, description="关联的防火墙规则ID列表")
     created_at: str = Field(
         default_factory=lambda: datetime.now().isoformat(),

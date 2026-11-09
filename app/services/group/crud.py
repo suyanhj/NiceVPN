@@ -28,7 +28,7 @@ class GroupService:
 
     # ---- 创建 ----
 
-    def create(self, name: str, subnet: str) -> dict:
+    def create(self, name: str, subnet: str, *, device_binding_exempt: bool = False) -> dict:
         """创建组：校验名称唯一性，调用子网冲突检测，通过后保存。
 
         规则：
@@ -85,6 +85,7 @@ class GroupService:
             subnet=subnet,
             status="active",
             user_count=0,
+            device_binding_exempt=device_binding_exempt,
             created_at=now,
             updated_at=now,
         )
@@ -196,7 +197,7 @@ class GroupService:
         )
         return data
 
-    def update_details(self, group_id: str, *, name: str, subnet: str) -> dict:
+    def update_details(self, group_id: str, *, name: str, subnet: str, device_binding_exempt: bool | None = None) -> dict:
         """同时更新组名称与子网；名称修改为增量能力，子网继续复用既有安全校验。"""
 
         current = self._load_group_or_raise(group_id)
@@ -220,9 +221,12 @@ class GroupService:
             self.update_subnet(group_id, new_subnet)
             current = self._load_group_or_raise(group_id)
 
-        if new_name != str(current.get("name") or ""):
+        exempt_changed = device_binding_exempt is not None and bool(device_binding_exempt) != bool(current.get("device_binding_exempt", False))
+        if new_name != str(current.get("name") or "") or exempt_changed:
             old_name = str(current.get("name") or "")
             current["name"] = new_name
+            if device_binding_exempt is not None:
+                current["device_binding_exempt"] = bool(device_binding_exempt)
             current["updated_at"] = datetime.now(timezone.utc).isoformat()
             current = Group(**current).model_dump()
             self.store.upsert_group(current)
