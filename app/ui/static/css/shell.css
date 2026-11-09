@@ -366,7 +366,7 @@ body {
   gap: 9px;
 }
 
-.vpn-field-help-row--start {
+.vpn-field-help-row.vpn-field-help-row--start {
   align-items: flex-start;
 }
 
