@@ -33,9 +33,10 @@ def test_only_four_append_logs_are_managed():
         block = _policy(conf, filename)
         assert f"maxsize {size}" in block
         for directive in ("daily", "rotate 14", "maxage 7", "compress",
-                          "delaycompress", "dateext", "missingok", "notifempty",
+                          "dateext", "missingok", "notifempty",
                           "su @LOG_OWNER@ @LOG_GROUP@"):
             assert directive in block
+        assert "delaycompress" not in block
         assert ("copytruncate" in block) == copytruncate
         if not copytruncate:
             assert "create 0644 @LOG_OWNER@ @LOG_GROUP@" in block
