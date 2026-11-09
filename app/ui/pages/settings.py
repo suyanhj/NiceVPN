@@ -604,6 +604,15 @@ class SettingsPage:
                     or "weak_fingerprint"
                 ),
             ).classes("w-full")
+            self.device_bind_exemption_input = ui.switch(
+                "启用设备绑定豁免（组 / 标签）",
+                value=bool(self.config.get("device_bind_exemption_enabled", False)),
+            ).classes("w-full")
+            help_hint(
+                "仅通用和强制绑定模式生效；关闭时保留组和标签配置，" 
+                "豁免用户不会产生或更新绑定 JSON，但保留会话及设备审计。",
+                aria_label="设备绑定豁免说明",
+            )
             help_hint(
                 "A 仅审计；B 按 HW/UUID/平台信息分级匹配；"
                 "C 强制 IV_HWADDR。切换策略后旧设备可能需要重置绑定。",
@@ -1602,6 +1611,7 @@ class SettingsPage:
             merged = build_device_bind_config(
                 previous,
                 mode=str(self.device_bind_mode_input.value or ""),
+                exemption_enabled=bool(self.device_bind_exemption_input.value),
             )
         except Exception as exc:
             safe_notify(f"配置校验失败: {exc}", type="negative")
@@ -1615,14 +1625,21 @@ class SettingsPage:
             return False
 
         try:
-            sync_device_bind_mode_file(merged.device_bind_mode)
-        except OSError as exc:
+            sync_device_bind_mode_file(
+                merged.device_bind_mode,
+                exemption_enabled=merged.device_bind_exemption_enabled,
+            )
+        except Exception as exc:
             try:
                 save_config(previous)
+                sync_device_bind_mode_file(
+                    str(previous.get("device_bind_mode") or "weak_fingerprint"),
+                    exemption_enabled=bool(previous.get("device_bind_exemption_enabled", False)),
+                )
             except Exception:
                 logger.exception("设备绑定配置回滚失败")
             safe_notify(
-                "写入 device_bind_mode 失败，配置已尝试回滚: "
+                "写入设备绑定运行时策略失败，配置已尝试回滚: "
                 f"{exc}",
                 type="negative",
                 multi_line=True,

@@ -188,6 +188,8 @@ class TagsPage:
                                 ui.label(str(tag["description"])).classes(
                                     "tags-record-description"
                                 )
+                            if tag.get("device_binding_exempt"):
+                                ui.label("免设备绑定").classes("text-caption text-positive")
                 with ui.row().classes("tags-record-meta items-center"):
                     with ui.element("span").classes("mgmt-meta-item"):
                         ui.icon("person_outline", size="14px")
@@ -335,6 +337,7 @@ class TagsPage:
         def body() -> None:
             fields["name"] = ui.input("标签名称").classes("w-full")
             fields["description"] = ui.input("说明（选填）").classes("w-full")
+            fields["device_binding_exempt"] = ui.switch("豁免设备绑定", value=False)
 
         def submit() -> bool:
             name = str(fields["name"].value or "").strip()
@@ -342,7 +345,8 @@ class TagsPage:
                 safe_notify("请输入标签名称", type="warning")
                 return False
             try:
-                self.service.create(name, str(fields["description"].value or "").strip())
+                self.service.create(name, str(fields["description"].value or "").strip(),
+                                    device_binding_exempt=bool(fields["device_binding_exempt"].value))
                 safe_notify("标签已创建", type="positive")
                 self._refresh()
                 return True
@@ -361,12 +365,16 @@ class TagsPage:
             fields["description"] = ui.input(
                 "说明（选填）", value=tag.get("description") or ""
             ).classes("w-full")
+            fields["device_binding_exempt"] = ui.switch(
+                "豁免设备绑定", value=bool(tag.get("device_binding_exempt", False))
+            )
 
         def submit() -> bool:
             try:
                 self.service.update(
                     tag["id"], name=fields["name"].value,
                     description=fields["description"].value,
+                    device_binding_exempt=bool(fields["device_binding_exempt"].value),
                 )
                 safe_notify("标签已更新", type="positive")
                 self._refresh()

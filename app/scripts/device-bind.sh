@@ -27,12 +27,18 @@ case "$SESSION_AUDIT_LOG" in *"__VPN_SESSION_AUDIT_LOG_FILE__"*)
 esac
 BINDINGS_DIR="${OVPN_ETC}/mgmt/device_bindings"
 MODE_FILE="${OVPN_ETC}/mgmt/device_bind_mode"
+EXEMPT_FILE="__DEVICE_BIND_EXEMPTIONS_FILE__"
+case "$EXEMPT_FILE" in *"__DEVICE_BIND_EXEMPTIONS_FILE__"*)
+    EXEMPT_FILE="${OVPN_ETC}/mgmt/device_bind_exemptions.json"
+    ;;
+esac
 
 CN="${common_name}"
 # 与 device_binding_json.py 同目录（部署在 /etc/openvpn/scripts/）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BD_JSON_PY="${SCRIPT_DIR}/device_binding_json.py"
 SESSION_AUDIT_PY="${SCRIPT_DIR}/vpn_session_audit.py"
+EXEMPT_PY="${SCRIPT_DIR}/device_bind_exemption.py"
 
 # 选用 PATH 中版本号最高的 python3.x（多版本并存时避免 python3 指向旧解释器），最后回退 python3
 init_py3_for_bind() {
@@ -93,6 +99,31 @@ if [ "${DEVICE_BIND_MODE}" = "weak_log" ]; then
     log "mode=weak_log CN=${CN} IV_PLAT=${IV_PLAT:-} UV_UUID=${UV_UUID:-} IV_VER=${IV_VER:-} IV_HWADDR=${IV_HWADDR:-} IV_AUTO_SESS=${IV_AUTO_SESS:-} IV_PLAT_VER=${IV_PLAT_VER:-} IV_GUI_VER=${IV_GUI_VER:-}"
     write_session_start
     exit 0
+fi
+
+# ---------- 仅通用/强制模式可按组或标签豁免 ----------
+# 总闸来自 root 发布的 mode 文件第二行，缺失即关闭（兼容旧安装）。
+EXEMPT_SWITCH=""
+if [ -f "${MODE_FILE}" ]; then
+    EXEMPT_SWITCH=$(sed -n '2p' "${MODE_FILE}" | tr -d '\r\n')
+fi
+if [ "${EXEMPT_SWITCH}" = "exemptions_enabled=1" ]; then
+    if [ -f "${EXEMPT_PY}" ] && init_py3_for_bind; then
+        EXEMPT_SOURCE=$("${PY3_BIND}" "${EXEMPT_PY}" --file "${EXEMPT_FILE}" --username "${CN}" 2>>"${BIND_LOG}")
+        EXEMPT_RESULT=$?
+        if [ "${EXEMPT_RESULT}" -eq 0 ] && [ -n "${EXEMPT_SOURCE}" ]; then
+            log "设备绑定豁免: CN=${CN} mode=${DEVICE_BIND_MODE} source=${EXEMPT_SOURCE}"
+            export DEVICE_BIND_DECISION="exempt"
+            export DEVICE_BIND_EXEMPT_SOURCE="${EXEMPT_SOURCE}"
+            write_session_start
+            exit 0
+        fi
+        if [ "${EXEMPT_RESULT}" -gt 1 ]; then
+            log "豁免策略读取失败，回退原有绑定校验: CN=${CN}"
+        fi
+    else
+        log "豁免检查脚本或 Python 不可用，回退原有绑定校验: CN=${CN}"
+    fi
 fi
 
 # ---------- 模式 C：强绑定，必须 IV_HWADDR ----------

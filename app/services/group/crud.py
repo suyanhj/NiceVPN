@@ -231,10 +231,11 @@ class GroupService:
             current = Group(**current).model_dump()
             self.store.upsert_group(current)
             self.audit.log(
-                "update_group_name",
+                "update_group_details",
                 "group",
                 group_id,
-                f"组名称从 {old_name} 变更为 {new_name}",
+                {"old_name": old_name, "name": new_name,
+                 "device_binding_exempt": bool(current.get("device_binding_exempt", False))},
                 "success",
             )
 
