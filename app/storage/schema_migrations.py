@@ -102,7 +102,9 @@ def migrate_v3_normalize_group_cidrs(conn: sqlite3.Connection) -> None:
 
 def migrate_v5_device_binding_exempt(conn: sqlite3.Connection) -> None:
     """标签豁免属性；旧记录默认关闭；用户组属性保存在组 payload。"""
-    execute_sql_file(conn, "005_device_binding_exempt.sql")
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tags)")}
+    if "device_binding_exempt" not in columns:
+        execute_sql_file(conn, "005_device_binding_exempt.sql")
     conn.execute(
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
         (5, "device-binding-exempt", _now_iso()),
