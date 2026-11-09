@@ -16,8 +16,11 @@ from app.storage.sqlite_store import SqliteStore
 
 
 @pytest.fixture()
-def store(tmp_path):
+def store(tmp_path, monkeypatch):
     db = SqliteStore(tmp_path / "db.sqlite")
+    # Emulate the effective configured SQLite database, not an unrelated
+    # temporary store; production refreshes only its configured database.
+    monkeypatch.setenv("NICEVPN_DB_PATH", str(db.path))
     db.upsert_group({
         "id": "root", "name": "默认组", "status": "active",
         "subnet": "10.8.0.0/16", "device_binding_exempt": False,
