@@ -139,7 +139,14 @@ class SqliteStore(
             and os.name != "nt"
         ):
             # Independent test stores must not overwrite OpenVPN's runtime snapshot.
-            if self.path.resolve() == get_default_store().path.resolve():
+            # Avoid get_default_store() here: initializing the default store
+            # can itself migrate legacy JSON using this same write path.
+            # Calling it from a migration transaction recursively enters the
+            # initialization lock and deadlocks the Python test suite.
+            configured_path = Path(
+                os.environ.get("NICEVPN_DB_PATH") or SQLITE_DB_FILE
+            ).resolve()
+            if self.path.resolve() == configured_path:
                 from app.services.user.device_bind_policy import (
                     refresh_device_bind_exemption_snapshot,
                 )
