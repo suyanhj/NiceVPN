@@ -17,7 +17,19 @@ class UserRepositoryMixin:
             raise ValueError("user.username 不能为空")
         payload = dict(data)
         payload["username"] = username
-        with self.connection(write=True) as conn:
+        changed = [False]
+        new_group = str(payload.get("group_id") or "")
+        new_status = str(payload.get("status") or "active")
+        with self.connection(
+            write=True, device_binding_changed=changed,
+        ) as conn:
+            old = conn.execute(
+                "SELECT group_id,status FROM users WHERE username=?", (username,)
+            ).fetchone()
+            changed[0] = (
+                old is None or str(old["group_id"]) != new_group
+                or str(old["status"]) != new_status
+            )
             conn.execute(
                 """
                 INSERT INTO users(username, group_id, status, created_at, updated_at, payload)
@@ -31,8 +43,8 @@ class UserRepositoryMixin:
                 """,
                 (
                     username,
-                    str(payload.get("group_id") or ""),
-                    str(payload.get("status") or "active"),
+                    new_group,
+                    new_status,
                     str(payload.get("created_at") or ""),
                     str(payload.get("updated_at") or ""),
                     _dump_payload(payload),
