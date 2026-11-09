@@ -76,6 +76,22 @@ def test_settings_page_uses_shared_header_tabs_and_form_section(
     assert "rocketchat" in page.notify_provider_select.options
 
 
+def test_settings_help_hints_are_attached_to_their_controls() -> None:
+    """设置页的字段说明必须由共享行组件承载，避免问号图标独占一行。"""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "app" / "ui" / "pages" / "settings.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from app.ui.components.help import field_with_help" in source
+    assert "help_hint(" not in source
+    assert source.count("field_with_help(") == 6
+    assert "control_grow=False" in source
+
+
 def test_validate_paths_checks_both_openvpn_and_easyrsa(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
