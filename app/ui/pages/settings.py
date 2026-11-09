@@ -609,7 +609,7 @@ class SettingsPage:
                 value=bool(self.config.get("device_bind_exemption_enabled", False)),
             ).classes("w-full")
             help_hint(
-                "仅通用和强制绑定模式生效；关闭时保留组和标签配置，" 
+                "仅通用和强制绑定模式生效；关闭时保留组和标签配置，"
                 "豁免用户不会产生或更新绑定 JSON，但保留会话及设备审计。",
                 aria_label="设备绑定豁免说明",
             )
