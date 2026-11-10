@@ -9,9 +9,9 @@
 - 开发分支：`feature/enterprise-sso-webauth`；PR #78 必须保持 Draft，用户明确验收后才允许合并 `main`。
 - 详细架构与实机验收：[docs/enterprise-sso.md](docs/enterprise-sso.md)。
 - `enterprise_sso_enabled` 默认关闭；登录身份只核实可信 OAuth 返回的企业 ID，**不要**要求钉钉/企业微信用户存在于 VPN 用户表。
-- 证书 CN 原本所属用户/组/标签和防火墙权限保持不变；Linux 只允许管理员按证书显式豁免 SSO，不能根据信任度不足的 `IV_PLAT` 免认证。
+- 证书 CN 原本所属用户/组/标签和防火墙权限保持不变；总开关仅提供 SSO 能力，组或标签编辑开关才强制 SSO。Linux 使用不属于强制 SSO 组/标签的证书，不新增证书豁免系统，也不能依据 `IV_PLAT` 自动绕过。
 - 启用后由 root 限制的 Unix Management Socket 完成 `WEB_AUTH` 流程；公网仅提供 `/auth/sso` OAuth 回调，不开放管理端与 Management Socket。
-- SSO 授权后设备指纹仅记录，其他证书按旧策略；AppSecret 加密密钥随完整备份保存。
+- SSO 授权后设备指纹仅记录，其他证书按旧策略；多家子/分公司使用独立 CorpId 和 OAuth 应用、独立密钥、可读企业名称。AppSecret 加密主密钥随完整备份保存。
 - 目前代码尚未通过真机 OpenVPN/WebAuth、钉钉/企业微信回调的端到端验收，CI mock 通过不能视为生产就绪。
 
 ## 当前架构
