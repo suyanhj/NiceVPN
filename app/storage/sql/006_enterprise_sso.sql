@@ -3,14 +3,6 @@
 -- Tag sso_required column is added conditionally by schema_manager
 -- to support re-running migrations against partially upgraded databases.
 
--- Exception is scoped to an actual certificate identity (CN), never IV_PLAT.
-CREATE TABLE IF NOT EXISTS sso_certificate_exemptions (
-    common_name TEXT PRIMARY KEY,
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 -- Secrets must not be stored in this table as plaintext.
 -- Use a private secret manager when implementing the OAuth adapter.
 CREATE TABLE IF NOT EXISTS sso_auth_providers (
