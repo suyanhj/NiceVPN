@@ -51,6 +51,14 @@ class WebAuthTransactionStore:
         self.store = store if store is not None else get_default_store()
 
     @staticmethod
+    def state_for_token(token: str) -> str:
+        # Domain-separated, unguessable OAuth state derivable only from the
+        # one-time random token sent directly to the client in WEB_AUTH.
+        return hashlib.sha256(
+            b"nicevpn-sso-oauth-state-v1:" + token.encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
     def _as_request(row) -> AuthRequest:
         return AuthRequest(
             instance_id=str(row["instance_id"]),
@@ -84,7 +92,7 @@ class WebAuthTransactionStore:
             raise ValueError("Invalid SSO lifetime")
         issued_at = int(time.time() if now is None else now)
         token = secrets.token_urlsafe(32)
-        state = secrets.token_urlsafe(32)
+        state = self.state_for_token(token)
         expires_at = issued_at + ttl_seconds
         with self.store.connection(write=True) as conn:
             conn.execute(
