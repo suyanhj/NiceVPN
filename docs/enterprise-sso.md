@@ -12,18 +12,18 @@
 4. **不能**根据 `IV_PLAT=linux`、GUI 版本或客户端自称身份自动跳过已要求的 SSO；同一份证书在不同系统始终执行同一组/标签策略。
 5. 需要 SSO 的证书完成身份验证后，设备指纹/MAC 仅记录，不拒绝；原有不需要 SSO 的证书保留旧设备绑定行为。
 6. WebAuth 缺失、不匹配企业、身份提供商不可用、超时、NiceVPN 意外退出时均不能让强制 SSO 的证书自动绕过认证。
-7. NiceVPN 管理端口**不**对公网开放；复用现有 `PublicApiListener` 的第二端口用于 HTTPS OAuth 授权回调，Management 仅本机受控访问。
+7. NiceVPN 管理端口**不**对公网开放；复用现有 `PublicApiListener` 的第二端口用于 HTTP 或 HTTPS OAuth 授权回调，Management 仅本机受控访问。
 
 ## 关键实现约束
 
 - 当前 server.conf 自动生成：`app/templates/openvpn/server.conf.in`；`app/services/openvpn/instance.py`。Management 为 `127.0.0.1:7505+index`；客户端连接校验由 `device-bind.sh` 执行。
 - 只有控制器成功启动、预检配置正确后才能将 `management-client-auth` 和 `auth-user-pass-optional` 写入实例配置；若启动失败，不能静默回退到旧认证。开启/关闭需要谨慎安排 OpenVPN 重启，且不能导致正在运行的认证控制器竞争连接。
 - Management 事件：`>CLIENT:CONNECT/REAUTH,CID,KID`，后接若干 `>CLIENT:ENV,k=v`，以 `>CLIENT:ENV,END` 结束。不能以仅凭字符串中包含 `webauth` 判断客户端真实能力，应检查服务端收到的 `IV_SSO`；即使声明该能力仍应对具体客户端实测。
-- `client-pending-auth CID KID WEB_AUTH:external:https://... TIMEOUT` 仅创建认证等待；认证成功后以同一实例、CID、KID 的 `client-auth-nt` 放行，否则 `client-deny`。
+- `client-pending-auth CID KID WEB_AUTH:external:http(s)://... TIMEOUT` 仅创建认证等待；认证成功后以同一实例、CID、KID 的 `client-auth-nt` 放行，否则 `client-deny`。
 - 初次登录、REAUTH、断线重试、CID/KID 复用和管理端重启都要验证；认证事务不可跨实例串用。
 - OAuth 由服务端生成高熵 `state`，固定供应商回调 URI，后端完成 code 换 token 与所属企业校验；HTTP 查询参数和浏览器的 CorpId 不可信。事务过期/取消/重复只能拒绝。
 - 钉钉/企业微信登录接口必须采用所选应用类型支持的**企业身份验证流程**，不能把仅有 `unionId` 的个人网页登录结果误当成公司身份。
-- 公网 HTTPS 入口无管理员 cookie 权限；隐藏授权码、token、client secret 和事务凭据，不得打印到 Uvicorn access log / audit log。
+- 对外 HTTP / HTTPS 回调均不得暴露管理员 cookie 权限；不在日志中记录授权码、token、client secret 和事务凭据。HTTP 传输不加密，开发环境可直接用 IP:端口测试；真实公网部署建议启用 HTTPS。
 - 必须完成单元、集成、客户端实测，任何没有实机测试的兼容性只标记「待验收」。
 
 ## 分阶段任务与完成条件
@@ -33,7 +33,7 @@
 | #72 | Management WebAuth POC / CONNECT / REAUTH | 真实客户端自动登录，回调正确放行，无 SSO 时旧连接不变 |
 | #73 | SQLite schema v7 / 多企业提供商 / 组标签策略 | 自动迁移、冲突决策单测、默认关闭 |
 | #74 | 钉钉、企业微信 OAuth | 服务端企业验证、State 防重放、无需 VPN 身份映射 |
-| #75 | FastAPI 公网回调 + pending 事务 | HTTPS、CID/KID 绑定、过期与并发可控 |
+| #75 | FastAPI 公网回调 + pending 事务 | HTTP/HTTPS 通用、CID/KID 绑定、过期与并发可控 |
 | #76 | NiceGUI 管理 UI | 总开关、集团多企业配置、组和标签新建/编辑开关、密钥脱敏 |
 | #77 | 设备仅记录 / 审计 / 安装文档 / 回归 | 权限不变、旧配置兼容、异常 fail closed |
 
@@ -53,9 +53,9 @@
 1. 集团总部与每家子公司分别在自己的钉钉/企业微信后台创建企业应用，收集各自 CorpId、AppKey/AppSecret 或 AgentId/Secret。
 2. 在 `系统设置 → 企业认证` 为集团每家公司添加一条独立的身份提供商，填写企业名称（供员工识别）、企业 ID 和应用凭证，并选择启用。多家公司可同时启用，登录页提供企业选择。**此时无需开启全局 SSO。**
 3. 在办公系统登记 OAuth 回调 URI：
-   - 钉钉：`https://VPN公网域名/auth/sso/dingtalk/callback`
-   - 企业微信：`https://VPN公网域名/auth/sso/wecom/callback`
-4. 在企业认证设置中输入 `enterprise_sso_public_base_url`（例如 `https://vpn.example.com`，不含路径），由 HTTPS 反向代理将 `/auth/sso/*` 转发到 NiceVPN 公网 API 独立端口。**不要将 NiceGUI 管理端公开暴露。**
+   - 钉钉：`http://服务器IP:API端口/auth/sso/dingtalk/callback`（也支持 HTTPS 域名）
+   - 企业微信：`http://服务器IP:API端口/auth/sso/wecom/callback`（也支持 HTTPS 域名）
+4. 在企业认证设置中输入 `enterprise_sso_public_base_url`，例如 `http://192.168.1.10:8881`、`http://vpn.example.com:8881` 或 `https://vpn.example.com`（不含路径）。无需域名或反向代理也能由 NiceVPN HTTP API 提供回调。如果有反代，也支持 HTTP 或 HTTPS 转发。**不要将 NiceGUI 管理端公开暴露。**
 5. 在**组管理或标签管理的新建/编辑弹窗**开启“启用企业认证（SSO）”。总开关打开但组与标签都不要求的证书保留原有逻辑。Linux 命令行证书不要放在启用 SSO 的组或标签内，不依据 `IV_PLAT` 自动豁免。
 6. 完成 POC 和 OpenVPN 客户端测试后，才在管理端打开全局总开关。保存后还需要重启 NiceVPN、重新生成并重启 OpenVPN 实例；未生效前不应把界面状态当作已执行策略。
 
@@ -76,3 +76,12 @@
 - **待真实企业应用测试**：钉钉/企业微信企业内部应用、授权回调、企业身份匹配及权限撤销。
 - **待实机验证**：NiceVPN / OpenVPN 服务重启、多个实例同时认证、已有运维踢出功能以及设备指纹脚本记录模式。
 - CI 仅运行不依赖真实办公系统或 OpenVPN 服务的单测；**CI 通过不代表 SSO 可直接投入生产**。
+
+## HTTP 和 HTTPS 兼容（开发、内网与生产）
+
+- NiceVPN 本身**不强制 HTTPS、不强制域名、不强制购买或安装 SSL 证书**。HTTP 与 HTTPS 均支持 IP、域名、可选端口。
+- 示例：`http://127.0.0.1:8881`、`http://192.168.1.10:8881`、`http://10.10.0.8:8881`、`http://vpn.example.com`、`https://vpn.example.com`。
+- 开启 SSO 所填写的认证基址必须完整包含 `http://` 或 `https://`；可在内网或开发环境直接填写 IP:API 端口，不能填写路径、URL 用户名密码、查询参数。
+- WebAuth 等待链接和钉钉/企业微信的授权 `redirect_uri` 保留配置里的原协议，不做 HTTP → HTTPS 强制跳转。
+- 钉钉、企业微信官方授权/API 服务地址仍为**官方提供的 HTTPS 地址**（这是供应商 API 入口，不是 NiceVPN 回调 HTTPS 限制）。供应商平台可能要求登记可信回调地址、域名或 HTTPS；NiceVPN 不阻止 HTTP 配置，但不能保证第三方平台接受所有测试地址。可用 Mock OAuth 完成本地 HTTP 链路测试。
+- HTTP 会明文传输 WebAuth 票据和授权码；建议仅用于可信的开发/内网测试，公网真实员工登录更适合 HTTPS，但不强制。
