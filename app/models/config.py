@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
 from app.utils.public_domains import parse_domains
+from app.utils.sso_enterprises import parse_allowed_enterprises
 
 
 _ARGON2ID_HASH_PATTERN = re.compile(
@@ -142,6 +143,10 @@ class SystemConfig(BaseModel):
         default=None,
         description="SSO 自定义认证地址；优先级：自动获取 < domains < 自定义。域名使用 80/443，IP 可自动补 API 端口",
     )
+    enterprise_sso_allowed_corps: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="统一钉钉登录的企业 CorpId 白名单（名称仅用于展示）",
+    )
     enterprise_sso_enabled: bool = Field(
         default=False,
         description="全局企业身份认证总开关；默认关闭，开启须先完成提供商、WebAuth、管理通道预检",
@@ -268,6 +273,11 @@ class SystemConfig(BaseModel):
                 raise ValueError(f"push_lan_routes 仅支持 IPv4: {item}")
             out.append(str(net))
         return out
+
+    @field_validator("enterprise_sso_allowed_corps", mode="before")
+    @classmethod
+    def validate_allowed_sso_enterprises(cls, value):
+        return parse_allowed_enterprises(value)
 
     @field_validator("domains", mode="before")
     @classmethod
