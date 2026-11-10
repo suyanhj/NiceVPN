@@ -13,7 +13,7 @@
 - 全局 `domains` 是一个按顺序排列的 http(s) 域名/IP:端口白名单；`download_base_url`、`enterprise_sso_public_base_url` 非空时须优先于全局值。API 只允许匹配名单内的 Host；OpenVPN SSO 初次跳转使用首项（没有 HTTP Host 可判断）。
 - SSO 日志可记录企业 CorpId、应用标识及可用的员工 ID，钉钉 `users/me` 403 时仅输出 HTTP 状态、错误码、缺少的 scopes；禁止输出 accessToken、refreshToken、OAuth code、AppSecret 或完整响应体。
 - 启用后由 root 限制的 Unix Management Socket 完成 `WEB_AUTH` 流程；公网仅提供 `/auth/sso` OAuth 回调，不开放管理端与 Management Socket。
-- SSO 授权后设备指纹仅记录，其他证书按旧策略；多家子/分公司使用独立 CorpId 和 OAuth 应用、独立密钥、可读企业名称。AppSecret 加密主密钥随完整备份保存。
+- SSO 授权后设备指纹仅记录，其他证书按旧策略；统一钉钉应用只配置一套加密 OAuth 凭证，多个企业使用 `enterprise_sso_allowed_corps` 中的 CorpId 白名单（企业名称仅展示）。旧 per-company 应用凭证保留备份，不自动切换。密钥主文件随完整备份保存。
 - 目前代码尚未通过真机 OpenVPN/WebAuth、钉钉/企业微信回调的端到端验收，CI mock 通过不能视为生产就绪。
 
 ## 当前架构
@@ -249,9 +249,13 @@ GitHub Actions 当前主要校验：
 <!-- MANUAL ADDITIONS END -->
 
 - 全局地址覆盖优先级：自动获取 < domains < 业务自定义；域名默认 HTTP 80/HTTPS 443 且不追加 8881，裸 IP 在未写端口时补 `NICEVPN_API_PORT`（默认 8881），显式端口保持不变；浏览器自行遵循站点 3xx，不能强制 HTTPS。
-- 钉钉登录 Scope `openid corpid` 默认始终保留；每个企业应用的 `read_user_profile` 是可选的独立开关，且仅在开关开启时请求 `Contact.User.Read` 并调用用户个人信息 API。严禁为未开权限的企业强制申请此委托 Scope。
+- 钉钉网页登录官方 Scope 仅 `openid` 或 `openid corpid`；NiceVPN 统一认证始终请求 `openid corpid`。个人资料读取开关只控制是否额外调用 `users/me`，绝不可把 `Contact.User.Read` 当作网页登录 Scope 拼进去。
 
 - SSO WebAuth **只对组或标签明确要求企业认证的连接触发**；未开启的连接经 Management 放行后继续原有 OpenVPN 证书、CCD 与 client-connect 流程。证书 CA / CRL / 有效期由 OpenVPN 原生验证，NiceVPN 不重复实现。
 - 通过可信企业 SSO 的连接使用受限 120 秒 grant 在 client-connect 钩子里跳过设备指纹绑定，仅记录设备和会话审计；未完成 SSO 的连接继续现有设备绑定策略。客户端 IP/port 使用与 Management 事件一致的 trusted/untrusted 备用字段。
 - SSO 审计改为专用文件 `data/logs/sso-auth.jsonl`（UTC 按天轮转，默认保留 7 天）；不再向旧 SQLite `sso_auth_audit` 新增记录，也不再在系统设置页展示认证表格。服务管理 → 本机实例 →「认证日志」复用有界日志查看弹窗。
 - 系统设置页说明一律使用 `render_form_section(description=...)` 或 `field_with_help` 小问号 Tooltip；不要新增多段常驻 `ui.label` 解释文案。字段帮助必须与输入控件处于同一行。
+
+- 统一钉钉提供商 ID 为 `dingtalk_unified`，通过 `SsoProviderStore.save_unified()` 保存一份 Fernet 加密全局 Client ID/Secret。已配置时 `first_enabled()` 和 `enabled_metadata()` 优先且只返回统一应用，关闭时不自动回退到旧企业提供商。
+- 允许企业白名单为 `SystemConfig.enterprise_sso_allowed_corps`，每项仅 `corp_id` / `name`。只有从钉钉 `userAccessToken` 服务端响应获得的 CorpId 精确命中名单才能在 `SsoRuntime.finish()` 放行；禁止浏览器参数直接决定权限。
+- 系统设置页企业认证使用全局钉钉 AppKey/SuiteKey + Secret + 企业白名单，不再逐公司设置 OAuth 密钥。支持显式迁移旧版第一套已启用钉钉应用凭证及公司名单，旧数据不删除。
