@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.services.auth.office_oauth import (
     OfficeAuthError, authorization_url, exchange_code,
 )
-from app.services.auth.sso_runtime import get_sso_runtime
+from app.services.auth.sso_runtime import SsoFinishResult, get_sso_runtime
 from app.services.auth.sso_transactions import WebAuthTransactionStore
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ _NO_CACHE = {
 }
 
 
-def _html(message: str, *, code: int = 200) -> HTMLResponse:
+def _html(message: str, *, code: int = 200, show_vpn_hint: bool = False) -> HTMLResponse:
     # No JS, tracking images or third-party scripts; mobile browsers may stay
     # open after the backend approves the parallel OpenVPN connection.
     safe_message = escape(message)
@@ -42,7 +42,8 @@ def _html(message: str, *, code: int = 200) -> HTMLResponse:
         "<body style='font:16px system-ui,sans-serif;text-align:center;"
         "padding:16vh 2rem;line-height:1.8'>"
         f"<h2>NiceVPN 企业认证</h2><p>{safe_message}</p>"
-        "<p>可以返回 VPN 客户端查看连接状态。</p></body></html>"
+        + ("<p>可以返回 VPN 客户端查看连接状态。</p>" if show_vpn_hint else "")
+        + "</body></html>"
     )
     return HTMLResponse(
         body, status_code=code,
@@ -161,6 +162,11 @@ async def office_callback(provider_kind: str, request: Request):
         logger.info("Office SSO verification rejected")
         return _html("企业身份认证未通过。", code=403)
 
-    if not runtime.finish(transaction, state, verified):
+    result = runtime.finish_with_result(transaction, state, verified)
+    if result == SsoFinishResult.DENIED:
+        return _html("当前企业未获授权，不允许访问 VPN。", code=403)
+    if result == SsoFinishResult.EXPIRED:
         return _html("认证事务已失效。请重新发起 VPN 连接。", code=410)
-    return _html("企业身份验证成功，VPN 正在继续连接。")
+    if result == SsoFinishResult.UNAVAILABLE:
+        return _html("VPN 认证服务暂时不可用。请重新连接。", code=503)
+    return _html("企业身份验证成功，VPN 正在继续连接。", show_vpn_hint=True)
