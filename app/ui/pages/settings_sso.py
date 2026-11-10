@@ -127,7 +127,7 @@ class SsoSettingsPanel:
                     on_click=self._import_legacy,
                 ).props("outline").tooltip(
                     "只复制第一套已启用钉钉应用凭证，并导入旧企业 CorpId 白名单；"
-                    "保留所有旧配置，导入完成后刷新页面查看。"
+                    "导入成功后清除不再使用的旧企业凭证，操作前请先备份数据库。"
                 )
         render_form_section(
             "统一钉钉身份认证",
@@ -205,8 +205,18 @@ class SsoSettingsPanel:
         except Exception as exc:
             safe_notify(f"统一钉钉配置保存失败: {exc}", type="negative")
             return False
+        try:
+            removed = self.providers.cleanup_unified_legacy()
+        except Exception as exc:
+            safe_notify(
+                f"统一认证已保存，但旧凭证清理未完成：{exc}。"
+                "请检查后重新保存；已保存的统一配置仍有效。",
+                type="warning", multi_line=True,
+            )
+            return True
         safe_notify(
-            "统一认证配置已保存；请重启 NiceVPN，使新的 WebAuth 连接使用统一钉钉登录",
+            f"统一认证已保存；已清理 {removed} 条旧企业应用凭证。"
+            "请重启 NiceVPN，使新的 WebAuth 连接使用统一登录",
             type="positive", multi_line=True,
         )
         return True
@@ -238,8 +248,17 @@ class SsoSettingsPanel:
         except Exception as exc:
             safe_notify(f"旧企业配置导入失败: {exc}", type="negative")
             return False
+        try:
+            removed = self.providers.cleanup_unified_legacy()
+        except Exception as exc:
+            safe_notify(
+                f"统一凭证及白名单已导入，但旧凭证清理失败：{exc}。"
+                "请先检查并重新保存统一认证配置。",
+                type="warning", multi_line=True,
+            )
+            return True
         safe_notify(
-            "已导入第一套钉钉凭证及旧企业白名单，原多企业凭证保留备份；"
+            f"已导入统一钉钉凭证及企业白名单，并清理 {removed} 条旧企业凭证；"
             "请刷新页面核对配置，然后重启 NiceVPN",
             type="positive", multi_line=True,
         )
