@@ -15,7 +15,7 @@ from app.storage.sqlite_store import SqliteStore, get_default_store
 
 @dataclass(frozen=True)
 class SsoPolicyDecision:
-    # One of: legacy, required, exempt, reject
+    # One of: legacy, required, reject
     mode: str
     sources: tuple[str, ...] = ()
     reason: str = ""
@@ -48,23 +48,17 @@ class SsoPolicyService:
                 "SELECT group_id, status FROM users WHERE username=?", (cn,)
             ).fetchone()
             if user is None:
-                return SsoPolicyDecision("reject", reason="unknown_certificate_policy")
+                # No matching group/tag policy: preserve pre-SSO behavior.
+                # OpenVPN certificate/CRL/CCD and device rules still apply.
+                return SsoPolicyDecision("legacy", reason="unmanaged_certificate")
             if str(user["status"]) != "active":
-                return SsoPolicyDecision("reject", reason="inactive_certificate_policy")
+                return SsoPolicyDecision("legacy", reason="inactive_user_original_policy")
             gid = str(user["group_id"] or "")
             group = conn.execute(
                 "SELECT status, payload FROM groups WHERE id=?", (gid,)
             ).fetchone()
             if group is None or str(group["status"]) != "active":
-                return SsoPolicyDecision("reject", reason="inactive_group")
-            exempt = conn.execute(
-                "SELECT reason FROM sso_certificate_exemptions WHERE common_name=?",
-                (cn,),
-            ).fetchone()
-            if exempt is not None:
-                return SsoPolicyDecision(
-                    "exempt", (f"certificate:{cn}",), "explicit_certificate_exemption"
-                )
+                return SsoPolicyDecision("legacy", reason="inactive_group_original_policy")
             group_payload = _load_payload(str(group["payload"]))
             sources = []
             if group_payload.get("sso_required") is True:
@@ -86,37 +80,6 @@ class SsoPolicyService:
             sources.extend(f"tag:{str(row['id'])}" for row in tags)
         return (SsoPolicyDecision("required", tuple(sources), "policy_required")
                 if sources else SsoPolicyDecision("legacy", reason="no_sso_requirement"))
-
-    def set_certificate_exemption(
-        self, common_name: str, *, exempt: bool, reason: str = ""
-    ) -> None:
-        """Admin-only service method; never expose to unauthenticated API."""
-        cn = str(common_name or "").strip()
-        if not cn or any(c in cn for c in "\r\n") or len(cn) > 255:
-            raise ValueError("Invalid certificate CN")
-        if exempt and not str(reason).strip():
-            raise ValueError("SSO exemption requires an audit reason")
-        with self.store.connection(write=True) as conn:
-            if not conn.execute(
-                "SELECT 1 FROM users WHERE username=?", (cn,)
-            ).fetchone():
-                raise ValueError("Cannot exempt an unknown NiceVPN certificate")
-            if exempt:
-                conn.execute(
-                    """
-                    INSERT INTO sso_certificate_exemptions
-                        (common_name, reason, created_at, updated_at)
-                    VALUES (?, ?, datetime('now'), datetime('now'))
-                    ON CONFLICT(common_name) DO UPDATE SET
-                        reason=excluded.reason, updated_at=excluded.updated_at
-                    """,
-                    (cn, str(reason).strip()),
-                )
-            else:
-                conn.execute(
-                    "DELETE FROM sso_certificate_exemptions WHERE common_name=?",
-                    (cn,),
-                )
 
     def set_group_required(self, group_id: str, *, required: bool) -> None:
         """Update existing JSON payload, preserving all other group settings."""
