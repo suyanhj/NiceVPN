@@ -59,6 +59,13 @@ def test_sso_custom_override_precedes_shared_domains(monkeypatch):
     }) == "http://192.168.1.3:8881"
 
 
+def test_default_api_port_for_literal_ip_honors_listener_environment(monkeypatch):
+    monkeypatch.setenv("NICEVPN_API_PORT", "18881")
+    assert domain_origin("192.168.2.50") == "http://192.168.2.50:18881"
+    assert domain_origin("192.168.2.50:80") == "http://192.168.2.50:80"
+    assert domain_origin("xx.hj.com") == "http://xx.hj.com"
+
+
 def test_allowlisted_host_match_not_arbitrary_request_host():
     domains = ["xx.hj.com", "192.168.1.1:80", "https://secure.example.com"]
     assert match_domain_origin(domains, "xx.hj.com", "https") == "https://xx.hj.com"
