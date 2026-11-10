@@ -46,6 +46,8 @@ class PendingConnection:
     provider_id: str
     state_digest: str
     expires_at: int
+    peer_ip: str = ""
+    peer_port: str = ""
 
 
 class ManagementInstance:
@@ -265,7 +267,10 @@ class SsoRuntime:
         with self.lock:
             self.pending[key] = PendingConnection(
                 event.common_name, provider.id,
-                self._state_digest(created.state), created.request.expires_at
+                self._state_digest(created.state), created.request.expires_at,
+                event.env.get("trusted_ip") or event.env.get("trusted_ip6")
+                or event.env.get("untrusted_ip") or event.env.get("untrusted_ip6") or "",
+                event.env.get("trusted_port") or event.env.get("untrusted_port") or "",
             )
         url = self.public_base_url + "/auth/sso/start?" + urlencode({"t": created.token})
         manager.send(pending_webauth(event.cid, event.kid, url))
@@ -315,7 +320,10 @@ class SsoRuntime:
                     return False
                 # OpenVPN runs client-connect *after* management auth.
                 # Grant post-auth device record-only mode before approval.
-                write_sso_grant(request.instance_id, request.common_name)
+                write_sso_grant(
+                    request.instance_id, request.common_name,
+                    peer_ip=pending.peer_ip, peer_port=pending.peer_port,
+                )
                 manager.send(auth_allow(request.cid, request.kid))
                 self.audit.log(
                     event_type="approved", instance_id=request.instance_id,
