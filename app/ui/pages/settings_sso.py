@@ -174,11 +174,14 @@ class SsoSettingsPanel:
 
     def _save_global(self) -> bool:
         origin = str(self.base_url.value or "").strip().rstrip("/")
-        if not _https_origin(origin):
-            safe_notify("公网认证地址必须是 HTTPS 域名或地址，且不能包含路径或查询参数",
+        enabled = bool(self.enable.value)
+        if enabled and not _https_origin(origin):
+            safe_notify("开启企业 SSO 前必须配置 HTTPS 公网认证地址，且不包含路径或查询参数",
                         type="negative")
             return False
-        enabled = bool(self.enable.value)
+        if origin and not _https_origin(origin):
+            safe_notify("公网认证地址格式不正确", type="negative")
+            return False
         if enabled:
             try:
                 provider = self.providers.first_enabled()
