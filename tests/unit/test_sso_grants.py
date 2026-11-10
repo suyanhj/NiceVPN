@@ -45,3 +45,5 @@ def test_post_auth_hook_does_not_depend_on_optional_config_environment():
     assert '--server-config "${SSO_SERVER_CONF}"' in script
     assert '&& [ -f "${SSO_SERVER_CONF}" ]' in script
     assert '[ -n "${config:-}" ]' not in script
+    assert '--peer-ip "${trusted_ip:-${trusted_ip6:-${untrusted_ip:-${untrusted_ip6:-}}}}"' in script
+    assert '--peer-port "${trusted_port:-${untrusted_port:-}}"' in script
