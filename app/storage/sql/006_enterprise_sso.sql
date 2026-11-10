@@ -1,7 +1,7 @@
 -- v6: Enterprise SSO policy and pending-auth metadata.
 -- Existing users/groups/firewall rules remain untouched.
-ALTER TABLE tags ADD COLUMN sso_required INTEGER NOT NULL DEFAULT 0
-    CHECK (sso_required IN (0, 1));
+-- Tag sso_required column is added conditionally by schema_manager
+-- to support re-running migrations against partially upgraded databases.
 
 -- Exception is scoped to an actual certificate identity (CN), never IV_PLAT.
 CREATE TABLE IF NOT EXISTS sso_certificate_exemptions (
