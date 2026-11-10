@@ -285,6 +285,9 @@ class SsoRuntime:
                 if policy.denied:
                     manager.send(auth_deny(request.cid, request.kid))
                     return False
+                # OpenVPN runs client-connect *after* management auth.
+                # Grant post-auth device record-only mode before approval.
+                write_sso_grant(request.instance_id, request.common_name)
                 manager.send(auth_allow(request.cid, request.kid))
                 self.sessions[(request.instance_id, request.cid)] = (
                     request.common_name, int(time.time()) + 8 * 3600
