@@ -57,35 +57,57 @@ class SsoSettingsPanel:
 
         def provider_body():
             records = self.providers.list_metadata()
-            for item in records:
-                with ui.row().classes("w-full items-center gap-3"):
-                    ui.label(f"{item['id']} · {item['kind']} · {item['enterprise_id']}")
-                    ui.badge("启用" if item["enabled"] else "关闭")
+            self._provider_meta = {str(item["id"]): item for item in records}
+            if records:
+                options = {
+                    str(item["id"]): (
+                        f'{item["display_name"]} · '
+                        f'{"钉钉" if item["kind"] == "dingtalk" else "企业微信"} · '
+                        f'{"启用" if item["enabled"] else "停用"}'
+                    )
+                    for item in records
+                }
+                self.existing_provider = ui.select(
+                    options, label="已配置企业（选择后编辑）",
+                ).classes("w-full")
+                self.existing_provider.on_value_change(
+                    lambda e: self._load_existing_provider(str(e.value or ""))
+                )
+            else:
+                ui.label("尚未添加企业，可为集团内每个公司独立配置身份应用。").classes(
+                    "text-caption text-grey-6"
+                )
+
+            ui.button("新增企业", icon="add", on_click=self._reset_provider_form).props("outline")
             self.provider_id = ui.input(
-                "提供商标识（新增或更新）", placeholder="ding-main",
+                "企业配置标识（唯一）", placeholder="gz_branch",
+            ).classes("w-full")
+            self.display_name = ui.input(
+                "企业名称（员工登录时显示）", placeholder="广州分公司",
             ).classes("w-full")
             self.provider_kind = ui.select(
                 {"dingtalk": "钉钉", "wecom": "企业微信"},
                 value="dingtalk", label="身份提供商",
             ).classes("w-full")
             self.enterprise_id = ui.input(
-                "允许登录的企业 CorpId", placeholder="企业标识",
+                "企业 CorpId", placeholder="当前公司的企业标识",
             ).classes("w-full")
             self.app_id = ui.input(
-                "应用 AppKey / AgentId", placeholder="办公系统应用 ID",
+                "应用 AppKey / AgentId", placeholder="该公司的办公系统应用 ID",
             ).classes("w-full")
             self.app_secret = ui.input(
-                "AppSecret（更新时可留空）",
+                "AppSecret（编辑时留空表示不修改）",
                 password=True, password_toggle_button=True,
             ).classes("w-full")
-            self.provider_enabled = ui.switch("启用当前身份提供商", value=False)
+            self.provider_enabled = ui.switch("启用该企业身份认证", value=False)
             ui.label(
-                "Secret 只加密保存，不显示在列表；钉钉通知 Webhook 与 SSO AppSecret 完全独立。"
+                "集团可添加多个企业；每家企业的 CorpId、AppKey/AgentId 和 Secret 独立管理。"
+                "仅通过启用的企业验证员工身份，不会映射 VPN 用户。"
             ).classes("text-caption text-grey-6")
         render_form_section(
-            "身份提供商",
+            "集团企业身份配置",
             kicker="Identity providers",
-            description="钉钉和企业微信支持多个企业应用。填写前需在办公系统配置 OAuth 回调地址。",
+            description="每个子公司或分公司各建一条独立认证应用；员工可从所有启用的企业中选择登录。",
             body=provider_body,
             actions=lambda: primary_action(
                 "保存提供商", icon="save", on_click=self._save_provider,
@@ -149,6 +171,29 @@ class SsoSettingsPanel:
                     type="positive", multi_line=True)
         return True
 
+    def _load_existing_provider(self, provider_id: str) -> None:
+        record = self._provider_meta.get(provider_id)
+        if record is None:
+            return
+        self.provider_id.value = record["id"]
+        self.display_name.value = record.get("display_name") or record["id"]
+        self.provider_kind.value = record["kind"]
+        self.enterprise_id.value = record["enterprise_id"]
+        self.app_id.value = record["app_id"]
+        self.app_secret.value = ""
+        self.provider_enabled.value = bool(record["enabled"])
+
+    def _reset_provider_form(self) -> None:
+        self.provider_id.value = ""
+        self.display_name.value = ""
+        self.provider_kind.value = "dingtalk"
+        self.enterprise_id.value = ""
+        self.app_id.value = ""
+        self.app_secret.value = ""
+        self.provider_enabled.value = False
+        if hasattr(self, "existing_provider"):
+            self.existing_provider.value = None
+
     def _save_provider(self) -> bool:
         try:
             self.providers.save(
@@ -158,11 +203,12 @@ class SsoSettingsPanel:
                 app_id=str(self.app_id.value or "").strip(),
                 secret=str(self.app_secret.value or "") or None,
                 enabled=bool(self.provider_enabled.value),
+                display_name=str(self.display_name.value or "").strip(),
             )
         except Exception as exc:
             safe_notify(f"提供商配置保存失败: {exc}", type="negative")
             return False
         self.app_secret.value = ""
-        safe_notify("身份提供商已保存，刷新设置页可查看最新列表", type="positive")
+        safe_notify("企业身份配置已保存；刷新页面后可在列表中查看或编辑", type="positive")
         return True
 
