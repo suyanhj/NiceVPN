@@ -158,3 +158,20 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换
 - `sso_auth_audit` 表升级前按行导出到 `data/logs/sso-auth-legacy.jsonl`（0600），导出成功后再删除，失败时数据库迁移回滚。
 - `sso_auth_providers` 表仍存储统一钉钉加密应用凭证，`sso_login_transactions` 表负责 WebAuth 单次使用，两表必须保留。schema v9 删除不再使用的旧审计表和旧索引；已经启用统一登录时，清理旧逐企业记录及其待认证事务。未启用统一应用则保留旧凭证直至主动迁移。
 - 升级前建议备份 `data/nicevpn.db` 和 `data/sso_provider_master.key`。
+
+## 持久化 SSO 会话与自动重连（schema v10）
+
+OpenVPN 负责 CA、CRL、证书有效期、TLS 握手、重启和客户端自动重连。NiceVPN **不再次验证客户端证书**，仅使用可信 Management CONNECT/REAUTH 环境变量 `tls_digest_sha256_0`，将已经通过 OAuth 的会话与同一份证书绑定；该指纹由 OpenVPN 输出，不来自浏览器或客户端自定义 IV_* 字段。
+
+- **首次登录**：组或标签要求 SSO → OpenVPN 证书验证 → 钉钉 OAuth + 允许企业 CorpId 校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 记录 8 小时**固定期限**的 SSO 会话（不滑动续期）。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止短期续用。
+- **重新 CONNECT**（OpenVPN 重启、网络中断或客户端主动断开后重连）：NiceVPN 使用来自本次 Management 事件的实例、CN、SHA256 证书指纹查找 SSO 会话，再核对已启用 OAuth 应用与企业白名单；命中即重新发布短期设备指纹豁免授权，直接向 OpenVPN 发送 `client-auth-nt`，无需浏览器重登。原有 OpenVPN client-connect、CCD、IP 分配和防火墙逻辑完全不变。
+- **TLS REAUTH**：当前活跃连接可使用内存会话并核对持久化状态；内存丢失但有合法缓存时也可恢复。不会因每次 TLS 密钥协商重新扫码，除非身份会话已经过期或撤销。
+- **缓存失败/过期**：继续原来的钉钉 WebAuth，不退化为仅凭 CN 放行。没有 `tls_digest_sha256_0` 或指纹格式无效时不创建或复用跨重启缓存；当前活跃 TLS 连接仍沿用已授权的内存会话。
+- **安全边界**：管理员禁用 SSO 组标签策略后回到原连接流程；企业从白名单删除、全局 OAuth App ID 切换、缓存过期或管理员显式删除会话时，不再复用缓存；不支持 WEB_AUTH 的全新连接仍不能绕过强制 SSO。会话撤销仅阻止下一次 CONNECT/REAUTH，不会代替 OpenVPN 主动踢出已经建立的隧道。
+- **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，8 小时内也可能复用同一份 SSO 会话。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌而不是在 NiceVPN 再做 CA 证书校验。
+
+新增 `data/nicevpn.db` SQLite schema v10 的 `sso_auth_sessions` 表，其他旧表与 VPN 数据不改变。NiceVPN 服务重启时只清理内存连接状态，不清理该持久化缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 服务端主动撤销方法；本版尚未新增管理界面按钮。
+
+### NiceVPN 可观测耗时
+
+在 App 日志区分 `SSO OAuth flow connect_to_auth_allow_ms`（含用户浏览器操作时间）和 `SSO OpenVPN establishment auth_allow_to_established_ms`（OpenVPN Management 接到 AUTH 允许之后到 ESTABLISHED 的时间）。后者只用于判断瓶颈在 OpenVPN 后续连接阶段，不改变隧道流程，也不会让 NiceVPN 接管 TLS、路由或网络协商。
