@@ -25,6 +25,7 @@ from app.services.auth.openvpn_webauth import (
     pending_webauth,
 )
 from app.services.auth.provider_store import SsoProviderStore
+from app.services.auth.sso_grants import write_sso_grant
 from app.services.auth.sso_transactions import (
     AuthRequest, WebAuthTransactionStore,
 )
