@@ -47,3 +47,32 @@
 ## 开发分支策略
 
 全部子任务按依赖顺序提交到同一 `feature/enterprise-sso-webauth` 分支，创建 **Draft PR 指向 main**。PR 不应自动合并或在用户全部功能验收前转 Ready。
+
+## 管理端配置（开发分支，未完成实机验收）
+
+1. 在企业后台创建自建应用，获取钉钉 AppKey/AppSecret/CorpId 或企业微信 AgentId/Secret/CorpId。
+2. 在 `系统设置 → 企业认证` 添加身份提供商，并指定企业 ID。**此时无需开启全局 SSO。**
+3. 在办公系统登记 OAuth 回调 URI：
+   - 钉钉：`https://VPN公网域名/auth/sso/dingtalk/callback`
+   - 企业微信：`https://VPN公网域名/auth/sso/wecom/callback`
+4. 在企业认证设置中输入 `enterprise_sso_public_base_url`（例如 `https://vpn.example.com`，不含路径），由 HTTPS 反向代理将 `/auth/sso/*` 转发到 NiceVPN 公网 API 独立端口。**不要将 NiceGUI 管理端公开暴露。**
+5. 给需要认证的组或标签开启强制 SSO。Linux 无图形客户端使用的单独证书可通过证书 CN 显式豁免；不依赖客户端自行上报的 `IV_PLAT`。
+6. 完成 POC 和 OpenVPN 客户端测试后，才在管理端打开全局总开关。保存后还需要重启 NiceVPN、重新生成并重启 OpenVPN 实例；未生效前不应把界面状态当作已执行策略。
+
+### 运行时与设备绑定
+
+- SSO 总开关关闭时仍使用既有 `management 127.0.0.1 7505+index`，不改变现有 OpenVPN 管理方式。
+- 总开关打开时，由 NiceVPN 管理每实例的 root 限制 Unix Management Socket；已有用户踢出（kill）功能转由同一控制器执行。
+- 经过可信企业认证后，NiceVPN 将仅对同实例、CN、客户端公网地址与端口发布 **120 秒的后置 client-connect 授权证明**；设备绑定脚本只记录而不拒绝指纹变动。其他会话继续执行原有设备绑定策略。
+- Unix Management 及 SSO grant 文件不对公网开放。客户端无 WEB_AUTH 能力时，强制 SSO 策略下拒绝连接；仅手工明确豁免的证书可不走 OAuth。
+- 登录事务最长 180 秒，state 和 WebAuth Token 原文不会入库；审计不含 OAuth code、access token、AppSecret。
+- 对于 OpenVPN 2.x CLI 等无浏览器界面的客户端，单独签发免 SSO 证书，原有 firewall 分组/标签权限不变。
+- SSO 加密主密钥位于 `data/sso_provider_master.key`，文件权限须为 `0600`，完整备份中需随 SQLite 一同保存；恢复时不可缺失该文件。
+
+### POC 与用户验收前不得省略
+
+- **待实机验证**：OpenVPN 2.6/2.7 是否按当前配置正确打开 Unix Management Socket、正确上报 `IV_SSO`、`trusted_ip`/`trusted_port`，以及 `client-connect` 执行顺序。
+- **待实机验证**：OpenVPN Connect 3.7+、Windows OpenVPN GUI、Tunnelblick 的授权浏览器打开、取消、超时以及扫码后自动继续连接。
+- **待真实企业应用测试**：钉钉/企业微信企业内部应用、授权回调、企业身份匹配及权限撤销。
+- **待实机验证**：NiceVPN / OpenVPN 服务重启、多个实例同时认证、已有运维踢出功能以及设备指纹脚本记录模式。
+- CI 仅运行不依赖真实办公系统或 OpenVPN 服务的单测；**CI 通过不代表 SSO 可直接投入生产**。
