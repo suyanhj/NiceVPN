@@ -91,8 +91,9 @@ def authorization_url(provider: OfficeProvider, callback: str, state: str) -> st
             "client_id": provider.app_id,
             "redirect_uri": callback,
             "response_type": "code",
-            "scope": ("openid corpid Contact.User.Read" if provider.read_user_profile
-                      else "openid corpid"),
+            # DingTalk's web OAuth documents only openid / openid corpid.
+            # Contact.User.Read is a delegated API permission, not a login scope.
+            "scope": "openid corpid",
             "state": state,
             "prompt": "consent",
         }
@@ -143,14 +144,19 @@ async def exchange_code(
             # only when the login requested the "openid corpid" scope.
             corp_id = str(token.get("corpId") or "")
             access_token = str(token.get("accessToken") or "")
+            is_unified = provider.enterprise_id == "__unified__"
             logger.info(
-                "SSO DingTalk enterprise check: provider=%s app_id=%s expected_corp_id=%s "
-                "verified_corp_id=%s corp_match=%s has_access_token=%s",
-                provider.id, provider.app_id, provider.enterprise_id,
-                corp_id or "<empty>", corp_id == provider.enterprise_id,
-                bool(access_token),
+                "SSO DingTalk token verified: provider=%s app_id=%s corp_id=%s "
+                "legacy_corp_match=%s unified_whitelist_check_pending=%s token_present=%s",
+                provider.id, provider.app_id, corp_id or "<empty>",
+                (corp_id == provider.enterprise_id) if not is_unified else None,
+                is_unified, bool(access_token),
             )
-            if corp_id != provider.enterprise_id or not access_token:
+            if not corp_id or not access_token:
+                raise OfficeAuthError("DingTalk enterprise identity unavailable")
+            # Unified mode checks the exact configured CorpId allow-list in
+            # SsoRuntime.finish, with the verified token result, not browser input.
+            if not is_unified and corp_id != provider.enterprise_id:
                 raise OfficeAuthError("DingTalk enterprise verification failed")
             # A user access token already proves OAuth authorization for this
             # organization. Personal identity is optional for the permission
@@ -158,7 +164,7 @@ async def exchange_code(
             user_id = ""
             if not provider.read_user_profile:
                 logger.info("SSO DingTalk user detail skipped: provider=%s; "
-                            "enable Contact.User.Read in provider settings after granting it",
+                            "enable personal-directory permission after granting it",
                             provider.id)
                 return EnterpriseIdentity("dingtalk", corp_id, user_id)
             try:
