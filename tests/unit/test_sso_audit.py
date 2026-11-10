@@ -46,4 +46,7 @@ def test_sqlite_store_argument_does_not_retain_audit_rows(tmp_path):
     audit.log(event_type="pending", outcome="pending",
               instance_id="vpn", common_name="cn")
     with store.connection() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM sso_auth_audit").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name='sso_auth_audit'"
+        ).fetchone()[0] == 0
