@@ -17,17 +17,21 @@ def _helper():
 def test_grant_only_bypasses_binding_with_management_auth(tmp_path):
     root = tmp_path / "grants"
     conf = tmp_path / "server.conf"
-    write_sso_grant("server", "alice", grant_dir=root)
+    write_sso_grant("server", "alice", peer_ip="203.0.113.2", peer_port="60321", grant_dir=root)
     helper = _helper()
     conf.write_text("management 127.0.0.1 7505\n", encoding="utf-8")
     assert not helper.has_grant(grant_dir=root, instance="server",
-                                common_name="alice", config=conf)
+                                common_name="alice", peer_ip="203.0.113.2", peer_port="60321", config=conf)
     conf.write_text("management /etc/openvpn/mgmt/sso.sock unix\n"
                     "management-client-user root\nmanagement-client-auth\n",
                     encoding="utf-8")
     assert helper.has_grant(grant_dir=root, instance="server",
-                            common_name="alice", config=conf)
+                            common_name="alice", peer_ip="203.0.113.2", peer_port="60321", config=conf)
     assert not helper.has_grant(grant_dir=root, instance="server",
-                                common_name="bob", config=conf)
+                                common_name="bob", peer_ip="203.0.113.2", peer_port="60321", config=conf)
     assert not helper.has_grant(grant_dir=root, instance="other",
-                                common_name="alice", config=conf)
+                                common_name="alice", peer_ip="203.0.113.2", peer_port="60321", config=conf)
+    assert not helper.has_grant(grant_dir=root, instance="server",
+                                common_name="alice", peer_ip="203.0.113.3", peer_port="60321", config=conf)
+    assert not helper.has_grant(grant_dir=root, instance="server",
+                                common_name="alice", peer_ip="203.0.113.2", peer_port="60322", config=conf)
