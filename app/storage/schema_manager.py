@@ -11,13 +11,14 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
 _KNOWN_SQL = frozenset({
     "001_initial.sql",
     "002_query_indexes.sql",
     "004_firewall_tags.sql",
     "005_device_binding_exempt.sql",
+    "006_enterprise_sso.sql",
 })
 
 
@@ -58,6 +59,7 @@ def ensure_schema(
     migrate_v4: Callable[[sqlite3.Connection], None],
     migrate_v5: Callable[[sqlite3.Connection], None],
     now_iso: Callable[[], str],
+    migrate_v6: Callable[[sqlite3.Connection], None] | None = None,
 ) -> None:
     """Preserve historical schema v1-v4 semantics in a single transaction."""
     conn.execute("BEGIN IMMEDIATE")
@@ -94,6 +96,16 @@ def ensure_schema(
             current = 4
         if current < 5:
             migrate_v5(conn)
+            current = 5
+        if current < 6:
+            if migrate_v6 is None:
+                execute_sql_file(conn, "006_enterprise_sso.sql")
+            else:
+                migrate_v6(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (6, "enterprise-sso-policy", now_iso()),
+            )
         conn.commit()
     except BaseException:
         conn.rollback()
