@@ -15,8 +15,8 @@ from app.storage.schema_manager import (
 from app.storage.sqlite_store import SqliteStore
 
 
-def test_schema_ddl_is_packaged_and_initializes_v9(tmp_path):
-    assert SCHEMA_VERSION == 9
+def test_schema_ddl_is_packaged_and_initializes_v10(tmp_path):
+    assert SCHEMA_VERSION == 10
     for name in ("001_initial.sql", "002_query_indexes.sql", "004_firewall_tags.sql"):
         assert "CREATE" in read_sql(name)
     assert "ALTER TABLE tags" in read_sql("005_device_binding_exempt.sql")
@@ -24,9 +24,10 @@ def test_schema_ddl_is_packaged_and_initializes_v9(tmp_path):
     assert "CREATE INDEX" in read_sql("007_sso_multi_enterprise.sql")
     assert "CREATE INDEX" in read_sql("008_sso_contact_profile.sql")
     assert "DROP TABLE" in read_sql("009_sso_unified_cleanup.sql")
+    assert "CREATE TABLE" in read_sql("010_sso_session_cache.sql")
     store = SqliteStore(tmp_path / "nicevpn.sqlite")
     store.initialize()
-    assert store.schema_version() == 9
+    assert store.schema_version() == 10
     with store.connection() as conn:
         tables = {
             row[0] for row in conn.execute(
@@ -36,7 +37,7 @@ def test_schema_ddl_is_packaged_and_initializes_v9(tmp_path):
     assert {"users", "groups", "peers", "firewall_rules",
             "tags", "user_tags", "group_tags", "schema_migrations"} <= tables
     store.initialize()
-    assert store.schema_version() == 9
+    assert store.schema_version() == 10
 
 
 def test_ddl_migrations_roll_back_entire_new_database_on_failure(tmp_path):
@@ -143,7 +144,7 @@ def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp
     # Simulate a persisted version 8 database with historic audit records.
     conn = sqlite3.connect(db)
     try:
-        conn.execute("DELETE FROM schema_migrations WHERE version=9")
+        conn.execute("DELETE FROM schema_migrations WHERE version>=9")
         execute_sql_file(conn, "006_enterprise_sso.sql")
         conn.execute(
             "INSERT INTO sso_auth_audit "
@@ -159,7 +160,7 @@ def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp
 
     upgraded = SqliteStore(db)
     upgraded.initialize()
-    assert upgraded.schema_version() == 9
+    assert upgraded.schema_version() == 10
     exported = tmp_path / "logs" / "sso-auth-legacy.jsonl"
     events = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
     assert len(events) == 1
@@ -184,7 +185,7 @@ def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp
     # A second startup does not replay the archive or recreate dropped data.
     upgraded_again = SqliteStore(db)
     upgraded_again.initialize()
-    assert upgraded_again.schema_version() == 9
+    assert upgraded_again.schema_version() == 10
     assert len(exported.read_text(encoding="utf-8").splitlines()) == 1
 
 
