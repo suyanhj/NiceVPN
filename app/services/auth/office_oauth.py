@@ -1,0 +1,155 @@
+# -*- coding: utf-8 -*-
+"""OAuth adapters for enterprise-only membership verification.
+
+Never treat an OAuth callback query parameter as an enterprise identity:
+DingTalk's corpId is validated from the *server-side token exchange*, and
+WeCom's member UserID is validated using an enterprise app token.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from urllib.parse import urlencode, urlsplit
+
+import httpx
+
+
+class OfficeAuthError(ValueError):
+    """Safe, non-secret authentication error."""
+
+
+@dataclass(frozen=True)
+class OfficeProvider:
+    id: str
+    kind: str                 # dingtalk or wecom
+    enterprise_id: str        # approved CorpId
+    app_id: str               # DingTalk AppKey or WeCom AgentId
+    secret: str               # server-only app secret
+
+    def validate(self) -> None:
+        if self.kind not in ("dingtalk", "wecom"):
+            raise OfficeAuthError("Unsupported office SSO provider")
+        if not all((self.id, self.enterprise_id, self.app_id, self.secret)):
+            raise OfficeAuthError("Incomplete office SSO provider")
+
+
+@dataclass(frozen=True)
+class EnterpriseIdentity:
+    provider_kind: str
+    enterprise_id: str
+    external_user_id: str
+
+
+def _callback_url(callback: str) -> None:
+    parsed = urlsplit(callback)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username
+            or parsed.password or parsed.fragment or parsed.query):
+        raise OfficeAuthError("Office SSO callback must be a configured HTTPS URL")
+
+
+def authorization_url(provider: OfficeProvider, callback: str, state: str) -> str:
+    """State MUST be a CSPRNG-generated, per-connection, one-time secret."""
+    provider.validate()
+    _callback_url(callback)
+    if not state or len(state) < 32 or any(ord(c) < 33 for c in state):
+        raise OfficeAuthError("Invalid OAuth state")
+    if provider.kind == "dingtalk":
+        params = {
+            "client_id": provider.app_id,
+            "redirect_uri": callback,
+            "response_type": "code",
+            "scope": "openid corpid",
+            "state": state,
+            "prompt": "consent",
+        }
+        return "https://login.dingtalk.com/oauth2/auth?" + urlencode(params)
+    params = {
+        "appid": provider.enterprise_id,
+        "agentid": provider.app_id,
+        "redirect_uri": callback,
+        "state": state,
+    }
+    return "https://open.work.weixin.qq.com/wwopen/sso/qrConnect?" + urlencode(params)
+
+
+async def _get_json(response: httpx.Response) -> dict:
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise OfficeAuthError("Unexpected office provider response")
+    return payload
+
+
+async def exchange_code(
+    provider: OfficeProvider, code: str, *,
+    client: httpx.AsyncClient | None = None,
+) -> EnterpriseIdentity:
+    """Validate employee and organization via trusted HTTPS provider APIs.
+
+    HTTP client injection is for deterministic unit tests. Provider hostnames
+    are fixed; no HTTP callback/user input may override their addresses.
+    """
+    provider.validate()
+    if not code or len(code) > 2048 or any(ord(c) < 32 for c in code):
+        raise OfficeAuthError("Invalid OAuth code")
+    managed = client is None
+    http = client or httpx.AsyncClient(timeout=8.0, follow_redirects=False)
+    try:
+        if provider.kind == "dingtalk":
+            token = await _get_json(await http.post(
+                "https://api.dingtalk.com/v1.0/oauth2/userAccessToken",
+                json={
+                    "clientId": provider.app_id,
+                    "clientSecret": provider.secret,
+                    "code": code,
+                    "grantType": "authorization_code",
+                },
+            ))
+            # corpId is not supplied by the browser; it comes from DingTalk
+            # only when the login requested the "openid corpid" scope.
+            corp_id = str(token.get("corpId") or "")
+            access_token = str(token.get("accessToken") or "")
+            if corp_id != provider.enterprise_id or not access_token:
+                raise OfficeAuthError("DingTalk enterprise verification failed")
+            # A user access token already proves OAuth authorization for this
+            # organization. Personal identity is optional for the permission
+            # decision but used for audit when the app has Contact.User.Read.
+            user_id = ""
+            try:
+                detail = await _get_json(await http.get(
+                    "https://api.dingtalk.com/v1.0/contact/users/me",
+                    headers={"x-acs-dingtalk-access-token": access_token},
+                ))
+                user_id = str(detail.get("unionId") or detail.get("openId") or "")
+            except (httpx.HTTPError, ValueError):
+                # Contact.User.Read may not be granted. Missing personal info
+                # must not be filled from untrusted HTTP callback params.
+                pass
+            return EnterpriseIdentity("dingtalk", corp_id, user_id)
+
+        app_token_data = await _get_json(await http.get(
+            "https://qyapi.weixin.qq.com/cgi-bin/gettoken",
+            params={"corpid": provider.enterprise_id, "corpsecret": provider.secret},
+        ))
+        if (app_token_data.get("errcode") != 0 or
+                not app_token_data.get("access_token")):
+            raise OfficeAuthError("WeCom app authentication failed")
+        employee = await _get_json(await http.get(
+            "https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo",
+            params={
+                "access_token": app_token_data["access_token"],
+                "code": code,
+            },
+        ))
+        # WeCom returns openid for non-enterprise external contacts: reject.
+        userid = str(employee.get("userid") or "")
+        if employee.get("errcode") != 0 or not userid:
+            raise OfficeAuthError("WeCom employee verification failed")
+        return EnterpriseIdentity("wecom", provider.enterprise_id, userid)
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        # Never include token payloads / HTTP query params in logs or errors.
+        if isinstance(exc, OfficeAuthError):
+            raise
+        raise OfficeAuthError("Office identity verification unavailable") from None
+    finally:
+        if managed:
+            await http.aclose()
