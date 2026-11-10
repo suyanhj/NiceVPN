@@ -109,6 +109,13 @@ class SsoSettingsPanel:
                 password=True, password_toggle_button=True,
             ).classes("w-full")
             self.provider_enabled = ui.switch("启用该企业身份认证", value=False)
+            self.read_user_profile = ui.switch(
+                "读取钉钉员工个人资料（需先开通 Contact.User.Read）", value=False,
+            )
+            ui.label(
+                "未开通权限前保持关闭，仅验证企业 CorpId；开启后登录时额外请求 "
+                "Contact.User.Read，可记录返回的 UnionId/OpenId。"
+            ).classes("text-caption text-grey-6")
             ui.label(
                 "集团可添加多个企业；每家企业的 CorpId、AppKey/AgentId 和 Secret 独立管理。"
                 "仅通过启用的企业验证员工身份，不会映射 VPN 用户。"
@@ -194,6 +201,7 @@ class SsoSettingsPanel:
         self.app_id.value = record["app_id"]
         self.app_secret.value = ""
         self.provider_enabled.value = bool(record["enabled"])
+        self.read_user_profile.value = bool(record.get("read_user_profile", False))
 
     def _reset_provider_form(self) -> None:
         self.provider_id.value = ""
@@ -203,6 +211,7 @@ class SsoSettingsPanel:
         self.app_id.value = ""
         self.app_secret.value = ""
         self.provider_enabled.value = False
+        self.read_user_profile.value = False
         if hasattr(self, "existing_provider"):
             self.existing_provider.value = None
 
@@ -216,6 +225,8 @@ class SsoSettingsPanel:
                 secret=str(self.app_secret.value or "") or None,
                 enabled=bool(self.provider_enabled.value),
                 display_name=str(self.display_name.value or "").strip(),
+                read_user_profile=(bool(self.read_user_profile.value)
+                                   if str(self.provider_kind.value) == "dingtalk" else False),
             )
         except Exception as exc:
             safe_notify(f"提供商配置保存失败: {exc}", type="negative")
