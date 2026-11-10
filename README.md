@@ -8,6 +8,9 @@
 - **进程模型**：一个 NiceVPN Python 进程、一个 systemd 服务、两个 HTTP 监听端口。
 - **结构化存储**：SQLite，默认 `data/nicevpn.db`。
 
+
+> **统一访问地址（开发分支）**：系统设置 → 访问地址支持全局 `domains`（如 `xx.hj.com,192.168.1.1:80`）。API 下载链接与企业 SSO 回调默认复用地址池，原有自定义 URL 仍可覆盖；身份校验将记录企业和可用的员工标识（不记录授权码、Token、密钥）。
+
 > **开发中的功能（尚未验收）**：企业身份 SSO（钉钉/企业微信）在 `feature/enterprise-sso-webauth` 独立分支与 [Draft PR #78](https://github.com/suyanhj/NiceVPN/pull/78) 开发，默认关闭，未通过真实 OpenVPN/办公系统实机验收，**不可在生产环境直接启用**。配置、认证策略和 POC 验收参见 [企业 SSO 文档](docs/enterprise-sso.md)。
 
 ## 主要能力
