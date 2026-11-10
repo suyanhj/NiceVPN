@@ -97,3 +97,49 @@ def test_oauth_redirect_rejects_malformed_or_unsafe_urls():
                 "http://127.0.0.1/cb\nmalicious"):
         with pytest.raises(OfficeAuthError):
             authorization_url(_provider(), url, "s" * 40)
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_403_logs_only_safe_error_code_and_scope(caplog):
+    def response(request):
+        if request.url.path.endswith("userAccessToken"):
+            return httpx.Response(200, json={
+                "corpId": "corp-good", "accessToken": "NEVER_PRINT_ACCESS_TOKEN",
+                "refreshToken": "NEVER_PRINT_REFRESH_TOKEN",
+            })
+        return httpx.Response(403, json={
+            "code": "Forbidden.AccessDenied.AccessTokenPermissionDenied",
+            "accessdenieddetail": {"requiredScopes": ["Contact.User.Read"]},
+            "message": "NEVER_PRINT_PRIVATE_ERROR_BODY",
+        })
+    with caplog.at_level("INFO", logger="app.services.auth.office_oauth"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+            identity = await exchange_code(
+                _provider(), "NEVER_PRINT_AUTH_CODE", client=client,
+            )
+    assert identity.enterprise_id == "corp-good"
+    assert identity.external_user_id == ""
+    assert "expected_corp_id=corp-good" in caplog.text
+    assert "verified_corp_id=corp-good" in caplog.text
+    assert "required_scopes=Contact.User.Read" in caplog.text
+    for value in ("NEVER_PRINT_ACCESS_TOKEN", "NEVER_PRINT_REFRESH_TOKEN",
+                  "NEVER_PRINT_AUTH_CODE", "NEVER_PRINT_PRIVATE_ERROR_BODY", "secret"):
+        assert value not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_200_logs_verified_external_identity(caplog):
+    def response(request):
+        if request.url.path.endswith("userAccessToken"):
+            return httpx.Response(200, json={
+                "corpId": "corp-good", "accessToken": "DONT_LOG_TOKEN",
+            })
+        return httpx.Response(200, json={"unionId": "user-union-42", "nick": "Test User"})
+    with caplog.at_level("INFO", logger="app.services.auth.office_oauth"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+            ident = await exchange_code(_provider(), "test-code", client=client)
+    assert ident.external_user_id == "user-union-42"
+    assert "external_user_id=user-union-42" in caplog.text
+    assert "DONT_LOG_TOKEN" not in caplog.text
+    assert "Test User" not in caplog.text
+
