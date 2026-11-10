@@ -135,7 +135,7 @@ class SystemConfig(BaseModel):
     )
     enterprise_sso_public_base_url: Optional[str] = Field(
         default=None,
-        description="企业 SSO 公网 HTTPS 地址，如 https://vpn.example.com（不含路径）",
+        description="企业 SSO 认证地址，支持 HTTP/HTTPS、域名或 IP:端口（不含路径）",
     )
     enterprise_sso_enabled: bool = Field(
         default=False,
