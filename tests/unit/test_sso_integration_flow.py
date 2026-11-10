@@ -149,6 +149,8 @@ def test_webauth_provider_choice_only_accepts_enabled_office_apps(monkeypatch, t
     assert picker.status_code == 200
     assert "钉钉" in picker.text
     assert "企业微信" in picker.text
+    assert "dd" in picker.text
+    assert "wx" in picker.text
     assert "bad-corp" not in picker.text
     denied = client.post(
         "/auth/sso/provider",
