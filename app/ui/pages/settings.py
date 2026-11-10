@@ -1527,7 +1527,7 @@ class SettingsPage:
             )
         else:
             safe_notify(
-                "已清空自定义下载地址，将使用全局访问地址池（若为空则自动使用本机 API 地址）",
+                "已清空自定义下载地址；优先使用全局访问地址池，若为空则自动使用本机 IP 和 API 监听端口",
                 type="positive",
             )
         return True
