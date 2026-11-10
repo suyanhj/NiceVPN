@@ -8,6 +8,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
+from app.utils.public_domains import parse_domains
 
 
 _ARGON2ID_HASH_PATTERN = re.compile(
@@ -103,11 +104,15 @@ class SystemConfig(BaseModel):
         default="OpenVPN",
         description="Rocket.Chat attachment 标题",
     )
+    domains: list[str] = Field(
+        default_factory=list,
+        description="允许作为对外访问入口的域名/IP:端口列表；按顺序优先，未写协议默认 HTTP",
+    )
     download_base_url: Optional[str] = Field(
         default=None,
         description=(
             "下载链接基础 URL；配置后优先使用，留空则使用启动时识别的"
-            "本机 IP（优先 eth0）和 API 监听端口，无需域名"
+            "全局 domains 第一项，若未配置再使用本机 IP 和 API 端口"
         ),
     )
     github_proxy_urls: list[str] = Field(
@@ -135,7 +140,7 @@ class SystemConfig(BaseModel):
     )
     enterprise_sso_public_base_url: Optional[str] = Field(
         default=None,
-        description="企业 SSO 认证地址，支持 HTTP/HTTPS、域名或 IP:端口（不含路径）",
+        description="企业 SSO 认证地址（可覆盖全局 domains）；为空则使用 domains 第一项",
     )
     enterprise_sso_enabled: bool = Field(
         default=False,
@@ -263,6 +268,11 @@ class SystemConfig(BaseModel):
                 raise ValueError(f"push_lan_routes 仅支持 IPv4: {item}")
             out.append(str(net))
         return out
+
+    @field_validator("domains", mode="before")
+    @classmethod
+    def parse_public_domains(cls, value):
+        return parse_domains(value)
 
     @field_validator("github_proxy_urls", mode="before")
     @classmethod
