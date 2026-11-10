@@ -20,6 +20,7 @@ from uuid import uuid4
 from app.core.config import load_config
 from app.core.constants import (
     ADMIN_SESSION_SECRET_FILE,
+    SSO_PROVIDER_MASTER_KEY_FILE,
     API_BASIC_CREDENTIALS_FILE,
     BACKUPS_DIR,
     CONFIG_FILE,
@@ -123,6 +124,7 @@ def _copy_backup_payload(payload: Path, config: dict) -> None:
     _copy_file(Path(CONFIG_FILE), app_dir / "config.json")
     _copy_file(Path(API_BASIC_CREDENTIALS_FILE), app_dir / "api_basic_credentials.json")
     _copy_file(Path(ADMIN_SESSION_SECRET_FILE), app_dir / "admin_session_secret")
+    _copy_file(Path(SSO_PROVIDER_MASTER_KEY_FILE), app_dir / "sso_provider_master.key")
     _copy_tree(Path(REMOTE_PEER_CHAINS_DIR), app_dir / "remote_peer_chains")
 
     openvpn_base = Path(str(config.get("openvpn_conf_dir") or "/etc/openvpn"))
@@ -438,6 +440,10 @@ def restore_full_backup(archive_path: str | Path) -> dict:
         _replace_optional_file(
             payload / "app" / "admin_session_secret",
             Path(ADMIN_SESSION_SECRET_FILE),
+        )
+        _replace_optional_file(
+            payload / "app" / "sso_provider_master.key",
+            Path(SSO_PROVIDER_MASTER_KEY_FILE),
         )
         _replace_tree(
             payload / "app" / "remote_peer_chains",
