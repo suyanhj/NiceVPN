@@ -8,7 +8,7 @@ from nicegui import ui
 
 from app.core.config import load_config, save_config
 from app.services.auth.provider_store import SsoProviderStore
-from app.utils.public_domains import first_domain_origin
+from app.utils.public_domains import first_domain_origin, resolve_sso_origin, with_default_ip_api_port
 from app.ui.components.actions import primary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
@@ -46,13 +46,13 @@ class SsoSettingsPanel:
             self.base_url = ui.input(
                 "认证地址（HTTP / HTTPS）",
                 value=str(self.cfg.get("enterprise_sso_public_base_url") or ""),
-                placeholder=first_domain_origin(self.cfg.get("domains") or []) or "http://192.168.1.10:8881",
+                placeholder=resolve_sso_origin(self.cfg) or "http://192.168.1.10:8881",
             ).classes("w-full")
             ui.label(
                 "默认关闭；保存后需要重启 NiceVPN 和 OpenVPN 实例。"
                 "正式启用前必须通过 POC 和客户端兼容测试。"
                 "只有组或标签开启企业认证的连接才需要 SSO，其余证书行为不变。"
-                "此处留空将使用「访问地址」中的第一项；填写则覆盖全局地址池。"
+                "地址优先级：自动获取 < 全局访问地址 < 自定义；域名走标准 80/443 端口，IP 未指定端口会补 API 端口。"
             ).classes("text-caption text-grey-6")
         render_form_section(
             "企业认证总开关",
@@ -150,7 +150,7 @@ class SsoSettingsPanel:
     def _save_global(self) -> bool:
         origin = str(self.base_url.value or "").strip().rstrip("/")
         enabled = bool(self.enable.value)
-        effective_origin = origin or first_domain_origin(load_config().get("domains") or []) or ""
+        effective_origin = with_default_ip_api_port(origin) if origin else resolve_sso_origin(load_config())
         if enabled and not _http_origin(effective_origin):
             safe_notify("开启 SSO 前请填写有效的自定义认证地址，或先配置全局访问地址池",
                         type="negative")
@@ -172,7 +172,7 @@ class SsoSettingsPanel:
         config = previous.to_dict()
         config.update({
             "enterprise_sso_enabled": enabled,
-            "enterprise_sso_public_base_url": origin,
+            "enterprise_sso_public_base_url": with_default_ip_api_port(origin) if origin else None,
         })
         try:
             save_config(config)
