@@ -32,10 +32,10 @@ def test_enterprise_allowlist_parser_and_exact_match():
     ]
     assert format_allowed_enterprises(corps) == "dingAAA | 总部\ndingBBB | 外部客户"
     cfg = SystemConfig(enterprise_sso_allowed_corps=corps)
-    assert is_allowed_enterprise(cfg, "dingAAA")
-    assert not is_allowed_enterprise(cfg, "dingAA")
-    assert not is_allowed_enterprise(cfg, "dingCCC")
-    assert not is_allowed_enterprise(cfg, "")
+    assert is_allowed_enterprise(cfg.model_dump(), "dingAAA")
+    assert not is_allowed_enterprise(cfg.model_dump(), "dingAA")
+    assert not is_allowed_enterprise(cfg.model_dump(), "dingCCC")
+    assert not is_allowed_enterprise(cfg.model_dump(), "")
     with pytest.raises(ValueError):
         parse_allowed_enterprises("dingAAA | 公司1\ndingAAA | 公司2")
     with pytest.raises(ValueError):
@@ -112,7 +112,7 @@ def test_unified_webauth_skips_company_picker_and_enforces_whitelist(
     config = SystemConfig(enterprise_sso_allowed_corps=[
         {"corp_id": "dingAllowed", "name": "供应商"},
     ])
-    monkeypatch.setattr("app.services.auth.sso_runtime.load_config", lambda: config)
+    monkeypatch.setattr("app.services.auth.sso_runtime.load_config", lambda: config.model_dump())
     monkeypatch.setattr("app.services.auth.sso_runtime.write_sso_grant",
                         lambda *_args, **_kwargs: None)
     runtime.on_event(manager, ClientNotification(
