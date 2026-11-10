@@ -133,6 +133,10 @@ class SystemConfig(BaseModel):
             "strict_hwaddr=必须 IV_HWADDR，无则拒绝（OpenVPN 2.x 核心安卓端常不兼容）"
         ),
     )
+    enterprise_sso_public_base_url: Optional[str] = Field(
+        default=None,
+        description="企业 SSO 公网 HTTPS 地址，如 https://vpn.example.com（不含路径）",
+    )
     enterprise_sso_enabled: bool = Field(
         default=False,
         description="全局企业身份认证总开关；默认关闭，开启须先完成提供商、WebAuth、管理通道预检",
