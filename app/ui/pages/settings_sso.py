@@ -134,6 +134,8 @@ class SsoSettingsPanel:
                 {"name": "common_name", "label": "证书 CN", "field": "common_name", "align": "left"},
                 {"name": "provider_kind", "label": "身份系统", "field": "provider_kind"},
                 {"name": "enterprise_id", "label": "企业 ID", "field": "enterprise_id"},
+                {"name": "external_user_id", "label": "外部用户 ID", "field": "external_user_id"},
+                {"name": "reason_code", "label": "原因代码", "field": "reason_code"},
                 {"name": "event_type", "label": "事件", "field": "event_type"},
                 {"name": "outcome", "label": "结果", "field": "outcome"},
             ]
@@ -141,7 +143,7 @@ class SsoSettingsPanel:
         render_form_section(
             "最近认证记录",
             kicker="SSO Audit",
-            description="记录证书与企业授权结果；不存储访问令牌、授权码或办公系统密码。",
+            description="记录证书 CN、企业 ID、外部用户 ID 及认证结果。若钉钉用户资料接口 403，外部用户 ID 可能为空，但已核对的企业 ID 仍可查看。不会记录 Token 和密钥。",
             body=audit_body,
         )
 
