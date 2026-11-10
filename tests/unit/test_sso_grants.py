@@ -45,4 +45,3 @@ def test_post_auth_hook_does_not_depend_on_optional_config_environment():
     assert '--server-config "${SSO_SERVER_CONF}"' in script
     assert '&& [ -f "${SSO_SERVER_CONF}" ]' in script
     assert '[ -n "${config:-}" ]' not in script
-
