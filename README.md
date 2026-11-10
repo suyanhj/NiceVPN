@@ -9,7 +9,7 @@
 - **结构化存储**：SQLite，默认 `data/nicevpn.db`。
 
 
-> **统一访问地址与钉钉认证（开发分支）**：系统设置 → 访问地址支持全局 `domains`；系统设置 → 企业认证使用一套统一钉钉 Client ID / Secret，企业只维护 `CorpId | 企业名称` 白名单，不必逐公司录入应用密钥。只有组或标签启用 SSO 的证书才需额外登录；旧多企业凭证保留兼容，可手动导入。
+> **统一访问地址与钉钉认证（开发分支）**：系统设置 → 访问地址支持全局 `domains`；系统设置 → 企业认证使用一套统一钉钉 Client ID / Secret，企业只维护 `CorpId | 企业名称` 白名单，不必逐公司录入应用密钥。只有组或标签启用 SSO 的证书才需额外登录；未切换统一认证前保留旧配置，可手动导入；统一模式保存后清理不再使用的旧企业凭证。
 
 > **开发中的功能（尚未验收）**：企业身份 SSO（钉钉/企业微信）在 `feature/enterprise-sso-webauth` 独立分支与 [Draft PR #78](https://github.com/suyanhj/NiceVPN/pull/78) 开发，默认关闭，未通过真实 OpenVPN/办公系统实机验收，**不可在生产环境直接启用**。配置、认证策略和 POC 验收参见 [企业 SSO 文档](docs/enterprise-sso.md)。
 
@@ -231,3 +231,4 @@ GitHub Actions 当前覆盖：
 - 按改动范围执行 Chrome browser smoke。
 
 代码注释和文档字符串使用中文，代码标识符使用英文。架构与开发边界以 [CLAUDE.md](./CLAUDE.md)、代码和当前 OpenSpec 为准。
+> **SSO 升级清理**：schema v9 将 SQLite 旧认证审计导出到 `data/logs/sso-auth-legacy.jsonl` 后删除废弃表，统一钉钉配置成功保存/导入后清理旧企业凭证。建议升级前备份数据库和 `data/sso_provider_master.key`。
