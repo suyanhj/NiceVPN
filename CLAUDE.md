@@ -10,6 +10,8 @@
 - 详细架构与实机验收：[docs/enterprise-sso.md](docs/enterprise-sso.md)。
 - `enterprise_sso_enabled` 默认关闭；登录身份只核实可信 OAuth 返回的企业 ID，**不要**要求钉钉/企业微信用户存在于 VPN 用户表。
 - 证书 CN 原本所属用户/组/标签和防火墙权限保持不变；总开关仅提供 SSO 能力，组或标签编辑开关才强制 SSO。Linux 使用不属于强制 SSO 组/标签的证书，不新增证书豁免系统，也不能依据 `IV_PLAT` 自动绕过。
+- 全局 `domains` 是一个按顺序排列的 http(s) 域名/IP:端口白名单；`download_base_url`、`enterprise_sso_public_base_url` 非空时须优先于全局值。API 只允许匹配名单内的 Host；OpenVPN SSO 初次跳转使用首项（没有 HTTP Host 可判断）。
+- SSO 日志可记录企业 CorpId、应用标识及可用的员工 ID，钉钉 `users/me` 403 时仅输出 HTTP 状态、错误码、缺少的 scopes；禁止输出 accessToken、refreshToken、OAuth code、AppSecret 或完整响应体。
 - 启用后由 root 限制的 Unix Management Socket 完成 `WEB_AUTH` 流程；公网仅提供 `/auth/sso` OAuth 回调，不开放管理端与 Management Socket。
 - SSO 授权后设备指纹仅记录，其他证书按旧策略；多家子/分公司使用独立 CorpId 和 OAuth 应用、独立密钥、可读企业名称。AppSecret 加密主密钥随完整备份保存。
 - 目前代码尚未通过真机 OpenVPN/WebAuth、钉钉/企业微信回调的端到端验收，CI mock 通过不能视为生产就绪。
