@@ -56,7 +56,7 @@ class SsoProviderStore:
     def list_metadata(self) -> list[dict]:
         with self.store.connection() as conn:
             rows = conn.execute(
-                "SELECT id,kind,enterprise_id,app_id,enabled,created_at,updated_at "
+                "SELECT id,kind,enterprise_id,app_id,display_name,enabled,created_at,updated_at "
                 "FROM sso_auth_providers ORDER BY kind,id"
             ).fetchall()
         return [
@@ -96,7 +96,8 @@ class SsoProviderStore:
         return self.get(enabled[0]["id"])
 
     def save(self, *, provider_id: str, kind: str, enterprise_id: str,
-             app_id: str, secret: str | None = None, enabled: bool = False) -> None:
+             app_id: str, secret: str | None = None, enabled: bool = False,
+             display_name: str = "") -> None:
         """Admin-only service method, never exposed on anonymous Public API."""
         if not _PROVIDER_ID.fullmatch(provider_id):
             raise ValueError("Invalid SSO provider ID")
@@ -104,6 +105,9 @@ class SsoProviderStore:
             raise ValueError("Unknown SSO provider kind")
         if not enterprise_id.strip() or not app_id.strip():
             raise ValueError("Enterprise ID and application ID required")
+        display_name = str(display_name or "").strip() or provider_id
+        if len(display_name) > 80 or any(ord(ch) < 32 for ch in display_name):
+            raise ValueError("Invalid enterprise display name")
         with self.store.connection() as conn:
             old = conn.execute(
                 "SELECT secret_ref FROM sso_auth_providers WHERE id=?", (provider_id,)
@@ -120,17 +124,18 @@ class SsoProviderStore:
             conn.execute(
                 """
                 INSERT INTO sso_auth_providers
-                    (id,kind,enterprise_id,app_id,secret_ref,enabled,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,datetime('now'),datetime('now'))
+                    (id,kind,enterprise_id,app_id,secret_ref,enabled,display_name,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))
                 ON CONFLICT(id) DO UPDATE SET
                     kind=excluded.kind,
                     enterprise_id=excluded.enterprise_id,
                     app_id=excluded.app_id,
                     secret_ref=excluded.secret_ref,
                     enabled=excluded.enabled,
+                    display_name=excluded.display_name,
                     updated_at=excluded.updated_at
                 """,
-                (provider_id,kind,enterprise_id.strip(),app_id.strip(),encrypted,int(enabled)),
+                (provider_id,kind,enterprise_id.strip(),app_id.strip(),encrypted,int(enabled),display_name),
             )
 
     def delete(self, provider_id: str) -> None:
