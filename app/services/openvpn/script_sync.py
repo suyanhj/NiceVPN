@@ -12,6 +12,7 @@ OPENVPN_SCRIPT_NAMES = (
     "device-bind.sh",
     "device_binding_json.py",
     "device_bind_exemption.py",
+    "sso_grant.py",
     "vpn_session_audit.py",
     "vpn-session-disconnect.sh",
 )
