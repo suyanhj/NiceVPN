@@ -13,12 +13,19 @@ from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
 
 
-def _https_origin(value: str) -> bool:
-    p = urlsplit(value)
-    return bool(
-        p.scheme == "https" and p.netloc and not p.username and not p.password
-        and not p.path and not p.query and not p.fragment
-    )
+def _http_origin(value: str) -> bool:
+    """Support local IP:port and HTTP/HTTPS domains without extra TLS setup."""
+    try:
+        p = urlsplit(value)
+        return bool(
+            p.scheme in {"http", "https"} and p.hostname
+            and p.username is None and p.password is None
+            and not p.path and not p.query and not p.fragment
+            and not any(ch.isspace() or ord(ch) < 32 for ch in value)
+            and (p.port is None or 1 <= p.port <= 65535)
+        )
+    except ValueError:
+        return False
 
 
 class SsoSettingsPanel:
@@ -36,9 +43,9 @@ class SsoSettingsPanel:
                 value=bool(self.cfg.get("enterprise_sso_enabled", False)),
             )
             self.base_url = ui.input(
-                "公网 HTTPS 认证地址",
+                "认证地址（HTTP / HTTPS）",
                 value=str(self.cfg.get("enterprise_sso_public_base_url") or ""),
-                placeholder="https://vpn.example.com",
+                placeholder="http://192.168.1.10:8881",
             ).classes("w-full")
             ui.label(
                 "默认关闭；保存后需要重启 NiceVPN 和 OpenVPN 实例。"
@@ -139,11 +146,11 @@ class SsoSettingsPanel:
     def _save_global(self) -> bool:
         origin = str(self.base_url.value or "").strip().rstrip("/")
         enabled = bool(self.enable.value)
-        if enabled and not _https_origin(origin):
-            safe_notify("开启企业 SSO 前必须配置 HTTPS 公网认证地址，且不包含路径或查询参数",
+        if enabled and not _http_origin(origin):
+            safe_notify("开启企业 SSO 前请填写完整 HTTP/HTTPS 地址（支持 IP:端口），不含路径或查询参数",
                         type="negative")
             return False
-        if origin and not _https_origin(origin):
+        if origin and not _http_origin(origin):
             safe_notify("公网认证地址格式不正确", type="negative")
             return False
         if enabled:
