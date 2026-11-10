@@ -150,6 +150,28 @@ class SsoSettingsPanel:
             ),
         )
 
+        def audit_body():
+            from app.services.auth.sso_audit import SsoAudit
+            events = SsoAudit(self.policy.store).recent(limit=30)
+            if not events:
+                ui.label("暂无企业身份认证记录").classes("text-caption text-grey-6")
+                return
+            columns = [
+                {"name": "event_time", "label": "时间", "field": "event_time", "align": "left"},
+                {"name": "common_name", "label": "证书 CN", "field": "common_name", "align": "left"},
+                {"name": "provider_kind", "label": "身份系统", "field": "provider_kind"},
+                {"name": "enterprise_id", "label": "企业 ID", "field": "enterprise_id"},
+                {"name": "event_type", "label": "事件", "field": "event_type"},
+                {"name": "outcome", "label": "结果", "field": "outcome"},
+            ]
+            ui.table(columns=columns, rows=events, row_key="event_time", pagination=10).classes("w-full")
+        render_form_section(
+            "最近认证记录",
+            kicker="SSO Audit",
+            description="记录证书与企业授权结果；不存储访问令牌、授权码或办公系统密码。",
+            body=audit_body,
+        )
+
     def _save_global(self) -> bool:
         origin = str(self.base_url.value or "").strip().rstrip("/")
         if not _https_origin(origin):
