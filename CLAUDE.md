@@ -250,3 +250,8 @@ GitHub Actions 当前主要校验：
 
 - 全局地址覆盖优先级：自动获取 < domains < 业务自定义；域名默认 HTTP 80/HTTPS 443 且不追加 8881，裸 IP 在未写端口时补 `NICEVPN_API_PORT`（默认 8881），显式端口保持不变；浏览器自行遵循站点 3xx，不能强制 HTTPS。
 - 钉钉登录 Scope `openid corpid` 默认始终保留；每个企业应用的 `read_user_profile` 是可选的独立开关，且仅在开关开启时请求 `Contact.User.Read` 并调用用户个人信息 API。严禁为未开权限的企业强制申请此委托 Scope。
+
+- SSO WebAuth **只对组或标签明确要求企业认证的连接触发**；未开启的连接经 Management 放行后继续原有 OpenVPN 证书、CCD 与 client-connect 流程。证书 CA / CRL / 有效期由 OpenVPN 原生验证，NiceVPN 不重复实现。
+- 通过可信企业 SSO 的连接使用受限 120 秒 grant 在 client-connect 钩子里跳过设备指纹绑定，仅记录设备和会话审计；未完成 SSO 的连接继续现有设备绑定策略。客户端 IP/port 使用与 Management 事件一致的 trusted/untrusted 备用字段。
+- SSO 审计改为专用文件 `data/logs/sso-auth.jsonl`（UTC 按天轮转，默认保留 7 天）；不再向旧 SQLite `sso_auth_audit` 新增记录，也不再在系统设置页展示认证表格。服务管理 → 本机实例 →「认证日志」复用有界日志查看弹窗。
+- 系统设置页说明一律使用 `render_form_section(description=...)` 或 `field_with_help` 小问号 Tooltip；不要新增多段常驻 `ui.label` 解释文案。字段帮助必须与输入控件处于同一行。
