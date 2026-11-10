@@ -8,6 +8,8 @@
 - **进程模型**：一个 NiceVPN Python 进程、一个 systemd 服务、两个 HTTP 监听端口。
 - **结构化存储**：SQLite，默认 `data/nicevpn.db`。
 
+> **开发中的功能（尚未验收）**：企业身份 SSO（钉钉/企业微信）在 `feature/enterprise-sso-webauth` 独立分支与 [Draft PR #78](https://github.com/suyanhj/NiceVPN/pull/78) 开发，默认关闭，未通过真实 OpenVPN/办公系统实机验收，**不可在生产环境直接启用**。配置、认证策略和 POC 验收参见 [企业 SSO 文档](docs/enterprise-sso.md)。
+
 ## 主要能力
 
 - **OpenVPN / PKI**：EasyRSA、CRL、tls-crypt-v2、CCD、固定虚拟 IP、OVPN 生成。
