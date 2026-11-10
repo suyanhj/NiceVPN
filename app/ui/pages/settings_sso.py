@@ -211,4 +211,3 @@ class SsoSettingsPanel:
         self.app_secret.value = ""
         safe_notify("企业身份配置已保存；刷新页面后可在列表中查看或编辑", type="positive")
         return True
-
