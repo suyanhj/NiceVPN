@@ -19,6 +19,7 @@ from urllib.parse import urlencode, urlsplit
 
 from app.core.constants import OPENVPN_MGMT_DIR
 from app.services.auth.enterprise_sso_policy import SsoPolicyService
+from app.services.auth.sso_audit import SsoAudit
 from app.services.auth.office_oauth import EnterpriseIdentity
 from app.services.auth.openvpn_webauth import (
     ClientNotification, ManagementNotificationParser, auth_allow, auth_deny,
@@ -152,6 +153,7 @@ class SsoRuntime:
         self.policy = policy if policy is not None else SsoPolicyService()
         self.providers = providers if providers is not None else SsoProviderStore()
         self.transactions = transactions if transactions is not None else WebAuthTransactionStore()
+        self.audit = SsoAudit(self.transactions.store)
         self.instances = {
             inst: ManagementInstance(inst, management_socket_path(inst), self)
             for inst in instances
@@ -212,6 +214,9 @@ class SsoRuntime:
         key = (inst, event.cid, event.kid)
         decision = self.policy.resolve(event.common_name, enabled=True)
         if decision.denied:
+            self.audit.log(event_type="policy_rejected", instance_id=inst,
+                           common_name=event.common_name, outcome="failure",
+                           reason_code=decision.reason)
             manager.send(auth_deny(event.cid, event.kid, "SSO required"))
             return
         if not decision.requires_sso:
@@ -227,6 +232,9 @@ class SsoRuntime:
                 manager.send(auth_allow(event.cid, event.kid))
                 return
         if not event.supports_webauth:
+            self.audit.log(event_type="no_webauth", instance_id=inst,
+                           common_name=event.common_name, outcome="failure",
+                           reason_code="missing_webauth")
             manager.send(auth_deny(event.cid, event.kid, "Unsupported SSO client"))
             return
         provider = self.providers.first_enabled()
@@ -248,6 +256,10 @@ class SsoRuntime:
             )
         url = self.public_base_url + "/auth/sso/start?" + urlencode({"t": created.token})
         manager.send(pending_webauth(event.cid, event.kid, url))
+        self.audit.log(event_type="pending", instance_id=inst,
+                       common_name=event.common_name, outcome="pending",
+                       provider_kind=provider.kind,
+                       reason_code="awaiting_provider")
         logger.info("SSO pending: instance=%s CID=%s KID=%s", inst, event.cid, event.kid)
 
     def finish(
@@ -277,6 +289,9 @@ class SsoRuntime:
                 return False
             try:
                 if identity is None:
+                    self.audit.log(event_type="denied", instance_id=request.instance_id,
+                                   common_name=request.common_name, outcome="failure",
+                                   reason_code="office_identity_rejected")
                     manager.send(auth_deny(request.cid, request.kid))
                     return False
                 # Re-evaluate policy at authorization time: a revoked group or
@@ -289,6 +304,14 @@ class SsoRuntime:
                 # Grant post-auth device record-only mode before approval.
                 write_sso_grant(request.instance_id, request.common_name)
                 manager.send(auth_allow(request.cid, request.kid))
+                self.audit.log(
+                    event_type="approved", instance_id=request.instance_id,
+                    common_name=request.common_name, outcome="success",
+                    provider_kind=identity.provider_kind,
+                    enterprise_id=identity.enterprise_id,
+                    external_user_id=identity.external_user_id,
+                    reason_code="enterprise_match",
+                )
                 self.sessions[(request.instance_id, request.cid)] = (
                     request.common_name, int(time.time()) + 8 * 3600
                 )
