@@ -247,3 +247,6 @@ GitHub Actions 当前主要校验：
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+- 全局地址覆盖优先级：自动获取 < domains < 业务自定义；域名默认 HTTP 80/HTTPS 443 且不追加 8881，裸 IP 在未写端口时补 `NICEVPN_API_PORT`（默认 8881），显式端口保持不变；浏览器自行遵循站点 3xx，不能强制 HTTPS。
+- 钉钉登录 Scope `openid corpid` 默认始终保留；每个企业应用的 `read_user_profile` 是可选的独立开关，且仅在开关开启时请求 `Contact.User.Read` 并调用用户个人信息 API。严禁为未开权限的企业强制申请此委托 Scope。
