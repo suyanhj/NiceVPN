@@ -142,4 +142,3 @@ async def test_dingtalk_200_logs_verified_external_identity(caplog):
     assert "external_user_id=user-union-42" in caplog.text
     assert "DONT_LOG_TOKEN" not in caplog.text
     assert "Test User" not in caplog.text
-
