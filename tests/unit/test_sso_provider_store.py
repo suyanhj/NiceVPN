@@ -48,3 +48,32 @@ def test_invalid_provider_does_not_create_key(tmp_path):
         store.save(provider_id="../bad", kind="dingtalk", enterprise_id="corp",
                    app_id="app", secret="secret", enabled=True)
     assert not store.key_path.exists()
+
+def test_multiple_subsidiaries_have_independent_credentials_and_labels(tmp_path):
+    store = SsoProviderStore(
+        SqliteStore(tmp_path / "group.db"),
+        key_path=tmp_path / "company-secrets.key",
+    )
+    store.save(
+        provider_id="guangzhou", display_name="广州子公司", kind="dingtalk",
+        enterprise_id="corp-gz", app_id="app-gz", secret="secret-gz", enabled=True,
+    )
+    store.save(
+        provider_id="shenzhen", display_name="深圳分公司", kind="dingtalk",
+        enterprise_id="corp-sz", app_id="app-sz", secret="secret-sz", enabled=True,
+    )
+    metadata = store.list_metadata()
+    assert {item["display_name"] for item in metadata} == {"广州子公司", "深圳分公司"}
+    assert all("secret_ref" not in item for item in metadata)
+    assert store.get("guangzhou").enterprise_id == "corp-gz"
+    assert store.get("shenzhen").enterprise_id == "corp-sz"
+    assert store.get("guangzhou").secret == "secret-gz"
+    assert store.get("shenzhen").secret == "secret-sz"
+    store.save(
+        provider_id="shenzhen", display_name="深圳分公司（停用）",
+        kind="dingtalk", enterprise_id="corp-sz",
+        app_id="app-sz", enabled=False,
+    )
+    assert store.get("shenzhen") is None
+    assert store.get("shenzhen", require_enabled=False).secret == "secret-sz"
+    assert store.get("guangzhou").secret == "secret-gz"
