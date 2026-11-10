@@ -13,11 +13,11 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from app.core.constants import DATA_DIR
+from app.core.constants import SSO_PROVIDER_MASTER_KEY_FILE
 from app.services.auth.office_oauth import OfficeProvider
 from app.storage.sqlite_store import SqliteStore, get_default_store
 
-SSO_KEY_FILE = DATA_DIR / "sso_provider_master.key"
+SSO_KEY_FILE = SSO_PROVIDER_MASTER_KEY_FILE
 _PROVIDER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
