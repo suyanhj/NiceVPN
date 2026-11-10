@@ -18,6 +18,7 @@ from app.core.config import load_config
 from app.core.constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_API_HOST, DEFAULT_API_PORT
 from app.core.scheduler import start_scheduler
 from app.api.server import PublicApiListener
+from app.services.auth.sso_runtime import SsoRuntime, set_sso_runtime
 from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
@@ -210,7 +211,15 @@ def run_web() -> None:
     )
 
     api_listener = PublicApiListener(host=api_host, port=api_port)
+    sso_runtime = None
     try:
+        if bool(config.get("enterprise_sso_enabled", False)):
+            sso_runtime = SsoRuntime(
+                instances=sorted((config.get("instances") or {}).keys()),
+                public_base_url=str(config.get("enterprise_sso_public_base_url") or ""),
+            )
+            sso_runtime.start()
+            set_sso_runtime(sso_runtime)
         api_listener.start()
         ui.run(
             host=web_host,
@@ -231,6 +240,9 @@ def run_web() -> None:
         logger.info("收到键盘中断，Web 服务已停止")
     finally:
         api_listener.stop()
+        set_sso_runtime(None)
+        if sso_runtime is not None:
+            sso_runtime.close()
         _shutdown_background_services()
         logging.shutdown()
 
