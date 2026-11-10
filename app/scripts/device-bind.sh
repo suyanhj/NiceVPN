@@ -104,6 +104,8 @@ if [ -f "${SSO_GRANT_PY}" ] && [ -n "${config:-}" ] && init_py3_for_bind; then
         --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
         --instance "${VPN_INSTANCE_NAME:-}" \
         --common-name "${CN}" \
+        --peer-ip "${trusted_ip:-${trusted_ip6:-}}" \
+        --peer-port "${trusted_port:-}" \
         --server-config "${config}" >/dev/null 2>>"${BIND_LOG}"; then
         export DEVICE_BIND_DECISION="sso_verified"
         log "SSO 授权后仅记录设备: CN=${CN} IV_PLAT=${IV_PLAT:-} IV_HWADDR=${IV_HWADDR:-}"
