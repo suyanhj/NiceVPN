@@ -181,5 +181,52 @@ def test_explicit_legacy_import_keeps_old_apps_and_secret_encrypted(tmp_path):
     assert store.get("legacy2").secret == "secret-b"
     assert len(store.enabled_metadata()) == 1
     assert "secret-a" not in repr(store.list_metadata())
+    assert store.cleanup_unified_legacy() == 2
+    assert store.get("legacy1") is None
+    assert store.get("legacy2") is None
+    assert {row["id"] for row in store.list_metadata()} == {UNIFIED_DINGTALK_ID}
+    assert store.cleanup_unified_legacy() == 0
     with pytest.raises(ValueError):
         store.import_legacy_dingtalk()
+
+
+def test_callback_denied_enterprise_shows_403_not_expired(
+    tmp_path, monkeypatch,
+):
+    runtime, manager = _runtime(tmp_path)
+    config = SystemConfig(enterprise_sso_allowed_corps=[
+        {"corp_id": "dingAllowed", "name": "公司A"},
+    ])
+    monkeypatch.setattr("app.services.auth.sso_runtime.load_config",
+                        lambda: config.model_dump())
+    runtime.on_event(manager, ClientNotification(
+        "CONNECT", 320, 1, {
+            "common_name": "alice", "IV_SSO": "webauth",
+            "untrusted_ip": "203.0.113.5", "untrusted_port": "54000",
+        },
+    ))
+    url = manager.commands[0].split("WEB_AUTH:external:", 1)[1].rsplit(" ", 1)[0]
+    token = parse_qs(urlsplit(url).query)["t"][0]
+    state = WebAuthTransactionStore.state_for_token(token)
+
+    import app.api.sso as sso
+
+    monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
+
+    async def fake_exchange(_provider, _code):
+        return EnterpriseIdentity("dingtalk", "dingBlocked", "external-uid")
+
+    monkeypatch.setattr(sso, "exchange_code", fake_exchange)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    callback_url = (
+        f"/auth/sso/dingtalk/callback?state={state}&authCode=oauth-code"
+    )
+    response = client.get(callback_url)
+    assert response.status_code == 403
+    assert "不允许访问 VPN" in response.text
+    assert "认证事务已失效" not in response.text
+    assert "可以返回 VPN 客户端" not in response.text
+    assert manager.commands[-1].startswith("client-deny")
+    assert client.get(callback_url).status_code == 410
