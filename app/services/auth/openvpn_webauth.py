@@ -104,17 +104,25 @@ def auth_deny(cid: int, kid: int, reason: str = "SSO authentication failed") -> 
 def pending_webauth(
     cid: int, kid: int, url: str, *, timeout_seconds: int = 180
 ) -> str:
-    """Build client-pending-auth for a trusted HTTPS URL.
+    """Build client-pending-auth for an HTTP or HTTPS URL.
 
     Caller must create an unguessable, one-time transaction and ensure the
-    HTTPS endpoint cannot directly approve a connection without OAuth.
+    endpoint cannot directly approve a connection without OAuth.
     """
     _validate_ids(cid, kid)
     parsed = urlsplit(url)
-    if (parsed.scheme != "https" or not parsed.netloc or parsed.username
-            or parsed.password or any(ch.isspace() for ch in url)
-            or any(ord(ch) < 32 for ch in url)):
-        raise ValueError("WebAuth requires an absolute HTTPS URL without credentials")
+    try:
+        valid_url = (
+            parsed.scheme in {"http", "https"} and parsed.hostname
+            and parsed.username is None and parsed.password is None
+            and not parsed.fragment
+            and not any(ch.isspace() or ord(ch) < 32 for ch in url)
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+        )
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise ValueError("WebAuth requires an absolute HTTP or HTTPS URL without credentials")
     if not 30 <= timeout_seconds <= 600:
         raise ValueError("Invalid WebAuth timeout")
     return f"client-pending-auth {cid} {kid} WEB_AUTH:external:{url} {timeout_seconds}\n"
