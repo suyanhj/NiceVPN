@@ -25,6 +25,9 @@ def test_domains_csv_list_and_deduplication():
 def test_global_domains_default_to_http_unless_explicit_https():
     assert domain_origin("xx.hj.com") == "http://xx.hj.com"
     assert domain_origin("192.168.1.1:80") == "http://192.168.1.1:80"
+    assert domain_origin("192.168.1.2") == "http://192.168.1.2:8881"
+    assert domain_origin("https://192.168.1.2") == "https://192.168.1.2:8881"
+    assert domain_origin("https://vpn.example.com") == "https://vpn.example.com"
     assert domain_origin("https://corp.example.com:9443") == "https://corp.example.com:9443"
     assert first_domain_origin(["xx.hj.com", "192.168.1.1:80"]) == "http://xx.hj.com"
 
@@ -40,13 +43,20 @@ def test_domain_addresses_reject_invalid_host_or_protocol(bad):
         parse_domains([bad])
 
 
-def test_sso_custom_override_precedes_shared_domains():
+def test_sso_custom_override_precedes_shared_domains(monkeypatch):
+    monkeypatch.setattr("app.utils.public_domains.get_listen_http_base",
+                        lambda: "http://10.10.10.1:8881")
     cfg = {"domains": ["xx.hj.com", "192.168.1.1:80"],
            "enterprise_sso_public_base_url": ""}
     assert resolve_sso_origin(cfg) == "http://xx.hj.com"
     cfg["enterprise_sso_public_base_url"] = "https://sso.example.org:9443"
     assert resolve_sso_origin(cfg) == "https://sso.example.org:9443"
-    assert resolve_sso_origin({"domains": []}) == ""
+    assert resolve_sso_origin({"domains": []}) == "http://10.10.10.1:8881"
+    assert resolve_sso_origin({"domains": ["192.168.1.2"]}) == "http://192.168.1.2:8881"
+    assert resolve_sso_origin({
+        "domains": ["xx.hj.com"],
+        "enterprise_sso_public_base_url": "http://192.168.1.3",
+    }) == "http://192.168.1.3:8881"
 
 
 def test_allowlisted_host_match_not_arbitrary_request_host():
