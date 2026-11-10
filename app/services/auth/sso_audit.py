@@ -1,20 +1,50 @@
 # -*- coding: utf-8 -*-
-"""Bounded SSO security audit events. Do not record OAuth codes or secrets."""
+"""Bounded SSO authentication audit events in a dedicated, rotating JSONL file.
+
+Never log OAuth authorization codes, tokens, application secrets or raw provider
+responses. The former sso_auth_audit SQLite table is retained only to preserve
+pre-release database compatibility; new events are no longer written there.
+"""
 from __future__ import annotations
 
+import json
+import logging
+import threading
 from datetime import datetime, timezone
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
-from app.storage.sqlite_store import SqliteStore, get_default_store
+from app.core.constants import LOG_RETENTION_DAYS, SSO_AUTH_AUDIT_LOG_FILE
 
 _EVENT_TYPES = frozenset({
     "pending", "approved", "denied", "disconnected", "timeout",
     "provider_error", "no_webauth", "policy_rejected", "session_reauth",
 })
 
+_HANDLER_LOCK = threading.RLock()
+_HANDLERS: dict[Path, TimedRotatingFileHandler] = {}
+
+
+def _file_handler(path: Path) -> TimedRotatingFileHandler:
+    """One thread-safe rotating writer per file, even across SSO instances."""
+    resolved = path.resolve()
+    with _HANDLER_LOCK:
+        handler = _HANDLERS.get(resolved)
+        if handler is None:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            handler = TimedRotatingFileHandler(
+                resolved, when="midnight", interval=1,
+                backupCount=LOG_RETENTION_DAYS, encoding="utf-8", utc=True,
+            )
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            _HANDLERS[resolved] = handler
+        return handler
+
 
 class SsoAudit:
-    def __init__(self, store: SqliteStore | None = None):
-        self.store = store if store is not None else get_default_store()
+    def __init__(self, store=None, *, log_path: Path | None = None):
+        # Accept historical store argument; SSO audit is file-only now.
+        self.log_path = log_path if log_path is not None else SSO_AUTH_AUDIT_LOG_FILE
 
     def log(
         self, *, event_type: str, instance_id: str, common_name: str,
@@ -25,41 +55,28 @@ class SsoAudit:
             raise ValueError("Invalid SSO audit event")
         if outcome not in {"success", "failure", "pending", "cancelled"}:
             raise ValueError("Invalid audit outcome")
-        fields = [
+        fields = (
             instance_id, common_name, provider_kind, enterprise_id,
             external_user_id, reason_code,
-        ]
+        )
         if any(
             not isinstance(v, str) or len(v) > 255
             or any(ord(ch) < 32 for ch in v) for v in fields
         ):
             raise ValueError("Invalid audit field")
-        with self.store.connection(write=True) as conn:
-            conn.execute(
-                """
-                INSERT INTO sso_auth_audit (
-                    event_time, instance_id, common_name, provider_kind,
-                    enterprise_id, external_user_id, event_type, outcome,
-                    reason_code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    datetime.now(timezone.utc).isoformat(),
-                    instance_id, common_name, provider_kind, enterprise_id,
-                    external_user_id, event_type, outcome, reason_code,
-                ),
-            )
-
-    def recent(self, *, limit: int = 50) -> list[dict]:
-        if not (1 <= int(limit) <= 500):
-            raise ValueError("Invalid SSO audit page size")
-        with self.store.connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT event_time,instance_id,common_name,provider_kind,
-                       enterprise_id,external_user_id,event_type,outcome,
-                       reason_code
-                FROM sso_auth_audit ORDER BY id DESC LIMIT ?
-                """, (int(limit),),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        event = {
+            "event_time": datetime.now(timezone.utc).isoformat(),
+            "instance_id": instance_id, "common_name": common_name,
+            "provider_kind": provider_kind, "enterprise_id": enterprise_id,
+            "external_user_id": external_user_id, "event_type": event_type,
+            "outcome": outcome, "reason_code": reason_code,
+        }
+        handler = _file_handler(self.log_path)
+        record = logging.LogRecord(
+            name="nicevpn.sso.audit", level=logging.INFO, pathname=__file__,
+            lineno=0, msg=json.dumps(event, ensure_ascii=False, sort_keys=True),
+            args=(), exc_info=None,
+        )
+        # .handle holds the handler's lock for rotation and writes. It does not
+        # propagate this high-volume audit stream into app.log or the console.
+        handler.handle(record)
