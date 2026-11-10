@@ -88,7 +88,7 @@ def test_settings_help_hints_are_attached_to_their_controls() -> None:
 
     assert "from app.ui.components.help import field_with_help" in source
     assert "help_hint(" not in source
-    assert source.count("field_with_help(") == 6
+    assert source.count("field_with_help(") == 7
     assert "control_grow=False" in source
 
 
