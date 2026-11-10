@@ -35,3 +35,14 @@ def test_grant_only_bypasses_binding_with_management_auth(tmp_path):
                                 common_name="alice", peer_ip="203.0.113.3", peer_port="60321", config=conf)
     assert not helper.has_grant(grant_dir=root, instance="server",
                                 common_name="alice", peer_ip="203.0.113.2", peer_port="60322", config=conf)
+
+def test_post_auth_hook_does_not_depend_on_optional_config_environment():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "app" / "scripts" /
+              "device-bind.sh").read_text(encoding="utf-8")
+    assert 'SSO_SERVER_CONF="${OVPN_ETC}/server/${VPN_INSTANCE_NAME:-}.conf"' in script
+    assert '--server-config "${SSO_SERVER_CONF}"' in script
+    assert '&& [ -f "${SSO_SERVER_CONF}" ]' in script
+    assert '[ -n "${config:-}" ]' not in script
+
