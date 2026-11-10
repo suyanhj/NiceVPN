@@ -99,14 +99,18 @@ write_session_start() {
 # 必须同时确认正在使用的 OpenVPN server.conf 具备受限的 Unix
 # Management 认证，绝不根据 IV_PLAT/IV_SSO 自称身份来跳过绑定。
 SSO_GRANT_PY="${SCRIPT_DIR}/sso_grant.py"
-if [ -f "${SSO_GRANT_PY}" ] && [ -n "${config:-}" ] && init_py3_for_bind; then
+# OpenVPN client-connect 并不保证导出 config 环境变量；使用由 NiceVPN
+# 同一个生成器写入的固定实例配置路径，避免已完成 SSO 后误走旧设备绑定。
+SSO_SERVER_CONF="${OVPN_ETC}/server/${VPN_INSTANCE_NAME:-}.conf"
+if [ -n "${VPN_INSTANCE_NAME:-}" ] && [ -f "${SSO_SERVER_CONF}" ] \
+    && [ -f "${SSO_GRANT_PY}" ] && init_py3_for_bind; then
     if "${PY3_BIND}" "${SSO_GRANT_PY}" \
         --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
-        --instance "${VPN_INSTANCE_NAME:-}" \
+        --instance "${VPN_INSTANCE_NAME}" \
         --common-name "${CN}" \
         --peer-ip "${trusted_ip:-${trusted_ip6:-}}" \
         --peer-port "${trusted_port:-}" \
-        --server-config "${config}" >/dev/null 2>>"${BIND_LOG}"; then
+        --server-config "${SSO_SERVER_CONF}" >/dev/null 2>>"${BIND_LOG}"; then
         export DEVICE_BIND_DECISION="sso_verified"
         log "SSO 授权后仅记录设备: CN=${CN} IV_PLAT=${IV_PLAT:-} IV_HWADDR=${IV_HWADDR:-}"
         write_session_start
