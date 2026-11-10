@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
 _KNOWN_SQL = frozenset({
     "001_initial.sql",
@@ -19,6 +19,7 @@ _KNOWN_SQL = frozenset({
     "004_firewall_tags.sql",
     "005_device_binding_exempt.sql",
     "006_enterprise_sso.sql",
+    "007_sso_multi_enterprise.sql",
 })
 
 
@@ -114,6 +115,22 @@ def ensure_schema(
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (6, "enterprise-sso-policy", now_iso()),
+            )
+            current = 6
+        if current < 7:
+            provider_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(sso_auth_providers)")
+            }
+            if "display_name" not in provider_columns:
+                conn.execute(
+                    "ALTER TABLE sso_auth_providers "
+                    "ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
+                )
+            execute_sql_file(conn, "007_sso_multi_enterprise.sql")
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (7, "sso-multi-enterprise", now_iso()),
             )
         conn.commit()
     except BaseException:
