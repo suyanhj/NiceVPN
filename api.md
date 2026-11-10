@@ -10,7 +10,7 @@
 - 本地手动运行：`./start.sh` 即启动两个监听端口，无需额外进程或终端。API 监听线程不重复启动 NiceGUI、调度器和 conntrack 监听器。
 - API 端口可设置 `NICEVPN_API_HOST` / `NICEVPN_API_PORT`，Web 端口可设置 `NICEVPN_UI_HOST` / `NICEVPN_UI_PORT`；systemd 从可选的 `/etc/nicevpn/listen.env` 读取。
 - API 端口只开放 `/api/vpn/*` 与一次性 `/download/{token}`。**管理端 8880 不再注册 `/download/{token}`**；API 端口没有管理页面、静态资源、`/docs`、`/redoc` 或 `/openapi.json`。
-- **务必限制公网仅能访问 API 入口，管理端 `8880` 仅内网/VPN 可访问。** HTTP Basic 会传输可还原的凭据，必须在外层使用 HTTPS/TLS 终结；推荐 Nginx 监听公网 HTTPS 端口，把 API 转发到 `127.0.0.1:8881`，并限制代理路径。不要将明文 `http://公网:8881` 直接开放。
+- **管理端 `8880` 建议仅内网/VPN 可访问。** 独立 API 端口 `8881` 原生支持 HTTP，反向代理也可选择 HTTP 或 HTTPS；开发和内网测试可以直接使用 `http://192.168.1.10:8881`，不需要域名或 SSL 证书。注意 HTTP Basic 在 HTTP 上传输可还原的凭据，公网正式使用推荐 HTTPS/TLS，但 NiceVPN 不以 HTTPS 作为功能开启的前提。
 - `download_base_url` **可选**：填写时原样使用指定下载基址（IP 或域名）；不填写时使用服务启动时自动识别的本机 IP（优先 eth0）及 API 监听端口（默认 `8881`）。生成下载 URL 不依赖访问管理后台的 Host，也不要求域名。若 API 仅在回环地址监听，则需明确配置可通过反代访问的下载地址。
 - 用户管理页的「复制链接」「推送链接」以及公网业务 API 返回的 `download_url` 全部使用独立下载基址，不能再使用管理端口。
 - 令牌有效期为 1 小时、只允许原子消费一次；API Access Log 关闭以避免泄露 URL Token，应用审计仅记录 Token 哈希前缀。
