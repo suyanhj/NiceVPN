@@ -46,6 +46,8 @@ DOWNLOAD_LINKS_DIR = DATA_DIR / "download_links"
 DOWNLOAD_BUNDLES_DIR = DATA_DIR / "download_bundles"
 AUDIT_DIR = DATA_DIR / "audit"
 LOGS_DIR = DATA_DIR / "logs"
+# SSO 认证事件：独立于系统设置页和 SQLite，文件仅在服务端读取
+SSO_AUTH_AUDIT_LOG_FILE = LOGS_DIR / "sso-auth.jsonl"
 OPENVPN_UPGRADE_LOG_FILE = LOGS_DIR / "openvpn-upgrade.log"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 CONFIG_FILE = DATA_DIR / "config.json"
