@@ -1,0 +1,92 @@
+"""Real OpenVPN daemon not required for isolated SSO Management tests."""
+import time
+from pathlib import Path
+
+import pytest
+
+from app.services.auth.office_oauth import EnterpriseIdentity
+from app.services.auth.openvpn_webauth import ClientNotification
+from app.services.auth.sso_runtime import SsoRuntime
+from app.services.auth.enterprise_sso_policy import SsoPolicyService
+from app.services.auth.provider_store import SsoProviderStore
+from app.services.auth.sso_transactions import WebAuthTransactionStore
+from app.storage.sqlite_store import SqliteStore
+
+
+class FakeManager:
+    instance_id = "server"
+
+    def __init__(self):
+        self.commands = []
+
+    def send(self, command):
+        self.commands.append(command)
+
+
+@pytest.fixture
+def bundle(tmp_path):
+    db = SqliteStore(tmp_path / "db.sqlite")
+    db.upsert_group({"id": "eng", "name": "研发", "status": "active",
+                     "subnet": "10.8.0.0/24"})
+    db.upsert_user({"username": "cert-1", "group_id": "eng", "status": "active"})
+    policy = SsoPolicyService(db)
+    providers = SsoProviderStore(db, key_path=tmp_path / "secret.key")
+    providers.save(provider_id="corp", kind="dingtalk", enterprise_id="goodcorp",
+                   app_id="app", secret="secret", enabled=True)
+    transactions = WebAuthTransactionStore(db)
+    runtime = SsoRuntime(instances=["server"], public_base_url="https://vpn.example.org",
+                         policy=policy, providers=providers, transactions=transactions)
+    return runtime, policy
+
+
+def test_required_sso_only_after_valid_enterprise_callback(bundle):
+    runtime, policy = bundle
+    policy.set_group_required("eng", required=True)
+    mgr = FakeManager()
+    event = ClientNotification("CONNECT", 17, 0, {
+        "common_name": "cert-1", "IV_SSO": "webauth",
+    })
+    runtime.on_event(mgr, event)
+    assert mgr.commands[0].startswith("client-pending-auth 17 0 WEB_AUTH:")
+    assert not any(c.startswith("client-auth-nt") for c in mgr.commands)
+    with runtime.transactions.store.connection() as conn:
+        row = conn.execute("SELECT * FROM sso_login_transactions").fetchone()
+        assert row["status"] == "pending"
+    # The runtime cannot approve without both the exact random OAuth state
+    # and the matching trusted office provider result.
+    req = runtime.transactions._as_request(row)
+    assert not runtime.finish(req, "untrusted", EnterpriseIdentity("dingtalk", "goodcorp", "alice"))
+    assert not any(c.startswith("client-auth-nt") for c in mgr.commands)
+
+
+def test_legacy_exemption_and_unsupported_client(bundle):
+    runtime, policy = bundle
+    mgr = FakeManager()
+    normal = ClientNotification("CONNECT", 1, 0, {"common_name": "cert-1"})
+    runtime.on_event(mgr, normal)
+    assert mgr.commands == ["client-auth-nt 1 0\n"]
+    policy.set_group_required("eng", required=True)
+    runtime.on_event(mgr, normal)
+    assert mgr.commands[-1].startswith("client-deny")
+    policy.set_certificate_exemption("cert-1", exempt=True, reason="headless linux")
+    runtime.on_event(mgr, normal)
+    assert mgr.commands[-1] == "client-auth-nt 1 0\n"
+
+
+def test_disconnect_drops_active_pending_state(bundle):
+    runtime, policy = bundle
+    policy.set_group_required("eng", required=True)
+    mgr = FakeManager()
+    runtime.on_event(mgr, ClientNotification(
+        "CONNECT", 55, 0, {"common_name": "cert-1", "IV_SSO": "webauth"}))
+    assert runtime.pending
+    runtime.on_event(mgr, ClientNotification("DISCONNECT", 55))
+    assert not runtime.pending
+    assert not runtime.sessions
+
+
+def test_public_origin_required(bundle):
+    _, policy = bundle
+    with pytest.raises(ValueError):
+        SsoRuntime(instances=["server"], public_base_url="http://vpn.example.org",
+                   policy=policy)
