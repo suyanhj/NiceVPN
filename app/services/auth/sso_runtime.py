@@ -148,9 +148,18 @@ class SsoRuntime:
         transactions: WebAuthTransactionStore | None = None,
     ):
         parsed = urlsplit(public_base_url.rstrip("/"))
-        if (parsed.scheme != "https" or not parsed.netloc or parsed.path
-                or parsed.query or parsed.fragment):
-            raise ValueError("SSO public base URL must be HTTPS origin only")
+        try:
+            valid_origin = (
+                parsed.scheme in {"http", "https"} and parsed.hostname
+                and parsed.username is None and parsed.password is None
+                and not parsed.path and not parsed.query and not parsed.fragment
+                and not any(ch.isspace() or ord(ch) < 32 for ch in public_base_url)
+                and (parsed.port is None or 1 <= parsed.port <= 65535)
+            )
+        except ValueError:
+            valid_origin = False
+        if not valid_origin:
+            raise ValueError("SSO public base URL must be a valid HTTP or HTTPS origin")
         self.public_base_url = public_base_url.rstrip("/")
         self.policy = policy if policy is not None else SsoPolicyService()
         self.providers = providers if providers is not None else SsoProviderStore()
