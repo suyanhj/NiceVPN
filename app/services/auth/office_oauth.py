@@ -41,9 +41,18 @@ class EnterpriseIdentity:
 
 def _callback_url(callback: str) -> None:
     parsed = urlsplit(callback)
-    if (parsed.scheme != "https" or not parsed.netloc or parsed.username
-            or parsed.password or parsed.fragment or parsed.query):
-        raise OfficeAuthError("Office SSO callback must be a configured HTTPS URL")
+    try:
+        valid_callback = (
+            parsed.scheme in {"http", "https"} and parsed.hostname
+            and parsed.username is None and parsed.password is None
+            and not parsed.fragment and not parsed.query
+            and not any(ch.isspace() or ord(ch) < 32 for ch in callback)
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+        )
+    except ValueError:
+        valid_callback = False
+    if not valid_callback:
+        raise OfficeAuthError("Office SSO callback must be an HTTP or HTTPS URL")
 
 
 def authorization_url(provider: OfficeProvider, callback: str, state: str) -> str:
