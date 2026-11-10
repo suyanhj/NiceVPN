@@ -59,7 +59,7 @@ def test_required_sso_only_after_valid_enterprise_callback(bundle):
     assert not any(c.startswith("client-auth-nt") for c in mgr.commands)
 
 
-def test_legacy_exemption_and_unsupported_client(bundle):
+def test_legacy_when_group_is_not_opted_in_and_unsupported_client(bundle):
     runtime, policy = bundle
     mgr = FakeManager()
     normal = ClientNotification("CONNECT", 1, 0, {"common_name": "cert-1"})
@@ -68,7 +68,7 @@ def test_legacy_exemption_and_unsupported_client(bundle):
     policy.set_group_required("eng", required=True)
     runtime.on_event(mgr, normal)
     assert mgr.commands[-1].startswith("client-deny")
-    policy.set_certificate_exemption("cert-1", exempt=True, reason="headless linux")
+    policy.set_group_required("eng", required=False)
     runtime.on_event(mgr, normal)
     assert mgr.commands[-1] == "client-auth-nt 1 0\n"
 
