@@ -16,16 +16,16 @@ class TagService:
     def __init__(self, store: SqliteStore | None = None):
         self.store = store or get_default_store()
 
-    def create(self, name: str, description: str = "", *, device_binding_exempt: bool = False) -> dict:
+    def create(self, name: str, description: str = "", *, device_binding_exempt: bool = False, sso_required: bool = False) -> dict:
         tag_id = str(uuid.uuid4())
-        self.store.create_tag(tag_id, name, description, device_binding_exempt=device_binding_exempt)
+        self.store.create_tag(tag_id, name, description, device_binding_exempt=device_binding_exempt, sso_required=sso_required)
         return self.store.get_tag(tag_id) or {}
 
     def list_all(self) -> list[dict]:
         return self.store.list_tags()
 
-    def update(self, tag_id: str, *, name: str, description: str = "", device_binding_exempt: bool | None = None) -> dict:
-        self.store.update_tag(tag_id, name=name, description=description, device_binding_exempt=device_binding_exempt)
+    def update(self, tag_id: str, *, name: str, description: str = "", device_binding_exempt: bool | None = None, sso_required: bool | None = None) -> dict:
+        self.store.update_tag(tag_id, name=name, description=description, device_binding_exempt=device_binding_exempt, sso_required=sso_required)
         return self.store.get_tag(tag_id) or {}
 
     def delete(self, tag_id: str) -> None:
