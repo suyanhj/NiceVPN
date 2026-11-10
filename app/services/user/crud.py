@@ -495,6 +495,17 @@ class UserService:
     def _kill_client_session(self, username: str) -> None:
         """通过 OpenVPN 管理接口踢掉用户当前连接（遍历已注册实例端口，与 server.conf 一致）。"""
         from app.services.openvpn.instance import iter_instance_mgmt_ports
+        from app.core.config import load_config
+
+        if bool(load_config().get("enterprise_sso_enabled", False)):
+            # SSO owns the sole active management connection. The legacy
+            # TCP management port does not exist when Unix WebAuth is enabled.
+            from app.services.auth.sso_runtime import get_sso_runtime
+
+            runtime = get_sso_runtime()
+            if runtime is None or not runtime.kill_client_by_common_name(username):
+                logger.warning("SSO Management 不可用，不能踢出用户: %s", username)
+            return
 
         endpoints = iter_instance_mgmt_ports()
         if not endpoints:
