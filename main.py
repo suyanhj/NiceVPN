@@ -19,6 +19,7 @@ from app.core.constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_API_HOST, DEF
 from app.core.scheduler import start_scheduler
 from app.api.server import PublicApiListener
 from app.services.auth.sso_runtime import SsoRuntime, set_sso_runtime
+from app.utils.public_domains import resolve_sso_origin
 from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
@@ -216,7 +217,7 @@ def run_web() -> None:
         if bool(config.get("enterprise_sso_enabled", False)):
             sso_runtime = SsoRuntime(
                 instances=sorted((config.get("instances") or {}).keys()),
-                public_base_url=str(config.get("enterprise_sso_public_base_url") or ""),
+                public_base_url=resolve_sso_origin(config),
             )
             sso_runtime.start()
             set_sso_runtime(sso_runtime)
