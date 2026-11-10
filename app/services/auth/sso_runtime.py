@@ -185,6 +185,19 @@ class SsoRuntime:
             self.pending.clear()
             self.sessions.clear()
 
+    def kill_client_by_common_name(self, common_name: str) -> bool:
+        """Keep existing admin kick-offline compatible with Unix Management."""
+        if not common_name or any(ch in common_name for ch in "\r\n"):
+            return False
+        success = False
+        for manager in self.instances.values():
+            try:
+                manager.send(f"kill {common_name}\n")
+                success = True
+            except (OSError, ConnectionError):
+                continue
+        return success
+
     def clear_instance(self, instance_id: str) -> None:
         with self.lock:
             pending_keys = [key for key in self.pending if key[0] == instance_id]
