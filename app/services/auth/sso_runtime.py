@@ -30,6 +30,9 @@ from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_
 from app.core.config import load_config
 from app.utils.sso_enterprises import is_allowed_enterprise
 from app.services.auth.sso_grants import write_sso_grant
+from app.services.auth.sso_sessions import (
+    SSO_SESSION_TTL_SECONDS, SsoSessionStore, verified_peer_fingerprint,
+)
 from app.services.auth.sso_transactions import (
     AuthRequest, WebAuthTransactionStore,
 )
@@ -59,6 +62,17 @@ class PendingConnection:
     expires_at: int
     peer_ip: str = ""
     peer_port: str = ""
+    cert_fingerprint: str = ""
+    started_at: float = 0.0
+
+
+@dataclass(frozen=True)
+class ActiveSsoSession:
+    common_name: str
+    provider_id: str
+    enterprise_id: str
+    cert_fingerprint: str
+    expires_at: int
 
 
 class ManagementInstance:
@@ -176,6 +190,7 @@ class SsoRuntime:
         self.providers = providers if providers is not None else SsoProviderStore()
         self.transactions = transactions if transactions is not None else WebAuthTransactionStore()
         self.audit = SsoAudit(self.transactions.store)
+        self.session_cache = SsoSessionStore(self.transactions.store)
         self.instances = {
             inst: ManagementInstance(inst, management_socket_path(inst), self)
             for inst in instances
@@ -183,7 +198,8 @@ class SsoRuntime:
         self.stop_event = threading.Event()
         self.lock = threading.RLock()
         self.pending: dict[tuple[str, int, int], PendingConnection] = {}
-        self.sessions: dict[tuple[str, int], tuple[str, int]] = {}
+        self.sessions: dict[tuple[str, int], ActiveSsoSession] = {}
+        self.establish_timings: dict[tuple[str, int], tuple[float, str]] = {}
 
     def start(self) -> None:
         if os.name != "posix" or not hasattr(socket, "AF_UNIX"):
@@ -208,6 +224,7 @@ class SsoRuntime:
         with self.lock:
             self.pending.clear()
             self.sessions.clear()
+            self.establish_timings.clear()
 
     def kill_client_by_common_name(self, common_name: str) -> bool:
         """Keep existing admin kick-offline compatible with Unix Management."""
@@ -231,6 +248,9 @@ class SsoRuntime:
             for key in list(self.sessions):
                 if key[0] == instance_id:
                     self.sessions.pop(key, None)
+            for key in list(self.establish_timings):
+                if key[0] == instance_id:
+                    self.establish_timings.pop(key, None)
 
     @staticmethod
     def _state_digest(state: str) -> str:
@@ -241,10 +261,22 @@ class SsoRuntime:
         if event.kind == "DISCONNECT":
             with self.lock:
                 self.sessions.pop((inst, event.cid), None)
+                self.establish_timings.pop((inst, event.cid), None)
                 for key in list(self.pending):
                     if key[0] == inst and key[1] == event.cid:
                         self.pending.pop(key, None)
                         self.transactions.cancel_connection(*key)
+            return
+        if event.kind == "ESTABLISHED":
+            with self.lock:
+                measured = self.establish_timings.pop((inst, event.cid), None)
+            if measured is not None:
+                started, source = measured
+                logger.info(
+                    "SSO OpenVPN establishment: instance=%s CID=%s mode=%s "
+                    "auth_allow_to_established_ms=%d",
+                    inst, event.cid, source, round((time.monotonic() - started) * 1000),
+                )
             return
         if event.kind not in ("CONNECT", "REAUTH") or event.kid is None:
             return
@@ -259,25 +291,104 @@ class SsoRuntime:
         if not decision.requires_sso:
             manager.send(auth_allow(event.cid, event.kid))
             return
-        # REAUTH is allowed on the exact live client session for 8 hours. On
-        # disconnect or Management reconnect, old sessions are discarded.
+        # CONNECT is always sent after OpenVPN's native certificate validation.
+        # We only reuse a previously verified OAuth identity; no CA/CRL or
+        # certificate signature checks happen in NiceVPN.
+        fingerprint = verified_peer_fingerprint(event.env)
+        provider = self.providers.first_enabled()
+        if provider is None:
+            manager.send(auth_deny(event.cid, event.kid, "SSO unavailable"))
+            return
+
+        def corp_allowed(corp_id: str) -> bool:
+            if provider.id == UNIFIED_DINGTALK_ID:
+                return is_allowed_enterprise(load_config(), corp_id)
+            return corp_id == provider.enterprise_id
+
         with self.lock:
-            old = self.sessions.get((inst, event.cid))
-        if event.kind == "REAUTH" and old is not None:
-            session_cn, session_expiry = old
-            if session_cn == event.common_name and session_expiry > int(time.time()):
+            active = self.sessions.get((inst, event.cid))
+
+        if event.kind == "REAUTH" and active is not None:
+            fingerprint_unchanged = (
+                not fingerprint or not active.cert_fingerprint
+                or fingerprint == active.cert_fingerprint
+            )
+            valid = (
+                active.common_name == event.common_name
+                and active.provider_id == provider.id
+                and active.expires_at > int(time.time())
+                and fingerprint_unchanged
+                and corp_allowed(active.enterprise_id)
+            )
+            if valid and active.cert_fingerprint:
+                # Respect administrator revocation even for a live TLS REAUTH.
+                stored = self.session_cache.get(
+                    instance_id=inst, common_name=event.common_name,
+                    cert_fingerprint=active.cert_fingerprint,
+                    provider_id=provider.id, provider_app_id=provider.app_id,
+                )
+                valid = stored is not None and stored.enterprise_id == active.enterprise_id
+            if valid:
                 manager.send(auth_allow(event.cid, event.kid))
+                logger.info(
+                    "SSO live-session REAUTH: instance=%s CID=%s KID=%s",
+                    inst, event.cid, event.kid,
+                )
                 return
+
+        # A client missing WEB_AUTH cannot silently bypass a required policy,
+        # even if it presents the same certificate that was used earlier.
         if not event.supports_webauth:
             self.audit.log(event_type="no_webauth", instance_id=inst,
                            common_name=event.common_name, outcome="failure",
                            reason_code="missing_webauth")
             manager.send(auth_deny(event.cid, event.kid, "Unsupported SSO client"))
             return
-        provider = self.providers.first_enabled()
-        if provider is None:
-            manager.send(auth_deny(event.cid, event.kid, "SSO unavailable"))
-            return
+
+        if fingerprint:
+            stored = self.session_cache.get(
+                instance_id=inst, common_name=event.common_name,
+                cert_fingerprint=fingerprint, provider_id=provider.id,
+                provider_app_id=provider.app_id,
+            )
+            if stored is not None and corp_allowed(stored.enterprise_id):
+                peer_ip = (event.env.get("trusted_ip") or event.env.get("trusted_ip6")
+                           or event.env.get("untrusted_ip")
+                           or event.env.get("untrusted_ip6") or "")
+                peer_port = (event.env.get("trusted_port")
+                             or event.env.get("untrusted_port") or "")
+                if event.kind == "CONNECT":
+                    # client-connect still runs on new connections. Re-issue a
+                    # short-lived bypass for the existing device-binding hook.
+                    write_sso_grant(
+                        inst, event.common_name, peer_ip=peer_ip,
+                        peer_port=peer_port,
+                    )
+                manager.send(auth_allow(event.cid, event.kid))
+                with self.lock:
+                    self.sessions[(inst, event.cid)] = ActiveSsoSession(
+                        event.common_name, provider.id, stored.enterprise_id,
+                        fingerprint, stored.expires_at,
+                    )
+                    if event.kind == "CONNECT":
+                        self.establish_timings[(inst, event.cid)] = (
+                            time.monotonic(), "cached",
+                        )
+                self.audit.log(
+                    event_type="session_reauth", instance_id=inst,
+                    common_name=event.common_name, outcome="success",
+                    provider_kind=provider.kind, enterprise_id=stored.enterprise_id,
+                    reason_code="cached_connect" if event.kind == "CONNECT"
+                    else "cached_tls_reauth",
+                )
+                logger.info(
+                    "SSO persisted session reused: instance=%s CID=%s KID=%s kind=%s",
+                    inst, event.cid, event.kid, event.kind,
+                )
+                return
+
+        # No verified fingerprint or no eligible cache: perform normal OAuth.
+        # A missing fingerprint never falls back to CN-only cache reuse.
         created = self.transactions.create(
             instance_id=inst,
             cid=event.cid,
@@ -293,6 +404,7 @@ class SsoRuntime:
                 event.env.get("trusted_ip") or event.env.get("trusted_ip6")
                 or event.env.get("untrusted_ip") or event.env.get("untrusted_ip6") or "",
                 event.env.get("trusted_port") or event.env.get("untrusted_port") or "",
+                fingerprint, time.monotonic(),
             )
         url = self.public_base_url + "/auth/sso/start?" + urlencode({"t": created.token})
         manager.send(pending_webauth(event.cid, event.kid, url))
@@ -342,6 +454,7 @@ class SsoRuntime:
                 current.common_name, provider_id,
                 current.state_digest, current.expires_at,
                 current.peer_ip, current.peer_port,
+                current.cert_fingerprint, current.started_at,
             )
             return True
 
@@ -423,9 +536,42 @@ class SsoRuntime:
                     external_user_id=identity.external_user_id,
                     reason_code="enterprise_match",
                 )
-                self.sessions[(request.instance_id, request.cid)] = (
-                    request.common_name, int(time.time()) + 8 * 3600
-                )
+                expires_at = int(time.time()) + SSO_SESSION_TTL_SECONDS
+                with self.lock:
+                    self.sessions[(request.instance_id, request.cid)] = ActiveSsoSession(
+                        request.common_name, provider.id, identity.enterprise_id,
+                        pending.cert_fingerprint, expires_at,
+                    )
+                    self.establish_timings[(request.instance_id, request.cid)] = (
+                        time.monotonic(), "oauth",
+                    )
+                if pending.cert_fingerprint:
+                    try:
+                        self.session_cache.remember(
+                            instance_id=request.instance_id,
+                            common_name=request.common_name,
+                            cert_fingerprint=pending.cert_fingerprint,
+                            provider_id=provider.id, provider_app_id=provider.app_id,
+                            enterprise_id=identity.enterprise_id,
+                        )
+                    except Exception:
+                        # The client was already authorized by OpenVPN. A cache
+                        # failure must not falsely report that OAuth failed;
+                        # the next reconnect simply returns to the browser.
+                        logger.exception("SSO durable session save failed")
+                else:
+                    logger.warning(
+                        "SSO session not cached: OpenVPN did not export "
+                        "tls_digest_sha256_0 for instance=%s CID=%s",
+                        request.instance_id, request.cid,
+                    )
+                if pending.started_at:
+                    logger.info(
+                        "SSO OAuth flow: instance=%s CID=%s "
+                        "connect_to_auth_allow_ms=%d",
+                        request.instance_id, request.cid,
+                        round((time.monotonic() - pending.started_at) * 1000),
+                    )
                 logger.info(
                     "SSO approved: instance=%s CID=%s KID=%s vpn_cn=%s "
                     "provider=%s enterprise_id=%s external_user_id=%s",
