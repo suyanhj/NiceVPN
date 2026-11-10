@@ -25,12 +25,12 @@ def test_dingtalk_authorization_requests_corporate_scope():
     assert params["state"] == ["s" * 40]
 
 
-def test_contact_scope_is_opt_in_and_separate_per_enterprise():
+def test_contact_directory_permission_is_not_a_login_scope():
     callback = "http://vpn.example.com/auth/sso/dingtalk/callback"
     minimal = authorization_url(_provider(read_user_profile=False), callback, "s" * 40)
     detailed = authorization_url(_provider(read_user_profile=True), callback, "s" * 40)
     assert parse_qs(urlsplit(minimal).query)["scope"] == ["openid corpid"]
-    assert parse_qs(urlsplit(detailed).query)["scope"] == ["openid corpid Contact.User.Read"]
+    assert parse_qs(urlsplit(detailed).query)["scope"] == ["openid corpid"]
 
 
 @pytest.mark.asyncio
