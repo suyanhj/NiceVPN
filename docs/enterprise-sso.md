@@ -63,7 +63,8 @@
 
 - SSO 总开关关闭时仍使用既有 `management 127.0.0.1 7505+index`，不改变现有 OpenVPN 管理方式。
 - 总开关打开时，由 NiceVPN 管理每实例的 root 限制 Unix Management Socket；已有用户踢出（kill）功能转由同一控制器执行。
-- 经过可信企业认证后，NiceVPN 将仅对同实例、CN、客户端公网地址与端口发布 **120 秒的后置 client-connect 授权证明**；设备绑定脚本只记录而不拒绝指纹变动。其他会话继续执行原有设备绑定策略。
+- **仅当组或标签要求 SSO** 才触发钉钉/企业微信网页认证；未启用 SSO 的用户按 OpenVPN 原有连接逻辑直接继续。
+- 经过可信企业认证后，NiceVPN 仅对同实例、CN、客户端公网地址与端口发布 **120 秒的后置 client-connect 授权证明**；设备绑定脚本仅记录设备信息，**跳过设备指纹绑定校验**。没有通过 SSO 的连接继续执行原有设备绑定策略。不额外实现 CA、CRL、证书有效期校验，证书验证仍由 OpenVPN 原生完成。
 - Unix Management 及 SSO grant 文件不对公网开放。客户端无 WEB_AUTH 能力时，**仅命中强制 SSO 组或标签**才拒绝连接，其余证书按原有连接行为处理。
 - 登录事务最长 180 秒，state 和 WebAuth Token 原文不会入库；审计不含 OAuth code、access token、AppSecret。
 - 对于 OpenVPN 2.x CLI 等无浏览器界面的客户端，管理员可使用不要求 SSO 的组和标签管理其专用证书；如果同一证书被包含在强制 SSO 的组或标签中，则不能因客户端是 Linux 而跳过。
@@ -108,7 +109,7 @@ xx.hj.com,192.168.1.1:80,https://sso.example.com
 
 ## DingTalk 身份核对日志
 
-SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换取返回的 CorpId**、是否与配置匹配，以及在具备权限时返回的 `unionId/openId`。管理端 **企业认证 → 最近认证记录** 包含证书 CN、企业 ID、外部用户 ID、结果和原因代码；没有请求 Token 或密钥的日志。
+SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换取返回的 CorpId**、是否与配置匹配，以及在具备权限时返回的 `unionId/openId`。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，复用既有的有限字节尾部读取、手动刷新和实时查看；按 UTC 日期轮转并保留 7 天。旧 SQLite `sso_auth_audit` 表为兼容历史迁移保留，但不再写入新认证记录。文件不包含 OAuth Code、Token 或密钥。
 
 用户 Token 换取 200、`GET /v1.0/contact/users/me` 返回 403：很可能未获 `Contact.User.Read` 权限。日志仅提取明确的服务端错误 Code 和 `requiredScopes` 以便检查，**不记录 HTTP 响应正文、Token、OAuth code 或 AppSecret**。只要用户访问凭证中的企业 CorpId 与所选企业匹配，个人资料不可用不会阻止已验证的企业登录；对应审计记录里的外部用户 ID 可能为空。若需员工 ID，可在钉钉开发者后台申请该应用的个人权限，确认用户授权后再次测试。
 
