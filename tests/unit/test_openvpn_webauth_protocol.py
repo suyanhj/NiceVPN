@@ -2,8 +2,38 @@
 import pytest
 
 from app.services.auth.openvpn_webauth import (
-    ManagementNotificationParser, auth_allow, auth_deny, pending_webauth,
+    ManagementNotificationParser, ManagementStatusParser,
+    auth_allow, auth_deny, pending_webauth,
 )
+
+
+def test_status_v3_snapshot_ignores_interleaved_async_management_events():
+    status = ManagementStatusParser()
+    status.begin(123.0)
+    assert status.feed("TITLE\tOpenVPN 2.7") is None
+    header = ("HEADER\tCLIENT_LIST\tCommon Name\tReal Address\t"
+              "Virtual Address\tVirtual IPv6 Address\tBytes Received\tBytes Sent\t"
+              "Connected Since\tConnected Since (time_t)\tUsername\tClient ID\t"
+              "Peer ID\tData Channel Cipher")
+    assert status.feed(header) is None
+    assert status.feed(">CLIENT:REAUTH,55,4") is None
+    assert status.feed(">CLIENT:ENV,common_name=alice") is None
+    assert status.feed("CLIENT_LIST\talice\t198.51.100.2:5000\t10.8.0.2\t\t10\t20\t"
+                       "2026-11-10\t1773150000\tUNDEF\t55\t0\tAES-256-GCM") is None
+    assert status.feed("END") == {55: ("alice", 1773150000)}
+    assert not status.pending
+
+
+def test_status_empty_snapshot_is_valid_but_missing_header_is_not():
+    status = ManagementStatusParser()
+    status.begin(10.0)
+    assert status.feed("END") is None
+    status.begin(11.0)
+    status.feed("HEADER\tCLIENT_LIST\tCommon Name\tClient ID\tConnected Since (time_t)")
+    assert status.feed("END") == {}
+    status.begin(12.0)
+    assert status.feed("ERROR: unsupported status") is None
+    assert not status.pending
 
 
 def test_connect_event_is_atomic_and_tracks_capabilities():

@@ -159,18 +159,20 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换
 - `sso_auth_providers` 表仍存储统一钉钉加密应用凭证，`sso_login_transactions` 表负责 WebAuth 单次使用，两表必须保留。schema v9 删除不再使用的旧审计表和旧索引；已经启用统一登录时，清理旧逐企业记录及其待认证事务。未启用统一应用则保留旧凭证直至主动迁移。
 - 升级前建议备份 `data/nicevpn.db` 和 `data/sso_provider_master.key`。
 
-## 持久化 SSO 会话与自动重连（schema v10）
+## 持久化 SSO 在线续期与自动重连（schema v11）
 
 OpenVPN 负责 CA、CRL、证书有效期、TLS 握手、重启和客户端自动重连。NiceVPN **不再次验证客户端证书**，仅使用可信 Management CONNECT/REAUTH 环境变量 `tls_digest_sha256_0`，将已经通过 OAuth 的会话与同一份证书绑定；该指纹由 OpenVPN 输出，不来自浏览器或客户端自定义 IV_* 字段。
 
-- **首次登录**：组或标签要求 SSO → OpenVPN 证书验证 → 钉钉 OAuth + 允许企业 CorpId 校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 记录 8 小时**固定期限**的 SSO 会话（不滑动续期）。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止短期续用。
+- **首次登录**：组或标签要求 SSO → OpenVPN 证书验证 → 钉钉 OAuth + 允许企业 CorpId 校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 为已验证证书创建一条 8 小时**离线宽限期**的会话。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止宽限期内复用。
+- **在线续期**：每个 OpenVPN 实例的 Unix Management 连接随机间隔 1–5 秒发送一次 `status 3`（**每实例一次全量查询，不按客户端逐个查询**）；只把完整响应中能够以 CID、CN、连接创建时间匹配到已认证 SSO 会话的客户端视为在线。每条在线会话最多每 5 分钟批量原地 `UPDATE last_used_at/expires_at`，不会添加心跳行或审计行。离线时停止续期，继续保留最后一次确认在线时间起约 8 小时的复用窗口；定时删除过期行以防表膨胀。查询异常时不续期、不据此踢人。
+- **NiceVPN 单独重启时**：原 OpenVPN 通道尚在线，管理进程从 SQLite 已记录的 CID + OpenVPN `Connected Since (time_t)` 绑定恢复可信会话，继续原地续期。仅有相同 CN 或只有相同 CID 均不能恢复认证身份；真正的 OpenVPN 重启则通过新 CONNECT 和可信证书指纹复用宽限期内授权。
 - **重新 CONNECT**（OpenVPN 重启、网络中断或客户端主动断开后重连）：NiceVPN 使用来自本次 Management 事件的实例、CN、SHA256 证书指纹查找 SSO 会话，再核对已启用 OAuth 应用与企业白名单；命中即重新发布短期设备指纹豁免授权，直接向 OpenVPN 发送 `client-auth-nt`，无需浏览器重登。原有 OpenVPN client-connect、CCD、IP 分配和防火墙逻辑完全不变。
-- **TLS REAUTH**：当前活跃连接可使用内存会话并核对持久化状态；内存丢失但有合法缓存时也可恢复。不会因每次 TLS 密钥协商重新扫码，除非身份会话已经过期或撤销。
+- **TLS REAUTH**：当前活跃连接仍要检查持久化授权记录与撤销状态；长期持续在线的记录因在线确认而续期，不会仅因首次 OAuth 过去 8 小时就要求重新扫码。
 - **缓存失败/过期**：继续原来的钉钉 WebAuth，不退化为仅凭 CN 放行。没有 `tls_digest_sha256_0` 或指纹格式无效时不创建或复用跨重启缓存；当前活跃 TLS 连接仍沿用已授权的内存会话。
 - **安全边界**：管理员禁用 SSO 组标签策略后回到原连接流程；企业从白名单删除、全局 OAuth App ID 切换、缓存过期或管理员显式删除会话时，不再复用缓存；不支持 WEB_AUTH 的全新连接仍不能绕过强制 SSO。会话撤销仅阻止下一次 CONNECT/REAUTH，不会代替 OpenVPN 主动踢出已经建立的隧道。
-- **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，8 小时内也可能复用同一份 SSO 会话。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌而不是在 NiceVPN 再做 CA 证书校验。
+- **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，在会话有效期间也可能复用 SSO；在线持续续期意味着风险窗口不再固定为 8 小时。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌，而不是在 NiceVPN 再做 CA 证书校验。
 
-新增 `data/nicevpn.db` SQLite schema v10 的 `sso_auth_sessions` 表，其他旧表与 VPN 数据不改变。NiceVPN 服务重启时只清理内存连接状态，不清理该持久化缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 服务端主动撤销方法；本版尚未新增管理界面按钮。
+Schema v10 创建 `sso_auth_sessions` 表，v11 只给原表增加 `active_client_id` / `active_connected_at` 两列并保留原记录；会话仍以 `(instance_id, common_name, cert_fingerprint, provider_id)` 为唯一主键，在线刷新不增加行数。NiceVPN 服务重启只清理内存状态，不清理 SQLite 缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 服务端主动撤销方法；本版尚未新增管理界面按钮。生产部署后仍须实测不同 OpenVPN 版本的 Management `status 3` 输出及长期运行稳定性。
 
 ### NiceVPN 可观测耗时
 

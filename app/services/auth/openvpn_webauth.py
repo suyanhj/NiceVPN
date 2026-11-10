@@ -81,6 +81,71 @@ class ManagementNotificationParser:
         return None
 
 
+class ManagementStatusParser:
+    """Parse a complete `status 3` reply without consuming async CLIENT events.
+
+    OpenVPN status-version 3 is tab-separated; a response with no trustworthy
+    CLIENT_LIST header must never be interpreted as 'every client is offline'.
+    """
+
+    def __init__(self) -> None:
+        self.pending = False
+        self.started_at = 0.0
+        self._client_id_index: int | None = None
+        self._name_index: int | None = None
+        self._since_index: int | None = None
+        self._clients: dict[int, tuple[str, int]] = {}
+
+    def begin(self, now: float) -> None:
+        self.pending = True
+        self.started_at = now
+        self._client_id_index = None
+        self._name_index = None
+        self._since_index = None
+        self._clients = {}
+
+    def cancel(self) -> None:
+        self.pending = False
+        self._clients = {}
+
+    def feed(self, line: str) -> dict[int, tuple[str, int]] | None:
+        if not self.pending or line.startswith(">"):
+            return None
+        if line.startswith("ERROR:"):
+            self.cancel()
+            return None
+        if line == "END":
+            complete = (self._client_id_index is not None
+                        and self._name_index is not None
+                        and self._since_index is not None)
+            result = dict(self._clients) if complete else None
+            self.cancel()
+            return result
+        parts = line.split("\t")
+        if parts[:2] == ["HEADER", "CLIENT_LIST"]:
+            fields = parts[2:]
+            try:
+                self._client_id_index = fields.index("Client ID")
+                self._name_index = fields.index("Common Name")
+                self._since_index = fields.index("Connected Since (time_t)")
+            except ValueError:
+                self._client_id_index = self._name_index = self._since_index = None
+        elif parts[0] == "CLIENT_LIST" and self._client_id_index is not None:
+            fields = parts[1:]
+            indices = (self._client_id_index, self._name_index, self._since_index)
+            if any(i is None or i >= len(fields) for i in indices):
+                return None
+            try:
+                client_id = int(fields[self._client_id_index])
+                connected_at = int(fields[self._since_index])
+            except ValueError:
+                return None
+            common_name = fields[self._name_index]
+            if client_id >= 0 and connected_at > 0 and common_name:
+                self._clients[client_id] = (common_name, connected_at)
+        return None
+
+
 def _validate_ids(cid: int, kid: int) -> None:
     if not _ID.fullmatch(str(cid)) or not _ID.fullmatch(str(kid)):
         raise ValueError("OpenVPN CID/KID must be nonnegative decimal integers")

@@ -15,8 +15,8 @@ from app.storage.schema_manager import (
 from app.storage.sqlite_store import SqliteStore
 
 
-def test_schema_ddl_is_packaged_and_initializes_v10(tmp_path):
-    assert SCHEMA_VERSION == 10
+def test_schema_ddl_is_packaged_and_initializes_v11(tmp_path):
+    assert SCHEMA_VERSION == 11
     for name in ("001_initial.sql", "002_query_indexes.sql", "004_firewall_tags.sql"):
         assert "CREATE" in read_sql(name)
     assert "ALTER TABLE tags" in read_sql("005_device_binding_exempt.sql")
@@ -25,9 +25,10 @@ def test_schema_ddl_is_packaged_and_initializes_v10(tmp_path):
     assert "CREATE INDEX" in read_sql("008_sso_contact_profile.sql")
     assert "DROP TABLE" in read_sql("009_sso_unified_cleanup.sql")
     assert "CREATE TABLE" in read_sql("010_sso_session_cache.sql")
+    assert "ALTER TABLE" in read_sql("011_sso_online_lease.sql")
     store = SqliteStore(tmp_path / "nicevpn.sqlite")
     store.initialize()
-    assert store.schema_version() == 10
+    assert store.schema_version() == 11
     with store.connection() as conn:
         tables = {
             row[0] for row in conn.execute(
@@ -37,7 +38,7 @@ def test_schema_ddl_is_packaged_and_initializes_v10(tmp_path):
     assert {"users", "groups", "peers", "firewall_rules",
             "tags", "user_tags", "group_tags", "schema_migrations"} <= tables
     store.initialize()
-    assert store.schema_version() == 10
+    assert store.schema_version() == 11
 
 
 def test_ddl_migrations_roll_back_entire_new_database_on_failure(tmp_path):
@@ -160,7 +161,7 @@ def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp
 
     upgraded = SqliteStore(db)
     upgraded.initialize()
-    assert upgraded.schema_version() == 10
+    assert upgraded.schema_version() == 11
     exported = tmp_path / "logs" / "sso-auth-legacy.jsonl"
     events = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
     assert len(events) == 1
@@ -185,8 +186,38 @@ def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp
     # A second startup does not replay the archive or recreate dropped data.
     upgraded_again = SqliteStore(db)
     upgraded_again.initialize()
-    assert upgraded_again.schema_version() == 10
+    assert upgraded_again.schema_version() == 11
     assert len(exported.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_v10_existing_sso_rows_upgrade_in_place_without_duplication(tmp_path):
+    path = tmp_path / "online-v11.db"
+    store = SqliteStore(path)
+    store.initialize()
+    from app.services.auth.sso_sessions import SsoSessionStore
+
+    sessions = SsoSessionStore(store)
+    sessions.remember(
+        instance_id="server", common_name="alice", cert_fingerprint="ab" * 32,
+        provider_id="dingtalk_unified", provider_app_id="app",
+        enterprise_id="dingcorp", now=1000,
+    )
+    with store.connection(write=True) as conn:
+        conn.execute("DELETE FROM schema_migrations WHERE version=11")
+        # Simulate the old v10 column layout, retaining the legacy session row.
+        conn.execute("ALTER TABLE sso_auth_sessions DROP COLUMN active_client_id")
+        conn.execute("ALTER TABLE sso_auth_sessions DROP COLUMN active_connected_at")
+    upgraded = SqliteStore(path)
+    upgraded.initialize()
+    assert upgraded.schema_version() == 11
+    with upgraded.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 1
+        row = conn.execute(
+            "SELECT active_client_id,active_connected_at,issued_at,expires_at "
+            "FROM sso_auth_sessions"
+        ).fetchone()
+        assert row[0] is None and row[1] is None
+        assert row[2] == 1000
 
 
 def test_v9_keeps_legacy_credentials_until_unified_app_exists(tmp_path):

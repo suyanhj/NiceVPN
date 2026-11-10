@@ -262,8 +262,8 @@ GitHub Actions 当前主要校验：
 - SSO 认证回调中，`SsoFinishResult.DENIED` 对应 HTTP 403（不允许访问）、`EXPIRED` 对应 410（事务真正失效）、`UNAVAILABLE` 对应 503；旧 `finish()` 布尔 API 继续兼容。不得把明确的企业白名单拒绝显示为过期。
 - v9 迁移先将旧审计表导出到权限 0600 的私有 JSONL 再删除；失败则回滚。只清理已启用统一钉钉时多余的旧 provider 行和旧待认证事务；保留加密全局凭证表及 WebAuth 事务表。
 
-- **SSO 会话持久化（SQLite schema v10）**：`app/services/auth/sso_sessions.py` 的 `SsoSessionStore` 保存固定有效期 8 小时的成功 OAuth 会话；键为 VPN 实例、证书 CN、OpenVPN Management 已验证证书的 `tls_digest_sha256_0`、OAuth 提供商 ID，同时绑定 provider App ID 和钉钉 CorpId。不要自己验签、查 CRL 或用 IV_HWADDR、HTTP 参数、只有 CN 的信息充当缓存证明。
+- **SSO 会话持久化（SQLite schema v11）**：`app/services/auth/sso_sessions.py` 的 `SsoSessionStore` 保存 8 小时**离线宽限期**的 OAuth 会话，活跃连接不断续期；键为 VPN 实例、证书 CN、OpenVPN Management 已验证证书的 `tls_digest_sha256_0`、OAuth 提供商 ID，同时绑定 provider App ID 和钉钉 CorpId。不要自己验签、查 CRL 或用 IV_HWADDR、HTTP 参数、只有 CN 的信息充当缓存证明。
 - **新 CONNECT 复用**：在组/标签要求 SSO 的前提下，OpenVPN 已完成证书原生检查；NiceVPN 核对持久化有效期、应用是否仍启用、白名单，再为新源 IP/端口发布 client-connect 设备绑定豁免 grant，调用原 `client-auth-nt`。会话失效则重新钉钉 OAuth，不能静默绕过认证。
-- **REAUTH 续租**：活跃 CID 使用已验证短期会话，必要时检查持久化撤销；Management 断线或 OpenVPN/ NiceVPN 重启后，新 CID 从 SQLite 恢复。禁止把重连和新连接的证书合法性校验从 OpenVPN 搬进 NiceVPN；没有可信 tls_digest_sha256_0 时不持久化，只能重新 OAuth。
+- **在线续期与 REAUTH**：Management 每个实例随机 1–5 秒一次 `status 3`；确认完整在线快照后，SQLite 最多每 5 分钟批量原地更新现有行，绝不为心跳追加新行。NiceVPN 单独重启时凭既有 CID + 服务端连接创建时间恢复，不能凭 CN-only 恢复；新 CONNECT 按 OpenVPN 验证的证书指纹在 8 小时离线窗口内复用。REAUTH 仍检查持久化撤销。不要把证书合法性校验从 OpenVPN 搬进 NiceVPN；没有可信 tls_digest_sha256_0 不做跨重启认证缓存。
 - **耗时诊断**：日志新增 OAuth 从 CONNECT 到 AUTH 放行的总时间，以及 AUTH 放行到 CLIENT:ESTABLISHED 时间。客户端隧道 TUN、CCD、路由、iptables 等耗时仍由 OpenVPN 自身处理。
-- **会话安全**：固定 8 小时过期，不滑动续期；企业白名单/全局 App ID 变化立即停止复用。缓存使用同一证书指纹意味着复制 .ovpn 文件可能在有效期内复用 SSO，这是需求明确免设备绑定的安全取舍；不要承诺设备级隔离。支持存储层显式 revoke，但未增加管理员 UI。
+- **会话安全**：持续在线可滚动续期，完全离线超过 8 小时失效；企业白名单/全局 App ID 变化阻止续期和后续 CONNECT/REAUTH 复用。复制 .ovpn 私钥可在同证书的授权有效期内复用 SSO，且在线授权可能长期存在；不要承诺设备级隔离。支持存储层显式 revoke，但未增加管理员 UI。管理状态查询失败时不得自行续期。

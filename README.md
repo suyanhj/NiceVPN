@@ -233,4 +233,4 @@ GitHub Actions 当前覆盖：
 代码注释和文档字符串使用中文，代码标识符使用英文。架构与开发边界以 [CLAUDE.md](./CLAUDE.md)、代码和当前 OpenSpec 为准。
 > **SSO 升级清理**：schema v9 将 SQLite 旧认证审计导出到 `data/logs/sso-auth-legacy.jsonl` 后删除废弃表，统一钉钉配置成功保存/导入后清理旧企业凭证。建议升级前备份数据库和 `data/sso_provider_master.key`。
 
-> **企业认证自动重连（SQLite v10）**：钉钉首次登录通过后，NiceVPN 在 SQLite 中保存固定 8 小时的 SSO 会话。OpenVPN 仍自行验证证书、CRL 与 TLS；NiceVPN 只用其 Management 返回的证书 SHA256 指纹寻找同一份证书的有效认证会话。OpenVPN / NiceVPN 重启、客户端断线重连或 TLS REAUTH 可在有效期内免重复钉钉登录，同时继续执行 OpenVPN 原有连接流程。缺少可信指纹或授权过期时恢复完整 OAuth。详见 `docs/enterprise-sso.md`。
+> **企业认证自动重连（SQLite v11）**：钉钉首次登录通过后，NiceVPN 按原证书指纹复用 SSO 会话；OpenVPN 仍自行验证证书、CRL 与 TLS。在线客户端由 Management `status 3` 按每实例随机 1–5 秒确认，SQLite 最多每 5 分钟原地刷新同一条会话记录；**持续在线不受固定 8 小时限制，完全离线超过 8 小时才需要重新 OAuth**。支持 OpenVPN / NiceVPN 重启、短暂断线和 TLS REAUTH 免重复登录；撤销、白名单失效、缺少可信证书指纹等情况仍不能绕过认证。详见 `docs/enterprise-sso.md`。

@@ -74,7 +74,7 @@ def test_inactive_group_keeps_previous_vpn_authorization_policy(policy):
 
 def test_schema_v7_contains_required_policy_tables(policy):
     store, _ = policy
-    assert store.schema_version() == 10
+    assert store.schema_version() == 11
     with store.connection() as conn:
         tables = {str(row[0]) for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"

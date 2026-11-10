@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import random
 import socket
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -23,7 +24,8 @@ from app.services.auth.enterprise_sso_policy import SsoPolicyService
 from app.services.auth.sso_audit import SsoAudit
 from app.services.auth.office_oauth import EnterpriseIdentity
 from app.services.auth.openvpn_webauth import (
-    ClientNotification, ManagementNotificationParser, auth_allow, auth_deny,
+    ClientNotification, ManagementNotificationParser, ManagementStatusParser,
+    auth_allow, auth_deny,
     pending_webauth,
 )
 from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_ID
@@ -31,13 +33,22 @@ from app.core.config import load_config
 from app.utils.sso_enterprises import is_allowed_enterprise
 from app.services.auth.sso_grants import write_sso_grant
 from app.services.auth.sso_sessions import (
-    SSO_SESSION_TTL_SECONDS, SsoSessionStore, verified_peer_fingerprint,
+    SSO_SESSION_TTL_SECONDS, OnlineSsoBinding, SsoSessionStore,
+    verified_peer_fingerprint,
 )
 from app.services.auth.sso_transactions import (
     AuthRequest, WebAuthTransactionStore,
 )
 
 logger = logging.getLogger(__name__)
+
+# One complete Management status request per VPN instance, not per client.
+# Keep high-frequency status reads separate from low-frequency SQLite writes.
+STATUS_POLL_MIN_SECONDS = 1.0
+STATUS_POLL_MAX_SECONDS = 5.0
+STATUS_RESPONSE_TIMEOUT_SECONDS = 10.0
+ONLINE_LEASE_WRITE_SECONDS = 300.0
+EXPIRED_SESSION_PRUNE_SECONDS = 1800.0
 
 
 class SsoFinishResult(str, Enum):
@@ -73,6 +84,8 @@ class ActiveSsoSession:
     enterprise_id: str
     cert_fingerprint: str
     expires_at: int
+    provider_app_id: str = ""
+    connected_at: int = 0
 
 
 class ManagementInstance:
@@ -137,8 +150,22 @@ class ManagementInstance:
 
     def _receive(self, conn: socket.socket) -> None:
         parser = ManagementNotificationParser()
+        status_parser = ManagementStatusParser()
+        next_status_poll = time.monotonic() + random.uniform(
+            STATUS_POLL_MIN_SECONDS, STATUS_POLL_MAX_SECONDS,
+        )
         buffer = b""
         while not self.runtime.stop_event.is_set():
+            now = time.monotonic()
+            if (status_parser.pending
+                    and now - status_parser.started_at > STATUS_RESPONSE_TIMEOUT_SECONDS):
+                # A late response cannot be safely associated with a later
+                # poll. Reconnect the management socket instead of reusing it.
+                raise ConnectionError("SSO Management status request timed out")
+            if not status_parser.pending and now >= next_status_poll:
+                status_parser.begin(now)
+                self.send("status 3\n")
+                next_status_poll = float("inf")
             try:
                 chunk = conn.recv(16384)
             except socket.timeout:
@@ -150,7 +177,22 @@ class ManagementInstance:
                 raise ConnectionError("Management frame too large")
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
-                event = parser.feed(line.decode("utf-8", errors="replace"))
+                decoded = line.decode("utf-8", errors="replace").rstrip("\r")
+                snapshot = status_parser.feed(decoded)
+                if snapshot is not None:
+                    next_status_poll = time.monotonic() + random.uniform(
+                        STATUS_POLL_MIN_SECONDS, STATUS_POLL_MAX_SECONDS,
+                    )
+                    try:
+                        self.runtime.on_status(self, snapshot)
+                    except Exception:
+                        logger.exception("SSO Management online status processing failed")
+                elif not status_parser.pending and next_status_poll == float("inf"):
+                    # Invalid/unsupported status result: retry with jitter.
+                    next_status_poll = time.monotonic() + random.uniform(
+                        STATUS_POLL_MIN_SECONDS, STATUS_POLL_MAX_SECONDS,
+                    )
+                event = parser.feed(decoded)
                 if event is not None:
                     try:
                         self.runtime.on_event(self, event)
@@ -199,6 +241,12 @@ class SsoRuntime:
         self.lock = threading.RLock()
         self.pending: dict[tuple[str, int, int], PendingConnection] = {}
         self.sessions: dict[tuple[str, int], ActiveSsoSession] = {}
+        self.established: set[tuple[str, int]] = set()
+        self.online_written_at: dict[tuple[str, int], float] = {}
+        self.recovery_checked: dict[tuple[str, int], tuple[str, int]] = {}
+        self.last_pruned_at = 0.0
+        self.status_provider_checked_at = 0.0
+        self.status_provider = None
         self.establish_timings: dict[tuple[str, int], tuple[float, str]] = {}
 
     def start(self) -> None:
@@ -224,6 +272,10 @@ class SsoRuntime:
         with self.lock:
             self.pending.clear()
             self.sessions.clear()
+            self.established.clear()
+            self.online_written_at.clear()
+            self.recovery_checked.clear()
+            self.status_provider = None
             self.establish_timings.clear()
 
     def kill_client_by_common_name(self, common_name: str) -> bool:
@@ -248,6 +300,11 @@ class SsoRuntime:
             for key in list(self.sessions):
                 if key[0] == instance_id:
                     self.sessions.pop(key, None)
+                    self.established.discard(key)
+                    self.online_written_at.pop(key, None)
+            for key in list(self.recovery_checked):
+                if key[0] == instance_id:
+                    self.recovery_checked.pop(key, None)
             for key in list(self.establish_timings):
                 if key[0] == instance_id:
                     self.establish_timings.pop(key, None)
@@ -256,11 +313,112 @@ class SsoRuntime:
     def _state_digest(state: str) -> str:
         return hashlib.sha256(state.encode()).hexdigest()
 
+    def on_status(
+        self, manager: ManagementInstance,
+        clients: dict[int, tuple[str, int]],
+    ) -> None:
+        """Renew existing rows only for current OpenVPN-confirmed connections.
+
+        During a NiceVPN-only restart, restore the identity mapping using
+        BOTH the stored CID and OpenVPN's server-side connection start time.
+        Merely seeing the same CN in status must never create an SSO grant.
+        """
+        inst = manager.instance_id
+        now = time.monotonic()
+        if now - self.last_pruned_at >= EXPIRED_SESSION_PRUNE_SECONDS:
+            self.session_cache.prune_expired()
+            self.last_pruned_at = now
+        if now - self.status_provider_checked_at >= 30 or self.status_provider_checked_at == 0:
+            self.status_provider = self.providers.first_enabled()
+            self.status_provider_checked_at = now
+        provider = self.status_provider
+        if provider is None:
+            return
+        bindings: list[OnlineSsoBinding] = []
+        allowed_corps_config = load_config() if provider.id == UNIFIED_DINGTALK_ID else None
+        with self.lock:
+            # Do not re-query SQLite for the same unknown/non-SSO client every
+            # 1–5 seconds; retry only for a different actual VPN connection.
+            for key, identity in list(self.recovery_checked.items()):
+                if key[0] == inst and clients.get(key[1]) != identity:
+                    self.recovery_checked.pop(key, None)
+
+        for cid, (common_name, connected_at) in clients.items():
+            key = (inst, cid)
+            with self.lock:
+                active = self.sessions.get(key)
+                established = key in self.established
+                last_write = self.online_written_at.get(key, 0.0)
+            if not established and active is None:
+                with self.lock:
+                    if self.recovery_checked.get(key) == (common_name, connected_at):
+                        continue
+                    self.recovery_checked[key] = (common_name, connected_at)
+                # A Management reconnection does not re-emit ESTABLISHED.
+                # Recover only a prior exact trusted CID+timestamp binding.
+                stored = self.session_cache.recover_online(
+                    instance_id=inst, common_name=common_name,
+                    client_id=cid, connected_at=connected_at,
+                    provider_id=provider.id, provider_app_id=provider.app_id,
+                )
+                if stored is None:
+                    continue
+                active = ActiveSsoSession(
+                    stored.common_name, stored.provider_id, stored.enterprise_id,
+                    stored.cert_fingerprint, stored.expires_at,
+                    stored.provider_app_id, connected_at,
+                )
+                with self.lock:
+                    self.sessions[key] = active
+                    self.established.add(key)
+                established = True
+            if (not established or active is None or not active.cert_fingerprint
+                    or active.common_name != common_name
+                    or (active.connected_at and active.connected_at != connected_at)
+                    or active.provider_id != provider.id
+                    or active.provider_app_id != provider.app_id):
+                continue
+            if now - last_write < ONLINE_LEASE_WRITE_SECONDS:
+                continue
+            if provider.id == UNIFIED_DINGTALK_ID:
+                if not is_allowed_enterprise(allowed_corps_config, active.enterprise_id):
+                    continue
+            elif active.enterprise_id != provider.enterprise_id:
+                continue
+            policy = self.policy.resolve(common_name, enabled=True)
+            if policy.denied or not policy.requires_sso:
+                continue
+            bindings.append(OnlineSsoBinding(
+                common_name, active.cert_fingerprint, provider.id,
+                provider.app_id, active.enterprise_id, cid, connected_at,
+            ))
+
+        if bindings:
+            refreshed = self.session_cache.refresh_online(
+                instance_id=inst, bindings=bindings,
+            )
+            with self.lock:
+                for binding in bindings:
+                    if (binding.common_name, binding.cert_fingerprint) not in refreshed:
+                        continue  # An administrator may have revoked the row.
+                    key = (inst, binding.client_id)
+                    current = self.sessions.get(key)
+                    if current is not None and current.cert_fingerprint == binding.cert_fingerprint:
+                        self.sessions[key] = replace(
+                            current, expires_at=int(time.time()) + SSO_SESSION_TTL_SECONDS,
+                            connected_at=binding.connected_at,
+                        )
+                        self.online_written_at[key] = now
+
     def on_event(self, manager: ManagementInstance, event: ClientNotification) -> None:
         inst = manager.instance_id
         if event.kind == "DISCONNECT":
+            self.session_cache.disconnected(instance_id=inst, client_id=event.cid)
             with self.lock:
                 self.sessions.pop((inst, event.cid), None)
+                self.established.discard((inst, event.cid))
+                self.online_written_at.pop((inst, event.cid), None)
+                self.recovery_checked.pop((inst, event.cid), None)
                 self.establish_timings.pop((inst, event.cid), None)
                 for key in list(self.pending):
                     if key[0] == inst and key[1] == event.cid:
@@ -269,6 +427,8 @@ class SsoRuntime:
             return
         if event.kind == "ESTABLISHED":
             with self.lock:
+                if (inst, event.cid) in self.sessions:
+                    self.established.add((inst, event.cid))
                 measured = self.establish_timings.pop((inst, event.cid), None)
             if measured is not None:
                 started, source = measured
@@ -316,7 +476,8 @@ class SsoRuntime:
             valid = (
                 active.common_name == event.common_name
                 and active.provider_id == provider.id
-                and active.expires_at > int(time.time())
+                and (active.cert_fingerprint or active.expires_at > int(time.time()))
+                and active.provider_app_id == provider.app_id
                 and fingerprint_unchanged
                 and corp_allowed(active.enterprise_id)
             )
@@ -368,7 +529,7 @@ class SsoRuntime:
                 with self.lock:
                     self.sessions[(inst, event.cid)] = ActiveSsoSession(
                         event.common_name, provider.id, stored.enterprise_id,
-                        fingerprint, stored.expires_at,
+                        fingerprint, stored.expires_at, provider.app_id,
                     )
                     if event.kind == "CONNECT":
                         self.establish_timings[(inst, event.cid)] = (
@@ -540,7 +701,7 @@ class SsoRuntime:
                 with self.lock:
                     self.sessions[(request.instance_id, request.cid)] = ActiveSsoSession(
                         request.common_name, provider.id, identity.enterprise_id,
-                        pending.cert_fingerprint, expires_at,
+                        pending.cert_fingerprint, expires_at, provider.app_id,
                     )
                     self.establish_timings[(request.instance_id, request.cid)] = (
                         time.monotonic(), "oauth",

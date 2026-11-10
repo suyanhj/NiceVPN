@@ -12,7 +12,8 @@ from app.services.auth.provider_store import SsoProviderStore
 from app.services.auth.sso_audit import SsoAudit
 from app.services.auth.sso_runtime import SsoRuntime
 from app.services.auth.sso_sessions import (
-    SSO_SESSION_TTL_SECONDS, SsoSessionStore, verified_peer_fingerprint,
+    SSO_SESSION_TTL_SECONDS, OnlineSsoBinding, SsoSessionStore,
+    verified_peer_fingerprint,
 )
 from app.services.auth.sso_transactions import WebAuthTransactionStore
 from app.storage.sqlite_store import SqliteStore
@@ -107,7 +108,7 @@ def test_fingerprint_is_only_trusted_management_sha256_not_cn_or_iv():
     assert verified_peer_fingerprint({"tls_digest_sha256_0": "invalid"}) == ""
 
 
-def test_fixed_expiry_and_revoke_without_certificate_validation(tmp_path):
+def test_offline_expiry_and_revoke_without_certificate_validation(tmp_path):
     store = SsoSessionStore(SqliteStore(tmp_path / "cache.db"))
     session = store.remember(
         instance_id="server", common_name="alice",
@@ -142,6 +143,115 @@ def test_fixed_expiry_and_revoke_without_certificate_validation(tmp_path):
             instance_id="server", common_name="alice", cert_fingerprint="bad",
             provider_id="p", provider_app_id="app", enterprise_id="corp",
         )
+
+
+def test_online_heartbeat_updates_existing_row_not_append(tmp_path):
+    store = SsoSessionStore(SqliteStore(tmp_path / "rolling.db"))
+    identity = dict(instance_id="server", common_name="alice",
+                    cert_fingerprint=FP_A, provider_id="dingtalk_unified",
+                    provider_app_id="app1")
+    store.remember(**identity, enterprise_id="dingAllowed", now=1000)
+    binding = OnlineSsoBinding("alice", FP_A, "dingtalk_unified", "app1",
+                               "dingAllowed", 55, 900)
+    for now in (1001, 2000, 10000, 30000, 50000):
+        assert store.refresh_online(
+            instance_id="server", bindings=[binding], now=now,
+        ) == {("alice", FP_A)}
+        assert store.get(**identity, now=now + 1) is not None
+    with store.store.connection() as conn:
+        row = conn.execute("SELECT COUNT(*), MAX(last_used_at), MAX(expires_at), "
+                           "MAX(active_client_id), MAX(active_connected_at) "
+                           "FROM sso_auth_sessions").fetchone()
+        assert tuple(row) == (1, 50000, 50000 + SSO_SESSION_TTL_SECONDS, 55, 900)
+    assert store.recover_online(
+        instance_id="server", common_name="alice", client_id=55,
+        connected_at=900, provider_id="dingtalk_unified",
+        provider_app_id="app1", now=50001,
+    ) is not None
+    assert store.recover_online(
+        instance_id="server", common_name="alice", client_id=55,
+        connected_at=901, provider_id="dingtalk_unified",
+        provider_app_id="app1", now=50001,
+    ) is None
+    store.disconnected(instance_id="server", client_id=55)
+    assert store.recover_online(
+        instance_id="server", common_name="alice", client_id=55,
+        connected_at=900, provider_id="dingtalk_unified",
+        provider_app_id="app1", now=50001,
+    ) is None
+    assert store.get(**identity, now=50001) is not None  # 8-hour offline grace.
+    assert store.get(**identity, now=50000 + SSO_SESSION_TTL_SECONDS) is None
+    assert store.prune_expired(now=50000 + SSO_SESSION_TTL_SECONDS) == 1
+
+
+def test_heartbeat_never_resurrects_expired_or_revoked_rows(tmp_path):
+    store = SsoSessionStore(SqliteStore(tmp_path / "expired.db"))
+    kwargs = dict(instance_id="server", common_name="alice",
+                  cert_fingerprint=FP_A, provider_id="dingtalk_unified",
+                  provider_app_id="app1", enterprise_id="dingAllowed")
+    binding = OnlineSsoBinding("alice", FP_A, "dingtalk_unified", "app1",
+                               "dingAllowed", 3, 1000)
+    store.remember(**kwargs, now=1000)
+    assert not store.refresh_online(instance_id="server", bindings=[binding],
+                                    now=1000 + SSO_SESSION_TTL_SECONDS)
+    store.remember(**kwargs, now=1000)
+    assert store.revoke(instance_id="server", common_name="alice") == 1
+    assert not store.refresh_online(instance_id="server", bindings=[binding], now=1001)
+    with store.store.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 0
+
+
+def test_management_online_status_refreshes_and_recovers_after_restart(setup):
+    db, providers, policy, tmp_path, _, _ = setup
+    runtime, manager = make_runtime(db, providers, policy, tmp_path)
+    approve(runtime, manager, 70)
+    runtime.on_event(manager, ClientNotification("ESTABLISHED", 70))
+    runtime.on_status(manager, {70: ("alice", 100000)})
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT active_client_id, active_connected_at FROM sso_auth_sessions"
+        ).fetchone()
+        assert tuple(row) == (70, 100000)
+
+    # A new NiceVPN process can reattach to the same running OpenVPN tunnel.
+    runtime2, manager2 = make_runtime(db, providers, policy, tmp_path)
+    runtime2.on_status(manager2, {70: ("alice", 100001)})
+    assert not runtime2.sessions  # CID alone cannot restore the identity.
+    runtime2.on_status(manager2, {70: ("alice", 100000)})
+    assert runtime2.sessions[("server", 70)].cert_fingerprint == FP_A
+    assert len(runtime2.sessions) == 1
+    for _ in range(30):
+        runtime2.on_status(manager2, {70: ("alice", 100000)})
+    with db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 1
+
+    runtime2.on_event(manager2, ClientNotification("DISCONNECT", 70))
+    runtime3, manager3 = make_runtime(db, providers, policy, tmp_path)
+    runtime3.on_status(manager3, {70: ("alice", 100000)})
+    assert not runtime3.sessions
+
+
+def test_status_poll_does_not_hit_sqlite_per_unknown_client_every_few_seconds(
+    setup, monkeypatch,
+):
+    db, providers, policy, tmp_path, _, _ = setup
+    runtime, manager = make_runtime(db, providers, policy, tmp_path)
+    queries = []
+    original = runtime.session_cache.recover_online
+
+    def counted(**kwargs):
+        queries.append(kwargs["connected_at"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(runtime.session_cache, "recover_online", counted)
+    for _ in range(50):
+        runtime.on_status(manager, {12: ("alice", 100000)})
+    assert queries == [100000]
+    runtime.on_status(manager, {12: ("alice", 100001)})
+    assert queries == [100000, 100001]
+    runtime.on_event(manager, ClientNotification("DISCONNECT", 12))
+    runtime.on_status(manager, {12: ("alice", 100001)})
+    assert queries == [100000, 100001, 100001]
 
 
 def test_restart_reconnect_uses_session_and_reissues_device_bypass(setup):

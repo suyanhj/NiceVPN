@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 _SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
 _KNOWN_SQL = frozenset({
     "001_initial.sql",
@@ -26,6 +26,7 @@ _KNOWN_SQL = frozenset({
     "008_sso_contact_profile.sql",
     "009_sso_unified_cleanup.sql",
     "010_sso_session_cache.sql",
+    "011_sso_online_lease.sql",
 })
 
 
@@ -218,6 +219,24 @@ def ensure_schema(
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (10, "sso-persistent-session-cache", now_iso()),
+            )
+        if current < 11:
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(sso_auth_sessions)")
+            }
+            if "active_client_id" not in columns and "active_connected_at" not in columns:
+                execute_sql_file(conn, "011_sso_online_lease.sql")
+            else:
+                # Prior test/partial upgrade may have applied one or both
+                # ALTERs before recording the migration version.
+                if "active_client_id" not in columns:
+                    conn.execute("ALTER TABLE sso_auth_sessions ADD COLUMN active_client_id INTEGER")
+                if "active_connected_at" not in columns:
+                    conn.execute("ALTER TABLE sso_auth_sessions ADD COLUMN active_connected_at INTEGER")
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (11, "sso-online-lease", now_iso()),
             )
         conn.commit()
     except BaseException:
