@@ -11,7 +11,7 @@ from app.core.constants import DEFAULT_PORT
 from starlette.requests import Request
 
 from app.utils.listen_lan import get_listen_http_base
-from app.utils.public_domains import first_domain_origin, match_domain_origin
+from app.utils.public_domains import first_domain_origin, match_domain_origin, with_default_ip_api_port
 
 
 def _is_loopback_host(host: Optional[str]) -> bool:
@@ -66,7 +66,7 @@ def resolve_download_base_url(
                 return None
         except ValueError:
             return None
-        return url
+        return with_default_ip_api_port(url)
 
     # Only configured allow-listed entries may override the historical
     # startup-IP fallback. A forged Host/X-Forwarded-Host cannot add a URL.
