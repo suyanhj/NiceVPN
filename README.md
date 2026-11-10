@@ -23,7 +23,7 @@
 - **管理界面**：NiceGUI 管理壳 + AG Grid / Vue 预编译前端资源。
 - **CLI**：用户、用户组、设备绑定、OVPN、防火墙等命令行操作。
 - **公网 API**：HTTP Basic 下的用户创建、批量创建、切组、删除、重置设备绑定与一次性下载。
-- **诊断、备份与日志**：系统诊断、备份恢复、OpenVPN/NiceVPN 日志轮转。
+- **诊断、备份与日志**：系统诊断、备份恢复、OpenVPN/NiceVPN 日志轮转；企业 SSO 认证事件独立记录于 `data/logs/sso-auth.jsonl`，可在「服务管理 → 本机实例 → 认证日志」按需查看。
 
 完整能力说明见 [docs/overview.md](./docs/overview.md)。
 
