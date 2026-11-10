@@ -386,6 +386,13 @@ class SsoRuntime:
                 self.sessions[(request.instance_id, request.cid)] = (
                     request.common_name, int(time.time()) + 8 * 3600
                 )
+                logger.info(
+                    "SSO approved: instance=%s CID=%s KID=%s vpn_cn=%s "
+                    "provider=%s enterprise_id=%s external_user_id=%s",
+                    request.instance_id, request.cid, request.kid,
+                    request.common_name, request.provider_id,
+                    identity.enterprise_id, identity.external_user_id or "<unavailable>",
+                )
                 return True
             except OSError:
                 return False
