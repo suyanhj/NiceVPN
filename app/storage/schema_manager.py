@@ -7,11 +7,14 @@ sqlite3.Connection.executescript this never implicitly commits prior work.
 """
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import tempfile
 from pathlib import Path
 from typing import Callable
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
 _KNOWN_SQL = frozenset({
     "001_initial.sql",
@@ -21,6 +24,7 @@ _KNOWN_SQL = frozenset({
     "006_enterprise_sso.sql",
     "007_sso_multi_enterprise.sql",
     "008_sso_contact_profile.sql",
+    "009_sso_unified_cleanup.sql",
 })
 
 
@@ -53,6 +57,43 @@ def execute_sql_file(conn: sqlite3.Connection, name: str) -> None:
         raise ValueError(f"SQLite schema SQL 不完整: {name}")
 
 
+def _export_legacy_sso_audit(conn: sqlite3.Connection, path: Path | None) -> None:
+    """Archive old SQLite auth events into a private JSONL before dropping the table.
+
+    A failed export aborts the transaction, preserving the original data.
+    Repeated attempts replace the deterministic archive atomically.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sso_auth_audit'"
+    ).fetchone()
+    if row is None:
+        return
+    if conn.execute("SELECT 1 FROM sso_auth_audit LIMIT 1").fetchone() is None:
+        return
+    if path is None:
+        raise RuntimeError("旧 SSO 审计含记录，迁移时必须提供历史日志导出路径")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".sso-legacy-", dir=path.parent)
+    try:
+        if os.name != "nt":
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            for event in conn.execute(
+                "SELECT event_time,instance_id,common_name,provider_kind,"
+                "enterprise_id,external_user_id,event_type,outcome,reason_code "
+                "FROM sso_auth_audit ORDER BY id"
+            ):
+                output.write(json.dumps(dict(event), ensure_ascii=False, sort_keys=True))
+                output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
 def ensure_schema(
     conn: sqlite3.Connection,
     *,
@@ -62,6 +103,7 @@ def ensure_schema(
     migrate_v5: Callable[[sqlite3.Connection], None],
     now_iso: Callable[[], str],
     migrate_v6: Callable[[sqlite3.Connection], None] | None = None,
+    legacy_sso_audit_export_path: Path | None = None,
 ) -> None:
     """Preserve historical schema v1-v4 semantics in a single transaction."""
     conn.execute("BEGIN IMMEDIATE")
@@ -147,6 +189,28 @@ def ensure_schema(
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (8, "sso-optional-contact-user-read", now_iso()),
+            )
+        if current < 9:
+            _export_legacy_sso_audit(conn, legacy_sso_audit_export_path)
+            execute_sql_file(conn, "009_sso_unified_cleanup.sql")
+            # Keep old provider credentials until an enabled unified app
+            # exists. Once switched, old provider rows cannot be used.
+            unified = conn.execute(
+                "SELECT 1 FROM sso_auth_providers "
+                "WHERE id='dingtalk_unified' AND enabled=1"
+            ).fetchone()
+            if unified is not None:
+                conn.execute(
+                    "UPDATE sso_login_transactions SET status='denied', "
+                    "completed_at=CAST(strftime('%s','now') AS INTEGER) "
+                    "WHERE status='pending' AND provider_id!='dingtalk_unified'"
+                )
+                conn.execute(
+                    "DELETE FROM sso_auth_providers WHERE id!='dingtalk_unified'"
+                )
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (9, "sso-unified-cleanup", now_iso()),
             )
         conn.commit()
     except BaseException:
