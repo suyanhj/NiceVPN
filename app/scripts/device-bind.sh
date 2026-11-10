@@ -108,8 +108,8 @@ if [ -n "${VPN_INSTANCE_NAME:-}" ] && [ -f "${SSO_SERVER_CONF}" ] \
         --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
         --instance "${VPN_INSTANCE_NAME}" \
         --common-name "${CN}" \
-        --peer-ip "${trusted_ip:-${trusted_ip6:-}}" \
-        --peer-port "${trusted_port:-}" \
+        --peer-ip "${trusted_ip:-${trusted_ip6:-${untrusted_ip:-${untrusted_ip6:-}}}}" \
+        --peer-port "${trusted_port:-${untrusted_port:-}}" \
         --server-config "${SSO_SERVER_CONF}" >/dev/null 2>>"${BIND_LOG}"; then
         export DEVICE_BIND_DECISION="sso_verified"
         log "SSO 授权后仅记录设备: CN=${CN} IV_PLAT=${IV_PLAT:-} IV_HWADDR=${IV_HWADDR:-}"
