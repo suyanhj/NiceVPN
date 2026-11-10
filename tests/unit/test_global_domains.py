@@ -33,7 +33,7 @@ def test_global_domains_default_to_http_unless_explicit_https():
     "file:///etc/passwd", "ftp://example.com", "example.com/path",
     "http://evil.example@allowed.example", "example.com?x=y",
     "http://example.com/#anchor", "http://example.com:bad", "example.com:99999",
-    "bad host", "http://example.com\nmalicious", "https://",
+    "bad host", "http://example.com\rmalicious", "https://",
 ])
 def test_domain_addresses_reject_invalid_host_or_protocol(bad):
     with pytest.raises(ValueError):
