@@ -25,7 +25,9 @@ from app.services.auth.openvpn_webauth import (
     ClientNotification, ManagementNotificationParser, auth_allow, auth_deny,
     pending_webauth,
 )
-from app.services.auth.provider_store import SsoProviderStore
+from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_ID
+from app.core.config import load_config
+from app.utils.sso_enterprises import is_allowed_enterprise
 from app.services.auth.sso_grants import write_sso_grant
 from app.services.auth.sso_transactions import (
     AuthRequest, WebAuthTransactionStore,
@@ -183,6 +185,8 @@ class SsoRuntime:
             raise RuntimeError("No VPN instances configured for SSO")
         if self.providers.first_enabled() is None:
             raise RuntimeError("SSO is enabled but no working OAuth provider is enabled")
+        if self.providers.has_unified() and not load_config().get("enterprise_sso_allowed_corps"):
+            raise RuntimeError("Unified DingTalk SSO requires at least one allowed CorpId")
         for instance in self.instances.values():
             instance.start()
 
@@ -299,7 +303,9 @@ class SsoRuntime:
             provider = self.providers.get(provider_id)
         except Exception:
             return False
-        if provider is None:
+        if provider is None or provider_id not in {
+            row["id"] for row in self.providers.enabled_metadata()
+        }:
             return False
         key = (request.instance_id, request.cid, request.kid)
         state_digest = self._state_digest(
@@ -345,8 +351,16 @@ class SsoRuntime:
                 return False
             if identity is not None:
                 provider = self.providers.get(request.provider_id)
-                if (provider is None or identity.provider_kind != provider.kind
-                        or identity.enterprise_id != provider.enterprise_id):
+                if provider is None or identity.provider_kind != provider.kind:
+                    identity = None
+                elif provider.id == UNIFIED_DINGTALK_ID:
+                    if not is_allowed_enterprise(load_config(), identity.enterprise_id):
+                        logger.warning(
+                            "SSO unified DingTalk rejected: corp_id=%s not in allow-list",
+                            identity.enterprise_id,
+                        )
+                        identity = None
+                elif identity.enterprise_id != provider.enterprise_id:
                     identity = None
             consumed = self.transactions.consume_state(state, approved=identity is not None)
             if consumed is None:
