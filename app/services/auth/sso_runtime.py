@@ -280,6 +280,47 @@ class SsoRuntime:
                        reason_code="awaiting_provider")
         logger.info("SSO pending: instance=%s CID=%s KID=%s", inst, event.cid, event.kid)
 
+    def select_provider(self, *, token: str, request: AuthRequest, provider_id: str) -> bool:
+        """Allow the user to choose an ENABLED trusted enterprise provider.
+
+        The browser chooses only a provider ID from the administrator's list,
+        never a CorpId, identity, OpenVPN CID, or authorization decision.
+        """
+        try:
+            provider = self.providers.get(provider_id)
+        except Exception:
+            return False
+        if provider is None:
+            return False
+        key = (request.instance_id, request.cid, request.kid)
+        state_digest = self._state_digest(
+            WebAuthTransactionStore.state_for_token(token)
+        )
+        with self.lock:
+            current = self.pending.get(key)
+            if (current is None or current.common_name != request.common_name
+                    or current.expires_at <= int(time.time())
+                    or current.state_digest != state_digest):
+                return False
+            with self.transactions.store.connection(write=True) as conn:
+                result = conn.execute(
+                    """
+                    UPDATE sso_login_transactions SET provider_id=?
+                    WHERE token_hash=? AND status='pending' AND expires_at>?
+                      AND instance_id=? AND client_id=? AND key_id=?
+                    """,
+                    (provider_id, hashlib.sha256(token.encode()).hexdigest(),
+                     int(time.time()), request.instance_id, request.cid, request.kid),
+                )
+                if result.rowcount != 1:
+                    return False
+            self.pending[key] = PendingConnection(
+                current.common_name, provider_id,
+                current.state_digest, current.expires_at,
+                current.peer_ip, current.peer_port,
+            )
+            return True
+
     def finish(
         self, request: AuthRequest, state: str,
         identity: EnterpriseIdentity | None,
