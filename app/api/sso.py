@@ -69,7 +69,7 @@ async def start_sso(t: str = ""):
                 f'<form method="POST" action="/auth/sso/provider">'
                 f'<input type="hidden" name="t" value="{escape(t, quote=True)}">'
                 f'<button name="provider_id" value="{pid}" type="submit">'
-                f'{label} · {escape(str(provider_meta["enterprise_id"]))}</button></form>'
+                f'{label} · {escape(str(provider_meta["display_name"] or provider_meta["id"]))}</button></form>'
             )
         body = (
             '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
