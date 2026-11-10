@@ -105,13 +105,16 @@ class SsoProviderStore:
             raise ValueError("Unknown SSO provider kind")
         if not enterprise_id.strip() or not app_id.strip():
             raise ValueError("Enterprise ID and application ID required")
-        display_name = str(display_name or "").strip() or provider_id
-        if len(display_name) > 80 or any(ord(ch) < 32 for ch in display_name):
-            raise ValueError("Invalid enterprise display name")
+        display_name = str(display_name or "").strip()
         with self.store.connection() as conn:
             old = conn.execute(
-                "SELECT secret_ref FROM sso_auth_providers WHERE id=?", (provider_id,)
+                "SELECT secret_ref,display_name FROM sso_auth_providers WHERE id=?",
+                (provider_id,),
             ).fetchone()
+        if not display_name:
+            display_name = str(old["display_name"] or provider_id) if old else provider_id
+        if len(display_name) > 80 or any(ord(ch) < 32 for ch in display_name):
+            raise ValueError("Invalid enterprise display name")
         if secret:
             encrypted = "fernet:" + _fernet(
                 self.key_path, create=old is None
