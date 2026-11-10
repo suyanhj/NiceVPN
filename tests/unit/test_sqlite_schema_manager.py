@@ -15,17 +15,18 @@ from app.storage.schema_manager import (
 from app.storage.sqlite_store import SqliteStore
 
 
-def test_schema_ddl_is_packaged_and_initializes_v8(tmp_path):
-    assert SCHEMA_VERSION == 8
+def test_schema_ddl_is_packaged_and_initializes_v9(tmp_path):
+    assert SCHEMA_VERSION == 9
     for name in ("001_initial.sql", "002_query_indexes.sql", "004_firewall_tags.sql"):
         assert "CREATE" in read_sql(name)
     assert "ALTER TABLE tags" in read_sql("005_device_binding_exempt.sql")
     assert "CREATE TABLE" in read_sql("006_enterprise_sso.sql")
     assert "CREATE INDEX" in read_sql("007_sso_multi_enterprise.sql")
     assert "CREATE INDEX" in read_sql("008_sso_contact_profile.sql")
+    assert "DROP TABLE" in read_sql("009_sso_unified_cleanup.sql")
     store = SqliteStore(tmp_path / "nicevpn.sqlite")
     store.initialize()
-    assert store.schema_version() == 8
+    assert store.schema_version() == 9
     with store.connection() as conn:
         tables = {
             row[0] for row in conn.execute(
@@ -35,7 +36,7 @@ def test_schema_ddl_is_packaged_and_initializes_v8(tmp_path):
     assert {"users", "groups", "peers", "firewall_rules",
             "tags", "user_tags", "group_tags", "schema_migrations"} <= tables
     store.initialize()
-    assert store.schema_version() == 8
+    assert store.schema_version() == 9
 
 
 def test_ddl_migrations_roll_back_entire_new_database_on_failure(tmp_path):
