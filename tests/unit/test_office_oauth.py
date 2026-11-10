@@ -77,9 +77,23 @@ async def test_wecom_external_contact_is_rejected():
             await exchange_code(_provider("wecom"), "code", client=client)
 
 
-def test_oauth_redirect_requires_https():
-    for url in ("http://vpn.example.org/callback",
+def test_oauth_redirect_accepts_http_https_ip_and_port():
+    for callback in (
+        "http://127.0.0.1:8881/auth/sso/dingtalk/callback",
+        "http://192.168.1.20:8881/auth/sso/dingtalk/callback",
+        "http://vpn.example.org/auth/sso/dingtalk/callback",
+        "https://vpn.example.org/auth/sso/dingtalk/callback",
+    ):
+        url = authorization_url(_provider(), callback, "s" * 40)
+        assert parse_qs(urlsplit(url).query)["redirect_uri"] == [callback]
+
+
+def test_oauth_redirect_rejects_malformed_or_unsafe_urls():
+    for url in ("ftp://vpn.example.org/callback",
                 "https://user:pass@vpn.example.org/cb",
-                "https://vpn.example.org/cb?untrusted=x"):
+                "https://vpn.example.org/cb?untrusted=x",
+                "http://127.0.0.1:bad/callback",
+                "http://127.0.0.1/cb#fragment",
+                "http://127.0.0.1/cb\nmalicious"):
         with pytest.raises(OfficeAuthError):
             authorization_url(_provider(), url, "s" * 40)
