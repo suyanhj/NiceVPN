@@ -22,7 +22,7 @@ def has_grant(*, grant_dir: Path, instance: str, common_name: str,
             return False
         if not any(line.startswith("management ") and " unix" in line for line in directives):
             return False
-        filename = hashlib.sha256((instance + "\0" + common_name).encode()).hexdigest() + ".json"
+        filename = hashlib.sha256((instance + "\0" + common_name + "\0" + peer_ip + "\0" + peer_port).encode()).hexdigest() + ".json"
         data = json.loads((grant_dir / filename).read_text(encoding="utf-8"))
         return (
             data.get("instance") == instance
