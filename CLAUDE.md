@@ -151,7 +151,7 @@ openspec/changes/
 
 - API 与管理 UI 路由集合保持隔离。
 - API Basic 凭据属于运行时数据，不提交版本库。
-- HTTP Basic 对公网必须通过 HTTPS/TLS。
+- Public API 原生支持 HTTP 与 HTTPS（例如 HTTP IP:端口进行开发测试），不能在业务代码中强制要求 HTTPS 或域名；HTTP Basic 在明文 HTTP 下可能泄露认证信息，公网生产建议 HTTPS/TLS。
 - API 相关行为同步更新 [api.md](./api.md)。
 
 ### SQLite
