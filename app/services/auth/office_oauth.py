@@ -48,6 +48,7 @@ class OfficeProvider:
     enterprise_id: str        # approved CorpId
     app_id: str               # DingTalk AppKey or WeCom AgentId
     secret: str               # server-only app secret
+    read_user_profile: bool = False  # per-company, requires Contact.User.Read grant
 
     def validate(self) -> None:
         if self.kind not in ("dingtalk", "wecom"):
@@ -90,7 +91,8 @@ def authorization_url(provider: OfficeProvider, callback: str, state: str) -> st
             "client_id": provider.app_id,
             "redirect_uri": callback,
             "response_type": "code",
-            "scope": "openid corpid",
+            "scope": ("openid corpid Contact.User.Read" if provider.read_user_profile
+                      else "openid corpid"),
             "state": state,
             "prompt": "consent",
         }
@@ -154,6 +156,11 @@ async def exchange_code(
             # organization. Personal identity is optional for the permission
             # decision but used for audit when the app has Contact.User.Read.
             user_id = ""
+            if not provider.read_user_profile:
+                logger.info("SSO DingTalk user detail skipped: provider=%s; "
+                            "enable Contact.User.Read in provider settings after granting it",
+                            provider.id)
+                return EnterpriseIdentity("dingtalk", corp_id, user_id)
             try:
                 detail = await _get_json(await http.get(
                     "https://api.dingtalk.com/v1.0/contact/users/me",
