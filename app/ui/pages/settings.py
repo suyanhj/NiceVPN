@@ -954,19 +954,20 @@ class SettingsPage:
     def _render_domains_panel(self) -> None:
         """Shared allow-listed external origins for downloads and office OAuth."""
         def body() -> None:
-            self.domains_input = ui.textarea(
-                "域名 / IP / 端口（支持逗号或换行，多项按顺序排列）",
-                value=", ".join(self.config.domains or []),
-                placeholder="xx.hj.com, 192.168.1.1:80",
-            ).classes("w-full").props("autogrow")
-            ui.label(
-                "允许填写 http:// 或 https://；未写协议时默认 HTTP。"
-                "域名不追加 API 端口，使用标准 80/443（HTTP 可跟随服务器重定向到 HTTPS）；"
-                "IP 未指定端口时自动追加 API 监听端口，显式端口保留。"
-                "业务未填写自定义地址时，优先使用列表第一项；"
-                "API 请求命中其他已配置地址时，可按对应地址生成下载链接。"
-                "SSO 首次跳转尚无浏览器 Host，因此使用列表第一项。"
-            ).classes("text-caption text-grey-6")
+            self.domains_input = field_with_help(
+                lambda: ui.textarea(
+                    "域名 / IP / 端口（支持逗号或换行，多项按顺序排列）",
+                    value=", ".join(self.config.domains or []),
+                    placeholder="xx.hj.com, 192.168.1.1:80",
+                ).classes("w-full").props("autogrow"),
+                "支持 http:// 或 https://；未写协议默认 HTTP。"
+                "域名不追加 API 端口，默认使用 80/443，HTTP 可按服务器重定向至 HTTPS。"
+                "IP 未指定端口时补 API 端口，显式端口保留。"
+                "未填写业务自定义地址时按列表顺序使用全局地址；"
+                "API 下载可匹配地址白名单；SSO 首次跳转使用第一项。",
+                aria_label="全局访问地址规则说明",
+                align="start",
+            )
 
         render_form_section(
             "全局访问地址", kicker="Public domains",
