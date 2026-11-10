@@ -48,7 +48,7 @@ log-append {{DAEMON_LOG}}
 verb 3
 
 # ======== 管理接口 ========
-management 127.0.0.1 {{MGMT_PORT}}
+{{MGMT_LINE}}{{SSO_AUTH_LINES}}
 
 # ======== DoS 防护 ========
 connect-freq 10 60
