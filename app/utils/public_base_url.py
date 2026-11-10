@@ -34,7 +34,7 @@ def public_base_url_from_request(request: Request) -> str:
     if forwarded_host:
         host = forwarded_host.split(",")[0].strip()
         forwarded_proto = headers.get("x-forwarded-proto")
-        scheme = (forwarded_proto or "https").split(",")[0].strip()
+        scheme = (forwarded_proto or request.url.scheme).split(",")[0].strip()
         fwd_prefix = (headers.get("x-forwarded-prefix") or "").strip()
         root_path = (request.scope.get("root_path") or "").strip()
         prefix = (fwd_prefix + root_path).rstrip("/")
