@@ -123,3 +123,83 @@ def test_future_schema_version_rejected_without_mutating_database(tmp_path):
         assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 99
     finally:
         conn.close()
+
+
+def test_v8_to_v9_archives_old_auth_rows_and_prunes_legacy_only_when_unified(tmp_path):
+    import json
+
+    from app.services.auth.provider_store import SsoProviderStore
+
+    db = tmp_path / "migration.db"
+    store = SqliteStore(db)
+    store.initialize()
+    providers = SsoProviderStore(store, key_path=tmp_path / "secret.key")
+    providers.save(
+        provider_id="legacy", kind="dingtalk", enterprise_id="dingOLD",
+        app_id="old-app", secret="secret-old", enabled=True,
+    )
+    providers.save_unified(app_id="global-app", secret="secret-unified")
+
+    # Simulate a persisted version 8 database with historic audit records.
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DELETE FROM schema_migrations WHERE version=9")
+        execute_sql_file(conn, "006_enterprise_sso.sql")
+        conn.execute(
+            "INSERT INTO sso_auth_audit "
+            "(event_time,instance_id,common_name,provider_kind,enterprise_id,"
+            "external_user_id,event_type,outcome,reason_code)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            ("2026-11-09T13:00:00+00:00", "server", "cert1", "dingtalk",
+             "dingOLD", "uid", "approved", "success", "enterprise_match"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    upgraded = SqliteStore(db)
+    upgraded.initialize()
+    assert upgraded.schema_version() == 9
+    exported = tmp_path / "logs" / "sso-auth-legacy.jsonl"
+    events = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 1
+    assert events[0]["common_name"] == "cert1"
+    assert events[0]["enterprise_id"] == "dingOLD"
+    with upgraded.connection() as conn:
+        tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "sso_auth_audit" not in tables
+        assert "sso_auth_providers" in tables
+        assert "sso_login_transactions" in tables
+        assert {row[0] for row in conn.execute(
+            "SELECT id FROM sso_auth_providers"
+        )} == {"dingtalk_unified"}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version=9"
+        ).fetchone()[0] == 1
+
+    # A second startup does not replay the archive or recreate dropped data.
+    upgraded_again = SqliteStore(db)
+    upgraded_again.initialize()
+    assert upgraded_again.schema_version() == 9
+    assert len(exported.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_v9_keeps_legacy_credentials_until_unified_app_exists(tmp_path):
+    from app.services.auth.provider_store import SsoProviderStore
+
+    db = tmp_path / "keep-legacy.db"
+    store = SqliteStore(db)
+    store.initialize()
+    providers = SsoProviderStore(store, key_path=tmp_path / "secret.key")
+    providers.save(
+        provider_id="legacy", kind="dingtalk", enterprise_id="dingOLD",
+        app_id="old-app", secret="secret-old", enabled=True,
+    )
+    assert providers.get("legacy") is not None
+    with pytest.raises(ValueError, match="未启用"):
+        providers.cleanup_unified_legacy()
+    assert providers.get("legacy") is not None
