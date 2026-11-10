@@ -995,7 +995,7 @@ class SettingsPage:
         return True
 
     def _render_download_panel(self):
-        """渲染可选下载基址；留空时自动使用 API 监听的本机 IP。"""
+        """渲染下载自定义覆盖地址；空值依次回退到 domains 和自动检测。"""
 
         def body() -> None:
             self.base_url_input = field_with_help(
