@@ -50,44 +50,42 @@ def test_group_and_tag_requirements_union(policy):
     assert svc.resolve("alice", enabled=True).sources == ("group:g1", "tag:t2")
 
 
-def test_certificate_exemption_overrides_group_only_and_can_be_revoked(policy):
+def test_only_groups_and_tags_can_require_sso(policy):
+    store, svc = policy
+    assert svc.resolve("missing", enabled=True).mode == "legacy"
+    assert svc.resolve("bob", enabled=True).mode == "legacy"
+    assert svc.resolve("alice", enabled=True).mode == "legacy"
+    assert svc.resolve("\n", enabled=True).denied
+    svc.set_group_required("g1", required=True)
+    assert svc.resolve("alice", enabled=True).mode == "required"
+    assert svc.resolve("alice", enabled=False).mode == "legacy"
+    assert svc.resolve("missing", enabled=True).mode == "legacy"
+    svc.set_group_required("g1", required=False)
+    assert svc.resolve("alice", enabled=True).mode == "legacy"
+
+
+def test_inactive_group_keeps_previous_vpn_authorization_policy(policy):
     store, svc = policy
     svc.set_group_required("g1", required=True)
-    with pytest.raises(ValueError, match="reason"):
-        svc.set_certificate_exemption("alice", exempt=True)
-    svc.set_certificate_exemption("alice", exempt=True, reason="Linux CLI")
-    assert svc.resolve("alice", enabled=True).mode == "exempt"
-    svc.set_certificate_exemption("alice", exempt=False)
-    assert svc.resolve("alice", enabled=True).mode == "required"
-
-
-def test_unknown_and_inactive_certificates_fail_closed(policy):
-    _, svc = policy
-    assert svc.resolve("missing", enabled=True).denied
-    assert svc.resolve("bob", enabled=True).denied
-    assert svc.resolve("\n", enabled=True).denied
-    with pytest.raises(ValueError):
-        svc.set_certificate_exemption("missing", exempt=True, reason="not known")
-
-
-def test_inactive_group_fails_closed_even_for_exempt_cert(policy):
-    store, svc = policy
-    svc.set_certificate_exemption("alice", exempt=True, reason="approved server")
     store.upsert_group({"id": "g1", "name": "研发", "status": "disabled",
                         "subnet": "10.8.0.0/24"})
-    assert svc.resolve("alice", enabled=True).denied
+    assert svc.resolve("alice", enabled=True).mode == "legacy"
 
 
-def test_schema_v6_contains_required_policy_tables(policy):
+def test_schema_v7_contains_required_policy_tables(policy):
     store, _ = policy
-    assert store.schema_version() == 6
+    assert store.schema_version() == 7
     with store.connection() as conn:
         tables = {str(row[0]) for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
-        assert {"sso_auth_providers", "sso_certificate_exemptions",
-                "sso_login_transactions", "sso_auth_audit"} <= tables
+        assert {"sso_auth_providers", "sso_login_transactions", "sso_auth_audit"} <= tables
         tag_columns = {str(row["name"]) for row in conn.execute(
             "PRAGMA table_info(tags)"
         )}
         assert "sso_required" in tag_columns
+        assert "sso_certificate_exemptions" not in tables
+        provider_columns = {str(row["name"]) for row in conn.execute(
+            "PRAGMA table_info(sso_auth_providers)"
+        )}
+        assert "display_name" in provider_columns
