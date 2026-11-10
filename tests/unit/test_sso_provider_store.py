@@ -69,6 +69,14 @@ def test_multiple_subsidiaries_have_independent_credentials_and_labels(tmp_path)
     assert store.get("shenzhen").enterprise_id == "corp-sz"
     assert store.get("guangzhou").secret == "secret-gz"
     assert store.get("shenzhen").secret == "secret-sz"
+    assert store.get("guangzhou").read_user_profile is False
+    store.save(
+        provider_id="guangzhou", display_name="广州子公司", kind="dingtalk",
+        enterprise_id="corp-gz", app_id="app-gz", enabled=True,
+        read_user_profile=True,
+    )
+    assert store.get("guangzhou").read_user_profile is True
+    assert next(row for row in store.list_metadata() if row["id"] == "guangzhou")["read_user_profile"] is True
     store.save(
         provider_id="shenzhen", display_name="深圳分公司（停用）",
         kind="dingtalk", enterprise_id="corp-sz",
