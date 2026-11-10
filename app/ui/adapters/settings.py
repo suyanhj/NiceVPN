@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from app.models.config import SystemConfig
+from app.utils.public_domains import with_default_ip_api_port
 
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
@@ -262,7 +263,7 @@ def normalize_download_base_url(value: str) -> str | None:
         raise ValueError("下载基础 URL 端口无效") from exc
     if port == int(os.environ.get("NICEVPN_UI_PORT", str(DEFAULT_PORT))):
         raise ValueError("下载基础 URL 不能指向管理端口，请使用 API 端口或下载域名")
-    return text.rstrip("/")
+    return with_default_ip_api_port(text.rstrip("/"))
 
 
 def build_download_config(
