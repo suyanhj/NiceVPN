@@ -94,6 +94,24 @@ write_session_start() {
     fi
 }
 
+# ---------- 通过企业 SSO 后仅记录设备 ----------
+# 授权证明由 NiceVPN 在 management-client-auth 验证成功后发布。
+# 必须同时确认正在使用的 OpenVPN server.conf 具备受限的 Unix
+# Management 认证，绝不根据 IV_PLAT/IV_SSO 自称身份来跳过绑定。
+SSO_GRANT_PY="${SCRIPT_DIR}/sso_grant.py"
+if [ -f "${SSO_GRANT_PY}" ] && [ -n "${config:-}" ] && init_py3_for_bind; then
+    if "${PY3_BIND}" "${SSO_GRANT_PY}" \
+        --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
+        --instance "${VPN_INSTANCE_NAME:-}" \
+        --common-name "${CN}" \
+        --server-config "${config}" >/dev/null 2>>"${BIND_LOG}"; then
+        export DEVICE_BIND_DECISION="sso_verified"
+        log "SSO 授权后仅记录设备: CN=${CN} IV_PLAT=${IV_PLAT:-} IV_HWADDR=${IV_HWADDR:-}"
+        write_session_start
+        exit 0
+    fi
+fi
+
 # ---------- 模式 A：仅记录 ----------
 if [ "${DEVICE_BIND_MODE}" = "weak_log" ]; then
     log "mode=weak_log CN=${CN} IV_PLAT=${IV_PLAT:-} UV_UUID=${UV_UUID:-} IV_VER=${IV_VER:-} IV_HWADDR=${IV_HWADDR:-} IV_AUTO_SESS=${IV_AUTO_SESS:-} IV_PLAT_VER=${IV_PLAT_VER:-} IV_GUI_VER=${IV_GUI_VER:-}"
