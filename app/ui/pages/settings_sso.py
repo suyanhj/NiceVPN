@@ -7,7 +7,6 @@ from urllib.parse import urlsplit
 from nicegui import ui
 
 from app.core.config import load_config, save_config
-from app.services.auth.enterprise_sso_policy import SsoPolicyService
 from app.services.auth.provider_store import SsoProviderStore
 from app.ui.components.actions import primary_action
 from app.ui.components.feedback import safe_notify
@@ -29,7 +28,6 @@ class SsoSettingsPanel:
         self.parent = parent
         self.cfg = load_config()
         self.providers = SsoProviderStore()
-        self.policy = SsoPolicyService()
 
     def render(self) -> None:
         def global_body():
@@ -45,7 +43,7 @@ class SsoSettingsPanel:
             ui.label(
                 "默认关闭；保存后需要重启 NiceVPN 和 OpenVPN 实例。"
                 "正式启用前必须通过 POC 和客户端兼容测试。"
-                "Linux CLI 如需免 SSO，请在下面明确配置证书豁免。"
+                "只有组或标签开启企业认证的连接才需要 SSO，其余证书行为不变。"
             ).classes("text-caption text-grey-6")
         render_form_section(
             "企业认证总开关",
@@ -94,65 +92,9 @@ class SsoSettingsPanel:
             ),
         )
 
-        def policy_body():
-            groups = self.policy.store.list_groups()
-            tags = self.policy.store.list_tags()
-            group_choices = {
-                str(group["id"]): str(group.get("name") or group["id"])
-                for group in groups
-            }
-            tag_choices = {
-                str(tag["id"]): str(tag.get("name") or tag["id"])
-                for tag in tags
-            }
-            self.group = ui.select(group_choices, label="选择用户组").classes("w-full")
-            self.group_required = ui.switch("该组强制企业认证", value=False)
-            self.group.on_value_change(
-                lambda e: self._sync_group_switch(str(e.value or ""))
-            )
-            self.tag = ui.select(tag_choices, label="选择标签").classes("w-full")
-            self.tag_required = ui.switch("该标签强制企业认证", value=False)
-            self.tag.on_value_change(
-                lambda e: self._sync_tag_switch(str(e.value or ""))
-            )
-            ui.label(
-                "组和标签任一强制认证即生效；证书豁免优先。"
-            ).classes("text-caption text-grey-6")
-        render_form_section(
-            "组和标签认证策略",
-            kicker="Auth policies",
-            description="只决定当前证书是否必须完成 SSO，VPN 防火墙规则不受影响。",
-            body=policy_body,
-            actions=lambda: primary_action(
-                "保存组/标签策略", icon="save", on_click=self._save_policies,
-            ),
-        )
-
-        def exemption_body():
-            self.cert = ui.input(
-                "证书 CN（必须存在于 NiceVPN）", placeholder="server-linux-01",
-            ).classes("w-full")
-            self.exempt = ui.switch("免企业认证", value=True)
-            self.exempt_reason = ui.input(
-                "豁免原因（开启豁免时必填）", placeholder="Linux OpenVPN 2.x 命令行",
-            ).classes("w-full")
-            ui.label(
-                "免 SSO 只对该证书生效，与操作系统无关；"
-                "对同一证书在其他系统上使用也将免认证。"
-            ).classes("text-caption text-grey-6")
-        render_form_section(
-            "证书例外",
-            kicker="Certificate exceptions",
-            description="为 Linux 命令行等无法 WebAuth 的证书明确豁免，禁止按 IV_PLAT 自动放行。",
-            body=exemption_body,
-            actions=lambda: primary_action(
-                "保存证书例外", icon="save", on_click=self._save_exemption,
-            ),
-        )
-
         def audit_body():
             from app.services.auth.sso_audit import SsoAudit
-            events = SsoAudit(self.policy.store).recent(limit=30)
+            events = SsoAudit().recent(limit=30)
             if not events:
                 ui.label("暂无企业身份认证记录").classes("text-caption text-grey-6")
                 return
@@ -224,44 +166,3 @@ class SsoSettingsPanel:
         safe_notify("身份提供商已保存，刷新设置页可查看最新列表", type="positive")
         return True
 
-    def _sync_group_switch(self, group_id: str) -> None:
-        if not group_id:
-            return
-        group = self.policy.store.get_group(group_id)
-        if group is not None:
-            self.group_required.value = bool(group.get("sso_required", False))
-
-    def _sync_tag_switch(self, tag_id: str) -> None:
-        if not tag_id:
-            return
-        tag = self.policy.store.get_tag(tag_id)
-        if tag is not None:
-            self.tag_required.value = bool(tag.get("sso_required", False))
-
-    def _save_policies(self) -> bool:
-        try:
-            if self.group.value:
-                self.policy.set_group_required(
-                    str(self.group.value), required=bool(self.group_required.value),
-                )
-            if self.tag.value:
-                self.policy.set_tag_required(
-                    str(self.tag.value), required=bool(self.tag_required.value),
-                )
-        except Exception as exc:
-            safe_notify(f"认证策略保存失败: {exc}", type="negative")
-            return False
-        safe_notify("认证策略已更新", type="positive")
-        return True
-
-    def _save_exemption(self) -> bool:
-        try:
-            self.policy.set_certificate_exemption(
-                str(self.cert.value or ""), exempt=bool(self.exempt.value),
-                reason=str(self.exempt_reason.value or ""),
-            )
-        except Exception as exc:
-            safe_notify(f"证书豁免保存失败: {exc}", type="negative")
-            return False
-        safe_notify("证书认证例外已更新", type="positive")
-        return True
