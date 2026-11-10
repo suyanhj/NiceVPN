@@ -470,6 +470,7 @@ class GroupsPage:
                 placeholder="例如：10.224.1.0/24",
             ).classes("w-full")
             fields["device_binding_exempt"] = ui.switch("豁免设备绑定", value=False)
+            fields["sso_required"] = ui.switch("启用企业认证（SSO）", value=False)
             fields["capacity"] = ui.label("").classes("text-caption text-grey-6")
             fields["capacity"].set_visibility(False)
             fields["conflict"] = ui.label("").classes("text-caption text-negative")
@@ -519,19 +520,20 @@ class GroupsPage:
                 str(fields["name"].value or "").strip(),
                 str(fields["subnet"].value or "").strip(),
                 bool(fields["device_binding_exempt"].value),
+                bool(fields["sso_required"].value),
             ),
             submit_label="创建",
         )
         form.open()
 
-    def _create_group(self, name: str, subnet: str, device_binding_exempt: bool = False) -> bool:
+    def _create_group(self, name: str, subnet: str, device_binding_exempt: bool = False, sso_required: bool = False) -> bool:
         """执行用户组创建并返回表单是否可关闭。"""
 
         if not name or not subnet:
             safe_notify("请填写完整信息", type="negative")
             return False
         try:
-            self.group_service.create(name, subnet, device_binding_exempt=device_binding_exempt)
+            self.group_service.create(name, subnet, device_binding_exempt=device_binding_exempt, sso_required=sso_required)
             safe_notify(f"用户组 {name} 已创建", type="positive")
             ui.navigate.to("/groups")
             return True
@@ -561,6 +563,9 @@ class GroupsPage:
             ).classes("w-full")
             fields["device_binding_exempt"] = ui.switch(
                 "豁免设备绑定", value=bool(group.get("device_binding_exempt", False))
+            )
+            fields["sso_required"] = ui.switch(
+                "启用企业认证（SSO）", value=bool(group.get("sso_required", False))
             )
 
             if not can_edit_subnet:
@@ -645,11 +650,12 @@ class GroupsPage:
                     else str(group.get("subnet") or "")
                 ),
                 bool(fields["device_binding_exempt"].value),
+                bool(fields["sso_required"].value),
             ),
         )
         form.open()
 
-    def _update_group_details(self, group_id: str, name: str, subnet: str, device_binding_exempt: bool | None = None) -> bool:
+    def _update_group_details(self, group_id: str, name: str, subnet: str, device_binding_exempt: bool | None = None, sso_required: bool | None = None) -> bool:
         """保存用户组名称和子网。"""
 
         if not name:
@@ -659,7 +665,7 @@ class GroupsPage:
             safe_notify("子网不能为空", type="negative")
             return False
         try:
-            self.group_service.update_details(group_id, name=name, subnet=subnet, device_binding_exempt=device_binding_exempt)
+            self.group_service.update_details(group_id, name=name, subnet=subnet, device_binding_exempt=device_binding_exempt, sso_required=sso_required)
             safe_notify("用户组已更新", type="positive")
             ui.navigate.to("/groups")
             return True
