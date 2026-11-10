@@ -133,6 +133,10 @@ class SystemConfig(BaseModel):
             "strict_hwaddr=必须 IV_HWADDR，无则拒绝（OpenVPN 2.x 核心安卓端常不兼容）"
         ),
     )
+    enterprise_sso_enabled: bool = Field(
+        default=False,
+        description="全局企业身份认证总开关；默认关闭，开启须先完成提供商、WebAuth、管理通道预检",
+    )
     device_bind_exemption_enabled: bool = Field(
         default=False,
         description="通用或强制模式允许组和标签豁免设备绑定",
