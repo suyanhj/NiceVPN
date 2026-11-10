@@ -46,9 +46,17 @@ def test_pending_auth_rejects_unsafe_urls():
     expected = ("client-pending-auth 2 0 "
                 "WEB_AUTH:external:https://vpn.example.com/auth/sso/start?t=abc 180\n")
     assert pending_webauth(2, 0, "https://vpn.example.com/auth/sso/start?t=abc") == expected
-    for url in ("http://vpn.example.com/a", "https://u:p@vpn.example.com/a",
+    assert pending_webauth(
+        2, 0, "http://192.168.10.20:8881/auth/sso/start?t=abc"
+    ) == ("client-pending-auth 2 0 "
+          "WEB_AUTH:external:http://192.168.10.20:8881/auth/sso/start?t=abc 180\n")
+    assert pending_webauth(
+        2, 0, "http://localhost:8881/auth/sso/start?t=abc"
+    ).startswith("client-pending-auth 2 0 WEB_AUTH:external:http://localhost:8881")
+    for url in ("ftp://vpn.example.com/a", "https://u:p@vpn.example.com/a",
                 "https://vpn.example.com/hi\nclient-auth-nt 9 0",
-                "https://vpn.example.com/has space", "/relative"):
+                "https://vpn.example.com/has space", "/relative",
+                "http://127.0.0.1:bad/auth", "http://server/#fragment"):
         with pytest.raises(ValueError):
             pending_webauth(2, 0, url)
     with pytest.raises(ValueError):
