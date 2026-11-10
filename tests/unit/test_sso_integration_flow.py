@@ -93,11 +93,11 @@ def test_browser_approval_unblocks_exact_pending_client(monkeypatch, tmp_path):
         "/auth/sso/dingtalk/callback?state=" + state + "&authCode=company-authcode"
     )
     assert done.status_code == 200
-    assert manager.commands[-1] == "client-auth-nt 100 0\\n"
+    assert manager.commands[-1] == "client-auth-nt 100 0\n"
     assert len(runtime.audit.recent()) >= 2
     assert runtime.audit.recent()[0]["external_user_id"] == "external-user-55"
     repeated = client.get(
         "/auth/sso/dingtalk/callback?state=" + state + "&authCode=company-authcode"
     )
     assert repeated.status_code == 410
-    assert manager.commands.count("client-auth-nt 100 0\\n") == 1
+    assert manager.commands.count("client-auth-nt 100 0\n") == 1
