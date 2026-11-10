@@ -18,6 +18,8 @@ from app.services.auth.office_oauth import OfficeProvider
 from app.storage.sqlite_store import SqliteStore, get_default_store
 
 SSO_KEY_FILE = SSO_PROVIDER_MASTER_KEY_FILE
+UNIFIED_DINGTALK_ID = "dingtalk_unified"
+UNIFIED_CORP_MARKER = "__unified__"
 _PROVIDER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
@@ -90,12 +92,60 @@ class SsoProviderStore:
         result.validate()
         return result
 
+    def get_unified(self) -> OfficeProvider | None:
+        return self.get(UNIFIED_DINGTALK_ID)
+
+    def has_unified(self) -> bool:
+        return any(row["id"] == UNIFIED_DINGTALK_ID for row in self.list_metadata())
+
+    def enabled_metadata(self) -> list[dict]:
+        rows = self.list_metadata()
+        unified = next((row for row in rows if row["id"] == UNIFIED_DINGTALK_ID), None)
+        if unified is not None:
+            return [unified] if unified["enabled"] else []
+        return [row for row in rows if row["enabled"]]
+
     def first_enabled(self) -> OfficeProvider | None:
-        enabled = [row for row in self.list_metadata() if row["enabled"]]
+        enabled = self.enabled_metadata()
         if not enabled:
             return None
-        # Deterministic first provider (UI may add explicit selection later).
         return self.get(enabled[0]["id"])
+
+    def save_unified(self, *, app_id: str, secret: str | None = None,
+                     enabled: bool = True, read_user_profile: bool = False) -> None:
+        self.save(
+            provider_id=UNIFIED_DINGTALK_ID, kind="dingtalk",
+            enterprise_id=UNIFIED_CORP_MARKER, app_id=app_id,
+            secret=secret, enabled=enabled,
+            display_name="统一钉钉登录", read_user_profile=read_user_profile,
+        )
+
+    def legacy_dingtalk_companies(self) -> list[dict]:
+        """Safe migration preview: no secrets or credentials are returned."""
+        return [
+            {"corp_id": row["enterprise_id"], "name": row["display_name"]}
+            for row in self.list_metadata()
+            if row["kind"] == "dingtalk" and row["id"] != UNIFIED_DINGTALK_ID
+            and row["enabled"]
+        ]
+
+    def import_legacy_dingtalk(self) -> list[dict]:
+        """Explicit admin-triggered copy; leave old provider rows untouched."""
+        if self.has_unified():
+            raise ValueError("统一钉钉应用已配置，不覆盖现有凭据")
+        old_rows = [
+            row for row in self.list_metadata()
+            if row["kind"] == "dingtalk" and row["id"] != UNIFIED_DINGTALK_ID
+            and row["enabled"]
+        ]
+        if not old_rows:
+            raise ValueError("没有可迁移的钉钉应用")
+        provider = self.get(old_rows[0]["id"])
+        if provider is None:
+            raise ValueError("历史钉钉应用不可用")
+        self.save_unified(app_id=provider.app_id, secret=provider.secret,
+                          read_user_profile=provider.read_user_profile)
+        return self.legacy_dingtalk_companies()
 
     def save(self, *, provider_id: str, kind: str, enterprise_id: str,
              app_id: str, secret: str | None = None, enabled: bool = False,
