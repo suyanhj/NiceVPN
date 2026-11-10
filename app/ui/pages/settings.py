@@ -83,6 +83,7 @@ class SettingsPage:
             return
 
         allowed_tabs = {
+            "sso",
             "openvpn",
             "server",
             "device",
@@ -111,6 +112,7 @@ class SettingsPage:
                     ui.tab("openvpn", label="OpenVPN")
                     ui.tab("server", label="服务端")
                     ui.tab("device", label="设备绑定")
+                    ui.tab("sso", label="企业认证")
                     ui.tab("ssh", label="SSH")
                     ui.tab("download", label="下载配置")
                     ui.tab("notify", label="通知")
@@ -128,6 +130,10 @@ class SettingsPage:
                 with ui.tab_panel("device"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_device_bind_panel()
+                with ui.tab_panel("sso"):
+                    with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
+                        from app.ui.pages.settings_sso import SsoSettingsPanel
+                        SsoSettingsPanel(self).render()
                 with ui.tab_panel("ssh"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_global_ssh_panel()
