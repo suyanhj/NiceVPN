@@ -9,13 +9,14 @@ from app.services.auth.office_oauth import (
 )
 
 
-def _provider(kind="dingtalk"):
+def _provider(kind="dingtalk", read_user_profile=True):
     return OfficeProvider(id="work", kind=kind, enterprise_id="corp-good",
-                          app_id="app-key", secret="secret")
+                          app_id="app-key", secret="secret",
+                          read_user_profile=read_user_profile)
 
 
 def test_dingtalk_authorization_requests_corporate_scope():
-    url = authorization_url(_provider(), "https://vpn.example.org/auth/cb", "s" * 40)
+    url = authorization_url(_provider(read_user_profile=False), "https://vpn.example.org/auth/cb", "s" * 40)
     parts = urlsplit(url)
     params = parse_qs(parts.query)
     assert parts.hostname == "login.dingtalk.com"
