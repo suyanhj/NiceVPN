@@ -49,6 +49,8 @@ def test_browser_approval_unblocks_exact_pending_client(monkeypatch, tmp_path):
         policy=policy, providers=providers,
         transactions=WebAuthTransactionStore(store),
     )
+    from app.services.auth.sso_audit import SsoAudit
+    runtime.audit = SsoAudit(log_path=tmp_path / "integration-sso-auth.jsonl")
     manager = FakeManager()
     runtime.instances["server"] = manager
 
@@ -94,8 +96,10 @@ def test_browser_approval_unblocks_exact_pending_client(monkeypatch, tmp_path):
     )
     assert done.status_code == 200
     assert manager.commands[-1] == "client-auth-nt 100 0\n"
-    assert len(runtime.audit.recent()) >= 2
-    assert runtime.audit.recent()[0]["external_user_id"] == "external-user-55"
+    import json
+    events = [json.loads(line) for line in (tmp_path / "integration-sso-auth.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(events) >= 2
+    assert events[-1]["external_user_id"] == "external-user-55"
     repeated = client.get(
         "/auth/sso/dingtalk/callback?state=" + state + "&authCode=company-authcode"
     )
