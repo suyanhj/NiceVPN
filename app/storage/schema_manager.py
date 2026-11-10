@@ -99,6 +99,15 @@ def ensure_schema(
             current = 5
         if current < 6:
             if migrate_v6 is None:
+                tag_columns = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(tags)")
+                }
+                if "sso_required" not in tag_columns:
+                    conn.execute(
+                        "ALTER TABLE tags ADD COLUMN sso_required INTEGER "
+                        "NOT NULL DEFAULT 0 CHECK (sso_required IN (0, 1))"
+                    )
                 execute_sql_file(conn, "006_enterprise_sso.sql")
             else:
                 migrate_v6(conn)
