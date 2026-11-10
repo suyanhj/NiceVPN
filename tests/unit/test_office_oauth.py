@@ -141,7 +141,8 @@ async def test_dingtalk_403_logs_only_safe_error_code_and_scope(caplog):
             )
     assert identity.enterprise_id == "corp-good"
     assert identity.external_user_id == ""
-    assert "expected_corp_id=corp-good" in caplog.text
+    assert "corp_id=corp-good" in caplog.text
+    assert "legacy_corp_match=True" in caplog.text
     assert "verified_corp_id=corp-good" in caplog.text
     assert "required_scopes=Contact.User.Read" in caplog.text
     for value in ("NEVER_PRINT_ACCESS_TOKEN", "NEVER_PRINT_REFRESH_TOKEN",
