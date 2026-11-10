@@ -25,6 +25,27 @@ def test_dingtalk_authorization_requests_corporate_scope():
     assert params["state"] == ["s" * 40]
 
 
+def test_contact_scope_is_opt_in_and_separate_per_enterprise():
+    callback = "http://vpn.example.com/auth/sso/dingtalk/callback"
+    minimal = authorization_url(_provider(read_user_profile=False), callback, "s" * 40)
+    detailed = authorization_url(_provider(read_user_profile=True), callback, "s" * 40)
+    assert parse_qs(urlsplit(minimal).query)["scope"] == ["openid corpid"]
+    assert parse_qs(urlsplit(detailed).query)["scope"] == ["openid corpid Contact.User.Read"]
+
+
+@pytest.mark.asyncio
+async def test_contact_read_disabled_never_calls_personal_api():
+    requests_seen = []
+    def response(request):
+        requests_seen.append(request.url.path)
+        return httpx.Response(200, json={"corpId": "corp-good", "accessToken": "token"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        identity = await exchange_code(_provider(read_user_profile=False), "code", client=client)
+    assert identity.enterprise_id == "corp-good"
+    assert identity.external_user_id == ""
+    assert requests_seen == ["/v1.0/oauth2/userAccessToken"]
+
+
 def test_wecom_qr_login_contains_enterprise_and_agent():
     url = authorization_url(_provider("wecom"), "https://vpn.example.org/auth/cb", "s" * 40)
     assert urlsplit(url).hostname == "open.work.weixin.qq.com"
