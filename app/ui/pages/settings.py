@@ -961,6 +961,8 @@ class SettingsPage:
             ).classes("w-full").props("autogrow")
             ui.label(
                 "允许填写 http:// 或 https://；未写协议时默认 HTTP。"
+                "域名不追加 API 端口，使用标准 80/443（HTTP 可跟随服务器重定向到 HTTPS）；"
+                "IP 未指定端口时自动追加 API 监听端口，显式端口保留。"
                 "业务未填写自定义地址时，优先使用列表第一项；"
                 "API 请求命中其他已配置地址时，可按对应地址生成下载链接。"
                 "SSO 首次跳转尚无浏览器 Host，因此使用列表第一项。"
@@ -1017,7 +1019,7 @@ class SettingsPage:
             "下载链接",
             kicker="Download",
             description=(
-                "自定义下载地址优先；留空则使用全局访问地址池，未配置地址池再使用本机 IP + API 端口。",
+                "优先级：自动获取 < 全局访问地址 < 自定义下载地址。域名默认端口 80/443，IP 未指定端口则追加 API 端口。",
             ),
             body=body,
             actions=actions,
