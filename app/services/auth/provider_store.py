@@ -194,6 +194,32 @@ class SsoProviderStore:
                 (provider_id,kind,enterprise_id.strip(),app_id.strip(),encrypted,int(enabled),display_name,int(bool(read_user_profile))),
             )
 
+    def cleanup_unified_legacy(self) -> int:
+        """Prune obsolete per-company credentials only after unified app is enabled.
+
+        One transaction revokes pending legacy provider logins and deletes
+        encrypted legacy rows. Older installations without a unified app
+        retain their legacy providers until explicitly switched.
+        """
+        with self.store.connection(write=True) as conn:
+            unified = conn.execute(
+                "SELECT enabled FROM sso_auth_providers WHERE id=?",
+                (UNIFIED_DINGTALK_ID,),
+            ).fetchone()
+            if unified is None or not bool(unified["enabled"]):
+                raise ValueError("统一钉钉认证未启用，不能清理旧企业凭证")
+            conn.execute(
+                "UPDATE sso_login_transactions SET status='denied', "
+                "completed_at=CAST(strftime('%s','now') AS INTEGER) "
+                "WHERE status='pending' AND provider_id!=?",
+                (UNIFIED_DINGTALK_ID,),
+            )
+            changed = conn.execute(
+                "DELETE FROM sso_auth_providers WHERE id!=?",
+                (UNIFIED_DINGTALK_ID,),
+            )
+            return int(changed.rowcount)
+
     def delete(self, provider_id: str) -> None:
         with self.store.connection(write=True) as conn:
             conn.execute("DELETE FROM sso_auth_providers WHERE id=?", (str(provider_id),))
