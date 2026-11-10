@@ -101,3 +101,67 @@ def test_browser_approval_unblocks_exact_pending_client(monkeypatch, tmp_path):
     )
     assert repeated.status_code == 410
     assert manager.commands.count("client-auth-nt 100 0\n") == 1
+
+
+def test_webauth_provider_choice_only_accepts_enabled_office_apps(monkeypatch, tmp_path):
+    store = SqliteStore(tmp_path / "sso-choice.db")
+    store.upsert_group({
+        "id": "eng", "name": "研发", "status": "active", "subnet": "10.8.0.0/24",
+    })
+    store.upsert_user({"username": "vpn-cert", "group_id": "eng", "status": "active"})
+    policy = SsoPolicyService(store)
+    policy.set_group_required("eng", required=True)
+    providers = SsoProviderStore(store, key_path=tmp_path / "master.key")
+    providers.save(
+        provider_id="dd", kind="dingtalk", enterprise_id="corp-ding",
+        app_id="ding-key", secret="private1", enabled=True,
+    )
+    providers.save(
+        provider_id="wx", kind="wecom", enterprise_id="corp-wecom",
+        app_id="agent", secret="private2", enabled=True,
+    )
+    providers.save(
+        provider_id="disabled", kind="dingtalk", enterprise_id="bad-corp",
+        app_id="agent2", secret="private3", enabled=False,
+    )
+    runtime = SsoRuntime(
+        instances=["server"], public_base_url="https://vpn.example.org",
+        policy=policy, providers=providers,
+        transactions=WebAuthTransactionStore(store),
+    )
+    manager = FakeManager()
+    runtime.instances["server"] = manager
+    runtime.on_event(manager, ClientNotification(
+        "CONNECT", 200, 1, {
+            "common_name": "vpn-cert", "IV_SSO": "webauth",
+            "untrusted_ip": "203.0.113.2", "untrusted_port": "49000",
+        },
+    ))
+    url = manager.commands[0].split("WEB_AUTH:external:", 1)[1].rsplit(" ", 1)[0]
+    token = parse_qs(urlsplit(url).query)["t"][0]
+    import app.api.sso as sso
+    monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    picker = client.get("/auth/sso/start?t=" + token)
+    assert picker.status_code == 200
+    assert "钉钉" in picker.text
+    assert "企业微信" in picker.text
+    assert "bad-corp" not in picker.text
+    denied = client.post(
+        "/auth/sso/provider",
+        data={"t": token, "provider_id": "disabled"},
+        follow_redirects=False,
+    )
+    assert denied.status_code == 403
+    selected = client.post(
+        "/auth/sso/provider",
+        data={"t": token, "provider_id": "wx"},
+        follow_redirects=False,
+    )
+    assert selected.status_code == 303
+    assert urlsplit(selected.headers["location"]).hostname == "open.work.weixin.qq.com"
+    assert runtime.transactions.get_pending_by_token(token).provider_id == "wx"
+    assert not any(cmd.startswith("client-auth-nt") for cmd in manager.commands)
