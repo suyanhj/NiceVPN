@@ -111,8 +111,8 @@ class SystemConfig(BaseModel):
     download_base_url: Optional[str] = Field(
         default=None,
         description=(
-            "下载链接基础 URL；配置后优先使用，留空则使用启动时识别的"
-            "全局 domains 第一项，若未配置再使用本机 IP 和 API 端口"
+            "下载基础 URL；优先级：自动检测 < domains 全局配置 < 本字段自定义。"
+            "域名默认端口 80/443，IP 未指定端口自动使用 API 端口。"
         ),
     )
     github_proxy_urls: list[str] = Field(
@@ -140,7 +140,7 @@ class SystemConfig(BaseModel):
     )
     enterprise_sso_public_base_url: Optional[str] = Field(
         default=None,
-        description="企业 SSO 认证地址（可覆盖全局 domains）；为空则使用 domains 第一项",
+        description="SSO 自定义认证地址；优先级：自动获取 < domains < 自定义。域名使用 80/443，IP 可自动补 API 端口",
     )
     enterprise_sso_enabled: bool = Field(
         default=False,
