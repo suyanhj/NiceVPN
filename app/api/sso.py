@@ -58,7 +58,7 @@ async def start_sso(t: str = ""):
     transaction = runtime.transactions.get_pending_by_token(t)
     if transaction is None:
         return _html("认证链接已过期或已经使用。请重新连接 VPN。", code=410)
-    available = [item for item in runtime.providers.list_metadata() if item["enabled"]]
+    available = runtime.providers.enabled_metadata()
     if len(available) > 1:
         # Present only an administrator-approved set, no arbitrary CorpId.
         fields = []
