@@ -85,8 +85,27 @@ def test_disconnect_drops_active_pending_state(bundle):
     assert not runtime.sessions
 
 
-def test_public_origin_required(bundle):
+def test_public_origin_accepts_http_https_ip_and_port(bundle):
     _, policy = bundle
-    with pytest.raises(ValueError):
-        SsoRuntime(instances=["server"], public_base_url="http://vpn.example.org",
-                   policy=policy)
+    for url in (
+        "http://127.0.0.1:8881",
+        "http://192.168.10.10:8881",
+        "http://vpn.example.org",
+        "https://vpn.example.org",
+    ):
+        runtime = SsoRuntime(instances=["server"], public_base_url=url, policy=policy)
+        assert runtime.public_base_url == url
+
+
+def test_public_origin_rejects_bad_urls(bundle):
+    _, policy = bundle
+    for url in (
+        "ftp://vpn.example.org",
+        "http://vpn.example.org/auth",
+        "http://vpn.example.org?token=bad",
+        "http://user:pass@vpn.example.org",
+        "http://127.0.0.1:wrong",
+        "http://127.0.0.1:8881/#fragment",
+    ):
+        with pytest.raises(ValueError):
+            SsoRuntime(instances=["server"], public_base_url=url, policy=policy)
