@@ -19,33 +19,33 @@ class TagRepositoryMixin:
         )
 
 
-    def create_tag(self, tag_id: str, name: str, description: str = "", *, device_binding_exempt: bool = False) -> None:
+    def create_tag(self, tag_id: str, name: str, description: str = "", *, device_binding_exempt: bool = False, sso_required: bool = False) -> None:
         tag_id, name = str(tag_id).strip(), str(name).strip()
         if not tag_id or not name:
             raise ValueError("标签 ID 与名称不能为空")
         now = _now_iso()
         with self.connection(write=True) as conn:
             conn.execute(
-                "INSERT INTO tags(id,name,description,device_binding_exempt,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                (tag_id, name, str(description), int(device_binding_exempt), now, now),
+                "INSERT INTO tags(id,name,description,device_binding_exempt,sso_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (tag_id, name, str(description), int(device_binding_exempt), int(sso_required), now, now),
             )
 
     def list_tags(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT id,name,description,device_binding_exempt,created_at,updated_at FROM tags ORDER BY name,id"
+                "SELECT id,name,description,device_binding_exempt,sso_required,created_at,updated_at FROM tags ORDER BY name,id"
             ).fetchall()
-        return [{**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"])} for row in rows]
+        return [{**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"]), "sso_required": bool(row["sso_required"])} for row in rows]
 
     def get_tag(self, tag_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT id,name,description,device_binding_exempt,created_at,updated_at FROM tags WHERE id=?",
+                "SELECT id,name,description,device_binding_exempt,sso_required,created_at,updated_at FROM tags WHERE id=?",
                 (str(tag_id),),
             ).fetchone()
-        return {**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"])} if row else None
+        return {**dict(row), "device_binding_exempt": bool(row["device_binding_exempt"]), "sso_required": bool(row["sso_required"])} if row else None
 
-    def update_tag(self, tag_id: str, *, name: str, description: str = "", device_binding_exempt: bool | None = None) -> None:
+    def update_tag(self, tag_id: str, *, name: str, description: str = "", device_binding_exempt: bool | None = None, sso_required: bool | None = None) -> None:
         name = str(name).strip()
         if not name:
             raise ValueError("标签名称不能为空")
@@ -61,8 +61,8 @@ class TagRepositoryMixin:
                 and bool(old[0]) != bool(device_binding_exempt)
             )
             cur = conn.execute(
-                "UPDATE tags SET name=?,description=?,device_binding_exempt=COALESCE(?,device_binding_exempt),updated_at=? WHERE id=?",
-                (name, str(description), None if device_binding_exempt is None else int(device_binding_exempt), _now_iso(), str(tag_id)),
+                "UPDATE tags SET name=?,description=?,device_binding_exempt=COALESCE(?,device_binding_exempt),sso_required=COALESCE(?,sso_required),updated_at=? WHERE id=?",
+                (name, str(description), None if device_binding_exempt is None else int(device_binding_exempt), None if sso_required is None else int(sso_required), _now_iso(), str(tag_id)),
             )
             if cur.rowcount != 1:
                 raise ValueError("标签不存在")
