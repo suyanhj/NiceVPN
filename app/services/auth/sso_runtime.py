@@ -14,6 +14,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -34,6 +35,14 @@ from app.services.auth.sso_transactions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SsoFinishResult(str, Enum):
+    """Keep an explicit denial distinct from an expired/replayed WebAuth state."""
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+    UNAVAILABLE = "unavailable"
 
 
 def management_socket_path(instance_id: str) -> Path:
@@ -340,7 +349,18 @@ class SsoRuntime:
         self, request: AuthRequest, state: str,
         identity: EnterpriseIdentity | None,
     ) -> bool:
-        """One active OAuth callback may unblock the exact waiting connection."""
+        """Compatibility boolean API for Management/older callers."""
+        return self.finish_with_result(request, state, identity) == SsoFinishResult.APPROVED
+
+    def finish_with_result(
+        self, request: AuthRequest, state: str,
+        identity: EnterpriseIdentity | None,
+    ) -> SsoFinishResult:
+        """Differentiate a consumed but *denied* login from a stale OAuth state.
+
+        Only a live instance's trusted Management channel sends allow/deny.
+        HTTP callbacks must not choose a connection or change the identity.
+        """
         key = (request.instance_id, request.cid, request.kid)
         with self.lock:
             pending = self.pending.get(key)
@@ -348,7 +368,8 @@ class SsoRuntime:
                     or pending.provider_id != request.provider_id
                     or pending.state_digest != self._state_digest(state)
                     or pending.expires_at <= int(time.time())):
-                return False
+                return SsoFinishResult.EXPIRED
+            deny_reason = "office_identity_rejected"
             if identity is not None:
                 provider = self.providers.get(request.provider_id)
                 if provider is None or identity.provider_kind != provider.kind:
@@ -359,31 +380,36 @@ class SsoRuntime:
                             "SSO unified DingTalk rejected: corp_id=%s not in allow-list",
                             identity.enterprise_id,
                         )
+                        deny_reason = "enterprise_not_allowed"
                         identity = None
                 elif identity.enterprise_id != provider.enterprise_id:
+                    deny_reason = "enterprise_not_allowed"
                     identity = None
             consumed = self.transactions.consume_state(state, approved=identity is not None)
             if consumed is None:
-                return False
+                return SsoFinishResult.EXPIRED
             self.pending.pop(key, None)
             manager = self.instances.get(request.instance_id)
             if manager is None:
-                return False
+                return SsoFinishResult.UNAVAILABLE
             try:
                 if identity is None:
                     self.audit.log(event_type="denied", instance_id=request.instance_id,
                                    common_name=request.common_name, outcome="failure",
-                                   reason_code="office_identity_rejected")
+                                   reason_code=deny_reason)
                     manager.send(auth_deny(request.cid, request.kid))
-                    return False
-                # Re-evaluate policy at authorization time: a revoked group or
-                # certificate may never be approved by a stale browser session.
+                    return SsoFinishResult.DENIED
+                # Re-evaluate only the existing SSO opt-in status. OpenVPN owns
+                # certificate, CRL, device, CCD, and network-access enforcement.
                 policy = self.policy.resolve(request.common_name, enabled=True)
                 if policy.denied:
+                    self.audit.log(event_type="policy_rejected", instance_id=request.instance_id,
+                                   common_name=request.common_name, outcome="failure",
+                                   reason_code=policy.reason)
                     manager.send(auth_deny(request.cid, request.kid))
-                    return False
-                # OpenVPN runs client-connect *after* management auth.
-                # Grant post-auth device record-only mode before approval.
+                    return SsoFinishResult.DENIED
+                # This short-lived grant only bypasses the post-SSO fingerprint
+                # check; OpenVPN continues its normal client-connect processing.
                 write_sso_grant(
                     request.instance_id, request.common_name,
                     peer_ip=pending.peer_ip, peer_port=pending.peer_port,
@@ -407,9 +433,9 @@ class SsoRuntime:
                     request.common_name, request.provider_id,
                     identity.enterprise_id, identity.external_user_id or "<unavailable>",
                 )
-                return True
+                return SsoFinishResult.APPROVED
             except OSError:
-                return False
+                return SsoFinishResult.UNAVAILABLE
 
 
 _RUNTIME: SsoRuntime | None = None
