@@ -20,7 +20,7 @@ def store(tmp_path):
 
 
 def test_schema_v4_tag_members_and_replace_are_idempotent(store):
-    assert store.schema_version() == 6
+    assert store.schema_version() == 7
     store.create_tag("tag1", "办公")
     store.set_tag_members("tag1", usernames=["alice", "alice"], group_ids=["g1"])
     assert store.get_tag_members("tag1") == {"usernames": ["alice"], "group_ids": ["g1"]}
