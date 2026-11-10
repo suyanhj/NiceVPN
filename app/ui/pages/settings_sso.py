@@ -12,6 +12,7 @@ from app.utils.public_domains import first_domain_origin, resolve_sso_origin, wi
 from app.ui.components.actions import primary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
+from app.ui.components.help import field_with_help
 
 
 def _http_origin(value: str) -> bool:
@@ -39,21 +40,28 @@ class SsoSettingsPanel:
 
     def render(self) -> None:
         def global_body():
-            self.enable = ui.switch(
-                "开启企业身份认证（全局总开关）",
-                value=bool(self.cfg.get("enterprise_sso_enabled", False)),
+            self.enable = field_with_help(
+                lambda: ui.switch(
+                    "开启企业身份认证（全局总开关）",
+                    value=bool(self.cfg.get("enterprise_sso_enabled", False)),
+                ),
+                "只有启用企业认证的组或标签才进行 SSO；其他连接继续原有流程。"
+                "企业认证成功后仅记录设备，不执行设备绑定校验。"
+                "启用或关闭需重启 NiceVPN 及 OpenVPN 实例。",
+                aria_label="企业认证总开关说明",
+                control_grow=False,
             )
-            self.base_url = ui.input(
-                "认证地址（HTTP / HTTPS）",
-                value=str(self.cfg.get("enterprise_sso_public_base_url") or ""),
-                placeholder=resolve_sso_origin(self.cfg) or "http://192.168.1.10:8881",
-            ).classes("w-full")
-            ui.label(
-                "默认关闭；保存后需要重启 NiceVPN 和 OpenVPN 实例。"
-                "正式启用前必须通过 POC 和客户端兼容测试。"
-                "只有组或标签开启企业认证的连接才需要 SSO，其余证书行为不变。"
-                "地址优先级：自动获取 < 全局访问地址 < 自定义；域名走标准 80/443 端口，IP 未指定端口会补 API 端口。"
-            ).classes("text-caption text-grey-6")
+            self.base_url = field_with_help(
+                lambda: ui.input(
+                    "认证地址（HTTP / HTTPS）",
+                    value=str(self.cfg.get("enterprise_sso_public_base_url") or ""),
+                    placeholder=resolve_sso_origin(self.cfg) or "http://192.168.1.10:8881",
+                ).classes("w-full"),
+                "地址优先级：自动获取 < 全局访问地址 < 自定义。"
+                "域名默认使用 80/443；IP 未指定端口自动使用 API 端口。"
+                "正式启用前需验证 OAuth 回调和客户端 WebAuth 兼容性。",
+                aria_label="企业认证地址说明",
+            )
         render_form_section(
             "企业认证总开关",
             kicker="Enterprise SSO",
@@ -108,18 +116,24 @@ class SsoSettingsPanel:
                 "AppSecret（编辑时留空表示不修改）",
                 password=True, password_toggle_button=True,
             ).classes("w-full")
-            self.provider_enabled = ui.switch("启用该企业身份认证", value=False)
-            self.read_user_profile = ui.switch(
-                "读取钉钉员工个人资料（需先开通 Contact.User.Read）", value=False,
+            self.provider_enabled = field_with_help(
+                lambda: ui.switch("启用该企业身份认证", value=False),
+                "仅允许使用已启用的企业应用进行身份核验；"
+                "办公系统账号不会自动映射成 NiceVPN 用户。",
+                aria_label="企业提供商启用说明",
+                control_grow=False,
             )
-            ui.label(
-                "未开通权限前保持关闭，仅验证企业 CorpId；开启后登录时额外请求 "
-                "Contact.User.Read，可记录返回的 UnionId/OpenId。"
-            ).classes("text-caption text-grey-6")
-            ui.label(
-                "集团可添加多个企业；每家企业的 CorpId、AppKey/AgentId 和 Secret 独立管理。"
-                "仅通过启用的企业验证员工身份，不会映射 VPN 用户。"
-            ).classes("text-caption text-grey-6")
+            self.read_user_profile = field_with_help(
+                lambda: ui.switch(
+                    "读取钉钉员工个人资料（需开通 Contact.User.Read）",
+                    value=False,
+                ),
+                "默认关闭，仅核对 CorpId；开通 Contact.User.Read 后可开启。"
+                "开启后请求额外 Scope 并尝试读取 UnionId/OpenId。"
+                "未获权限时个人资料可能不可用。",
+                aria_label="钉钉员工个人资料权限说明",
+                control_grow=False,
+            )
         render_form_section(
             "集团企业身份配置",
             kicker="Identity providers",
@@ -128,30 +142,6 @@ class SsoSettingsPanel:
             actions=lambda: primary_action(
                 "保存提供商", icon="save", on_click=self._save_provider,
             ),
-        )
-
-        def audit_body():
-            from app.services.auth.sso_audit import SsoAudit
-            events = SsoAudit().recent(limit=30)
-            if not events:
-                ui.label("暂无企业身份认证记录").classes("text-caption text-grey-6")
-                return
-            columns = [
-                {"name": "event_time", "label": "时间", "field": "event_time", "align": "left"},
-                {"name": "common_name", "label": "证书 CN", "field": "common_name", "align": "left"},
-                {"name": "provider_kind", "label": "身份系统", "field": "provider_kind"},
-                {"name": "enterprise_id", "label": "企业 ID", "field": "enterprise_id"},
-                {"name": "external_user_id", "label": "外部用户 ID", "field": "external_user_id"},
-                {"name": "reason_code", "label": "原因代码", "field": "reason_code"},
-                {"name": "event_type", "label": "事件", "field": "event_type"},
-                {"name": "outcome", "label": "结果", "field": "outcome"},
-            ]
-            ui.table(columns=columns, rows=events, row_key="event_time", pagination=10).classes("w-full")
-        render_form_section(
-            "最近认证记录",
-            kicker="SSO Audit",
-            description="记录证书 CN、企业 ID、外部用户 ID 及认证结果。若钉钉用户资料接口 403，外部用户 ID 可能为空，但已核对的企业 ID 仍可查看。不会记录 Token 和密钥。",
-            body=audit_body,
         )
 
     def _save_global(self) -> bool:
