@@ -144,11 +144,13 @@ async def exchange_code(
             # directory access. Never trust a browser-supplied display name
             # or an undocumented field from the OAuth token response.
             name = ""
+            name_source = "not_requested"
             needs_name = (
                 fetch_enterprise_name(corp_id)
                 if callable(fetch_enterprise_name) else fetch_enterprise_name
             )
             if needs_name:
+                name_source = "unavailable"
                 organization = {}
                 try:
                     organization = await _get_json(await http.get(
@@ -156,10 +158,20 @@ async def exchange_code(
                         params={"targetCorpId": corp_id},
                         headers={"x-acs-dingtalk-access-token": access_token},
                     ))
-                except (httpx.HTTPError, ValueError, TypeError):
-                    pass
+                except (httpx.HTTPError, ValueError, TypeError) as exc:
+                    logger.warning(
+                        "SSO DingTalk organization name lookup failed: provider=%s "
+                        "corp_id=%s credential=user_access_token error=%s",
+                        provider.id, corp_id, type(exc).__name__,
+                    )
                 possible = organization.get("orgName")
-                if not isinstance(possible, str) or not possible.strip():
+                if (isinstance(possible, str) and possible.strip()
+                        and len(possible.strip()) <= 80
+                        and not any(ord(ch) < 32 for ch in possible)):
+                    name = possible.strip()
+                    name_source = "user_access_token"
+
+                if not name:
                     # Org APIs can require an application access token rather
                     # than the login user's token. Internal applications can
                     # obtain one using the already configured AppKey/Secret.
@@ -176,17 +188,31 @@ async def exchange_code(
                                 params={"targetCorpId": corp_id},
                                 headers={"x-acs-dingtalk-access-token": app_access},
                             ))
-                    except (httpx.HTTPError, ValueError, TypeError):
-                        pass  # No personal-directory fallback is permitted.
-                possible = organization.get("orgName")
-                if (isinstance(possible, str) and possible.strip()
-                        and len(possible.strip()) <= 80
-                        and not any(ord(ch) < 32 for ch in possible)):
-                    name = possible.strip()
+                            possible = organization.get("orgName")
+                            if (isinstance(possible, str) and possible.strip()
+                                    and len(possible.strip()) <= 80
+                                    and not any(ord(ch) < 32 for ch in possible)):
+                                name = possible.strip()
+                                name_source = "app_access_token"
+                    except (httpx.HTTPError, ValueError, TypeError) as exc:
+                        logger.warning(
+                            "SSO DingTalk organization name lookup failed: provider=%s "
+                            "corp_id=%s credential=app_access_token error=%s",
+                            provider.id, corp_id, type(exc).__name__,
+                        )
                 if not name:
                     # CorpId-only entries still work without this permission;
                     # name-only entries must fail closed in SsoRuntime.
-                    logger.info("SSO DingTalk organization name unavailable: provider=%s", provider.id)
+                    logger.warning(
+                        "SSO DingTalk organization name unavailable: provider=%s "
+                        "corp_id=%s name_source=%s",
+                        provider.id, corp_id, name_source,
+                    )
+            logger.info(
+                "SSO DingTalk verified enterprise identity: provider=%s corp_id=%s "
+                "enterprise_name=%r name_source=%s name_lookup_requested=%s",
+                provider.id, corp_id, name or "<empty>", name_source, bool(needs_name),
+            )
             return EnterpriseIdentity("dingtalk", corp_id, "", name)
 
         app_token_data = await _get_json(await http.get(
