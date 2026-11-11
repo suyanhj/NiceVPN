@@ -136,7 +136,10 @@ def _log_provider_http_error(response: httpx.Response) -> None:
     ), "")
     if isinstance(scopes, (list, tuple)):
         scopes = ",".join(str(item) for item in scopes[:12])
-    request = response.request
+    try:
+        request = response.request
+    except RuntimeError:
+        request = None
     logger.warning(
         "Office provider API HTTP error: host=%s path=%s http_status=%s "
         "api_code=%r api_message=%r request_id=%r required_scopes=%r",
