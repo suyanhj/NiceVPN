@@ -49,8 +49,13 @@ class TagService:
         from app.services.firewall.remote_tag_rules import has_remote_tag_rule_references
         remote_ref = has_remote_tag_rule_references([tag_id], store=self.store)
         if peer_refs or remote_ref:
+            references = []
+            if peer_refs:
+                references.append("对端路由")
+            if remote_ref:
+                references.append("远端防火墙规则")
             raise ValueError(
-                "标签仍被对端路由或远端防火墙规则引用，请先移除对端引用后再删除"
+                f"标签仍被{'、'.join(references)}引用，请先移除对端引用后再删除"
             )
         self.store.delete_tag(tag_id)
 
