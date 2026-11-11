@@ -31,6 +31,10 @@ class FakeManager:
     def send(self, command):
         self.commands.append(command)
 
+    def disconnect_common_name(self, common_name):
+        self.commands.append("disconnect:" + common_name)
+        return 1, 1, 0
+
 
 def make_runtime(store, providers, policy, tmp_path):
     runtime = SsoRuntime(
@@ -166,12 +170,14 @@ def test_admin_reset_revokes_all_user_sessions_and_forces_new_oauth(setup):
     # A browser window may already be in the middle of another OAuth flow.
     runtime.on_event(manager, connect(13, fingerprint=FP_B))
     assert runtime.pending
-    revoked, canceled, sent = runtime.revoke_user_session("alice")
-    assert (revoked, canceled, sent) == (2, 1, True)
+    revoked, canceled, online, disconnected, disconnect_failed = (
+        runtime.revoke_user_session("alice")
+    )
+    assert (revoked, canceled, online, disconnected, disconnect_failed) == (2, 1, 2, 2, 0)
     assert not runtime.pending
     assert not runtime.sessions
-    assert "kill alice\n" in manager.commands
-    assert "kill alice\n" in backup_manager.commands
+    assert "disconnect:alice" in manager.commands
+    assert "disconnect:alice" in backup_manager.commands
     assert "client-deny 13 0" in "".join(manager.commands)
     with store.connection() as conn:
         assert conn.execute(
@@ -203,15 +209,16 @@ def test_offline_user_reset_revokes_cache_without_running_runtime(setup, monkeyp
     )
     service = UserService(store)
     monkeypatch.setattr(service.audit, "log", lambda *args, **kwargs: None)
-    assert service.reset_sso_session("alice") == (1, 0, False)
-    assert service.reset_sso_session("alice") == (0, 0, False)
+    monkeypatch.setattr(service, "_kill_client_session", lambda _username: (0, 0, 0))
+    assert service.reset_connection("alice") == (1, 0, 0, 0, 0)
+    assert service.reset_connection("alice") == (0, 0, 0, 0, 0)
     assert sessions.get(
         instance_id="server", common_name="alice",
         cert_fingerprint=FP_A, provider_id="dingtalk_unified",
         provider_app_id="app1",
     ) is None
     with pytest.raises(ValueError, match="用户不存在"):
-        service.reset_sso_session("missing")
+        service.reset_connection("missing")
 
 
 def test_online_heartbeat_updates_existing_row_not_append(tmp_path):
