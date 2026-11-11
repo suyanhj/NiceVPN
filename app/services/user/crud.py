@@ -601,9 +601,13 @@ class UserService:
         )
         return revoked, canceled, online, disconnected, disconnect_failed
 
-    def reset_sso_session(self, username: str) -> tuple[int, int, int, int, int]:
-        """旧方法名兼容；统一转到重置连接。"""
-        return self.reset_connection(username)
+    def reset_sso_session(self, username: str) -> tuple[int, int, bool]:
+        """旧方法名兼容；保留原三元组返回格式，实际执行统一重置连接。"""
+        revoked, canceled, online, disconnected, disconnect_failed = (
+            self.reset_connection(username)
+        )
+        confirmed = online > 0 and disconnected == online and disconnect_failed == 0
+        return revoked, canceled, confirmed
 
     def get(self, username: str) -> dict | None:
         """获取用户信息"""
