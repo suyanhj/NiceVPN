@@ -698,10 +698,17 @@ class PeerService:
         tag_memberships = self.store.list_tag_memberships()
         user_tag_map = tag_memberships.get("users") or {}
         group_tag_map = tag_memberships.get("groups") or {}
+        group_rows = GroupService().list_all()
         group_names = {
             str(g.get("id") or "").strip(): str(g.get("name") or g.get("id") or "未命名组")
-            for g in GroupService().list_all()
+            for g in group_rows
             if str(g.get("id") or "").strip()
+        }
+        active_group_ids = {
+            str(g.get("id") or "").strip()
+            for g in group_rows
+            if str(g.get("id") or "").strip()
+            and str(g.get("status") or "active") == "active"
         }
         stats: dict[str, dict[str, int]] = {}
 
@@ -712,7 +719,8 @@ class PeerService:
             return stats[key]
 
         for u in UserService().list_all():
-            if u.get("status") != "active":
+            status = str(u.get("status") or "active")
+            if status == "deleted":
                 continue
             uname = str(u.get("username") or "").strip()
             if not uname:
@@ -720,13 +728,18 @@ class PeerService:
             gid = str(u.get("group_id") or "").strip()
             st = group_stat(gid)
             effective_tags = set(user_tag_map.get(uname) or ())
-            effective_tags.update(group_tag_map.get(gid) or ())
+            if gid in active_group_ids:
+                effective_tags.update(group_tag_map.get(gid) or ())
             path = CCD_DIR / uname
             if not path.is_file():
                 st["no_ccd"] += 1
                 continue
-            cidrs = mesh_lan_cidrs_for_user_group(
-                peers_snapshot, gid, effective_tags,
+            cidrs = (
+                mesh_lan_cidrs_for_user_group(
+                    peers_snapshot, gid, effective_tags,
+                )
+                if status == "active"
+                else []
             )
             try:
                 text = path.read_text(encoding="utf-8")
