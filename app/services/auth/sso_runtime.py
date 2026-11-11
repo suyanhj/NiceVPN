@@ -857,10 +857,16 @@ class SsoRuntime:
                     )
                     # A row with CorpId is intentionally ID-authoritative;
                     # only name-only rows participate in exact name matching.
-                    configured_name_only = [
-                        str(item.get("name") or "")
+                    configured_enterprises = [
+                        {
+                            "corp_id": str(item.get("corp_id") or ""),
+                            "name": str(item.get("name") or ""),
+                        }
                         for item in allowed_entries
-                        if not item.get("corp_id") and item.get("name")
+                    ]
+                    configured_name_only = [
+                        row["name"] for row in configured_enterprises
+                        if not row["corp_id"] and row["name"]
                     ]
                     name_match = bool(identity.enterprise_name) and (
                         identity.enterprise_name in configured_name_only
@@ -868,21 +874,27 @@ class SsoRuntime:
                     allowed = is_allowed_enterprise(
                         config, identity.enterprise_id, identity.enterprise_name,
                     )
+                    match_mode = (
+                        "corp_id" if corp_id_match else "name" if name_match else "none"
+                    )
                     logger.info(
                         "SSO unified DingTalk enterprise allow-list check: "
                         "corp_id=%s verified_enterprise_name=%r "
-                        "configured_name_only=%r corp_id_match=%s name_match=%s result=%s",
+                        "configured_enterprises=%r configured_name_only=%r "
+                        "corp_id_match=%s name_match=%s match_mode=%s result=%s",
                         identity.enterprise_id, identity.enterprise_name or "<empty>",
-                        configured_name_only, corp_id_match, name_match,
+                        configured_enterprises, configured_name_only,
+                        corp_id_match, name_match, match_mode,
                         "allow" if allowed else "deny",
                     )
                     if not allowed:
                         logger.warning(
                             "SSO unified DingTalk rejected: corp_id=%s "
-                            "verified_enterprise_name=%r configured_name_only=%r "
-                            "corp_id_match=%s name_match=%s",
+                            "verified_enterprise_name=%r configured_enterprises=%r "
+                            "configured_name_only=%r corp_id_match=%s name_match=%s",
                             identity.enterprise_id, identity.enterprise_name or "<empty>",
-                            configured_name_only, corp_id_match, name_match,
+                            configured_enterprises, configured_name_only,
+                            corp_id_match, name_match,
                         )
                         deny_reason = "enterprise_not_allowed"
                         identity = None
