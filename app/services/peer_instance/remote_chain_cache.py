@@ -141,6 +141,16 @@ def _normalize_rows_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"rest": s, "enabled": True} for s in rests]
 
 
+def delete_remote_chain_cache(peer_id: str) -> None:
+    """删除已删除对端的本地工作副本及写回前备份，避免孤儿标签引用。"""
+    for path in (_path_for_peer(peer_id), _prepush_bak_path(peer_id)):
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as exc:
+            logger.warning("删除对端链缓存失败 peer=%s path=%s: %s", peer_id, path, exc)
+
+
 def read_remote_chain_cache(peer_id: str) -> dict[str, Any] | None:
     """读取对端链缓存。无文件或损坏时返回 ``None``。始终含规范化后的 ``rows``。"""
     p = _path_for_peer(peer_id)
