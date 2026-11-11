@@ -2,13 +2,16 @@
 """Enterprise SSO settings for NiceGUI admin, never mounted on Public API."""
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from nicegui import ui
 
 from app.core.config import load_config, save_config
 from app.services.auth.provider_store import (
     SsoProviderStore, UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID,
+)
+from app.services.auth.dingtalk_enterprise_lookup import (
+    get_dingtalk_enterprise_lookup_store,
 )
 from app.utils.public_domains import resolve_sso_origin, with_default_ip_api_port
 from app.utils.sso_enterprises import parse_allowed_enterprises
@@ -113,9 +116,19 @@ class SsoSettingsPanel:
                         str(company.get("corp_id") or ""),
                         str(company.get("name") or ""),
                     )
-                ui.button("添加企业", icon="add", on_click=lambda: self._add_allowed_company()).props(
-                    "outline no-caps"
-                )
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    ui.button(
+                        "添加企业", icon="add",
+                        on_click=lambda: self._add_allowed_company(),
+                    ).props("outline no-caps")
+                    self.lookup_button = ui.button(
+                        "从钉钉选择企业并获取 ID",
+                        icon="travel_explore",
+                        on_click=self._start_enterprise_lookup,
+                    ).props("outline no-caps")
+                self.lookup_status = ui.label(
+                    "无需进入钉钉企业后台：点击查询，在钉钉授权页选择企业，CorpId 会自动填入此处。"
+                ).classes("text-xs text-gray-500")
                 if dingtalk is None and self.providers.legacy_dingtalk_companies():
                     ui.button(
                         "导入旧钉钉配置", icon="upload", on_click=self._import_legacy,
@@ -156,6 +169,91 @@ class SsoSettingsPanel:
                     on_click=lambda: self._remove_allowed_company(container),
                 ).props("flat round color=negative").classes("mt-2")
         self.allowed_company_rows.append((container, corp_input, name_input))
+
+    def _apply_enterprise_lookup(self, corp_id: str, name: str) -> None:
+        """Fill an existing blank/duplicate row or append the verified CorpId."""
+        for _, corp_input, name_input in self.allowed_company_rows:
+            current = str(corp_input.value or "").strip()
+            if current == corp_id:
+                if name and not str(name_input.value or "").strip():
+                    name_input.value = name
+                return
+        for _, corp_input, name_input in self.allowed_company_rows:
+            if not str(corp_input.value or "").strip() and not str(name_input.value or "").strip():
+                corp_input.value = corp_id
+                name_input.value = name
+                return
+        self._add_allowed_company(corp_id, name)
+
+    def _start_enterprise_lookup(self) -> None:
+        """Launch a one-time DingTalk org chooser and auto-fill its CorpId."""
+        lookup_store = get_dingtalk_enterprise_lookup_store()
+        timer = None
+        try:
+            provider = self.providers.get(
+                UNIFIED_DINGTALK_ID, require_enabled=False,
+            )
+            if provider is None:
+                raise ValueError("请先保存钉钉 Client ID 和 Client Secret，再查询企业")
+            origin = resolve_sso_origin(load_config()).rstrip("/")
+            if not origin:
+                raise ValueError("请先配置可被钉钉访问的公网认证地址")
+            callback_url = origin + "/auth/sso/dingtalk/enterprise-lookup/callback"
+            state = lookup_store.create(callback_url, provider.app_id)
+            start_url = (
+                origin + "/auth/sso/dingtalk/enterprise-lookup/start?state="
+                + quote(state, safe="")
+            )
+            self.lookup_button.disable()
+            self.lookup_status.set_text("已打开钉钉授权页，请选择需要加入白名单的企业……")
+
+            def poll_result() -> None:
+                nonlocal timer
+                result = lookup_store.get(state)
+                if result is None:
+                    if timer is not None:
+                        timer.deactivate()
+                    self.lookup_button.enable()
+                    self.lookup_status.set_text("企业查询已超时，请重新发起。")
+                    return
+                if result.status == "completed":
+                    if timer is not None:
+                        timer.deactivate()
+                    lookup_store.consume(state)
+                    self._apply_enterprise_lookup(
+                        result.corp_id, result.enterprise_name,
+                    )
+                    self.lookup_button.enable()
+                    if result.enterprise_name:
+                        self.lookup_status.set_text(
+                            f"已获取：{result.enterprise_name}（{result.corp_id}），请保存统一认证配置。"
+                        )
+                        safe_notify("已获取企业信息并填入白名单，点击保存后生效", type="positive")
+                    else:
+                        self.lookup_status.set_text(
+                            f"已获取 CorpId：{result.corp_id}；企业名称接口无权限或不可用，"
+                            "CorpId 已填入白名单，请保存配置。"
+                        )
+                        safe_notify(
+                            "已获取企业 CorpId 并填入白名单；名称读取失败不影响 CorpId 认证",
+                            type="warning", multi_line=True,
+                        )
+                elif result.status == "failed":
+                    if timer is not None:
+                        timer.deactivate()
+                    lookup_store.consume(state)
+                    self.lookup_button.enable()
+                    self.lookup_status.set_text("企业查询未完成，请重新发起并检查钉钉授权。")
+                    safe_notify("钉钉企业查询未完成，请查看服务日志", type="warning")
+
+            timer = ui.timer(1.0, poll_result, active=True)
+            ui.navigate.to(start_url, new_tab=True)
+        except Exception as exc:
+            if timer is not None:
+                timer.deactivate()
+            if hasattr(self, "lookup_button"):
+                self.lookup_button.enable()
+            safe_notify(f"无法发起钉钉企业查询：{exc}", type="warning", multi_line=True)
 
     def _remove_allowed_company(self, container) -> None:
         self.allowed_company_rows = [
