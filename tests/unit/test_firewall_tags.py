@@ -277,3 +277,22 @@ def test_batch_group_tag_association(store):
         "group", ["g1"], ["g-tag"], operation="add"
     )
     assert store.list_entity_tag_ids("group", "g1") == ["g-tag"]
+
+
+
+def test_bulk_tag_memberships_include_direct_users_and_groups(store):
+    store.create_tag("tag-route", "Mesh 路由")
+    store.create_tag("tag-fw", "远端防火墙")
+    store.set_tag_members(
+        "tag-route", usernames=["alice"], group_ids=["g1"],
+    )
+    store.set_tag_members(
+        "tag-fw", usernames=["bob"], group_ids=[],
+    )
+
+    memberships = store.list_tag_memberships()
+    assert memberships["users"] == {
+        "alice": ["tag-route"],
+        "bob": ["tag-fw"],
+    }
+    assert memberships["groups"] == {"g1": ["tag-route"]}
