@@ -1,12 +1,13 @@
 """Real OpenVPN daemon not required for isolated SSO Management tests."""
 import time
+import threading
 from pathlib import Path
 
 import pytest
 
 from app.services.auth.office_oauth import EnterpriseIdentity
 from app.services.auth.openvpn_webauth import ClientNotification
-from app.services.auth.sso_runtime import SsoRuntime
+from app.services.auth.sso_runtime import ManagementInstance, SsoRuntime
 from app.services.auth.enterprise_sso_policy import SsoPolicyService
 from app.services.auth.provider_store import SsoProviderStore
 from app.services.auth.sso_transactions import WebAuthTransactionStore
@@ -126,3 +127,44 @@ def test_public_origin_rejects_bad_urls(bundle):
     ):
         with pytest.raises(ValueError):
             SsoRuntime(instances=["server"], public_base_url=url, policy=policy)
+
+
+def test_management_disconnect_uses_client_id_and_confirms_status_absence(tmp_path):
+    runtime = type("RuntimeStub", (), {"stop_event": threading.Event()})()
+    manager = ManagementInstance("server", tmp_path / "management.sock", runtime)
+    snapshots = iter([
+        ({42: ("cert-1", 1700000000)}, 1.0),
+        ({}, 2.0),
+    ])
+    commands = []
+    manager.wait_for_status = lambda *, after, timeout: next(snapshots, None)
+    manager.send = commands.append
+
+    assert manager.disconnect_common_name("cert-1", timeout=1.0) == (1, 1, 0)
+    assert commands == ["client-kill 42\\n"]
+
+
+def test_management_disconnect_reports_unconfirmed_if_client_remains_online(tmp_path):
+    runtime = type("RuntimeStub", (), {"stop_event": threading.Event()})()
+    manager = ManagementInstance("server", tmp_path / "management.sock", runtime)
+    snapshots = iter([
+        ({42: ("cert-1", 1700000000)}, 1.0),
+        ({42: ("cert-1", 1700000000)}, 2.0),
+    ])
+    commands = []
+    manager.wait_for_status = lambda *, after, timeout: next(snapshots, None)
+    manager.send = commands.append
+
+    assert manager.disconnect_common_name("cert-1", timeout=0.1) == (1, 0, 1)
+    assert commands == ["client-kill 42\\n"]
+
+
+def test_management_disconnect_offline_user_is_noop(tmp_path):
+    runtime = type("RuntimeStub", (), {"stop_event": threading.Event()})()
+    manager = ManagementInstance("server", tmp_path / "management.sock", runtime)
+    manager.wait_for_status = lambda *, after, timeout: ({}, 1.0)
+    commands = []
+    manager.send = commands.append
+
+    assert manager.disconnect_common_name("offline-user", timeout=1.0) == (0, 0, 0)
+    assert commands == []
