@@ -9,32 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import re
 from urllib.parse import urlencode, urlsplit
 
 import httpx
 
 logger = logging.getLogger(__name__)
-_SAFE_API_CODE = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
-
-
-def _safe_error_detail(response: httpx.Response) -> tuple[str, str]:
-    """Extract only documented error *identifiers*, never an API body or token."""
-    try:
-        body = response.json()
-    except (ValueError, UnicodeDecodeError):
-        return "unavailable", ""
-    if not isinstance(body, dict):
-        return "unavailable", ""
-    raw_code = str(body.get("code") or body.get("errcode") or "")
-    code = raw_code if _SAFE_API_CODE.fullmatch(raw_code) else "unavailable"
-    access_detail = body.get("accessdenieddetail") or body.get("accessDeniedDetail") or {}
-    raw_scopes = access_detail.get("requiredScopes", []) if isinstance(access_detail, dict) else []
-    if not isinstance(raw_scopes, list):
-        raw_scopes = []
-    scopes = [scope for scope in raw_scopes[:12]
-              if isinstance(scope, str) and _SAFE_API_CODE.fullmatch(scope)]
-    return code, ",".join(scopes)
 
 
 class OfficeAuthError(ValueError):
@@ -48,7 +27,7 @@ class OfficeProvider:
     enterprise_id: str        # approved CorpId
     app_id: str               # DingTalk AppKey or WeCom AgentId
     secret: str               # server-only app secret
-    read_user_profile: bool = False  # per-company, requires Contact.User.Read grant
+    read_user_profile: bool = False  # legacy persisted column, no longer queried
 
     def validate(self) -> None:
         if self.kind not in ("dingtalk", "wecom"):
@@ -158,47 +137,9 @@ async def exchange_code(
             # SsoRuntime.finish, with the verified token result, not browser input.
             if not is_unified and corp_id != provider.enterprise_id:
                 raise OfficeAuthError("DingTalk enterprise verification failed")
-            # A user access token already proves OAuth authorization for this
-            # organization. Personal identity is optional for the permission
-            # decision but used for audit when the app has Contact.User.Read.
-            user_id = ""
-            if not provider.read_user_profile:
-                logger.info("SSO DingTalk user detail skipped: provider=%s; "
-                            "enable personal-directory permission after granting it",
-                            provider.id)
-                return EnterpriseIdentity("dingtalk", corp_id, user_id)
-            try:
-                detail = await _get_json(await http.get(
-                    "https://api.dingtalk.com/v1.0/contact/users/me",
-                    headers={"x-acs-dingtalk-access-token": access_token},
-                ))
-                user_id = str(detail.get("unionId") or detail.get("openId") or "")
-                logger.info(
-                    "SSO DingTalk user detail: provider=%s corp_id=%s external_user_id=%s "
-                    "identity_source=%s",
-                    provider.id, corp_id, user_id or "<unavailable>",
-                    "unionId" if detail.get("unionId") else "openId" if detail.get("openId") else "none",
-                )
-                if detail.get("nick") or detail.get("name"):
-                    # Names are personal data. Only emit at DEBUG level;
-                    # never log the entire provider response.
-                    logger.debug("SSO DingTalk user display name: provider=%s name=%s",
-                                 provider.id, str(detail.get("nick") or detail.get("name"))[:80])
-            except httpx.HTTPStatusError as exc:
-                code, required_scopes = _safe_error_detail(exc.response)
-                logger.warning(
-                    "SSO DingTalk user detail unavailable: provider=%s corp_id=%s "
-                    "status=%s error_code=%s required_scopes=%s; corporate login remains valid",
-                    provider.id, corp_id, exc.response.status_code, code,
-                    required_scopes or "<not_provided>",
-                )
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
-                logger.warning(
-                    "SSO DingTalk user detail unavailable: provider=%s corp_id=%s reason=%s; "
-                    "corporate login remains valid",
-                    provider.id, corp_id, type(exc).__name__,
-                )
-            return EnterpriseIdentity("dingtalk", corp_id, user_id)
+            # Membership authorization uses only the verified enterprise.
+            # There is no Contact.User.Read request or employee profile lookup.
+            return EnterpriseIdentity("dingtalk", corp_id, "")
 
         app_token_data = await _get_json(await http.get(
             "https://qyapi.weixin.qq.com/cgi-bin/gettoken",

@@ -231,6 +231,29 @@ def test_management_online_status_refreshes_and_recovers_after_restart(setup):
     assert not runtime3.sessions
 
 
+def test_first_management_heartbeat_persists_when_monotonic_is_below_interval(
+    setup, monkeypatch,
+):
+    db, providers, policy, tmp_path, _, _ = setup
+    runtime, manager = make_runtime(db, providers, policy, tmp_path)
+    approve(runtime, manager, 27)
+    runtime.on_event(manager, ClientNotification("ESTABLISHED", 27))
+    # Recently started hosts have a monotonic uptime below the 5-minute
+    # throttling window; their first heartbeat must not be skipped.
+    monkeypatch.setattr(
+        "app.services.auth.sso_runtime.time.monotonic", lambda: 123.0,
+    )
+    runtime.on_status(manager, {27: ("alice", 456789)})
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT active_client_id, active_connected_at FROM sso_auth_sessions"
+        ).fetchone()
+        assert tuple(row) == (27, 456789)
+    assert runtime.online_written_at[("server", 27)] == 123.0
+    runtime.on_status(manager, {27: ("alice", 456789)})
+    with db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 1
+
 def test_status_poll_does_not_hit_sqlite_per_unknown_client_every_few_seconds(
     setup, monkeypatch,
 ):

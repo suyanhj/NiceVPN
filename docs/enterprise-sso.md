@@ -51,22 +51,22 @@
 ## 管理端配置（开发分支，未完成实机验收）
 
 1. 在钉钉开放平台准备 **一套统一 OAuth 应用凭证**：Client ID（企业内部应用为 AppKey，第三方企业应用为 SuiteKey）和 Client Secret，并在应用后台登记登录回调地址。
-2. 在 `系统设置 → 企业认证 → 统一钉钉身份认证` 输入全局 Client ID / Secret，并为每家允许登录的企业填入 `CorpId | 企业名称`，一行一条。**企业名称仅用于展示，必须以 CorpId 精确验证**。保存后无需每家公司单独填写 AppKey/Secret。
+2. 在 `系统设置 → 企业认证 → 统一认证` 选择认证方式：**钉钉**填写一套全局 Client ID / Secret 和多家企业的 `CorpId | 企业名称`（每行一条，名称仅展示）；**企业微信**填写企业 CorpId、应用 AgentId 与 Secret。保存后只有选中的认证方式生效。
 3. 原有多企业配置仅在未启用统一登录前保留；完成统一登录配置保存/导入后会清除旧企业应用凭证。操作前请备份数据库。已有旧配置可点击「从旧多企业配置导入」，以第一套已启用钉钉应用凭证作为全局应用，同时导入已有公司 CorpId；操作完成后必须在钉钉实际验证该应用能否为其他企业登录，不能将导入视作已完成跨企业授权。
 4. 在办公系统登记 OAuth 回调 URI：
    - 钉钉：`http://服务器IP:API端口/auth/sso/dingtalk/callback`（也支持 HTTPS 域名）
    - 企业微信：`http://服务器IP:API端口/auth/sso/wecom/callback`（也支持 HTTPS 域名）
 5. 在企业认证设置中输入 `enterprise_sso_public_base_url`，例如 `http://192.168.1.10:8881`、`http://vpn.example.com:8881` 或 `https://vpn.example.com`（不含路径）。无需域名或反向代理也能由 NiceVPN HTTP API 提供回调。如果有反代，也支持 HTTP 或 HTTPS 转发。**不要将 NiceGUI 管理端公开暴露。**
-6. 在**组管理或标签管理的新建/编辑弹窗**开启“启用企业认证（SSO）”。总开关打开但组与标签都不要求的证书保留原有逻辑。Linux 命令行证书不要放在启用 SSO 的组或标签内，不依据 `IV_PLAT` 自动豁免。
+6. 在企业认证设置中打开“开启认证”；需要所有 VPN 证书使用企业登录时，再打开“所有人生效”。**不需要全员认证**时，关闭“所有人生效”，在组管理或标签管理的弹窗中对目标组/标签开启 SSO。没有 WEB_AUTH 能力的客户端不要纳入必须 SSO 的范围，不依据 `IV_PLAT` 自动豁免。
 7. 完成 POC 和 OpenVPN 客户端测试后，才在管理端打开全局总开关。保存后还需要重启 NiceVPN、重新生成并重启 OpenVPN 实例；未生效前不应把界面状态当作已执行策略。
 
 ### 运行时与设备绑定
 
 - SSO 总开关关闭时仍使用既有 `management 127.0.0.1 7505+index`，不改变现有 OpenVPN 管理方式。
 - 总开关打开时，由 NiceVPN 管理每实例的 root 限制 Unix Management Socket；已有用户踢出（kill）功能转由同一控制器执行。
-- **仅当组或标签要求 SSO** 才触发钉钉/企业微信网页认证；未启用 SSO 的用户按 OpenVPN 原有连接逻辑直接继续。
+- 总开关打开后，“所有人生效”会对全部证书连接触发钉钉/企业微信网页认证；否则仅对要求 SSO 的组/标签生效，其他证书按 OpenVPN 原有连接逻辑继续。
 - 经过可信企业认证后，NiceVPN 仅对同实例、CN、客户端公网地址与端口发布 **120 秒的后置 client-connect 授权证明**；设备绑定脚本仅记录设备信息，**跳过设备指纹绑定校验**。没有通过 SSO 的连接继续执行原有设备绑定策略。不额外实现 CA、CRL、证书有效期校验，证书验证仍由 OpenVPN 原生完成。
-- Unix Management 及 SSO grant 文件不对公网开放。客户端无 WEB_AUTH 能力时，**仅命中强制 SSO 组或标签**才拒绝连接，其余证书按原有连接行为处理。
+- Unix Management 及 SSO grant 文件不对公网开放。客户端无 WEB_AUTH 能力时，命中全员认证或强制 SSO 组/标签均拒绝连接，其余证书按原有连接行为处理。
 - 登录事务最长 180 秒，state 和 WebAuth Token 原文不会入库；审计不含 OAuth code、access token、AppSecret。
 - 对于 OpenVPN 2.x CLI 等无浏览器界面的客户端，管理员可使用不要求 SSO 的组和标签管理其专用证书；如果同一证书被包含在强制 SSO 的组或标签中，则不能因客户端是 Linux 而跳过。
 - SSO 加密主密钥位于 `data/sso_provider_master.key`，文件权限须为 `0600`，完整备份中需随 SQLite 一同保存；恢复时不可缺失该文件。
@@ -110,9 +110,9 @@ xx.hj.com,192.168.1.1:80,https://sso.example.com
 
 ## DingTalk 身份核对日志
 
-SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换取返回的 CorpId**、是否与配置匹配，以及在具备权限时返回的 `unionId/openId`。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，复用既有的有限字节尾部读取、手动刷新和实时查看；按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。文件不包含 OAuth Code、Token 或密钥。
+SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换取返回的 CorpId**。钉钉不再额外读取个人资料，外部用户 ID 留空；企业微信仍使用官方必需的员工身份接口确认内部成员。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID（如提供商返回）、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。文件不包含 OAuth Code、Token 或密钥。
 
-用户 Token 换取 200、`GET /v1.0/contact/users/me` 返回 403：很可能未获 `Contact.User.Read` 权限。日志仅提取明确的服务端错误 Code 和 `requiredScopes` 以便检查，**不记录 HTTP 响应正文、Token、OAuth code 或 AppSecret**。只要用户访问凭证中的企业 CorpId 与所选企业匹配，个人资料不可用不会阻止已验证的企业登录；对应审计记录里的外部用户 ID 可能为空。若需员工 ID，可在钉钉开发者后台申请该应用的个人权限，确认用户授权后再次测试。
+钉钉统一认证只调用 OAuth Token 接口验证企业身份，不再请求 `GET /v1.0/contact/users/me`，因此不需要 `Contact.User.Read` 个人通讯录权限；日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
 
 ## 域名、IP 和外部 API 端口的规范（2026-11-10）
 
@@ -124,23 +124,15 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换
 - 所有业务自定义 URL 均高于全局 `domains`；未设置全局地址时使用系统自动检测的 API IP:端口（含 SSO），自动检测不到外部地址则提示配置。
 - SSO 授权链接在客户端打开浏览器以前就由服务端生成，因此选择 **domains 第一项**；多域名并非自动轮询探活。登录跳转与钉钉回调还需确保对应域名在钉钉后台允许登记。
 
-## 钉钉权限的最小授权与可选用户资料
+## 钉钉权限的最小授权
 
 在钉钉开发者后台 **开发配置 → 权限管理**，查询：
 
 | 类型 | 权限点 | NiceVPN 用途 |
 | --- | --- | --- |
 | 基础 | `open_app_api_base` | 获取钉钉用户访问凭证；企业扫码登录所需 |
-| 个人委托 | `Contact.User.Read` | 获取用户通讯录个人信息；**可选**，用于核对 UnionId/OpenId |
 
-`openid corpid` 属于 OAuth 授权范围，要求登录时返回用户所选企业 CorpId，不是通讯录数据权限。`Contact.User.Read` 必须既在后台开通，又由**登录用户授权**才能成功读取 `GET /v1.0/contact/users/me`。不需要手机号、邮箱、部门列表、全部成员读取权限来完成当前的企业身份验证。
-
-为避免影响未开通通讯录权限的企业，NiceVPN 的统一钉钉应用保留**可选读取员工个人资料**开关（默认关闭）。旧版每企业权限只在未迁移前保留；schema v9 在统一模式启用后清理旧企业配置：
-
-- **关闭**：登录 Scope 只包含 `openid corpid`，仅核验用户选择的企业；不调用 `users/me`，不获取员工 ID。
-- **开启**：登录 Scope **仍保持 `openid corpid`**（官方登录仅列出 `openid` 与 `openid corpid`）；服务端另行尝试调用 `users/me`，在具备相关权限与授权时记录 UnionId/OpenId；403 只记安全错误码，不泄露凭证，也不会因个人资料缺失否定已通过白名单的 CorpId。
-
-仅在钉钉开放平台确认统一应用已具有用户资料读取授权之后才开启。用户资料接口可用性与成员信息范围取决于应用类型、用户授予的权限和企业授权情况。
+`openid corpid` 属于 OAuth 登录授权范围，企业身份由钉钉返回的 CorpId 与 NiceVPN 白名单匹配。**统一认证不提供读取个人资料开关**，不调用 `users/me`，不需要 `Contact.User.Read` 或手机号、邮箱、部门等通讯录权限。数据库内旧字段为兼容历史版本而保留，不影响当前认证行为。
 
 ## 统一钉钉登录与企业白名单（当前实现）
 
@@ -163,7 +155,7 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识、**钉钉 Token 换
 
 OpenVPN 负责 CA、CRL、证书有效期、TLS 握手、重启和客户端自动重连。NiceVPN **不再次验证客户端证书**，仅使用可信 Management CONNECT/REAUTH 环境变量 `tls_digest_sha256_0`，将已经通过 OAuth 的会话与同一份证书绑定；该指纹由 OpenVPN 输出，不来自浏览器或客户端自定义 IV_* 字段。
 
-- **首次登录**：组或标签要求 SSO → OpenVPN 证书验证 → 钉钉 OAuth + 允许企业 CorpId 校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 为已验证证书创建一条 8 小时**离线宽限期**的会话。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止宽限期内复用。
+- **首次登录**：全员认证或组/标签要求 SSO → OpenVPN 证书验证 → 办公系统 OAuth 身份校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 为已验证证书创建一条 8 小时**离线宽限期**的会话。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止宽限期内复用。
 - **在线续期**：每个 OpenVPN 实例的 Unix Management 连接随机间隔 1–5 秒发送一次 `status 3`（**每实例一次全量查询，不按客户端逐个查询**）；只把完整响应中能够以 CID、CN、连接创建时间匹配到已认证 SSO 会话的客户端视为在线。每条在线会话最多每 5 分钟批量原地 `UPDATE last_used_at/expires_at`，不会添加心跳行或审计行。离线时停止续期，继续保留最后一次确认在线时间起约 8 小时的复用窗口；定时删除过期行以防表膨胀。查询异常时不续期、不据此踢人。
 - **NiceVPN 单独重启时**：原 OpenVPN 通道尚在线，管理进程从 SQLite 已记录的 CID + OpenVPN `Connected Since (time_t)` 绑定恢复可信会话，继续原地续期。仅有相同 CN 或只有相同 CID 均不能恢复认证身份；真正的 OpenVPN 重启则通过新 CONNECT 和可信证书指纹复用宽限期内授权。
 - **重新 CONNECT**（OpenVPN 重启、网络中断或客户端主动断开后重连）：NiceVPN 使用来自本次 Management 事件的实例、CN、SHA256 证书指纹查找 SSO 会话，再核对已启用 OAuth 应用与企业白名单；命中即重新发布短期设备指纹豁免授权，直接向 OpenVPN 发送 `client-auth-nt`，无需浏览器重登。原有 OpenVPN client-connect、CCD、IP 分配和防火墙逻辑完全不变。

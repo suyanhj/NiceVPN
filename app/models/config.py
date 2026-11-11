@@ -151,6 +151,10 @@ class SystemConfig(BaseModel):
         default=False,
         description="全局企业身份认证总开关；默认关闭，开启须先完成提供商、WebAuth、管理通道预检",
     )
+    enterprise_sso_all_users: bool = Field(
+        default=False,
+        description="企业身份认证对所有 VPN 证书连接生效；关闭时仅按组/标签 SSO 策略执行",
+    )
     device_bind_exemption_enabled: bool = Field(
         default=False,
         description="通用或强制模式允许组和标签豁免设备绑定",

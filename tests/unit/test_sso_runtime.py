@@ -72,6 +72,23 @@ def test_legacy_when_group_is_not_opted_in_and_unsupported_client(bundle):
     runtime.on_event(mgr, normal)
     assert mgr.commands[-1] == "client-auth-nt 1 0\n"
 
+def test_all_users_switch_requires_sso_for_unmanaged_certificate(bundle, monkeypatch):
+    runtime, _ = bundle
+    mgr = FakeManager()
+    monkeypatch.setattr(
+        "app.services.auth.sso_runtime.load_config",
+        lambda: {"enterprise_sso_all_users": True},
+    )
+    runtime.on_event(mgr, ClientNotification(
+        "CONNECT", 89, 0,
+        {"common_name": "unmanaged-cert", "IV_SSO": "webauth"},
+    ))
+    assert mgr.commands[-1].startswith("client-pending-auth 89 0 WEB_AUTH:")
+    runtime.on_event(mgr, ClientNotification(
+        "CONNECT", 90, 0, {"common_name": "unmanaged-cert"},
+    ))
+    assert mgr.commands[-1].startswith("client-deny 90 0")
+
 
 def test_disconnect_drops_active_pending_state(bundle):
     runtime, policy = bundle

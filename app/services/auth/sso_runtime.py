@@ -256,9 +256,11 @@ class SsoRuntime:
             raise RuntimeError("SSO Management requires root to access restricted Unix sockets")
         if not self.instances:
             raise RuntimeError("No VPN instances configured for SSO")
-        if self.providers.first_enabled() is None:
+        provider = self.providers.first_enabled()
+        if provider is None:
             raise RuntimeError("SSO is enabled but no working OAuth provider is enabled")
-        if self.providers.has_unified() and not load_config().get("enterprise_sso_allowed_corps"):
+        if (provider.id == UNIFIED_DINGTALK_ID
+                and not load_config().get("enterprise_sso_allowed_corps")):
             raise RuntimeError("Unified DingTalk SSO requires at least one allowed CorpId")
         for instance in self.instances.values():
             instance.start()
@@ -335,7 +337,7 @@ class SsoRuntime:
         if provider is None:
             return
         bindings: list[OnlineSsoBinding] = []
-        allowed_corps_config = load_config() if provider.id == UNIFIED_DINGTALK_ID else None
+        sso_config = load_config()
         with self.lock:
             # Do not re-query SQLite for the same unknown/non-SSO client every
             # 1–5 seconds; retry only for a different actual VPN connection.
@@ -348,7 +350,7 @@ class SsoRuntime:
             with self.lock:
                 active = self.sessions.get(key)
                 established = key in self.established
-                last_write = self.online_written_at.get(key, 0.0)
+                last_write = self.online_written_at.get(key)
             if not established and active is None:
                 with self.lock:
                     if self.recovery_checked.get(key) == (common_name, connected_at):
@@ -378,14 +380,17 @@ class SsoRuntime:
                     or active.provider_id != provider.id
                     or active.provider_app_id != provider.app_id):
                 continue
-            if now - last_write < ONLINE_LEASE_WRITE_SECONDS:
+            if last_write is not None and now - last_write < ONLINE_LEASE_WRITE_SECONDS:
                 continue
             if provider.id == UNIFIED_DINGTALK_ID:
-                if not is_allowed_enterprise(allowed_corps_config, active.enterprise_id):
+                if not is_allowed_enterprise(sso_config, active.enterprise_id):
                     continue
             elif active.enterprise_id != provider.enterprise_id:
                 continue
-            policy = self.policy.resolve(common_name, enabled=True)
+            policy = self.policy.resolve(
+                common_name, enabled=True,
+                all_users=bool(sso_config.get("enterprise_sso_all_users", False)),
+            )
             if policy.denied or not policy.requires_sso:
                 continue
             bindings.append(OnlineSsoBinding(
@@ -441,7 +446,10 @@ class SsoRuntime:
         if event.kind not in ("CONNECT", "REAUTH") or event.kid is None:
             return
         key = (inst, event.cid, event.kid)
-        decision = self.policy.resolve(event.common_name, enabled=True)
+        decision = self.policy.resolve(
+            event.common_name, enabled=True,
+            all_users=bool(load_config().get("enterprise_sso_all_users", False)),
+        )
         if decision.denied:
             self.audit.log(event_type="policy_rejected", instance_id=inst,
                            common_name=event.common_name, outcome="failure",
@@ -675,7 +683,10 @@ class SsoRuntime:
                     return SsoFinishResult.DENIED
                 # Re-evaluate only the existing SSO opt-in status. OpenVPN owns
                 # certificate, CRL, device, CCD, and network-access enforcement.
-                policy = self.policy.resolve(request.common_name, enabled=True)
+                policy = self.policy.resolve(
+                    request.common_name, enabled=True,
+                    all_users=bool(load_config().get("enterprise_sso_all_users", False)),
+                )
                 if policy.denied:
                     self.audit.log(event_type="policy_rejected", instance_id=request.instance_id,
                                    common_name=request.common_name, outcome="failure",

@@ -19,6 +19,7 @@ from app.storage.sqlite_store import SqliteStore, get_default_store
 
 SSO_KEY_FILE = SSO_PROVIDER_MASTER_KEY_FILE
 UNIFIED_DINGTALK_ID = "dingtalk_unified"
+UNIFIED_WECOM_ID = "wecom_unified"
 UNIFIED_CORP_MARKER = "__unified__"
 _PROVIDER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -101,8 +102,15 @@ class SsoProviderStore:
     def enabled_metadata(self) -> list[dict]:
         rows = self.list_metadata()
         unified = next((row for row in rows if row["id"] == UNIFIED_DINGTALK_ID), None)
-        if unified is not None:
-            return [unified] if unified["enabled"] else []
+        if unified is not None and unified["enabled"]:
+            return [unified]
+        wecom = next((row for row in rows if row["id"] == UNIFIED_WECOM_ID), None)
+        if wecom is not None and wecom["enabled"]:
+            return [wecom]
+        if unified is not None or wecom is not None:
+            # A configured but disabled unified provider must not silently
+            # fall back to older enterprise credentials.
+            return []
         return [row for row in rows if row["enabled"]]
 
     def first_enabled(self) -> OfficeProvider | None:
@@ -117,8 +125,42 @@ class SsoProviderStore:
             provider_id=UNIFIED_DINGTALK_ID, kind="dingtalk",
             enterprise_id=UNIFIED_CORP_MARKER, app_id=app_id,
             secret=secret, enabled=enabled,
-            display_name="统一钉钉登录", read_user_profile=read_user_profile,
+            display_name="统一钉钉登录", read_user_profile=False,
         )
+
+    def save_wecom_unified(
+        self, *, corp_id: str, agent_id: str, secret: str | None = None,
+    ) -> None:
+        """A single WeCom enterprise app; its CorpID is verified by WeCom."""
+        self.save(
+            provider_id=UNIFIED_WECOM_ID, kind="wecom",
+            enterprise_id=corp_id, app_id=agent_id, secret=secret,
+            enabled=True, display_name="统一企业微信登录",
+        )
+
+    def activate_only(self, provider_id: str) -> None:
+        """Make the admin-selected authentication method the only active one."""
+        if provider_id not in {UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID}:
+            raise ValueError("Unsupported unified authentication method")
+        with self.store.connection(write=True) as conn:
+            active = conn.execute(
+                "SELECT 1 FROM sso_auth_providers WHERE id=?", (provider_id,),
+            ).fetchone()
+            if active is None:
+                raise ValueError("Selected authentication provider is not configured")
+            previously_active = {
+                str(row[0]) for row in conn.execute(
+                    "SELECT id FROM sso_auth_providers WHERE enabled=1"
+                )
+            }
+            conn.execute(
+                "UPDATE sso_auth_providers SET enabled=(id=?), updated_at=datetime('now')",
+                (provider_id,),
+            )
+            if previously_active != {provider_id}:
+                # A change of enterprise identity provider invalidates prior
+                # OAuth cache records, without touching OpenVPN certificates.
+                conn.execute("DELETE FROM sso_auth_sessions")
 
     def legacy_dingtalk_companies(self) -> list[dict]:
         """Safe migration preview: no secrets or credentials are returned."""
@@ -143,8 +185,7 @@ class SsoProviderStore:
         provider = self.get(old_rows[0]["id"])
         if provider is None:
             raise ValueError("历史钉钉应用不可用")
-        self.save_unified(app_id=provider.app_id, secret=provider.secret,
-                          read_user_profile=provider.read_user_profile)
+        self.save_unified(app_id=provider.app_id, secret=provider.secret)
         return self.legacy_dingtalk_companies()
 
     def save(self, *, provider_id: str, kind: str, enterprise_id: str,
@@ -215,8 +256,8 @@ class SsoProviderStore:
                 (UNIFIED_DINGTALK_ID,),
             )
             changed = conn.execute(
-                "DELETE FROM sso_auth_providers WHERE id!=?",
-                (UNIFIED_DINGTALK_ID,),
+                "DELETE FROM sso_auth_providers WHERE id NOT IN (?,?)",
+                (UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID),
             )
             return int(changed.rowcount)
 

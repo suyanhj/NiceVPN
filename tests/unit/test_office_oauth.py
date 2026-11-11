@@ -66,13 +66,16 @@ async def test_dingtalk_rejects_missing_or_wrong_corp_id():
 
 @pytest.mark.asyncio
 async def test_dingtalk_correct_enterprise_allows_without_vpn_user_lookup():
+    requested_paths = []
     def response(request):
+        requested_paths.append(request.url.path)
         if request.url.path.endswith("userAccessToken"):
             return httpx.Response(200, json={"corpId": "corp-good", "accessToken": "valid"})
         return httpx.Response(200, json={"unionId": "external-office-user"})
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
         ident = await exchange_code(_provider(), "code", client=client)
-    assert ident == EnterpriseIdentity("dingtalk", "corp-good", "external-office-user")
+    assert ident == EnterpriseIdentity("dingtalk", "corp-good", "")
+    assert requested_paths == ["/v1.0/oauth2/userAccessToken"]
 
 
 @pytest.mark.asyncio
@@ -122,8 +125,10 @@ def test_oauth_redirect_rejects_malformed_or_unsafe_urls():
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_403_logs_only_safe_error_code_and_scope(caplog):
+async def test_dingtalk_legacy_profile_flag_does_not_make_contact_request(caplog):
+    requested_paths = []
     def response(request):
+        requested_paths.append(request.url.path)
         if request.url.path.endswith("userAccessToken"):
             return httpx.Response(200, json={
                 "corpId": "corp-good", "accessToken": "NEVER_PRINT_ACCESS_TOKEN",
@@ -143,16 +148,18 @@ async def test_dingtalk_403_logs_only_safe_error_code_and_scope(caplog):
     assert identity.external_user_id == ""
     assert "corp_id=corp-good" in caplog.text
     assert "legacy_corp_match=True" in caplog.text
-    assert "corp_id=corp-good" in caplog.text
-    assert "required_scopes=Contact.User.Read" in caplog.text
+    assert requested_paths == ["/v1.0/oauth2/userAccessToken"]
+    assert "required_scopes=" not in caplog.text
     for value in ("NEVER_PRINT_ACCESS_TOKEN", "NEVER_PRINT_REFRESH_TOKEN",
                   "NEVER_PRINT_AUTH_CODE", "NEVER_PRINT_PRIVATE_ERROR_BODY", "secret"):
         assert value not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_200_logs_verified_external_identity(caplog):
+async def test_dingtalk_never_requests_optional_profile_even_when_enabled(caplog):
+    requested_paths = []
     def response(request):
+        requested_paths.append(request.url.path)
         if request.url.path.endswith("userAccessToken"):
             return httpx.Response(200, json={
                 "corpId": "corp-good", "accessToken": "DONT_LOG_TOKEN",
@@ -161,7 +168,8 @@ async def test_dingtalk_200_logs_verified_external_identity(caplog):
     with caplog.at_level("INFO", logger="app.services.auth.office_oauth"):
         async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
             ident = await exchange_code(_provider(), "test-code", client=client)
-    assert ident.external_user_id == "user-union-42"
-    assert "external_user_id=user-union-42" in caplog.text
+    assert ident.external_user_id == ""
+    assert requested_paths == ["/v1.0/oauth2/userAccessToken"]
+    assert "external_user_id=" not in caplog.text
     assert "DONT_LOG_TOKEN" not in caplog.text
     assert "Test User" not in caplog.text

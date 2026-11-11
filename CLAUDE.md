@@ -249,16 +249,16 @@ GitHub Actions 当前主要校验：
 <!-- MANUAL ADDITIONS END -->
 
 - 全局地址覆盖优先级：自动获取 < domains < 业务自定义；域名默认 HTTP 80/HTTPS 443 且不追加 8881，裸 IP 在未写端口时补 `NICEVPN_API_PORT`（默认 8881），显式端口保持不变；浏览器自行遵循站点 3xx，不能强制 HTTPS。
-- 钉钉网页登录官方 Scope 仅 `openid` 或 `openid corpid`；NiceVPN 统一认证始终请求 `openid corpid`。个人资料读取开关只控制是否额外调用 `users/me`，绝不可把 `Contact.User.Read` 当作网页登录 Scope 拼进去。
+- 钉钉网页登录官方 Scope 仅 `openid` 或 `openid corpid`；NiceVPN 统一认证始终请求 `openid corpid`，不调用 `users/me`，也不请求 `Contact.User.Read`。数据库中的旧个人资料标志仅为历史兼容字段。
 
-- SSO WebAuth **只对组或标签明确要求企业认证的连接触发**；未开启的连接经 Management 放行后继续原有 OpenVPN 证书、CCD 与 client-connect 流程。证书 CA / CRL / 有效期由 OpenVPN 原生验证，NiceVPN 不重复实现。
+- SSO WebAuth 受“开启认证”总开关控制；“所有人生效”打开时所有证书连接均要求 SSO，关闭时**仅对组或标签明确要求企业认证的连接触发**。其他连接经 Management 放行后继续 OpenVPN 证书、CCD 与 client-connect 流程。证书 CA / CRL / 有效期由 OpenVPN 原生验证，NiceVPN 不重复实现。
 - 通过可信企业 SSO 的连接使用受限 120 秒 grant 在 client-connect 钩子里跳过设备指纹绑定，仅记录设备和会话审计；未完成 SSO 的连接继续现有设备绑定策略。客户端 IP/port 使用与 Management 事件一致的 trusted/untrusted 备用字段。
 - SSO 审计改为专用文件 `data/logs/sso-auth.jsonl`（UTC 按天轮转，默认保留 7 天）；schema v9 在升级时将 SQLite 历史审计安全导出到 `data/logs/sso-auth-legacy.jsonl`（0600），然后删除废弃的审计表及索引。服务管理 → 本机实例 →「认证日志」复用有界日志窗口。
 - 系统设置页说明一律使用 `render_form_section(description=...)` 或 `field_with_help` 小问号 Tooltip；不要新增多段常驻 `ui.label` 解释文案。字段帮助必须与输入控件处于同一行。
 
 - 统一钉钉提供商 ID 为 `dingtalk_unified`，通过 `SsoProviderStore.save_unified()` 保存一份 Fernet 加密全局 Client ID/Secret。已配置时 `first_enabled()` 和 `enabled_metadata()` 优先且只返回统一应用，关闭时不自动回退到旧企业提供商。
 - 允许企业白名单为 `SystemConfig.enterprise_sso_allowed_corps`，每项仅 `corp_id` / `name`。只有从钉钉 `userAccessToken` 服务端响应获得的 CorpId 精确命中名单才能在 `SsoRuntime.finish()` 放行；禁止浏览器参数直接决定权限。
-- 系统设置页企业认证使用全局钉钉 AppKey/SuiteKey + Secret + 企业白名单，不再逐公司设置 OAuth 密钥。支持显式导入旧版第一套已启用钉钉凭证及企业名单；统一模式成功启用后清理旧企业应用记录。未切换的旧配置仍兼容。
+- 系统设置页企业认证保留“开启认证 / 所有人生效”，在“统一认证”按认证方式展示钉钉或企业微信配置。钉钉使用一套全局 AppKey/SuiteKey + Secret + 企业白名单，不再逐公司设置 OAuth 密钥；支持显式导入旧版钉钉凭证及企业名单。切换认证方式只激活一个提供商并清除旧 OAuth 缓存；旧配置凭证兼容保留。
 - SSO 认证回调中，`SsoFinishResult.DENIED` 对应 HTTP 403（不允许访问）、`EXPIRED` 对应 410（事务真正失效）、`UNAVAILABLE` 对应 503；旧 `finish()` 布尔 API 继续兼容。不得把明确的企业白名单拒绝显示为过期。
 - v9 迁移先将旧审计表导出到权限 0600 的私有 JSONL 再删除；失败则回滚。只清理已启用统一钉钉时多余的旧 provider 行和旧待认证事务；保留加密全局凭证表及 WebAuth 事务表。
 

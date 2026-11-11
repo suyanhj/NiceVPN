@@ -7,7 +7,9 @@ from urllib.parse import urlsplit
 from nicegui import ui
 
 from app.core.config import load_config, save_config
-from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_ID
+from app.services.auth.provider_store import (
+    SsoProviderStore, UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID,
+)
 from app.utils.public_domains import resolve_sso_origin, with_default_ip_api_port
 from app.utils.sso_enterprises import parse_allowed_enterprises, format_allowed_enterprises
 from app.ui.components.actions import primary_action
@@ -43,102 +45,94 @@ class SsoSettingsPanel:
         def global_body():
             self.enable = field_with_help(
                 lambda: ui.switch(
-                    "开启企业身份认证（全局总开关）",
+                    "开启认证",
                     value=bool(self.cfg.get("enterprise_sso_enabled", False)),
                 ),
-                "只有启用企业认证的组或标签才进行 SSO；其他连接继续原有流程。"
-                "企业认证成功后仅记录设备，不执行设备绑定校验。"
-                "启用或关闭需重启 NiceVPN 及 OpenVPN 实例。",
-                aria_label="企业认证总开关说明",
+                "修改后需要重启 NiceVPN 和 OpenVPN。",
+                aria_label="开启认证说明",
+                control_grow=False,
+            )
+            self.all_users = field_with_help(
+                lambda: ui.switch(
+                    "所有人生效",
+                    value=bool(self.cfg.get("enterprise_sso_all_users", False)),
+                ),
+                "开启后全部 VPN 证书连接均要求认证；关闭时只按组或标签要求认证。",
+                aria_label="全员认证说明",
                 control_grow=False,
             )
             self.base_url = field_with_help(
                 lambda: ui.input(
-                    "认证地址（HTTP / HTTPS）",
+                    "认证地址",
                     value=str(self.cfg.get("enterprise_sso_public_base_url") or ""),
                     placeholder=resolve_sso_origin(self.cfg) or "http://192.168.1.10:8881",
                 ).classes("w-full"),
-                "地址优先级：自动获取 < 全局访问地址 < 自定义。"
-                "域名默认使用 80/443；IP 未指定端口自动使用 API 端口。"
-                "正式启用前需验证 OAuth 回调和客户端 WebAuth 兼容性。",
+                "留空时使用系统访问地址；支持 HTTP/HTTPS 和 IP:端口。",
                 aria_label="企业认证地址说明",
             )
         render_form_section(
-            "企业认证总开关",
-            kicker="Enterprise SSO",
-            description="通过办公系统核验企业成员，VPN 网络权限仍由证书、组和标签控制。",
+            "认证开关",
             body=global_body,
             actions=lambda: primary_action(
-                "保存认证设置", icon="save", on_click=self._save_global,
+                "保存", icon="save", on_click=self._save_global,
             ),
         )
 
         def unified_body() -> None:
-            metadata = next(
-                (row for row in self.providers.list_metadata()
-                 if row["id"] == UNIFIED_DINGTALK_ID), None,
-            )
-            self.unified_app_id = field_with_help(
-                lambda: ui.input(
-                    "全局钉钉 Client ID（AppKey / SuiteKey）",
-                    value=str(metadata["app_id"]) if metadata else "",
-                    placeholder="只需要配置一套应用 Client ID",
-                ).classes("w-full"),
-                "企业内部应用使用 AppKey；第三方企业应用使用 SuiteKey。"
-                "所有允许的企业共用这套 OAuth 应用凭证。",
-                aria_label="统一钉钉应用标识说明",
-            )
-            self.unified_secret = field_with_help(
-                lambda: ui.input(
-                    "全局 Client Secret（已保存时留空不修改）",
+            rows = self.providers.list_metadata()
+            dingtalk = next((row for row in rows if row["id"] == UNIFIED_DINGTALK_ID), None)
+            wecom = next((row for row in rows if row["id"] == UNIFIED_WECOM_ID), None)
+            current = "wecom" if wecom and wecom["enabled"] else "dingtalk"
+            self.auth_method = ui.select(
+                {"dingtalk": "钉钉", "wecom": "企业微信"},
+                value=current, label="认证方式",
+            ).classes("w-full")
+
+            with ui.column().classes("w-full gap-3").bind_visibility_from(
+                self.auth_method, "value", backward=lambda value: value == "dingtalk",
+            ):
+                self.unified_app_id = ui.input(
+                    "Client ID（AppKey / SuiteKey）",
+                    value=str(dingtalk["app_id"]) if dingtalk else "",
+                ).classes("w-full")
+                self.unified_secret = ui.input(
+                    "Client Secret（留空则不修改）",
                     password=True, password_toggle_button=True,
-                ).classes("w-full"),
-                "只会保存在本地加密存储中，不显示在企业白名单或认证记录中。",
-                aria_label="统一钉钉应用密钥说明",
-            )
-            self.unified_profile = field_with_help(
-                lambda: ui.switch(
-                    "尝试读取个人资料（可选）",
-                    value=bool(metadata["read_user_profile"]) if metadata else False,
-                ),
-                "需要在钉钉后台开通 Contact.User.Read 个人资料接口权限。"
-                "登录 Scope 保持钉钉官方支持的 openid corpid，"
-                "仅在开启此项时尝试读取 users/me；失败不影响企业 CorpId 验证。",
-                aria_label="个人资料读取说明",
-                control_grow=False,
-            )
-            self.allowed_corps = field_with_help(
-                lambda: ui.textarea(
-                    "允许登录的企业（每行：CorpId | 企业名称）",
-                    value=format_allowed_enterprises(
-                        self.cfg.get("enterprise_sso_allowed_corps") or []
-                    ),
-                    placeholder="dingxxxxxxxxxx | 广州公司\\ndingyyyyyyyyyy | 深圳公司",
-                ).classes("w-full").props("autogrow"),
-                "必须填写钉钉真实 CorpId；企业名称可省略，仅用于界面展示。"
-                "只认钉钉服务端返回的 CorpId，不支持按企业名称模糊放行。"
-                "配置保存后生效，无须为每家公司单独添加 AppKey/AppSecret。",
-                aria_label="允许的企业白名单说明",
-                align="start",
-            )
-            if metadata is None and self.providers.legacy_dingtalk_companies():
-                ui.button(
-                    "从旧多企业配置导入", icon="upload",
-                    on_click=self._import_legacy,
-                ).props("outline").tooltip(
-                    "只复制第一套已启用钉钉应用凭证，并导入旧企业 CorpId 白名单；"
-                    "导入成功后清除不再使用的旧企业凭证，操作前请先备份数据库。"
+                ).classes("w-full")
+                self.allowed_corps = field_with_help(
+                    lambda: ui.textarea(
+                        "允许企业（每行：CorpId | 企业名称）",
+                        value=format_allowed_enterprises(
+                            self.cfg.get("enterprise_sso_allowed_corps") or []
+                        ),
+                        placeholder="dingxxxxxxxxxx | 广州公司\\ndingyyyyyyyyyy | 深圳公司",
+                    ).classes("w-full").props("autogrow"),
+                    "仅以钉钉返回的 CorpId 校验企业身份。",
+                    aria_label="钉钉企业白名单说明", align="start",
                 )
+                if dingtalk is None and self.providers.legacy_dingtalk_companies():
+                    ui.button(
+                        "导入旧钉钉配置", icon="upload", on_click=self._import_legacy,
+                    ).props("outline").tooltip("导入前请备份数据库。")
+
+            with ui.column().classes("w-full gap-3").bind_visibility_from(
+                self.auth_method, "value", backward=lambda value: value == "wecom",
+            ):
+                self.wecom_corp_id = ui.input(
+                    "企业 CorpId", value=str(wecom["enterprise_id"]) if wecom else "",
+                ).classes("w-full")
+                self.wecom_agent_id = ui.input(
+                    "应用 AgentId", value=str(wecom["app_id"]) if wecom else "",
+                ).classes("w-full")
+                self.wecom_secret = ui.input(
+                    "应用 Secret（留空则不修改）",
+                    password=True, password_toggle_button=True,
+                ).classes("w-full")
         render_form_section(
-            "统一钉钉身份认证",
-            kicker="Unified DingTalk OAuth",
-            description=(
-                "全局只需配置一套钉钉 OAuth Client ID/Secret；"
-                "企业管理仅维护 CorpId 白名单。登录方式由钉钉官方页面提供。"
-            ),
+            "统一认证",
             body=unified_body,
             actions=lambda: primary_action(
-                "保存统一认证配置", icon="save", on_click=self._save_unified,
+                "保存", icon="save", on_click=self._save_unified,
             ),
         )
 
@@ -167,6 +161,7 @@ class SsoSettingsPanel:
         config = previous.to_dict()
         config.update({
             "enterprise_sso_enabled": enabled,
+            "enterprise_sso_all_users": bool(self.all_users.value),
             "enterprise_sso_public_base_url": with_default_ip_api_port(origin) if origin else None,
         })
         try:
@@ -179,46 +174,62 @@ class SsoSettingsPanel:
         return True
 
     def _save_unified(self) -> bool:
-        """Enable the unified provider only after the company allow-list is saved."""
-        app_id = str(self.unified_app_id.value or "").strip()
-        secret = str(self.unified_secret.value or "") or None
+        """Save the selected authentication method; keep the other credentials."""
+        selected = str(self.auth_method.value or "")
         try:
-            corps = parse_allowed_enterprises(str(self.allowed_corps.value or ""))
-            if not corps:
-                raise ValueError("至少配置一个允许登录的企业 CorpId")
-            if not app_id:
-                raise ValueError("请填写钉钉全局 Client ID")
-            previous = load_config()
-            new_config = previous.to_dict()
-            new_config["enterprise_sso_allowed_corps"] = corps
-            save_config(new_config)
-            try:
-                self.providers.save_unified(
-                    app_id=app_id, secret=secret,
-                    read_user_profile=bool(self.unified_profile.value),
+            if selected == "dingtalk":
+                corps = parse_allowed_enterprises(str(self.allowed_corps.value or ""))
+                if not corps:
+                    raise ValueError("至少配置一个允许登录的企业 CorpId")
+                app_id = str(self.unified_app_id.value or "").strip()
+                if not app_id:
+                    raise ValueError("请填写钉钉 Client ID")
+                previous = load_config()
+                new_config = previous.to_dict()
+                new_config["enterprise_sso_allowed_corps"] = corps
+                save_config(new_config)
+                try:
+                    self.providers.save_unified(
+                        app_id=app_id,
+                        secret=str(self.unified_secret.value or "") or None,
+                    )
+                    self.providers.activate_only(UNIFIED_DINGTALK_ID)
+                except Exception:
+                    save_config(previous.to_dict())
+                    raise
+                self.unified_secret.value = ""
+                self.cfg = load_config()
+            elif selected == "wecom":
+                corp_id = str(self.wecom_corp_id.value or "").strip()
+                agent_id = str(self.wecom_agent_id.value or "").strip()
+                if not corp_id or not agent_id:
+                    raise ValueError("请填写企业微信 CorpId 和 AgentId")
+                self.providers.save_wecom_unified(
+                    corp_id=corp_id, agent_id=agent_id,
+                    secret=str(self.wecom_secret.value or "") or None,
                 )
-            except Exception:
-                save_config(previous.to_dict())
-                raise
-            self.cfg = load_config()
-            self.unified_secret.value = ""
+                self.providers.activate_only(UNIFIED_WECOM_ID)
+                self.wecom_secret.value = ""
+            else:
+                raise ValueError("请选择认证方式")
         except Exception as exc:
-            safe_notify(f"统一钉钉配置保存失败: {exc}", type="negative")
+            safe_notify(f"统一认证配置保存失败: {exc}", type="negative")
             return False
-        try:
-            removed = self.providers.cleanup_unified_legacy()
-        except Exception as exc:
+        if selected == "dingtalk":
+            try:
+                removed = self.providers.cleanup_unified_legacy()
+            except Exception as exc:
+                safe_notify(
+                    f"配置已保存，但旧凭证清理未完成：{exc}。",
+                    type="warning", multi_line=True,
+                )
+                return True
             safe_notify(
-                f"统一认证已保存，但旧凭证清理未完成：{exc}。"
-                "请检查后重新保存；已保存的统一配置仍有效。",
-                type="warning", multi_line=True,
+                f"统一认证已保存，已清理 {removed} 条旧应用凭证；重启 NiceVPN 后生效",
+                type="positive", multi_line=True,
             )
-            return True
-        safe_notify(
-            f"统一认证已保存；已清理 {removed} 条旧企业应用凭证。"
-            "请重启 NiceVPN，使新的 WebAuth 连接使用统一登录",
-            type="positive", multi_line=True,
-        )
+        else:
+            safe_notify("企业微信认证已保存；重启 NiceVPN 后生效", type="positive")
         return True
 
     def _import_legacy(self) -> bool:
@@ -242,6 +253,7 @@ class SsoSettingsPanel:
             save_config(cfg)
             try:
                 self.providers.import_legacy_dingtalk()
+                self.providers.activate_only(UNIFIED_DINGTALK_ID)
             except Exception:
                 save_config(old_cfg.to_dict())
                 raise

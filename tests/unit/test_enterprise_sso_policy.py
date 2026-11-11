@@ -20,6 +20,15 @@ def test_default_off_is_legacy_even_for_unknown_cn(policy):
     assert svc.resolve("external", enabled=False).mode == "legacy"
     assert svc.resolve("alice", enabled=True).mode == "legacy"
 
+def test_global_all_users_requires_sso_even_for_unknown_cn(policy):
+    _, svc = policy
+    for cn in ("alice", "bob", "external"):
+        result = svc.resolve(cn, enabled=True, all_users=True)
+        assert result.requires_sso
+        assert result.sources == ("global",)
+    assert svc.resolve("external", enabled=False, all_users=True).mode == "legacy"
+    assert svc.resolve("\n", enabled=True, all_users=True).denied
+
 
 def test_group_can_require_sso_without_mapping_dingtalk_user(policy):
     _, svc = policy

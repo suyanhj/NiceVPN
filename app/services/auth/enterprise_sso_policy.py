@@ -35,12 +35,17 @@ class SsoPolicyService:
     def __init__(self, store: SqliteStore | None = None):
         self.store = store if store is not None else get_default_store()
 
-    def resolve(self, common_name: str, *, enabled: bool) -> SsoPolicyDecision:
+    def resolve(
+        self, common_name: str, *, enabled: bool, all_users: bool = False,
+    ) -> SsoPolicyDecision:
         if not enabled:
             return SsoPolicyDecision("legacy", reason="global_disabled")
         cn = str(common_name or "").strip()
         if not cn or "\n" in cn or "\r" in cn:
             return SsoPolicyDecision("reject", reason="invalid_certificate_cn")
+        if all_users:
+            # Global opt-in is explicit; do not silently exempt unmanaged CNs.
+            return SsoPolicyDecision("required", ("global",), "global_all_users")
         with self.store.connection() as conn:
             # Certificate issuer/CRL validation belongs to OpenVPN; this query
             # only resolves the existing NiceVPN policy owner for that CN.

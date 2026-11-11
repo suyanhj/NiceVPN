@@ -3,7 +3,9 @@ import os
 
 import pytest
 
-from app.services.auth.provider_store import ProviderSecretError, SsoProviderStore
+from app.services.auth.provider_store import (
+    ProviderSecretError, SsoProviderStore, UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID,
+)
 from app.storage.sqlite_store import SqliteStore
 
 
@@ -85,3 +87,34 @@ def test_multiple_subsidiaries_have_independent_credentials_and_labels(tmp_path)
     assert store.get("shenzhen") is None
     assert store.get("shenzhen", require_enabled=False).secret == "secret-sz"
     assert store.get("guangzhou").secret == "secret-gz"
+
+
+def test_only_selected_authentication_method_is_active(tmp_path):
+    store = SsoProviderStore(
+        SqliteStore(tmp_path / "switch.db"),
+        key_path=tmp_path / "auth.key",
+    )
+    store.save_unified(app_id="ding-app", secret="ding-secret")
+    store.activate_only(UNIFIED_DINGTALK_ID)
+    assert [row["id"] for row in store.enabled_metadata()] == [UNIFIED_DINGTALK_ID]
+    store.save_wecom_unified(
+        corp_id="ww-corp", agent_id="10001", secret="wecom-secret",
+    )
+    store.activate_only(UNIFIED_WECOM_ID)
+    assert [row["id"] for row in store.enabled_metadata()] == [UNIFIED_WECOM_ID]
+    assert store.first_enabled().enterprise_id == "ww-corp"
+    assert store.get(UNIFIED_DINGTALK_ID, require_enabled=False).secret == "ding-secret"
+    store.activate_only(UNIFIED_DINGTALK_ID)
+    assert [row["id"] for row in store.enabled_metadata()] == [UNIFIED_DINGTALK_ID]
+    assert store.get(UNIFIED_WECOM_ID, require_enabled=False).secret == "wecom-secret"
+
+
+def test_unified_dingtalk_ignores_obsolete_profile_flag(tmp_path):
+    store = SsoProviderStore(
+        SqliteStore(tmp_path / "profile.db"),
+        key_path=tmp_path / "auth.key",
+    )
+    store.save_unified(
+        app_id="ding-app", secret="ding-secret", read_user_profile=True,
+    )
+    assert store.get_unified().read_user_profile is False
