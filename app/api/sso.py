@@ -127,6 +127,10 @@ async def choose_provider(request: Request):
     provider = runtime.providers.get(provider_id)
     if provider is None:
         return _html("认证提供商不可用。", code=503)
+    logger.info(
+        "SSO provider selected: provider=%s kind=%s display_name=%r",
+        provider.id, provider.kind, provider.display_name,
+    )
     callback = runtime.public_base_url + f"/auth/sso/{provider.kind}/callback"
     url = authorization_url(
         provider, callback, WebAuthTransactionStore.state_for_token(token),
@@ -171,10 +175,14 @@ async def office_callback(provider_kind: str, request: Request):
             provider, code,
             fetch_enterprise_name=lookup_name if allowed is not None else False,
         )
-    except OfficeAuthError:
-        # Do not leak the third-party code, token, provider secret or CorpId.
+    except OfficeAuthError as exc:
+        # Do not log the third-party code, token or provider secret. OfficeAuthError
+        # messages are controlled, non-secret reasons (e.g. missing CorpId).
         runtime.finish(transaction, state, None)
-        logger.info("Office SSO verification rejected")
+        logger.warning(
+            "Office SSO verification rejected: provider=%s kind=%s reason=%s",
+            provider.id, provider.kind, str(exc),
+        )
         return _html("企业身份认证未通过。", code=403)
 
     result = runtime.finish_with_result(transaction, state, verified)
