@@ -296,6 +296,44 @@ class SsoRuntime:
                 continue
         return success
 
+    def revoke_user_session(self, common_name: str) -> tuple[int, int, bool]:
+        """Invalidate persistent and live SSO state, then request VPN disconnect.
+
+        A client that reconnects must complete a fresh OAuth flow. The
+        management kill command is harmless for an already-offline client.
+        """
+        if not common_name or any(char in common_name for char in "\r\n"):
+            raise ValueError("Invalid VPN common name")
+        with self.lock:
+            canceled = self.transactions.cancel_user(common_name)
+            revoked = self.session_cache.revoke_user(common_name)
+            for key, pending in list(self.pending.items()):
+                if pending.common_name != common_name:
+                    continue
+                self.pending.pop(key, None)
+                manager = self.instances.get(key[0])
+                if manager is not None:
+                    try:
+                        manager.send(auth_deny(key[1], key[2]))
+                    except (OSError, ConnectionError):
+                        logger.warning("SSO pending denial failed for %s", key[0])
+            for key, active in list(self.sessions.items()):
+                if active.common_name == common_name:
+                    self.sessions.pop(key, None)
+                    self.established.discard(key)
+                    self.online_written_at.pop(key, None)
+                    self.establish_timings.pop(key, None)
+            for key, identity in list(self.recovery_checked.items()):
+                if identity[0] == common_name:
+                    self.recovery_checked.pop(key, None)
+            disconnect_sent = self.kill_client_by_common_name(common_name)
+        logger.info(
+            "SSO administrator revoked account session: user=%s rows=%d "
+            "pending=%d disconnect_sent=%s",
+            common_name, revoked, canceled, disconnect_sent,
+        )
+        return revoked, canceled, disconnect_sent
+
     def clear_instance(self, instance_id: str) -> None:
         with self.lock:
             pending_keys = [key for key in self.pending if key[0] == instance_id]

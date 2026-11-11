@@ -161,10 +161,24 @@ OpenVPN 负责 CA、CRL、证书有效期、TLS 握手、重启和客户端自�
 - **重新 CONNECT**（OpenVPN 重启、网络中断或客户端主动断开后重连）：NiceVPN 使用来自本次 Management 事件的实例、CN、SHA256 证书指纹查找 SSO 会话，再核对已启用 OAuth 应用与企业白名单；命中即重新发布短期设备指纹豁免授权，直接向 OpenVPN 发送 `client-auth-nt`，无需浏览器重登。原有 OpenVPN client-connect、CCD、IP 分配和防火墙逻辑完全不变。
 - **TLS REAUTH**：当前活跃连接仍要检查持久化授权记录与撤销状态；长期持续在线的记录因在线确认而续期，不会仅因首次 OAuth 过去 1 小时就要求重新扫码。
 - **缓存失败/过期**：继续原来的钉钉 WebAuth，不退化为仅凭 CN 放行。没有 `tls_digest_sha256_0` 或指纹格式无效时不创建或复用跨重启缓存；当前活跃 TLS 连接仍沿用已授权的内存会话。
-- **安全边界**：管理员禁用 SSO 组标签策略后回到原连接流程；企业从白名单删除、全局 OAuth App ID 切换、缓存过期或管理员显式删除会话时，不再复用缓存；不支持 WEB_AUTH 的全新连接仍不能绕过强制 SSO。会话撤销仅阻止下一次 CONNECT/REAUTH，不会代替 OpenVPN 主动踢出已经建立的隧道。
+- **安全边界**：管理员禁用 SSO 组标签策略后回到原连接流程；企业从白名单删除、全局 OAuth App ID 切换、缓存过期或管理员显式删除会话时，不再复用缓存；不支持 WEB_AUTH 的全新连接仍不能绕过强制 SSO。仅操作 SQLite 撤销方法不会踢掉已连接隧道，用户页的“重置企业认证”则同时发送 Management 踢线指令。
 - **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，在会话有效期间也可能复用 SSO；在线持续续期意味着只要持续连接，授权仍可超过 1 小时。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌，而不是在 NiceVPN 再做 CA 证书校验。
 
-Schema v10 创建 `sso_auth_sessions` 表，v11 给原表增加 `active_client_id` / `active_connected_at`，v12 再增加 `enterprise_name` 列，以便重连时安全复核名称名单；旧记录的名称为空，只能继续按 CorpId 白名单复用。会话仍以 `(instance_id, common_name, cert_fingerprint, provider_id)` 为唯一主键，在线刷新不增加行数。NiceVPN 服务重启只清理内存状态，不清理 SQLite 缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 主动撤销方法；尚未新增管理界面按钮。生产部署后仍须实测不同 OpenVPN 版本的 Management `status 3` 输出、组织权限和长期运行稳定性。
+Schema v10 创建 `sso_auth_sessions` 表，v11 给原表增加 `active_client_id` / `active_connected_at`，v12 再增加 `enterprise_name` 列，以便重连时安全复核名称名单；旧记录的名称为空，只能继续按 CorpId 白名单复用。会话仍以 `(instance_id, common_name, cert_fingerprint, provider_id)` 为唯一主键，在线刷新不增加行数。NiceVPN 服务重启只清理内存状态，不清理 SQLite 缓存。生产部署后仍须实测不同 OpenVPN 版本的 Management `status 3` 输出、组织权限和长期运行稳定性。
+
+### 管理员重置认证会话
+
+在用户管理页点击单人操作中的 **重置企业认证** 图标，或勾选多位用户后点击工具栏 **批量重置企业认证**。确认后针对每个账号：删除全部 VPN 实例与证书指纹对应的持久认证缓存；把未完成的网页登录事务标记为拒绝；清理 NiceVPN 进程中的认证状态；向 OpenVPN Management 发送 `kill <common_name>`。该操作不删除用户、证书或组配置。
+
+- **在线用户**：当前连接会被要求断开；支持自动重连的客户端下次 CONNECT 应进入全新的 OAuth 登录流程。界面仅保证发出 Management 命令，具体踢线结果需以 OpenVPN 状态为准。
+- **离线用户**：没有可主动唤醒的 VPN 客户端，但旧缓存已撤销，因此客户端下次主动连接时必须重新进行 OAuth。即使此前留下多个实例的缓存，也会一并撤销。
+- **重复重置**：没有缓存时仍属于正常操作，便于管理员确认旧会话不会再被复用；已经完成的历史审计记录不会被删除。
+
+### 公网 API 的 Basic 认证边界
+
+独立公网 API 端口挂载 `/api/vpn/...`、`/download/{token}` 和 `/auth/sso/...`，**不挂载 NiceGUI 管理端页面**。`/api/vpn/...` 的增删改操作必须通过 HTTP Basic；一次性下载链接用不可预测、仅一次有效的令牌授权；浏览器访问的 `/auth/sso/start` 和第三方 OAuth 回调**不使用 HTTP Basic**，否则浏览器自动跳转及办公平台回调会被 Basic 挑战阻断。
+
+SSO 的授权边界由短期一次性 `t/state`、服务端保存的连接实例/CID/KID、钉钉/企业微信官方令牌校验、企业白名单及原生 OpenVPN 证书校验构成；无正确事务令牌的公网请求不能单独放行 VPN。公网部署应使用 HTTPS，限制公网防火墙只放行必要 API 端口，禁止把管理员端口或 Management Socket 暴露到公网；勿在反向代理日志中记录 OAuth 授权码或 URL 一次性令牌。
 
 ### NiceVPN 可观测耗时
 

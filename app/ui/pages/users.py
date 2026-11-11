@@ -163,6 +163,13 @@ class UsersPage:
                 track_bulk=True,
             )
             icon_action(
+                "restart_alt",
+                "批量重置企业认证（清除缓存并断开在线连接）",
+                self._batch_reset_sso_confirm,
+                disabled_action=True,
+                track_bulk=True,
+            )
+            icon_action(
                 "sell",
                 "批量关联标签",
                 lambda: show_batch_tags_dialog(
@@ -1055,6 +1062,11 @@ class UsersPage:
                     disabled=not is_online,
                 )
                 icon_action(
+                    "restart_alt",
+                    "重置企业认证（离线用户也可操作）",
+                    lambda: self._reset_sso_confirm(username),
+                )
+                icon_action(
                     "drive_file_move",
                     "切换组",
                     lambda: self._show_change_group_dialog(username),
@@ -1162,6 +1174,54 @@ class UsersPage:
                 failed += 1
         safe_notify(
             f"批量下线完成：成功 {success}，跳过 {skipped}，失败 {failed}",
+            type="positive" if failed == 0 else "warning",
+        )
+        self._refresh_user_list()
+
+    def _batch_reset_sso_confirm(self) -> None:
+        if not self.selected_users:
+            safe_notify("请先选择用户", type="warning")
+            return
+        usernames = tuple(sorted(self.selected_users))
+        confirm_dialog.show(
+            "确定重置所选用户的企业认证会话？",
+            title="批量重置企业认证",
+            impact=("删除已选用户所有实例的 SSO 缓存并取消未完成的认证；"
+                    "在线连接将被断开并在重连时重新登录，离线用户下次连接也须重新登录。"
+                    "不会删除 VPN 账号或证书。"),
+            object_count=len(usernames),
+            danger_level="warning",
+            on_confirm=lambda: self._reset_sso_users(usernames),
+        )
+
+    def _reset_sso_confirm(self, username: str) -> None:
+        confirm_dialog.show(
+            f"确定重置用户 {username} 的企业认证会话？",
+            title="重置企业认证",
+            impact=("清除缓存并断开在线连接，重连时要求重新企业登录；"
+                    "如果用户已经离线，下次主动连接时要求重新登录。"
+                    "不影响账号及证书。"),
+            object_count=1,
+            danger_level="warning",
+            on_confirm=lambda: self._reset_sso_users((username,)),
+        )
+
+    def _reset_sso_users(self, usernames: tuple[str, ...]) -> None:
+        success = failed = disconnect_sent = revoked = pending = 0
+        for username in usernames:
+            try:
+                rows, canceled, sent = self.user_service.reset_sso_session(username)
+                revoked += rows
+                pending += canceled
+                disconnect_sent += int(sent)
+                success += 1
+            except Exception:
+                logger.exception("重置企业认证会话失败 user=%s", username)
+                failed += 1
+        safe_notify(
+            f"认证重置：成功 {success} 人，失败 {failed} 人；"
+            f"清理缓存 {revoked} 条，取消待认证 {pending} 条，"
+            f"已向 {disconnect_sent} 人发送踢线指令",
             type="positive" if failed == 0 else "warning",
         )
         self._refresh_user_list()

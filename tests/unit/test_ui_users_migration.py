@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import Mock
 
 import pytest
 from nicegui.testing import user_simulation
@@ -95,6 +96,38 @@ def _user(name: str, *, status: str = "active", group_id: str = "group-main") ->
     }
 
 
+def test_sso_reset_works_for_single_and_batch_including_offline(monkeypatch):
+    page = UsersPage()
+    page.user_service = Mock()
+    page.user_service.reset_sso_session.side_effect = [
+        (1, 0, True), (2, 1, False), (0, 0, True),
+    ]
+    page._refresh_user_list = Mock()
+    notifications = []
+    monkeypatch.setattr(
+        "app.ui.pages.users.safe_notify",
+        lambda message, **kwargs: notifications.append(message),
+    )
+    confirmations = []
+    monkeypatch.setattr(
+        "app.ui.pages.users.confirm_dialog.show",
+        lambda *args, **kwargs: confirmations.append(kwargs),
+    )
+
+    page._reset_sso_confirm("alice")
+    assert confirmations[-1]["object_count"] == 1
+    confirmations[-1]["on_confirm"]()
+    page.selected_users = {"alice", "bob"}
+    page._batch_reset_sso_confirm()
+    assert confirmations[-1]["object_count"] == 2
+    confirmations[-1]["on_confirm"]()
+    assert page.user_service.reset_sso_session.call_count == 3
+    assert "清理缓存 2 条" in notifications[-1]
+    assert "取消待认证 1 条" in notifications[-1]
+    assert "已向 1 人发送踢线指令" in notifications[-1]
+    assert page._refresh_user_list.call_count == 2
+
+
 def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,7 +214,7 @@ def test_users_page_uses_aggrid_action_bar_and_selection_restore(
     )
     assert device_column["filterParams"]["values"] == ["未知"]
     assert page.bulk_download_button._props.get("disable") is not True
-    assert len(page.bulk_icon_buttons) == 6
+    assert len(page.bulk_icon_buttons) == 7
     assert all(button._props.get("disable") is not True for button in page.bulk_icon_buttons)
 
 

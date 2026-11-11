@@ -146,6 +146,74 @@ def test_offline_expiry_and_revoke_without_certificate_validation(tmp_path):
         )
 
 
+def test_admin_reset_revokes_all_user_sessions_and_forces_new_oauth(setup):
+    store, providers, policy, root, _, _ = setup
+    runtime, manager = make_runtime(store, providers, policy, root)
+    backup_manager = FakeManager()
+    runtime.instances["backup"] = backup_manager
+    approve(runtime, manager, 12)
+    runtime.session_cache.remember(
+        instance_id="backup", common_name="alice",
+        cert_fingerprint=FP_B, provider_id="dingtalk_unified",
+        provider_app_id="app1", enterprise_id="dingAllowed",
+    )
+    runtime.session_cache.remember(
+        instance_id="server", common_name="bob",
+        cert_fingerprint=FP_B, provider_id="dingtalk_unified",
+        provider_app_id="app1", enterprise_id="dingAllowed",
+    )
+
+    # A browser window may already be in the middle of another OAuth flow.
+    runtime.on_event(manager, connect(13, fingerprint=FP_B))
+    assert runtime.pending
+    revoked, canceled, sent = runtime.revoke_user_session("alice")
+    assert (revoked, canceled, sent) == (2, 1, True)
+    assert not runtime.pending
+    assert not runtime.sessions
+    assert "kill alice\n" in manager.commands
+    assert "kill alice\n" in backup_manager.commands
+    assert "client-deny 13 0" in "".join(manager.commands)
+    with store.connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sso_auth_sessions WHERE common_name='alice'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sso_auth_sessions WHERE common_name='bob'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT status FROM sso_login_transactions WHERE client_id=13"
+        ).fetchone()[0] == "denied"
+
+    runtime.on_event(manager, connect(14))
+    assert manager.commands[-1].startswith("client-pending-auth 14 0 WEB_AUTH:")
+
+
+def test_offline_user_reset_revokes_cache_without_running_runtime(setup, monkeypatch):
+    from app.services.user.crud import UserService
+
+    store, _, _, _, _, _ = setup
+    sessions = SsoSessionStore(store)
+    sessions.remember(
+        instance_id="server", common_name="alice",
+        cert_fingerprint=FP_A, provider_id="dingtalk_unified",
+        provider_app_id="app1", enterprise_id="dingAllowed",
+    )
+    monkeypatch.setattr(
+        "app.services.auth.sso_runtime.get_sso_runtime", lambda: None,
+    )
+    service = UserService(store)
+    monkeypatch.setattr(service.audit, "log", lambda *args, **kwargs: None)
+    assert service.reset_sso_session("alice") == (1, 0, False)
+    assert service.reset_sso_session("alice") == (0, 0, False)
+    assert sessions.get(
+        instance_id="server", common_name="alice",
+        cert_fingerprint=FP_A, provider_id="dingtalk_unified",
+        provider_app_id="app1",
+    ) is None
+    with pytest.raises(ValueError, match="用户不存在"):
+        service.reset_sso_session("missing")
+
+
 def test_online_heartbeat_updates_existing_row_not_append(tmp_path):
     store = SsoSessionStore(SqliteStore(tmp_path / "rolling.db"))
     identity = dict(instance_id="server", common_name="alice",

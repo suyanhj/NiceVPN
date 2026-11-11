@@ -43,3 +43,23 @@ def test_start_without_transaction_is_expired(monkeypatch):
     assert response.status_code == 410
     assert response.headers.get("Cache-Control") == "no-store, max-age=0"
     assert "random" not in response.text
+
+
+def test_public_browser_oauth_uses_one_time_tokens_while_admin_api_requires_basic(
+    monkeypatch,
+):
+    import app.api.sso as sso
+    from app.api.server import create_api_app
+
+    runtime = Mock()
+    runtime.stop_event.is_set.return_value = False
+    runtime.transactions.get_pending_by_token.return_value = None
+    monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
+    client = TestClient(create_api_app())
+
+    browser = client.get("/auth/sso/start?t=invalid")
+    assert browser.status_code == 410  # Token rejected; no Basic login prompt.
+    assert "WWW-Authenticate" not in browser.headers
+    admin = client.post("/api/vpn/users", json={"username": "new-user"})
+    assert admin.status_code == 401
+    assert admin.headers["WWW-Authenticate"] == "Basic"

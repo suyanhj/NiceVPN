@@ -539,6 +539,33 @@ class UserService:
                        "管理员手动踢下线", "success")
         return True
 
+    def reset_sso_session(self, username: str) -> tuple[int, int, bool]:
+        """撤销用户所有企业认证缓存，并尽可能断开其当前 VPN 连接。
+
+        离线用户没有可踢的连接，但下次连接会重新触发 OAuth。
+        """
+        if not self.get(username):
+            raise ValueError(f"用户不存在: {username}")
+        from app.services.auth.sso_runtime import get_sso_runtime
+
+        runtime = get_sso_runtime()
+        if runtime is not None and not runtime.stop_event.is_set():
+            revoked, canceled, sent = runtime.revoke_user_session(username)
+        else:
+            from app.services.auth.sso_sessions import SsoSessionStore
+            from app.services.auth.sso_transactions import WebAuthTransactionStore
+
+            # SSO 运行时可能尚未启动；SQLite 撤销仍必须可用于离线用户。
+            canceled = WebAuthTransactionStore(self.store).cancel_user(username)
+            revoked = SsoSessionStore(self.store).revoke_user(username)
+            sent = False
+        self.audit.log(
+            "reset_sso_session", "user", username,
+            f"撤销认证缓存 {revoked} 条，待认证事务 {canceled} 条，发送断开命令 {sent}",
+            "success",
+        )
+        return revoked, canceled, sent
+
     def get(self, username: str) -> dict | None:
         """获取用户信息"""
         return self._load_user(username)

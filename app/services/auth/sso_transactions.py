@@ -189,6 +189,16 @@ class WebAuthTransactionStore:
             )
             return int(result.rowcount)
 
+    def cancel_user(self, common_name: str) -> int:
+        """Invalidate every uncompleted browser login for a revoked account."""
+        with self.store.connection(write=True) as conn:
+            return int(conn.execute(
+                """UPDATE sso_login_transactions
+                   SET status='denied', completed_at=?
+                   WHERE common_name=? AND status='pending'""",
+                (int(time.time()), common_name),
+            ).rowcount)
+
     def expire(self, *, now: int | None = None) -> int:
         current = int(time.time() if now is None else now)
         with self.store.connection(write=True) as conn:

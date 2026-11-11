@@ -249,3 +249,13 @@ class SsoSessionStore:
             else:
                 raise ValueError("Invalid certificate fingerprint")
             return int(result.rowcount)
+
+    def revoke_user(self, common_name: str) -> int:
+        """Revoke all certificates/providers/instances for one VPN account."""
+        if not isinstance(common_name, str) or not common_name.strip():
+            raise ValueError("VPN common name is required")
+        with self.store.connection(write=True) as conn:
+            return int(conn.execute(
+                "DELETE FROM sso_auth_sessions WHERE common_name=?",
+                (common_name,),
+            ).rowcount)
