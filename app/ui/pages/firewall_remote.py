@@ -691,9 +691,23 @@ class FirewallRemoteMixin:
             "vpn-form-dialog firewall-action-dialog w-full max-w-md"
         ):
             ui.label(f"对端规则 #{index + 1}").classes("text-h6")
-            ui.label(str(row.get("rest") or "")).classes(
-                "font-mono text-caption break-all"
-            )
+            binding = row.get("tag_binding") if isinstance(row.get("tag_binding"), dict) else None
+            if binding:
+                ui.label(
+                    f"动态标签规则 · {binding.get('tag_name') or str(binding.get('tag_id') or '')[:8]}"
+                ).classes("font-medium")
+                ui.label(
+                    "源地址会在每次推送时按标签当前成员计算；标签无有效成员时不会下发。"
+                ).classes("text-caption text-grey-7")
+                ui.label(
+                    f"{str(binding.get('action') or 'accept').upper()} · "
+                    f"{str(binding.get('protocol') or 'all').upper()} · "
+                    f"目标 {binding.get('dest_ip') or '*'}:{binding.get('dest_port') or '*'}"
+                ).classes("font-mono text-caption break-all")
+            else:
+                ui.label(str(row.get("rest") or "")).classes(
+                    "font-mono text-caption break-all"
+                )
             with ui.column().classes("w-full gap-2 q-mt-sm"):
                 secondary_action(
                     "编辑",
@@ -713,13 +727,14 @@ class FirewallRemoteMixin:
                         ),
                     ),
                 )
-                secondary_action(
-                    "复制原始规则",
-                    icon="content_copy",
-                    on_click=lambda: self._schedule_remote_text_copy(
-                        str(row.get("rest") or "")
-                    ),
-                )
+                if not binding:
+                    secondary_action(
+                        "复制原始规则",
+                        icon="content_copy",
+                        on_click=lambda: self._schedule_remote_text_copy(
+                            str(row.get("rest") or "")
+                        ),
+                    )
                 danger_action(
                     "删除",
                     icon="delete",
