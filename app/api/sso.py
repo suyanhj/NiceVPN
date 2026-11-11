@@ -128,8 +128,8 @@ async def choose_provider(request: Request):
     if provider is None:
         return _html("认证提供商不可用。", code=503)
     logger.info(
-        "SSO provider selected: provider=%s kind=%s display_name=%r",
-        provider.id, provider.kind, provider.display_name,
+        "SSO provider selected: provider=%s kind=%s",
+        provider.id, provider.kind,
     )
     callback = runtime.public_base_url + f"/auth/sso/{provider.kind}/callback"
     url = authorization_url(
