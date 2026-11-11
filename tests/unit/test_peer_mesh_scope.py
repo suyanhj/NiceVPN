@@ -75,3 +75,65 @@ def test_peer_model_normalizes_tag_visibility_ids_and_legacy_defaults():
         mesh_route_visible_tag_ids=[" tag-a ", "tag-a", "", "tag-b"],
     )
     assert peer.mesh_route_visible_tag_ids == ["tag-a", "tag-b"]
+
+
+
+def test_mesh_sync_uses_direct_and_active_group_tags_and_clears_disabled_users(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.services.peer_instance import service as peer_module
+    from app.services.peer_instance.service import PeerService
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "mesh-tags.sqlite")
+    store.upsert_group({
+        "id": "g-active", "name": "活动组",
+        "subnet": "10.8.1.0/24", "status": "active",
+    })
+    store.upsert_group({
+        "id": "g-disabled", "name": "停用组",
+        "subnet": "10.8.2.0/24", "status": "disabled",
+    })
+    for username, group_id, status in [
+        ("alice", "g-active", "active"),
+        ("bob", "g-disabled", "active"),
+        ("carol", "g-active", "disabled"),
+        ("dave", "g-active", "active"),
+    ]:
+        store.upsert_user({
+            "username": username, "group_id": group_id, "status": status,
+        })
+    store.create_tag("tag-group", "活动组标签")
+    store.create_tag("tag-user", "个人标签")
+    store.create_tag("tag-disabled-group", "停用组标签")
+    store.set_tag_members("tag-group", usernames=[], group_ids=["g-active"])
+    store.set_tag_members("tag-user", usernames=["dave"], group_ids=[])
+    store.set_tag_members("tag-disabled-group", usernames=[], group_ids=["g-disabled"])
+    store.upsert_peer({
+        "id": "peer-tags",
+        "name": "标签站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.50.0/24"],
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": ["tag-group", "tag-user", "tag-disabled-group"],
+    })
+
+    ccd_dir = tmp_path / "ccd"
+    ccd_dir.mkdir()
+    for username in ("alice", "bob", "carol", "dave"):
+        (ccd_dir / username).write_text("ifconfig-push 10.8.1.10 255.255.255.0\n", encoding="utf-8")
+    monkeypatch.setattr(peer_module, "CCD_DIR", ccd_dir)
+    monkeypatch.setattr(peer_module, "fix_path_for_openvpn_shared_data", lambda _path: None)
+
+    PeerService(store=store).sync_all_mesh_push_routes_in_ccd()
+
+    alice = (ccd_dir / "alice").read_text(encoding="utf-8")
+    bob = (ccd_dir / "bob").read_text(encoding="utf-8")
+    carol = (ccd_dir / "carol").read_text(encoding="utf-8")
+    dave = (ccd_dir / "dave").read_text(encoding="utf-8")
+    route = 'push "route 192.168.50.0 255.255.255.0"'
+
+    assert route in alice  # group-inherited tag
+    assert route not in bob  # inactive group tag is ignored
+    assert route not in carol  # disabled users have mesh routes removed
+    assert route in dave  # direct user tag
