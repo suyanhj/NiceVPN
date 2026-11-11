@@ -64,7 +64,7 @@ def test_enterprise_name_only_is_exact_and_never_overrides_configured_corp_id():
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_name_lookup_uses_verified_corp_id_and_provider_api(tmp_path):
+async def test_dingtalk_name_lookup_uses_verified_corp_id_and_provider_api(tmp_path, caplog):
     providers = SsoProviderStore(
         SqliteStore(tmp_path / "name.db"), key_path=tmp_path / "secret.key",
     )
@@ -92,6 +92,9 @@ async def test_dingtalk_name_lookup_uses_verified_corp_id_and_provider_api(tmp_p
     assert requests_seen[1].url.params["targetCorpId"] == "dingVerified"
     assert requests_seen[1].headers["x-acs-dingtalk-access-token"] == "USER_TOKEN"
     assert all("/users/me" not in request.url.path for request in requests_seen)
+    assert "enterprise_name='可信企业名称'" in caplog.text
+    assert "name_source=user_access_token" in caplog.text
+    assert "USER_TOKEN" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -126,7 +129,7 @@ async def test_corp_id_match_skips_optional_organization_lookup(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path):
+async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path, caplog):
     providers = SsoProviderStore(
         SqliteStore(tmp_path / "deny.db"), key_path=tmp_path / "secret.key",
     )
@@ -145,6 +148,8 @@ async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path
             fetch_enterprise_name=True,
         )
     assert identity.enterprise_name == ""
+    assert "SSO DingTalk organization name unavailable" in caplog.text
+    assert "enterprise_name='<empty>'" in caplog.text
     config = {"enterprise_sso_allowed_corps": [
         {"corp_id": "", "name": "可信企业名称"},
     ]}
@@ -335,11 +340,11 @@ def test_explicit_legacy_import_keeps_old_apps_and_secret_encrypted(tmp_path):
 
 
 def test_callback_denied_enterprise_shows_403_not_expired(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ):
     runtime, manager = _runtime(tmp_path)
     config = SystemConfig(enterprise_sso_allowed_corps=[
-        {"corp_id": "dingAllowed", "name": "公司A"},
+        {"corp_id": "", "name": "后台配置企业名"},
     ])
     monkeypatch.setattr("app.services.auth.sso_runtime.load_config",
                         lambda: config.model_dump())
@@ -358,7 +363,9 @@ def test_callback_denied_enterprise_shows_403_not_expired(
     monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
 
     async def fake_exchange(_provider, _code, **_kwargs):
-        return EnterpriseIdentity("dingtalk", "dingBlocked", "external-uid")
+        return EnterpriseIdentity(
+            "dingtalk", "dingBlocked", "external-uid", "钉钉接口返回企业名",
+        )
 
     monkeypatch.setattr(sso, "exchange_code", fake_exchange)
     app = FastAPI()
@@ -369,6 +376,9 @@ def test_callback_denied_enterprise_shows_403_not_expired(
     )
     response = client.get(callback_url)
     assert response.status_code == 403
+    assert "verified_enterprise_name='钉钉接口返回企业名'" in caplog.text
+    assert "configured_name_only=['后台配置企业名']" in caplog.text
+    assert "corp_id_match=False name_match=False" in caplog.text
     assert "不允许访问 VPN" in response.text
     assert "认证事务已失效" not in response.text
     assert "可以返回 VPN 客户端" not in response.text
