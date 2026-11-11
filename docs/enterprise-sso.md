@@ -110,9 +110,14 @@ xx.hj.com,192.168.1.1:80,https://sso.example.com
 
 ## DingTalk 身份核对日志
 
-SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换取返回的 CorpId**。钉钉不再额外读取个人资料，外部用户 ID 留空；企业微信仍使用官方必需的员工身份接口确认内部成员。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID（如提供商返回）、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。文件不包含 OAuth Code、Token 或密钥。
+SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换取返回的 CorpId**。钉钉不再额外读取个人资料，外部用户 ID 留空；企业微信仍使用官方必需的员工身份接口确认内部成员。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID（如提供商返回）、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。
 
-钉钉统一认证不请求个人资料 `GET /v1.0/contact/users/me`，因此不需要 `Contact.User.Read`。仅在配置“企业名称、无 CorpId”的名单时，额外调用组织基础信息接口。日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
+钉钉统一认证不请求个人资料 `GET /v1.0/contact/users/me`，因此不需要 `Contact.User.Read`。仅在配置“企业名称、无 CorpId”的名单时，额外调用组织基础信息接口。**排查名称白名单时**，应用日志会输出：
+- `SSO DingTalk verified enterprise identity`：钉钉实际返回的 CorpId、组织接口解析出的 `enterprise_name`、名称来源 `name_source`（用户访问令牌 / 应用访问令牌 / 未请求 / 不可用）。
+- `SSO unified DingTalk enterprise allow-list check`：实际企业名称、后台配置的 name-only 名单、`corp_id_match`、`name_match` 和最终结果。
+- 如果名称接口无权限或没有返回 `orgName`，会输出 `SSO DingTalk organization name unavailable`；随后 name-only 白名单会拒绝认证。此时应检查钉钉组织基础信息读取权限，或改用 CorpId 白名单。
+
+名称匹配仍为去除首尾空白后的**完全相等**，不会忽略括号、后缀、空格或简称差异。配置行同时填写 CorpId 和企业名称时只按 CorpId 匹配，该行名称不会参与名称匹配。日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
 
 ## 域名、IP 和外部 API 端口的规范（2026-11-10）
 
