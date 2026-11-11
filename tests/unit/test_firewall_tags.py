@@ -296,3 +296,47 @@ def test_bulk_tag_memberships_include_direct_users_and_groups(store):
         "bob": ["tag-fw"],
     }
     assert memberships["groups"] == {"g1": ["tag-route"]}
+
+
+
+def test_tag_membership_change_refreshes_mesh_routes_for_referencing_peer(store, monkeypatch):
+    from app.services.peer_instance.service import PeerService
+
+    store.create_tag("tag-mesh", "Mesh 可见")
+    store.upsert_peer({
+        "id": "peer-mesh",
+        "name": "站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.20.0/24"],
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": ["tag-mesh"],
+    })
+    calls = []
+    monkeypatch.setattr(
+        PeerService,
+        "sync_all_mesh_push_routes_in_ccd",
+        lambda self: calls.append("sync"),
+    )
+
+    TagService(store).set_members(
+        "tag-mesh", usernames=["alice"], group_ids=[],
+    )
+
+    assert calls == ["sync"]
+
+
+def test_tag_delete_is_blocked_while_peer_mesh_route_references_tag(store):
+    from app.services.peer_instance.service import PeerService
+
+    store.create_tag("tag-mesh", "Mesh 可见")
+    store.upsert_peer({
+        "id": "peer-mesh",
+        "name": "站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.20.0/24"],
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": ["tag-mesh"],
+    })
+
+    with pytest.raises(ValueError, match="对端路由"):
+        TagService(store).delete("tag-mesh")
