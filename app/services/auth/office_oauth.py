@@ -92,11 +92,11 @@ def _safe_provider_error_value(value, *, limit: int = 240) -> str:
     """Bound and sanitize provider error fields before writing them to logs."""
     import re
 
-    text = str(value or "").replace("\\r", " ").replace("\\n", " ").strip()
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
     text = re.sub(
         r"(?i)(access[_-]?token|client[_-]?secret|app[_-]?secret|authorization)"
-        r"\\s*[:=]\\s*[^,;\\s]+",
-        r"\\1=<redacted>",
+        r"\s*[:=]\s*[^,;\s]+",
+        r"\1=<redacted>",
         text,
     )
     return text[:limit]
