@@ -46,7 +46,7 @@ class FirewallRemoteMixin:
         """进入「对端远端」：同步下拉后必须先 SSH 取对端真值落库，再谈编辑（与换节点时一致）。"""
         self._ensure_remote_tab_synced_with_peers()
         self._refresh_remote_view()
-        self._schedule_remote_fetch_via_ssh()
+        self._schedule_remote_fetch_via_ssh(auto=True)
 
     def _ensure_remote_tab_synced_with_peers(self) -> None:
         """根据 :meth:`PeerService.list_all` 重建或更新对端下拉的选项（避免首屏/新建对端后 UI 不刷新）。"""
@@ -77,14 +77,39 @@ class FirewallRemoteMixin:
         self._remote_filter_model = {}
         self._remote_grid_sort_active = False
         self._refresh_remote_view()
-        self._schedule_remote_fetch_via_ssh()
+        self._schedule_remote_fetch_via_ssh(auto=True)
 
-    def _schedule_remote_fetch_via_ssh(self) -> None:
-        """在「对端远端」对当前选中的对端：SSH 拉取 → ``record_from_fetch`` 落库；失败 ``notify`` + ``logger``。"""
+    def _schedule_remote_fetch_via_ssh(
+        self, *, force: bool = False, auto: bool = False,
+    ) -> None:
+        """SSH 拉取远端真值；覆盖动态标签逻辑规则前必须由管理员显式确认。"""
         if self._center_tab_active:
             return
         target = self._active_remote_peer_id()
         if not target:
+            return
+        cache = remote_chain_cache.read_remote_chain_cache(target) or {}
+        tag_rows = [
+            row for row in (cache.get("rows") or [])
+            if isinstance(row.get("tag_binding"), dict)
+        ]
+        if tag_rows and not force:
+            if auto:
+                logger.info(
+                    "对端缓存含动态标签规则，跳过自动拉取以保护标签绑定 peer=%s",
+                    target[:8],
+                )
+                return
+            confirm_dialog.show(
+                "拉取会覆盖动态标签规则，确定继续？",
+                impact=(
+                    "远端链拉取会把标签规则展开后的 iptables 行当作普通原始规则，"
+                    "本地标签与动态成员绑定将丢失。若只是更新标签成员，请直接推送或等待自动同步。"
+                ),
+                object_count=len(tag_rows),
+                danger_level="warning",
+                on_confirm=lambda: self._schedule_remote_fetch_via_ssh(force=True),
+            )
             return
         if self._remote_fetch_running_peer == target:
             logger.info("对端链正在拉取，跳过重复请求 peer=%s", target)
