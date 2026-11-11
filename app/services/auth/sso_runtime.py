@@ -161,7 +161,8 @@ class ManagementInstance:
 
         snapshot, status_at = first
         targeted = {
-            cid for cid, (cn, _connected_at) in snapshot.items()
+            cid: connected_at
+            for cid, (cn, connected_at) in snapshot.items()
             if cn == common_name
         }
         if not targeted:
@@ -189,8 +190,10 @@ class ManagementInstance:
                 break
             snapshot, status_at = next_status
             still_online = {
-                cid for cid in targeted
-                if cid in snapshot and snapshot[cid][0] == common_name
+                cid for cid, connected_at in targeted.items()
+                if cid in snapshot
+                and snapshot[cid][0] == common_name
+                and snapshot[cid][1] == connected_at
             }
             if not still_online:
                 return len(targeted), len(targeted), 0
@@ -208,8 +211,10 @@ class ManagementInstance:
                     )
 
         still_online = {
-            cid for cid in targeted
-            if cid in snapshot and snapshot[cid][0] == common_name
+            cid for cid, connected_at in targeted.items()
+            if cid in snapshot
+            and snapshot[cid][0] == common_name
+            and snapshot[cid][1] == connected_at
         }
         confirmed = targeted - still_online
         failed = still_online
