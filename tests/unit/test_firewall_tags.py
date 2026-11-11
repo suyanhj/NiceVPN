@@ -326,8 +326,6 @@ def test_tag_membership_change_refreshes_mesh_routes_for_referencing_peer(store,
 
 
 def test_tag_delete_is_blocked_while_peer_mesh_route_references_tag(store):
-    from app.services.peer_instance.service import PeerService
-
     store.create_tag("tag-mesh", "Mesh 可见")
     store.upsert_peer({
         "id": "peer-mesh",
@@ -340,3 +338,41 @@ def test_tag_delete_is_blocked_while_peer_mesh_route_references_tag(store):
 
     with pytest.raises(ValueError, match="对端路由"):
         TagService(store).delete("tag-mesh")
+
+
+
+def test_tag_delete_is_blocked_while_remote_firewall_rule_references_tag(
+    store, tmp_path, monkeypatch,
+):
+    from app.services.peer_instance import remote_chain_cache
+
+    store.create_tag("tag-remote", "远端防火墙标签")
+    store.upsert_peer({
+        "id": "peer-remote",
+        "name": "远端站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.30.0/24"],
+    })
+    monkeypatch.setattr(
+        remote_chain_cache, "REMOTE_PEER_CHAINS_DIR", tmp_path / "remote-cache",
+    )
+    remote_chain_cache.write_remote_chain_cache(
+        "peer-remote",
+        chain="VPN_PEER_remote",
+        chain_exists=True,
+        rows=[{
+            "rest": "",
+            "enabled": True,
+            "tag_binding": {
+                "tag_id": "tag-remote",
+                "tag_name": "远端防火墙标签",
+                "action": "accept",
+                "protocol": "all",
+            },
+        }],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+
+    with pytest.raises(ValueError, match="远端防火墙规则"):
+        TagService(store).delete("tag-remote")
