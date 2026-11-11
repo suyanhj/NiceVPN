@@ -75,7 +75,7 @@ def test_browser_approval_unblocks_exact_pending_client(monkeypatch, tmp_path):
     monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
     monkeypatch.setattr(runtime_module, "write_sso_grant", lambda *a, **kw: None)
 
-    async def fake_exchange(provider, code):
+    async def fake_exchange(provider, code, **_kwargs):
         assert provider.enterprise_id == "company-1"
         assert code == "company-authcode"
         return EnterpriseIdentity("dingtalk", "company-1", "external-user-55")
