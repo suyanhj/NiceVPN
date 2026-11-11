@@ -17,7 +17,10 @@ from app.core.config import load_config
 from app.services.auth.office_oauth import (
     OfficeAuthError, authorization_url, exchange_code,
 )
-from app.services.auth.provider_store import UNIFIED_DINGTALK_ID
+from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_ID
+from app.services.auth.dingtalk_enterprise_lookup import (
+    get_dingtalk_enterprise_lookup_store,
+)
 from app.services.auth.sso_runtime import SsoFinishResult, get_sso_runtime
 from app.services.auth.sso_transactions import WebAuthTransactionStore
 from app.utils.sso_enterprises import (
@@ -136,6 +139,103 @@ async def choose_provider(request: Request):
         provider, callback, WebAuthTransactionStore.state_for_token(token),
     )
     return RedirectResponse(url, status_code=303, headers=_NO_CACHE)
+
+
+@router.get("/dingtalk/enterprise-lookup/start", include_in_schema=False)
+async def start_dingtalk_enterprise_lookup(state: str = ""):
+    """Start a read-only CorpId lookup created by the authenticated admin UI."""
+    lookup_store = get_dingtalk_enterprise_lookup_store()
+    if not state or len(state) > 128:
+        return _html("企业查询请求无效或已过期。", code=410)
+    lookup = lookup_store.begin_start(state)
+    if lookup is None:
+        return _html("企业查询请求无效、已使用或已过期。", code=410)
+    try:
+        provider = SsoProviderStore().get(
+            UNIFIED_DINGTALK_ID, require_enabled=False,
+        )
+        if provider is None or provider.app_id != lookup.app_id:
+            lookup_store.fail(state, "DingTalk provider unavailable or changed")
+            return _html("钉钉应用配置不可用或已变更，请返回设置页重新发起查询。", code=503)
+        url = authorization_url(provider, lookup.callback_url, state)
+    except Exception as exc:
+        lookup_store.fail(state, "DingTalk provider configuration unavailable")
+        logger.warning(
+            "SSO DingTalk enterprise lookup could not start: error=%s",
+            type(exc).__name__,
+        )
+        return _html("钉钉应用配置不可用，请检查 Client ID、Secret 和密钥文件。", code=503)
+    logger.info("SSO DingTalk enterprise lookup started: app_id=%s", provider.app_id)
+    return RedirectResponse(url, status_code=303, headers=_NO_CACHE)
+
+
+@router.get("/dingtalk/enterprise-lookup/callback", include_in_schema=False)
+async def dingtalk_enterprise_lookup_callback(request: Request):
+    """Complete one administrator-initiated OAuth lookup; never changes policy."""
+    state = str(request.query_params.get("state") or "")
+    if not state or len(state) > 128:
+        return _html("企业查询请求无效或已过期。", code=410)
+    lookup_store = get_dingtalk_enterprise_lookup_store()
+    lookup = lookup_store.begin_callback(state)
+    if lookup is None:
+        return _html("企业查询请求无效、已使用或已过期。", code=410)
+
+    code = str(
+        request.query_params.get("authCode")
+        or request.query_params.get("code")
+        or ""
+    )
+    if request.query_params.get("error") or not code:
+        lookup_store.fail(state, "DingTalk authorization was cancelled")
+        return _html("钉钉授权未完成。可以返回 NiceVPN 设置页重新查询。", code=403)
+
+    try:
+        provider = SsoProviderStore().get(
+            UNIFIED_DINGTALK_ID, require_enabled=False,
+        )
+        if provider is None or provider.app_id != lookup.app_id:
+            lookup_store.fail(state, "DingTalk provider unavailable or changed")
+            return _html("钉钉应用配置已变更，请返回设置页重新发起查询。", code=503)
+        identity = await exchange_code(
+            provider, code, fetch_enterprise_name=True,
+        )
+        if not identity.enterprise_id:
+            lookup_store.fail(state, "DingTalk did not return a CorpId")
+            return _html("钉钉未返回企业 CorpId，请检查 OAuth scope 是否包含 corpid。", code=403)
+        if not lookup_store.complete(
+            state,
+            corp_id=identity.enterprise_id,
+            enterprise_name=identity.enterprise_name,
+        ):
+            return _html("企业查询已过期，请返回设置页重新发起。", code=410)
+        logger.info(
+            "SSO DingTalk enterprise lookup completed: app_id=%s corp_id=%s "
+            "enterprise_name=%r",
+            provider.app_id, identity.enterprise_id,
+            identity.enterprise_name or "<unavailable>",
+        )
+        name_text = (
+            f"企业名称：{identity.enterprise_name}"
+            if identity.enterprise_name else "企业名称暂不可读取，不影响 CorpId 查询。"
+        )
+        return _html(
+            f"企业查询成功。CorpId：{identity.enterprise_id}。{name_text}"
+            "。请返回 NiceVPN 设置页，查询结果会自动填入企业白名单。"
+        )
+    except OfficeAuthError as exc:
+        lookup_store.fail(state, "DingTalk OAuth verification failed")
+        logger.warning(
+            "SSO DingTalk enterprise lookup failed: app_id=%s reason=%s",
+            lookup.app_id, str(exc),
+        )
+        return _html("钉钉企业查询失败，请检查授权状态和应用配置。", code=403)
+    except Exception as exc:
+        lookup_store.fail(state, "DingTalk enterprise lookup unavailable")
+        logger.exception(
+            "SSO DingTalk enterprise lookup unavailable: app_id=%s error=%s",
+            lookup.app_id, type(exc).__name__,
+        )
+        return _html("钉钉企业查询暂时不可用，请查看 NiceVPN 服务日志。", code=503)
 
 
 @router.get("/{provider_kind}/callback", include_in_schema=False)
