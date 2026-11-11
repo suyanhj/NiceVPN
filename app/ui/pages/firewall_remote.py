@@ -371,10 +371,10 @@ class FirewallRemoteMixin:
         rows = list(cache.get("rows") or [])
         from app.services.firewall.remote_tag_rules import materialize_remote_chain_rows
         from app.services.firewall.tag_service import TagService
-        rests = materialize_remote_chain_rows(
-            rows, tag_service=TagService(),
-        )
         try:
+            rests = materialize_remote_chain_rows(
+                rows, tag_service=TagService(),
+            )
             await run.io_bound(self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests)
             remote_chain_cache.record_after_apply(peer_id, chain, bool(ce), rows, True, None)
         except Exception as exc:
