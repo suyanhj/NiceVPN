@@ -698,7 +698,7 @@ class PeerService:
         tag_memberships = self.store.list_tag_memberships()
         user_tag_map = tag_memberships.get("users") or {}
         group_tag_map = tag_memberships.get("groups") or {}
-        group_rows = GroupService().list_all()
+        group_rows = GroupService(store=self.store).list_all()
         group_names = {
             str(g.get("id") or "").strip(): str(g.get("name") or g.get("id") or "未命名组")
             for g in group_rows
@@ -718,7 +718,7 @@ class PeerService:
                 stats[key] = {"updated": 0, "unchanged": 0, "no_ccd": 0, "failed": 0}
             return stats[key]
 
-        for u in UserService().list_all():
+        for u in UserService(store=self.store).list_all():
             status = str(u.get("status") or "active")
             if status == "deleted":
                 continue
