@@ -44,7 +44,8 @@ def _mesh_push_wire_snapshot(row: dict) -> tuple:
     raw_lan = [str(x).strip() for x in (row.get("lan_cidrs") or []) if str(x).strip()]
     lan_t = tuple(sorted_unique_ipv4_cidrs(raw_lan))
     mugs = tuple(sorted(str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()))
-    return (lan_t, mugs)
+    tags = tuple(sorted(str(x).strip() for x in (row.get("mesh_route_visible_tag_ids") or []) if str(x).strip()))
+    return (lan_t, mugs, tags)
 
 
 def _ccd_iroute_wire_snapshot(row: dict) -> tuple:
@@ -55,24 +56,40 @@ def _ccd_iroute_wire_snapshot(row: dict) -> tuple:
     return (u, lan_t)
 
 
-def mesh_lan_cidrs_for_user_group(peers_rows: list[dict], user_group_id: str) -> list[str]:
-    """根据对端上的 mesh 可见组配置，计算某用户组应下发的 LAN CIDR 并集（IPv4 规范化）。
+def mesh_lan_cidrs_for_user_group(
+    peers_rows: list[dict],
+    user_group_id: str,
+    user_tag_ids: list[str] | set[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """计算用户应收到的 Mesh LAN 路由。
 
-    规则：某对端 ``lan_cidrs`` 非空时，若 ``mesh_route_visible_group_ids`` 为空则对所有组用户下发；
-    若非空则仅当 ``user_group_id`` 在该列表中时才下发该对端的 LAN。
+    组与标签采用 OR 关系：命中任一已选组，或用户/所属组拥有任一已选标签即可。
+    两类限制都为空时对所有活跃用户下发；标签同时包含直接用户标签和组继承标签。
     """
-    ug = str(user_group_id or "").strip()
+    group_id = str(user_group_id or "").strip()
+    user_tags = {str(value).strip() for value in (user_tag_ids or ()) if str(value).strip()}
     acc: list[str] = []
     for row in peers_rows:
         lan = list(row.get("lan_cidrs") or [])
         if not lan:
             continue
-        visible = [str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()]
-        if not visible:
+        visible_groups = {
+            str(value).strip()
+            for value in (row.get("mesh_route_visible_group_ids") or [])
+            if str(value).strip()
+        }
+        visible_tags = {
+            str(value).strip()
+            for value in (row.get("mesh_route_visible_tag_ids") or [])
+            if str(value).strip()
+        }
+        if not visible_groups and not visible_tags:
             acc.extend(lan)
-        elif ug and ug in visible:
+            continue
+        if (group_id and group_id in visible_groups) or (user_tags & visible_tags):
             acc.extend(lan)
     return sorted_unique_ipv4_cidrs(acc)
+
 
 
 class PeerService:
@@ -611,7 +628,7 @@ class PeerService:
             self.sync_all_mesh_push_routes_in_ccd()
         else:
             logger.info(
-                "对端保存无 LAN / mesh 可见组 变更，跳过全量 mesh CCD peer=%s",
+                "对端保存无 LAN / mesh 可见组或标签 变更，跳过全量 mesh CCD peer=%s",
                 peer.id[:8],
             )
         logger.debug("已保存对端实例元数据 peer=%s", peer.id)
@@ -678,6 +695,9 @@ class PeerService:
 
         peers_snapshot = self.list_all()
         failed: list[str] = []
+        tag_memberships = self.store.list_tag_memberships()
+        user_tag_map = tag_memberships.get("users") or {}
+        group_tag_map = tag_memberships.get("groups") or {}
         group_names = {
             str(g.get("id") or "").strip(): str(g.get("name") or g.get("id") or "未命名组")
             for g in GroupService().list_all()
@@ -699,11 +719,15 @@ class PeerService:
                 continue
             gid = str(u.get("group_id") or "").strip()
             st = group_stat(gid)
+            effective_tags = set(user_tag_map.get(uname) or ())
+            effective_tags.update(group_tag_map.get(gid) or ())
             path = CCD_DIR / uname
             if not path.is_file():
                 st["no_ccd"] += 1
                 continue
-            cidrs = mesh_lan_cidrs_for_user_group(peers_snapshot, gid)
+            cidrs = mesh_lan_cidrs_for_user_group(
+                peers_snapshot, gid, effective_tags,
+            )
             try:
                 text = path.read_text(encoding="utf-8")
                 new_text = merge_mesh_peer_push_routes_into_ccd(text, cidrs)
