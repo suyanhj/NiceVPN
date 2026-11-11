@@ -186,7 +186,7 @@ def test_management_disconnect_does_not_kill_a_new_reconnect_cid(tmp_path):
     manager.send = commands.append
 
     assert manager.disconnect_common_name("cert-1", timeout=1.0) == (1, 1, 0)
-    assert commands == ["client-kill 42\\n"]
+    assert commands == ["client-kill 42\n"]
 
 
 def test_management_disconnect_fails_fast_without_live_management_socket(tmp_path):
