@@ -141,7 +141,7 @@ def test_management_disconnect_uses_client_id_and_confirms_status_absence(tmp_pa
     manager.send = commands.append
 
     assert manager.disconnect_common_name("cert-1", timeout=1.0) == (1, 1, 0)
-    assert commands == ["client-kill 42\\n"]
+    assert commands == ["client-kill 42\n"]
 
 
 def test_management_disconnect_reports_unconfirmed_if_client_remains_online(tmp_path):
@@ -156,7 +156,7 @@ def test_management_disconnect_reports_unconfirmed_if_client_remains_online(tmp_
     manager.send = commands.append
 
     assert manager.disconnect_common_name("cert-1", timeout=0.1) == (1, 0, 1)
-    assert commands == ["client-kill 42\\n"]
+    assert commands == ["client-kill 42\n"]
 
 
 def test_management_disconnect_offline_user_is_noop(tmp_path):
