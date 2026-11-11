@@ -578,6 +578,15 @@ class FirewallRemoteActionsMixin:
                     tag = TagService().store.get_tag(tag_id)
                     if tag is None:
                         raise ValueError("所选标签不存在，请刷新后重试")
+                    FirewallRule(
+                        owner_type="tag",
+                        owner_id=tag_id,
+                        action=str(values["action"] or "accept"),
+                        priority=priority,
+                        protocol=str(values["protocol"] or "all"),
+                        dest_ip=values.get("dest_ip"),
+                        dest_port=values.get("dest_port"),
+                    )
                     new_rows = [{
                         "rest": "",
                         "enabled": bool(values["enabled"]),
