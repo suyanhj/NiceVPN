@@ -108,6 +108,12 @@ xx.hj.com,192.168.1.1:80,https://sso.example.com
 
 修改地址池后，API 下载可在下次请求直接读取配置；运行中的 SSO 控制器使用启动时的地址快照，需要重启 NiceVPN 后才采用新的默认值。
 
+### 管理员查询 DingTalk CorpId
+
+系统设置 → 企业认证 → 统一认证（钉钉）提供 **从钉钉选择企业并获取 ID**。管理员先保存统一钉钉 Client ID/Secret，再点击查询；NiceVPN 在新标签页发起一次独立 OAuth（`scope=openid corpid`），管理员在钉钉授权页面选择目标组织。回调服务端换取用户 AccessToken 后，从钉钉响应读取可信 `corpId`，并尝试查询组织名称；CorpId 会自动填入白名单的空行或新增行，管理员仍需点击“保存”才会修改白名单。
+
+该查询使用短时、随机、一次性的 state（5 分钟有效），仅保存在 NiceVPN 进程内；回调只完成查询，不直接修改认证策略，不返回或记录 AccessToken、OAuth Code。NiceVPN 重启后未完成的查询会失效。查询需要当前浏览器用户能够登录钉钉并选择目标组织；它不是全网企业搜索，也不能查询该钉钉用户无权访问的组织。
+
 ## DingTalk 身份核对日志
 
 SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换取返回的 CorpId**。钉钉不再额外读取个人资料，外部用户 ID 留空；企业微信仍使用官方必需的员工身份接口确认内部成员。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID（如提供商返回）、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。
@@ -117,7 +123,7 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换
 - `SSO unified DingTalk enterprise allow-list check`：实际企业名称、后台配置的 name-only 名单、`corp_id_match`、`name_match` 和最终结果。
 - 如果名称接口无权限或没有返回 `orgName`，会输出 `SSO DingTalk organization name unavailable`；随后 name-only 白名单会拒绝认证。此时应检查钉钉组织基础信息读取权限，或改用 CorpId 白名单。
 
-名称匹配仍为去除首尾空白后的**完全相等**，不会忽略括号、后缀、空格或简称差异。配置行同时填写 CorpId 和企业名称时只按 CorpId 匹配，该行名称不会参与名称匹配。日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
+名称匹配仍为去除首尾空白后的**完全相等**，不会忽略括号、后缀、空格或简称差异。配置行同时填写 CorpId 和企业名称时只按 CorpId 匹配，该行名称不会参与名称匹配。日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。钉钉 API 非 2xx 响应会额外记录 HTTP 状态、响应中的错误码/错误消息、requestId 和 requiredScopes（仅提取白名单字段并截断、清理控制字符）；不会整段打印响应正文。
 
 ## 域名、IP 和外部 API 端口的规范（2026-11-10）
 
