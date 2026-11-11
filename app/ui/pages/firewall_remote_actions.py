@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from app.models.firewall import FirewallRule
 from app.services.firewall.iptables_mgr import IptablesManager
 from app.services.firewall.simple_rule_import import remote_rests_from_create_fields
+from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
@@ -39,8 +40,11 @@ class FirewallRemoteActionsMixin:
     """FirewallPage 的远端单条规则动作实现。"""
 
     def _show_edit_remote_line_dialog(self, idx: int, row: dict) -> None:
-        """统一表单编辑对端规则；可结构化编辑，也可直接修改原始 rest。"""
+        """统一表单编辑对端规则；标签规则使用逻辑规则编辑器。"""
 
+        if isinstance(row.get("tag_binding"), dict):
+            self._show_edit_remote_tag_rule_dialog(idx, row)
+            return
         if not self._require_remote_strategy_tab():
             return
         peer_id = self._active_remote_peer_id()
@@ -168,6 +172,108 @@ class FirewallRemoteActionsMixin:
 
         form = create_form_dialog(
             f"编辑对端规则 #{idx + 1}",
+            body=body,
+            on_submit=submit,
+            submit_label="保存并写回",
+            close_on_success=True,
+        )
+        form.dialog.props("position=right maximized")
+        form.card.classes(
+            "firewall-rule-drawer w-[min(100vw,30rem)] h-full no-wrap overflow-y-auto"
+        )
+        form.open()
+
+    def _show_edit_remote_tag_rule_dialog(self, idx: int, row: dict) -> None:
+        """编辑一条逻辑标签规则；源地址始终由标签当前成员动态计算。"""
+        if not self._require_remote_strategy_tab():
+            return
+        peer_id = self._active_remote_peer_id()
+        if not peer_id:
+            self._notify_for_page("请选择对端", type="warning")
+            return
+        binding = dict(row.get("tag_binding") or {})
+        tag_service = TagService()
+        tags = tag_service.list_all()
+        options = {
+            str(tag.get("id") or ""): str(tag.get("name") or "")
+            for tag in tags if tag.get("id")
+        }
+        current_tag_id = str(binding.get("tag_id") or "")
+        if current_tag_id and current_tag_id not in options:
+            options[current_tag_id] = f"{current_tag_id[:8]}…（标签可能已删）"
+        fields: dict[str, Any] = {}
+
+        def body() -> None:
+            ui.label(
+                "这是一条动态标签规则。每次写回时，NiceVPN 会按标签当前关联的用户/组重新展开源 IP；"
+                "标签没有有效成员时不会下发规则。"
+            ).classes("section-caption")
+            fields["tag"] = ui.select(
+                options, label="来源标签", value=current_tag_id, with_input=True,
+            ).classes("w-full")
+            fields["action"] = ui.select(
+                {"accept": "放行 (ACCEPT)", "drop": "丢弃 (DROP)", "reject": "拒绝 (REJECT)"},
+                label="动作", value=str(binding.get("action") or "accept"),
+            ).classes("w-full")
+            fields["protocol"] = ui.select(
+                {"all": "不限 (ALL)", "tcp": "TCP", "udp": "UDP", "icmp": "ICMP"},
+                label="协议", value=str(binding.get("protocol") or "all"),
+                with_input=True, new_value_mode="add-unique",
+            ).classes("w-full")
+            fields["dest_ip"] = ui.input(
+                "目标地址", value=str(binding.get("dest_ip") or ""),
+                placeholder="空=不限",
+            ).classes("w-full")
+            fields["dest_port"] = ui.input(
+                "目标端口", value=str(binding.get("dest_port") or ""),
+                placeholder="空=不限",
+            ).classes("w-full")
+            fields["description"] = ui.input(
+                "规则描述", value=str(row.get("description") or ""),
+            ).classes("w-full")
+            fields["enabled"] = ui.switch(
+                "启用", value=bool(row.get("enabled", True)),
+            )
+
+        async def submit() -> bool:
+            tag_id = str(fields["tag"].value or "").strip()
+            tag = tag_service.store.get_tag(tag_id) if tag_id else None
+            if tag is None:
+                self._notify_for_page("请选择有效标签", type="negative")
+                return False
+            action = str(fields["action"].value or "accept").strip().lower()
+            protocol = str(fields["protocol"].value or "all").strip().lower()
+            dest_ip = str(fields["dest_ip"].value or "").strip()
+            dest_port = str(fields["dest_port"].value or "").strip()
+            try:
+                FirewallRule(
+                    owner_type="tag", owner_id=tag_id,
+                    action=action, priority=1, protocol=protocol,
+                    dest_ip=dest_ip or None, dest_port=dest_port or None,
+                )
+            except (ValidationError, ValueError) as exc:
+                self._notify_for_page(str(exc), type="negative")
+                return False
+            new_row = {
+                "rest": "",
+                "enabled": bool(fields["enabled"].value),
+                "priority": int(row.get("priority", 0) or (idx + 1) * 10),
+                "description": str(fields["description"].value or "").strip(),
+                "tag_binding": {
+                    "tag_id": tag_id,
+                    "tag_name": str(tag.get("name") or tag_id),
+                    "action": action,
+                    "protocol": protocol,
+                    "dest_ip": dest_ip,
+                    "dest_port": dest_port,
+                },
+            }
+            return await self._save_remote_block_replace_and_push(
+                peer_id, idx, [new_row],
+            )
+
+        form = create_form_dialog(
+            f"编辑标签规则 #{idx + 1}",
             body=body,
             on_submit=submit,
             submit_label="保存并写回",
@@ -420,6 +526,7 @@ class FirewallRemoteActionsMixin:
 
         groups = GroupService().list_all()
         users = UserService().list_all()
+        tags = TagService().list_all()
         default_group_id = (
             str(groups[0].get("id") or "")
             if groups
@@ -444,6 +551,7 @@ class FirewallRemoteActionsMixin:
             holder["fields"] = render_firewall_rule_create_fields(
                 groups=groups,
                 users=users,
+                tags=tags,
                 peer_presets_loader=load_peer_presets,
                 ccd_reader=_read_ccd_vpn_ips,
                 parse_user_source=_parse_user_source_for_create,
@@ -465,34 +573,51 @@ class FirewallRemoteActionsMixin:
                     values["priority_value"],
                     base=self._remote_priority_base_list(peer_id),
                 )
-                rests = remote_rests_from_create_fields(
-                    source_subnet=values["source_subnet"],
-                    source_ips=values["source_ips"],
-                    action=values["action"],
-                    protocol=values["protocol"],
-                    dest_ip=values["dest_ip"],
-                    dest_port=values["dest_port"],
-                )
+                if values["owner_type"] == "tag":
+                    tag_id = str(values["owner_id"] or "").strip()
+                    tag = TagService().store.get_tag(tag_id)
+                    if tag is None:
+                        raise ValueError("所选标签不存在，请刷新后重试")
+                    new_rows = [{
+                        "rest": "",
+                        "enabled": bool(values["enabled"]),
+                        "priority": priority,
+                        "tag_binding": {
+                            "tag_id": tag_id,
+                            "tag_name": str(tag.get("name") or tag_id),
+                            "action": str(values["action"] or "accept"),
+                            "protocol": str(values["protocol"] or "all"),
+                            "dest_ip": str(values.get("dest_ip") or ""),
+                            "dest_port": str(values.get("dest_port") or ""),
+                        },
+                    }]
+                else:
+                    rests = remote_rests_from_create_fields(
+                        source_subnet=values["source_subnet"],
+                        source_ips=values["source_ips"],
+                        action=values["action"],
+                        protocol=values["protocol"],
+                        dest_ip=values["dest_ip"],
+                        dest_port=values["dest_port"],
+                    )
+                    description = str(values.get("description") or "").strip() or None
+                    new_rows = [
+                        {
+                            "rest": line,
+                            "enabled": bool(values["enabled"]),
+                            "priority": priority,
+                            **({"description": description} if description else {}),
+                        }
+                        for line in rests
+                    ]
             except (ValueError, ValidationError, TypeError) as exc:
                 self._notify_for_page(str(exc), type="negative")
                 return False
 
-            description = str(
-                values.get("description") or ""
-            ).strip() or None
-            new_rows = [
-                {
-                    "rest": line,
-                    "enabled": bool(values["enabled"]),
-                    "priority": priority,
-                    **(
-                        {"description": description}
-                        if description
-                        else {}
-                    ),
-                }
-                for line in rests
-            ]
+            if values["owner_type"] == "tag":
+                description = str(values.get("description") or "").strip()
+                if description:
+                    new_rows[0]["description"] = description
             return await self._insert_remote_rows_and_push(
                 peer_id,
                 new_rows,
