@@ -143,10 +143,10 @@ class ManagementInstance:
         self, common_name: str, *,
         timeout: float = DISCONNECT_CONFIRM_TIMEOUT_SECONDS,
     ) -> tuple[int, int, int]:
-        """按 status 3 中的真实 CID 执行 client-kill，并确认后续快照已移除。
+        """按 status 3 中的真实 CID 执行 client-kill，并确认原连接已移除。
 
-        返回 (发现在线连接数, 已确认断开数, 未确认数)。离线用户返回全零；
-        Management 无法取得可信快照时返回未确认，绝不把 sendall 成功当成踢线成功。
+        返回 (发现在线连接数, 已确认断开数, 未确认数)。只处理操作开始时
+        已存在的 CID；客户端被 RESTART 后产生的新连接不误当成旧连接继续踢。
         """
         if not common_name or any(ch in common_name for ch in "\r\n"):
             return 0, 0, 1
@@ -160,32 +160,27 @@ class ManagementInstance:
             return 0, 0, 1
 
         snapshot, status_at = first
-        targeted: set[int] = set()
-        send_failed: set[int] = set()
+        targeted = {
+            cid for cid, (cn, _connected_at) in snapshot.items()
+            if cn == common_name
+        }
+        if not targeted:
+            return 0, 0, 0
 
-        while True:
-            current = {
-                cid for cid, (cn, _connected_at) in snapshot.items()
-                if cn == common_name
-            }
-            if not current:
-                return (
-                    len(targeted),
-                    len(targeted - send_failed),
-                    len(send_failed),
+        send_failed: set[int] = set()
+        for cid in sorted(targeted):
+            try:
+                # client-kill 使用 OpenVPN 当前 CID 精确定位连接。
+                # 默认 RESTART，让客户端自动重连并重新完成企业认证。
+                self.send(f"client-kill {cid}\n")
+            except (OSError, ConnectionError):
+                send_failed.add(cid)
+                logger.exception(
+                    "OpenVPN Management client-kill send failed: instance=%s cid=%s",
+                    self.instance_id, cid,
                 )
 
-            for cid in sorted(current):
-                targeted.add(cid)
-                try:
-                    self.send(f"client-kill {cid}\n")
-                except (OSError, ConnectionError):
-                    send_failed.add(cid)
-                    logger.exception(
-                        "OpenVPN Management client-kill send failed: instance=%s cid=%s",
-                        self.instance_id, cid,
-                    )
-
+        while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -193,13 +188,31 @@ class ManagementInstance:
             if next_status is None:
                 break
             snapshot, status_at = next_status
+            still_online = {
+                cid for cid in targeted
+                if cid in snapshot and snapshot[cid][0] == common_name
+            }
+            if not still_online:
+                return len(targeted), len(targeted), 0
+
+            # 若旧 CID 仍存在，再发一次精准命令；不触碰自动重连产生的新 CID。
+            for cid in sorted(still_online):
+                try:
+                    self.send(f"client-kill {cid}\n")
+                    send_failed.discard(cid)
+                except (OSError, ConnectionError):
+                    send_failed.add(cid)
+                    logger.exception(
+                        "OpenVPN Management client-kill retry failed: instance=%s cid=%s",
+                        self.instance_id, cid,
+                    )
 
         still_online = {
-            cid for cid, (cn, _connected_at) in snapshot.items()
-            if cn == common_name
+            cid for cid in targeted
+            if cid in snapshot and snapshot[cid][0] == common_name
         }
-        confirmed = targeted - still_online - send_failed
-        failed = still_online | send_failed
+        confirmed = targeted - still_online
+        failed = still_online
         return len(targeted), len(confirmed), len(failed)
 
     def start(self) -> None:
