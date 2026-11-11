@@ -518,7 +518,7 @@ class UserService:
                 with socket.create_connection(("127.0.0.1", mgmt_port), timeout=3) as sock:
                     sock.settimeout(3)
                     sock.recv(4096)
-                    sock.sendall(f"kill {username}\\n".encode("utf-8"))
+                    sock.sendall(f"kill {username}\n".encode("utf-8"))
                     response = sock.recv(4096).decode("utf-8", errors="replace")
                 if "SUCCESS:" in response:
                     online += 1
