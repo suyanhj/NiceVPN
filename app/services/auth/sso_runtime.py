@@ -848,12 +848,41 @@ class SsoRuntime:
                 if provider is None or identity.provider_kind != provider.kind:
                     identity = None
                 elif provider.id == UNIFIED_DINGTALK_ID:
-                    if not is_allowed_enterprise(
-                        load_config(), identity.enterprise_id, identity.enterprise_name,
-                    ):
+                    config = load_config()
+                    allowed_entries = config.get("enterprise_sso_allowed_corps") or []
+                    corp_id_match = any(
+                        item.get("corp_id")
+                        and item.get("corp_id") == identity.enterprise_id
+                        for item in allowed_entries
+                    )
+                    # A row with CorpId is intentionally ID-authoritative;
+                    # only name-only rows participate in exact name matching.
+                    configured_name_only = [
+                        str(item.get("name") or "")
+                        for item in allowed_entries
+                        if not item.get("corp_id") and item.get("name")
+                    ]
+                    name_match = bool(identity.enterprise_name) and (
+                        identity.enterprise_name in configured_name_only
+                    )
+                    allowed = is_allowed_enterprise(
+                        config, identity.enterprise_id, identity.enterprise_name,
+                    )
+                    logger.info(
+                        "SSO unified DingTalk enterprise allow-list check: "
+                        "corp_id=%s verified_enterprise_name=%r "
+                        "configured_name_only=%r corp_id_match=%s name_match=%s result=%s",
+                        identity.enterprise_id, identity.enterprise_name or "<empty>",
+                        configured_name_only, corp_id_match, name_match,
+                        "allow" if allowed else "deny",
+                    )
+                    if not allowed:
                         logger.warning(
-                            "SSO unified DingTalk rejected: corp_id=%s not in allow-list",
-                            identity.enterprise_id,
+                            "SSO unified DingTalk rejected: corp_id=%s "
+                            "verified_enterprise_name=%r configured_name_only=%r "
+                            "corp_id_match=%s name_match=%s",
+                            identity.enterprise_id, identity.enterprise_name or "<empty>",
+                            configured_name_only, corp_id_match, name_match,
                         )
                         deny_reason = "enterprise_not_allowed"
                         identity = None
