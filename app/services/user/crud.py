@@ -369,7 +369,7 @@ class UserService:
 
         # Mesh 路由只下发给 active 用户；停用时从 CCD 移除，启用时重新计算。
         from app.services.peer_instance.service import PeerService
-        PeerService().sync_all_mesh_push_routes_in_ccd()
+        PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
 
         from app.services.firewall.tag_service import TagService
         TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
