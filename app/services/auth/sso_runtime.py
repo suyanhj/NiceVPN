@@ -130,6 +130,9 @@ class ManagementInstance:
         deadline = time.monotonic() + max(0.0, timeout)
         with self.status_condition:
             while not self.runtime.stop_event.is_set():
+                with self.socket_lock:
+                    if self.socket is None:
+                        return None
                 if (self.last_status_clients is not None
                         and self.last_status_at > after
                         and time.monotonic() - self.last_status_at
