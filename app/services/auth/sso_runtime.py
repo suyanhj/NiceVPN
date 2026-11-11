@@ -224,7 +224,7 @@ class ManagementInstance:
             and snapshot[cid][0] == common_name
             and snapshot[cid][1] == connected_at
         }
-        confirmed = targeted - still_online
+        confirmed = set(targeted) - still_online
         failed = still_online
         return len(targeted), len(confirmed), len(failed)
 
