@@ -51,6 +51,7 @@ STATUS_RESPONSE_TIMEOUT_SECONDS = 10.0
 # race a delayed Management status response and cause unwanted re-login.
 ONLINE_LEASE_WRITE_SECONDS = 55 * 60.0
 EXPIRED_SESSION_PRUNE_SECONDS = 1800.0
+DISCONNECT_CONFIRM_TIMEOUT_SECONDS = 12.0
 
 
 class SsoFinishResult(str, Enum):
@@ -99,12 +100,107 @@ class ManagementInstance:
         self.socket: socket.socket | None = None
         self.socket_lock = threading.RLock()
         self.thread: threading.Thread | None = None
+        self.status_condition = threading.Condition()
+        self.last_status_clients: dict[int, tuple[str, int]] | None = None
+        self.last_status_at = 0.0
 
     def send(self, command: str) -> None:
         with self.socket_lock:
             if self.socket is None:
                 raise ConnectionError("OpenVPN Management channel is disconnected")
             self.socket.sendall(command.encode("utf-8"))
+
+    def _publish_status(self, clients: dict[int, tuple[str, int]]) -> None:
+        """发布 OpenVPN status 3 快照，供管理员断开操作确认真实连接状态。"""
+        with self.status_condition:
+            self.last_status_clients = dict(clients)
+            self.last_status_at = time.monotonic()
+            self.status_condition.notify_all()
+
+    def _clear_status(self) -> None:
+        with self.status_condition:
+            self.last_status_clients = None
+            self.last_status_at = 0.0
+            self.status_condition.notify_all()
+
+    def wait_for_status(
+        self, *, after: float = 0.0, timeout: float = 7.0,
+    ) -> tuple[dict[int, tuple[str, int]], float] | None:
+        """等待一份新的完整 status 3 快照；不把超时或断线当作空列表。"""
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self.status_condition:
+            while not self.runtime.stop_event.is_set():
+                if (self.last_status_clients is not None
+                        and self.last_status_at > after):
+                    return dict(self.last_status_clients), self.last_status_at
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self.status_condition.wait(remaining)
+        return None
+
+    def disconnect_common_name(
+        self, common_name: str, *,
+        timeout: float = DISCONNECT_CONFIRM_TIMEOUT_SECONDS,
+    ) -> tuple[int, int, int]:
+        """按 status 3 中的真实 CID 执行 client-kill，并确认后续快照已移除。
+
+        返回 (发现在线连接数, 已确认断开数, 未确认数)。离线用户返回全零；
+        Management 无法取得可信快照时返回未确认，绝不把 sendall 成功当成踢线成功。
+        """
+        if not common_name or any(ch in common_name for ch in "\r\n"):
+            return 0, 0, 1
+
+        deadline = time.monotonic() + max(0.1, timeout)
+        first = self.wait_for_status(
+            after=0.0,
+            timeout=min(max(0.1, timeout), STATUS_RESPONSE_TIMEOUT_SECONDS),
+        )
+        if first is None:
+            return 0, 0, 1
+
+        snapshot, status_at = first
+        targeted: set[int] = set()
+        send_failed: set[int] = set()
+
+        while True:
+            current = {
+                cid for cid, (cn, _connected_at) in snapshot.items()
+                if cn == common_name
+            }
+            if not current:
+                return (
+                    len(targeted),
+                    len(targeted - send_failed),
+                    len(send_failed),
+                )
+
+            for cid in sorted(current):
+                targeted.add(cid)
+                try:
+                    self.send(f"client-kill {cid}\n")
+                except (OSError, ConnectionError):
+                    send_failed.add(cid)
+                    logger.exception(
+                        "OpenVPN Management client-kill send failed: instance=%s cid=%s",
+                        self.instance_id, cid,
+                    )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            next_status = self.wait_for_status(after=status_at, timeout=remaining)
+            if next_status is None:
+                break
+            snapshot, status_at = next_status
+
+        still_online = {
+            cid for cid, (cn, _connected_at) in snapshot.items()
+            if cn == common_name
+        }
+        confirmed = targeted - still_online - send_failed
+        failed = still_online | send_failed
+        return len(targeted), len(confirmed), len(failed)
 
     def start(self) -> None:
         if self.thread is not None:
@@ -117,6 +213,8 @@ class ManagementInstance:
         self.thread.start()
 
     def close(self) -> None:
+        with self.status_condition:
+            self.status_condition.notify_all()
         with self.socket_lock:
             if self.socket is not None:
                 try:
@@ -148,6 +246,7 @@ class ManagementInstance:
                         self.socket = None
                 if conn is not None:
                     conn.close()
+                self._clear_status()
                 self.runtime.clear_instance(self.instance_id)
             self.runtime.stop_event.wait(1.0)
 
@@ -183,6 +282,7 @@ class ManagementInstance:
                 decoded = line.decode("utf-8", errors="replace").rstrip("\r")
                 snapshot = status_parser.feed(decoded)
                 if snapshot is not None:
+                    self._publish_status(snapshot)
                     next_status_poll = time.monotonic() + random.uniform(
                         STATUS_POLL_MIN_SECONDS, STATUS_POLL_MAX_SECONDS,
                     )
@@ -283,24 +383,34 @@ class SsoRuntime:
             self.status_provider = None
             self.establish_timings.clear()
 
-    def kill_client_by_common_name(self, common_name: str) -> bool:
-        """Keep existing admin kick-offline compatible with Unix Management."""
+    def kill_client_by_common_name(self, common_name: str) -> tuple[int, int, int]:
+        """遍历所有实例按 CID 断开指定 CN，并返回真实状态确认结果。"""
         if not common_name or any(ch in common_name for ch in "\r\n"):
-            return False
-        success = False
+            return 0, 0, 1
+        online = disconnected = failed = 0
         for manager in self.instances.values():
             try:
-                manager.send(f"kill {common_name}\n")
-                success = True
-            except (OSError, ConnectionError):
-                continue
-        return success
+                found, confirmed, not_confirmed = manager.disconnect_common_name(
+                    common_name,
+                )
+                online += found
+                disconnected += confirmed
+                failed += not_confirmed
+            except Exception:
+                logger.exception(
+                    "OpenVPN Management disconnect failed: instance=%s user=%s",
+                    manager.instance_id, common_name,
+                )
+                failed += 1
+        return online, disconnected, failed
 
-    def revoke_user_session(self, common_name: str) -> tuple[int, int, bool]:
-        """Invalidate persistent and live SSO state, then request VPN disconnect.
+    def revoke_user_session(
+        self, common_name: str,
+    ) -> tuple[int, int, int, int, int]:
+        """撤销认证状态后断开真实 VPN 连接，并返回 status 3 确认结果。
 
-        A client that reconnects must complete a fresh OAuth flow. The
-        management kill command is harmless for an already-offline client.
+        离线用户只清理缓存；在线用户按 CID 断开，等待新的 status 3
+        快照确认客户端已从 OpenVPN 在线列表中消失。
         """
         if not common_name or any(char in common_name for char in "\r\n"):
             raise ValueError("Invalid VPN common name")
@@ -326,13 +436,17 @@ class SsoRuntime:
             for key, identity in list(self.recovery_checked.items()):
                 if identity[0] == common_name:
                     self.recovery_checked.pop(key, None)
-            disconnect_sent = self.kill_client_by_common_name(common_name)
-        logger.info(
-            "SSO administrator revoked account session: user=%s rows=%d "
-            "pending=%d disconnect_sent=%s",
-            common_name, revoked, canceled, disconnect_sent,
+
+        # 断开操作可能等待 status 3，不能持有运行时状态锁。
+        online, disconnected, disconnect_failed = self.kill_client_by_common_name(
+            common_name,
         )
-        return revoked, canceled, disconnect_sent
+        logger.info(
+            "SSO administrator reset connection: user=%s rows=%d pending=%d "
+            "online=%d disconnected=%d disconnect_failed=%d",
+            common_name, revoked, canceled, online, disconnected, disconnect_failed,
+        )
+        return revoked, canceled, online, disconnected, disconnect_failed
 
     def clear_instance(self, instance_id: str) -> None:
         with self.lock:
