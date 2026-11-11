@@ -86,6 +86,37 @@ def materialize_remote_chain_rows(
     return rests
 
 
+def mark_remote_tag_rules_pending(tag_ids: Iterable[str], *, store=None) -> list[str]:
+    """先持久化待同步状态，进程重启时也不会把远端滞后伪装成已同步。"""
+    wanted = {str(value).strip() for value in tag_ids if str(value).strip()}
+    if not wanted:
+        return []
+    pending_peers: list[str] = []
+    for peer in PeerService(store=store).list_all():
+        peer_id = str(peer.get("id") or "").strip()
+        if not peer_id:
+            continue
+        cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        if not cache:
+            continue
+        rows = list(cache.get("rows") or [])
+        if not any(
+            str((_tag_binding(row) or {}).get("tag_id") or "") in wanted
+            for row in rows
+        ):
+            continue
+        remote_chain_cache.write_remote_chain_cache(
+            peer_id,
+            chain=str(cache.get("chain") or ""),
+            chain_exists=bool(cache.get("chain_exists", True)),
+            rows=rows,
+            pending_sync=True,
+            last_sync_error="标签成员发生变化，等待远端防火墙刷新",
+        )
+        pending_peers.append(peer_id)
+    return pending_peers
+
+
 def sync_remote_tag_firewall_rules(tag_ids: Iterable[str], *, store=None) -> dict[str, Any]:
     """按当前标签成员重推所有引用这些标签的远端防火墙工作副本。"""
     wanted = {str(value).strip() for value in tag_ids if str(value).strip()}
@@ -143,6 +174,9 @@ def schedule_remote_tag_firewall_sync(tag_ids: Iterable[str], *, store=None) -> 
     wanted = sorted({str(value).strip() for value in tag_ids if str(value).strip()})
     if not wanted or not has_remote_tag_rule_references(wanted, store=store):
         return False
+    pending_peers = mark_remote_tag_rules_pending(wanted, store=store)
+    if not pending_peers:
+        return False
 
     def worker() -> None:
         with _REMOTE_TAG_SYNC_LOCK:
@@ -156,5 +190,8 @@ def schedule_remote_tag_firewall_sync(tag_ids: Iterable[str], *, store=None) -> 
         name="nicevpn-remote-tag-firewall-sync",
         daemon=True,
     ).start()
-    logger.info("已安排远端标签防火墙刷新 tags=%s", len(wanted))
+    logger.info(
+        "已安排远端标签防火墙刷新 tags=%s peers=%s",
+        len(wanted), len(pending_peers),
+    )
     return True
