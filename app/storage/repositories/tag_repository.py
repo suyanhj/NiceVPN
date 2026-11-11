@@ -139,6 +139,23 @@ class TagRepositoryMixin:
                 [(tid, gid) for gid in groups],
             )
 
+    def list_tag_memberships(self) -> dict[str, dict[str, list[str]]]:
+        """一次读取用户/组全部标签关联，供批量 Mesh 路由计算避免 N+1 查询。"""
+        users: dict[str, list[str]] = {}
+        groups: dict[str, list[str]] = {}
+        with self.connection() as conn:
+            user_rows = conn.execute(
+                "SELECT username,tag_id FROM user_tags ORDER BY username,tag_id"
+            ).fetchall()
+            group_rows = conn.execute(
+                "SELECT group_id,tag_id FROM group_tags ORDER BY group_id,tag_id"
+            ).fetchall()
+        for row in user_rows:
+            users.setdefault(str(row["username"]), []).append(str(row["tag_id"]))
+        for row in group_rows:
+            groups.setdefault(str(row["group_id"]), []).append(str(row["tag_id"]))
+        return {"users": users, "groups": groups}
+
     def list_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
         if entity_type == "user":
             table, column = "user_tags", "username"
