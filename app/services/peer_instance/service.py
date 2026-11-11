@@ -40,7 +40,7 @@ def _vpn_forward_wire_snapshot(row: dict) -> tuple:
 
 
 def _mesh_push_wire_snapshot(row: dict) -> tuple:
-    """mesh 向各用户 CCD 下发 push route 时对单条对端实例起作用的指纹：后方 LAN + 路由可见组。"""
+    """mesh 向各用户 CCD 下发 push route 时的指纹：后方 LAN + 路由可见组/标签。"""
     raw_lan = [str(x).strip() for x in (row.get("lan_cidrs") or []) if str(x).strip()]
     lan_t = tuple(sorted_unique_ipv4_cidrs(raw_lan))
     mugs = tuple(sorted(str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()))
