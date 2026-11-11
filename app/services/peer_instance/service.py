@@ -662,6 +662,8 @@ class PeerService:
                     exc,
                 )
         self.store.delete_peer(peer_id)
+        from app.services.peer_instance import remote_chain_cache
+        remote_chain_cache.delete_remote_chain_cache(peer_id)
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
 
