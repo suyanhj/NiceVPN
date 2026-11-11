@@ -4,6 +4,8 @@
 import uuid
 
 from app.services.peer_instance.remote_chain_cache import (
+    delete_remote_chain_cache,
+    mark_pending_apply,
     read_remote_chain_cache,
     record_from_fetch,
     rests_to_push_list,
@@ -87,3 +89,29 @@ def test_remote_cache_preserves_logical_tag_rows_without_raw_rest(tmp_path, monk
     assert cache["rows"][1]["rest"] == ""
     assert cache["rows"][1]["tag_binding"] == binding
     assert rests_to_push_list(cache["rows"]) == ["-s 10.8.0.0/24 -j ACCEPT"]
+
+
+
+def test_delete_remote_chain_cache_removes_working_copy_and_prepush_backup(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.peer_instance.remote_chain_cache.REMOTE_PEER_CHAINS_DIR",
+        tmp_path,
+    )
+    pid = str(uuid.uuid4())
+    write_remote_chain_cache(
+        pid,
+        chain="VPN_PEER_test",
+        chain_exists=True,
+        rows=[{"rest": "-j ACCEPT", "enabled": True}],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+    mark_pending_apply(
+        pid, "VPN_PEER_test", True,
+        [{"rest": "-j DROP", "enabled": True}],
+    )
+
+    delete_remote_chain_cache(pid)
+
+    assert read_remote_chain_cache(pid) is None
+    assert not (tmp_path / f"{pid}.prepush.bak").exists()
