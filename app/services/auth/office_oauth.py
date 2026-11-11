@@ -88,8 +88,74 @@ def authorization_url(provider: OfficeProvider, callback: str, state: str) -> st
     return "https://open.work.weixin.qq.com/wwopen/sso/qrConnect?" + urlencode(params)
 
 
+def _safe_provider_error_value(value, *, limit: int = 240) -> str:
+    """Bound and sanitize provider error fields before writing them to logs."""
+    import re
+
+    text = str(value or "").replace("\\r", " ").replace("\\n", " ").strip()
+    text = re.sub(
+        r"(?i)(access[_-]?token|client[_-]?secret|app[_-]?secret|authorization)"
+        r"\\s*[:=]\\s*[^,;\\s]+",
+        r"\\1=<redacted>",
+        text,
+    )
+    return text[:limit]
+
+
+def _log_provider_http_error(response: httpx.Response) -> None:
+    """Log only allow-listed error metadata; never dump provider response bodies."""
+    payload = {}
+    try:
+        candidate = response.json()
+        if isinstance(candidate, dict):
+            payload = candidate
+    except (ValueError, TypeError):
+        pass
+
+    code = next((
+        payload.get(key) for key in ("code", "errcode", "errorCode", "subCode")
+        if payload.get(key) not in (None, "")
+    ), "")
+    message = next((
+        payload.get(key) for key in ("message", "errmsg", "errorMessage", "subMessage")
+        if payload.get(key) not in (None, "")
+    ), "")
+    request_id = next((
+        payload.get(key) for key in ("requestid", "requestId", "request_id", "traceId")
+        if payload.get(key) not in (None, "")
+    ), "")
+    if not request_id:
+        request_id = next((
+            response.headers.get(key) for key in (
+                "x-ca-request-id", "x-acs-request-id", "request-id", "trace-id",
+            ) if response.headers.get(key)
+        ), "")
+    scopes = next((
+        payload.get(key) for key in ("requiredScopes", "requiredScope", "required_scopes")
+        if payload.get(key) not in (None, "")
+    ), "")
+    if isinstance(scopes, (list, tuple)):
+        scopes = ",".join(str(item) for item in scopes[:12])
+    request = response.request
+    logger.warning(
+        "Office provider API HTTP error: host=%s path=%s http_status=%s "
+        "api_code=%r api_message=%r request_id=%r required_scopes=%r",
+        request.url.host if request else "<unknown>",
+        request.url.path if request else "<unknown>",
+        response.status_code,
+        _safe_provider_error_value(code, limit=100),
+        _safe_provider_error_value(message),
+        _safe_provider_error_value(request_id, limit=120),
+        _safe_provider_error_value(scopes, limit=240),
+    )
+
+
 async def _get_json(response: httpx.Response) -> dict:
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        _log_provider_http_error(response)
+        raise
     payload = response.json()
     if not isinstance(payload, dict):
         raise OfficeAuthError("Unexpected office provider response")
