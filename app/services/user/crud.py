@@ -492,79 +492,118 @@ class UserService:
         ccd_file.write_text("\n".join(filtered) + "\n", encoding="utf-8")
         fix_path_for_openvpn_shared_data(ccd_file)
 
-    def _kill_client_session(self, username: str) -> None:
-        """通过 OpenVPN 管理接口踢掉用户当前连接（遍历已注册实例端口，与 server.conf 一致）。"""
+    def _kill_client_session(self, username: str) -> tuple[int, int, int]:
+        """断开用户当前 VPN 会话，返回 (在线连接数, 确认断开数, 未确认数)。"""
         from app.services.openvpn.instance import iter_instance_mgmt_ports
         from app.core.config import load_config
 
         if bool(load_config().get("enterprise_sso_enabled", False)):
-            # SSO owns the sole active management connection. The legacy
-            # TCP management port does not exist when Unix WebAuth is enabled.
+            # SSO 启用时只有 Unix Management 长连接可控制 OpenVPN。
             from app.services.auth.sso_runtime import get_sso_runtime
 
             runtime = get_sso_runtime()
-            if runtime is None or not runtime.kill_client_by_common_name(username):
-                logger.warning("SSO Management 不可用，不能踢出用户: %s", username)
-            return
+            if runtime is None or runtime.stop_event.is_set():
+                logger.warning("SSO Management 不可用，无法确认断开用户: %s", username)
+                return 0, 0, 1
+            return runtime.kill_client_by_common_name(username)
 
         endpoints = iter_instance_mgmt_ports()
         if not endpoints:
             logger.warning("instances 为空，无法通过管理接口踢用户: %s", username)
-            return
-        any_ok = False
+            return 0, 0, 1
+
+        online = disconnected = failed = 0
         for _inst, mgmt_port in endpoints:
             try:
                 with socket.create_connection(("127.0.0.1", mgmt_port), timeout=3) as sock:
+                    sock.settimeout(3)
                     sock.recv(4096)
-                    sock.sendall(f"kill {username}\n".encode("utf-8"))
-                    sock.recv(4096)
-                logger.info("已通过管理接口断开用户连接: %s (mgmt_port=%s)", username, mgmt_port)
-                any_ok = True
-            except (OSError, socket.timeout) as exc:
-                logger.debug(
-                    "管理端口 %s 上 kill 失败（实例未监听或用户不在该实例）: %s",
-                    mgmt_port,
-                    exc,
+                    sock.sendall(f"kill {username}\\n".encode("utf-8"))
+                    response = sock.recv(4096).decode("utf-8", errors="replace")
+                if "SUCCESS:" in response:
+                    online += 1
+                    disconnected += 1
+                    logger.info(
+                        "OpenVPN Management confirmed client kill: user=%s port=%s",
+                        username, mgmt_port,
+                    )
+                elif "ERROR:" in response:
+                    if "not found" not in response.lower():
+                        failed += 1
+                    logger.debug(
+                        "OpenVPN Management did not kill user=%s port=%s response=%s",
+                        username, mgmt_port, response.strip(),
+                    )
+                else:
+                    failed += 1
+                    logger.warning(
+                        "OpenVPN Management returned no kill confirmation: user=%s port=%s",
+                        username, mgmt_port,
+                    )
+            except socket.timeout as exc:
+                failed += 1
+                logger.warning(
+                    "OpenVPN Management kill timed out: user=%s port=%s err=%s",
+                    username, mgmt_port, exc,
                 )
-        if not any_ok:
-            logger.warning(
-                "所有已注册实例的管理接口均未成功执行 kill %s，请确认 openvpn 已启动",
-                username,
-            )
+            except OSError as exc:
+                # 实例未启动/本地管理端口未监听时，不存在可确认的在线会话。
+                logger.debug(
+                    "管理端口 %s 不可用，跳过用户断开确认 user=%s: %s",
+                    mgmt_port, username, exc,
+                )
+        return online, disconnected, failed
 
     def kick_offline(self, username: str) -> bool:
-        """踢掉用户当前在线会话（一次性操作，不影响后续连接）。"""
-        self._kill_client_session(username)
-        self.audit.log("kick_offline", "user", username,
-                       "管理员手动踢下线", "success")
-        return True
+        """兼容 CLI 的单纯踢线操作；用户页统一使用 reset_connection。"""
+        online, disconnected, failed = self._kill_client_session(username)
+        self.audit.log(
+            "kick_offline", "user", username,
+            f"在线连接 {online}，确认断开 {disconnected}，未确认 {failed}",
+            "failure" if failed else "success",
+        )
+        return failed == 0 and disconnected == online
 
-    def reset_sso_session(self, username: str) -> tuple[int, int, bool]:
-        """撤销用户所有企业认证缓存，并尽可能断开其当前 VPN 连接。
-
-        离线用户没有可踢的连接，但下次连接会重新触发 OAuth。
-        """
-        if not self.get(username):
+    def reset_connection(self, username: str) -> tuple[int, int, int, int, int]:
+        """清除用户 SSO 状态并断开在线连接；离线用户只清缓存。"""
+        user = self.get(username)
+        if not user or user.get("status") == "deleted":
             raise ValueError(f"用户不存在: {username}")
+
+        from app.core.config import load_config
         from app.services.auth.sso_runtime import get_sso_runtime
 
         runtime = get_sso_runtime()
         if runtime is not None and not runtime.stop_event.is_set():
-            revoked, canceled, sent = runtime.revoke_user_session(username)
+            revoked, canceled, online, disconnected, disconnect_failed = (
+                runtime.revoke_user_session(username)
+            )
         else:
             from app.services.auth.sso_sessions import SsoSessionStore
             from app.services.auth.sso_transactions import WebAuthTransactionStore
 
-            # SSO 运行时可能尚未启动；SQLite 撤销仍必须可用于离线用户。
             canceled = WebAuthTransactionStore(self.store).cancel_user(username)
             revoked = SsoSessionStore(self.store).revoke_user(username)
-            sent = False
+            if bool(load_config().get("enterprise_sso_enabled", False)):
+                # SSO 配置使用 Unix Management；运行时不可用时不能谎报踢线成功。
+                online, disconnected, disconnect_failed = 0, 0, 1
+            else:
+                online, disconnected, disconnect_failed = self._kill_client_session(username)
+
         self.audit.log(
-            "reset_sso_session", "user", username,
-            f"撤销认证缓存 {revoked} 条，待认证事务 {canceled} 条，发送断开命令 {sent}",
-            "success",
+            "reset_connection", "user", username,
+            (
+                f"撤销认证缓存 {revoked} 条，取消待认证 {canceled} 条；"
+                f"在线连接 {online} 条，确认断开 {disconnected} 条，"
+                f"未确认 {disconnect_failed} 条"
+            ),
+            "failure" if disconnect_failed else "success",
         )
-        return revoked, canceled, sent
+        return revoked, canceled, online, disconnected, disconnect_failed
+
+    def reset_sso_session(self, username: str) -> tuple[int, int, int, int, int]:
+        """旧方法名兼容；统一转到重置连接。"""
+        return self.reset_connection(username)
 
     def get(self, username: str) -> dict | None:
         """获取用户信息"""
