@@ -63,3 +63,89 @@ def test_public_browser_oauth_uses_one_time_tokens_while_admin_api_requires_basi
     admin = client.post("/api/vpn/users", json={"username": "new-user"})
     assert admin.status_code == 401
     assert admin.headers["WWW-Authenticate"] == "Basic"
+
+
+
+def test_dingtalk_enterprise_lookup_start_redirects_to_org_chooser(monkeypatch):
+    import app.api.sso as sso
+    from app.services.auth.dingtalk_enterprise_lookup import DingTalkEnterpriseLookupStore
+    from app.services.auth.office_oauth import OfficeProvider
+    from fastapi import FastAPI
+
+    store = DingTalkEnterpriseLookupStore()
+    state = store.create(
+        "https://vpn.example.org/auth/sso/dingtalk/enterprise-lookup/callback",
+        "ding-app",
+    )
+
+    class FakeProviderStore:
+        def get(self, provider_id, *, require_enabled=True):
+            assert provider_id == "dingtalk_unified"
+            assert require_enabled is False
+            return OfficeProvider(
+                id="dingtalk_unified", kind="dingtalk",
+                enterprise_id="__unified__", app_id="ding-app", secret="secret",
+            )
+
+    monkeypatch.setattr(sso, "get_dingtalk_enterprise_lookup_store", lambda: store)
+    monkeypatch.setattr(sso, "SsoProviderStore", FakeProviderStore)
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get(
+        f"/auth/sso/dingtalk/enterprise-lookup/start?state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("https://login.dingtalk.com/oauth2/auth?")
+    assert "scope=openid+corpid" in response.headers["location"]
+    assert store.get(state).status == "started"
+
+
+def test_dingtalk_enterprise_lookup_callback_returns_verified_corp_id(monkeypatch):
+    import app.api.sso as sso
+    from app.services.auth.dingtalk_enterprise_lookup import DingTalkEnterpriseLookupStore
+    from app.services.auth.office_oauth import EnterpriseIdentity, OfficeProvider
+    from fastapi import FastAPI
+
+    store = DingTalkEnterpriseLookupStore()
+    state = store.create(
+        "https://vpn.example.org/auth/sso/dingtalk/enterprise-lookup/callback",
+        "ding-app",
+    )
+    store.begin_start(state)
+
+    class FakeProviderStore:
+        def get(self, provider_id, *, require_enabled=True):
+            return OfficeProvider(
+                id="dingtalk_unified", kind="dingtalk",
+                enterprise_id="__unified__", app_id="ding-app", secret="secret",
+            )
+
+    async def fake_exchange(provider, code, *, fetch_enterprise_name=False):
+        assert provider.app_id == "ding-app"
+        assert code == "one-time-code"
+        assert fetch_enterprise_name is True
+        return EnterpriseIdentity(
+            "dingtalk", "dingCorpVerified", "", "查询到的企业名称",
+        )
+
+    monkeypatch.setattr(sso, "get_dingtalk_enterprise_lookup_store", lambda: store)
+    monkeypatch.setattr(sso, "SsoProviderStore", FakeProviderStore)
+    monkeypatch.setattr(sso, "exchange_code", fake_exchange)
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get(
+        f"/auth/sso/dingtalk/enterprise-lookup/callback"
+        f"?state={state}&authCode=one-time-code",
+    )
+
+    assert response.status_code == 200
+    assert "dingCorpVerified" in response.text
+    assert "查询到的企业名称" in response.text
+    assert "one-time-code" not in response.text
+    result = store.get(state)
+    assert result is not None
+    assert result.status == "completed"
+    assert result.corp_id == "dingCorpVerified"
+    assert result.enterprise_name == "查询到的企业名称"
