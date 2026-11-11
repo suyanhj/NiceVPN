@@ -65,6 +65,7 @@ def test_enterprise_name_only_is_exact_and_never_overrides_configured_corp_id():
 
 @pytest.mark.asyncio
 async def test_dingtalk_name_lookup_uses_verified_corp_id_and_provider_api(tmp_path, caplog):
+    caplog.set_level("INFO")
     providers = SsoProviderStore(
         SqliteStore(tmp_path / "name.db"), key_path=tmp_path / "secret.key",
     )
@@ -130,6 +131,7 @@ async def test_corp_id_match_skips_optional_organization_lookup(tmp_path):
 
 @pytest.mark.asyncio
 async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path, caplog):
+    caplog.set_level("INFO")
     providers = SsoProviderStore(
         SqliteStore(tmp_path / "deny.db"), key_path=tmp_path / "secret.key",
     )
@@ -342,6 +344,7 @@ def test_explicit_legacy_import_keeps_old_apps_and_secret_encrypted(tmp_path):
 def test_callback_denied_enterprise_shows_403_not_expired(
     tmp_path, monkeypatch, caplog,
 ):
+    caplog.set_level("INFO")
     runtime, manager = _runtime(tmp_path)
     config = SystemConfig(enterprise_sso_allowed_corps=[
         {"corp_id": "", "name": "后台配置企业名"},
