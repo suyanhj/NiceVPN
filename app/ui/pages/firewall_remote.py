@@ -718,8 +718,14 @@ class FirewallRemoteMixin:
             ui.label(f"对端规则 #{index + 1}").classes("text-h6")
             binding = row.get("tag_binding") if isinstance(row.get("tag_binding"), dict) else None
             if binding:
+                from app.services.firewall.tag_service import TagService
+                bound_tag = TagService().store.get_tag(str(binding.get("tag_id") or ""))
+                bound_tag_name = (
+                    str(bound_tag.get("name") or "")
+                    if bound_tag else str(binding.get("tag_name") or "")
+                )
                 ui.label(
-                    f"动态标签规则 · {binding.get('tag_name') or str(binding.get('tag_id') or '')[:8]}"
+                    f"动态标签规则 · {bound_tag_name or str(binding.get('tag_id') or '')[:8]}"
                 ).classes("font-medium")
                 ui.label(
                     "源地址会在每次推送时按标签当前成员计算；标签无有效成员时不会下发。"
