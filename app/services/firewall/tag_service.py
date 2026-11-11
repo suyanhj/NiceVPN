@@ -37,7 +37,21 @@ class TagService:
             if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)
         ]
         if referenced:
-            raise ValueError(f"标签仍被 {len(referenced)} 条防火墙规则引用，请先删除规则")
+            raise ValueError(f"标签仍被 {len(referenced)} 条中心防火墙规则引用，请先删除规则")
+        from app.services.peer_instance.service import PeerService
+        peer_refs = [
+            row for row in PeerService(store=self.store).list_all()
+            if str(tag_id) in {
+                str(value).strip()
+                for value in (row.get("mesh_route_visible_tag_ids") or [])
+            }
+        ]
+        from app.services.firewall.remote_tag_rules import has_remote_tag_rule_references
+        remote_ref = has_remote_tag_rule_references([tag_id], store=self.store)
+        if peer_refs or remote_ref:
+            raise ValueError(
+                "标签仍被对端路由或远端防火墙规则引用，请先移除对端引用后再删除"
+            )
         self.store.delete_tag(tag_id)
 
     def rule_count(self, tag_id: str) -> int:
@@ -56,6 +70,13 @@ class TagService:
             self.refresh_for_tags([tag_id])
         except Exception:
             self.store.set_tag_members(tag_id, **previous)
+            try:
+                self.refresh_for_tags([tag_id])
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "标签关联回滚后重新收敛失败 tag=%s", str(tag_id)[:8],
+                )
             raise
 
     def set_entity_tags(
@@ -70,10 +91,19 @@ class TagService:
         self.store.replace_entity_tags(entity_type, entity_id, desired)
         if not refresh_kernel:
             return
+        affected = set(before) | set(desired)
         try:
-            self.refresh_for_tags(set(before) | set(desired))
+            self.refresh_for_tags(affected)
         except Exception:
             self.store.replace_entity_tags(entity_type, entity_id, before)
+            try:
+                self.refresh_for_tags(affected)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "标签关联回滚后重新收敛失败 entity_type=%s entity_id=%s",
+                    entity_type, str(entity_id)[:32],
+                )
             raise
 
     def get_entity_tag_ids(self, entity_type: str, entity_id: str) -> list[str]:
@@ -95,6 +125,14 @@ class TagService:
             self.refresh_for_tags(affected)
         except Exception:
             self.store.restore_entity_tag_snapshots(entity_type, before)
+            try:
+                self.refresh_for_tags(affected)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "批量标签关联回滚后重新收敛失败 entity_type=%s",
+                    entity_type,
+                )
             raise
         return len(ids)
 
@@ -111,9 +149,34 @@ class TagService:
         if affected & active:
             from app.services.firewall.rule_service import FirewallRuleService
             FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+        self._refresh_mesh_routes_for_tags(affected)
+        self._schedule_remote_firewall_refresh(affected)
+
+    def _refresh_mesh_routes_for_tags(self, tag_ids) -> None:
+        """仅当对端路由策略引用了这些标签时，重写用户 CCD 的 Mesh push 块。"""
+        affected = {str(value).strip() for value in tag_ids if str(value).strip()}
+        if not affected:
+            return
+        from app.services.peer_instance.service import PeerService
+        peers = PeerService(store=self.store).list_all()
+        if not any(
+            affected & {
+                str(value).strip()
+                for value in (peer.get("mesh_route_visible_tag_ids") or [])
+                if str(value).strip()
+            }
+            for peer in peers
+        ):
+            return
+        PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
+
+    def _schedule_remote_firewall_refresh(self, tag_ids) -> None:
+        """远端 SSH 写回在后台执行；失败保留远端工作副本的待同步状态。"""
+        from app.services.firewall.remote_tag_rules import schedule_remote_tag_firewall_sync
+        schedule_remote_tag_firewall_sync(tag_ids, store=self.store)
 
     def refresh_if_referenced(self, *, entity_type: str, entity_id: str, other_group_id: str = "") -> None:
-        """用户/组状态或地址变动后，仅在存在受影响标签规则时刷新。"""
+        """用户/组状态或地址变动后，收敛中心/对端所有引用到的标签规则与路由。"""
         relevant = set(self.get_entity_tag_ids(entity_type, entity_id))
         if entity_type == "user":
             user = self.store.get_user(entity_id)
@@ -128,10 +191,11 @@ class TagService:
             for rule in self.store.list_firewall_rules()
             if rule.get("owner_type") == "tag" and rule.get("enabled", True)
         }
-        if not (active_refs & relevant):
-            return
-        from app.services.firewall.rule_service import FirewallRuleService
-        FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+        if active_refs & relevant:
+            from app.services.firewall.rule_service import FirewallRuleService
+            FirewallRuleService(store=self.store).refresh_vpn_forward_only()
+        self._refresh_mesh_routes_for_tags(relevant)
+        self._schedule_remote_firewall_refresh(relevant)
 
     def resolve_addresses(self, tag_id: str, *, ccd_ips: dict[str, str] | None = None) -> tuple[str, ...]:
         """合并直接关联用户和关联组下的用户虚拟 IP，以及当前组 CIDR。
