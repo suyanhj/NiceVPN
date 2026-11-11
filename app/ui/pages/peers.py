@@ -17,6 +17,7 @@ from app.core.config import load_config
 from app.core.constants import LOGS_DIR, OPENVPN_MIN_VERSION, OVPN_PROFILES_DIR
 from app.services.peer_instance.peer_ssh_connect import peer_row_has_usable_ssh_auth
 from app.services.group.crud import GroupService
+from app.services.firewall.tag_service import TagService
 from app.services.peer_instance.remote_peer_ovpn import default_remote_ovpn_path
 from app.services.peer_instance.service import PeerService
 from app.services.user.crud import UserService
@@ -157,6 +158,14 @@ class PeersPage:
 
     def _group_id_to_name(self) -> dict[str, str]:
         return {str(g.get("id") or ""): str(g.get("name") or "") for g in self.group_service.list_all() if g.get("id")}
+
+    @staticmethod
+    def _tag_id_to_name() -> dict[str, str]:
+        return {
+            str(tag.get("id") or ""): str(tag.get("name") or "")
+            for tag in TagService().list_all()
+            if tag.get("id")
+        }
 
     @staticmethod
     def _peer_manual_download_filename(row: dict) -> str:
@@ -897,12 +906,14 @@ class PeersPage:
             )
             return
         group_names = self._group_id_to_name()
+        tag_names = self._tag_id_to_name()
         has_global_key = self._has_global_ssh_key()
         with ui.element("div").classes("mgmt-record-list peers-record-list"):
             for row in peers:
                 self._render_peer_card(
                     row,
                     group_names=group_names,
+                    tag_names=tag_names,
                     has_global_ssh_key=has_global_key,
                 )
 
@@ -911,6 +922,7 @@ class PeersPage:
         row: dict,
         *,
         group_names: dict[str, str] | None = None,
+        tag_names: dict[str, str] | None = None,
         has_global_ssh_key: bool = False,
     ) -> None:
         """使用统一状态和操作层级渲染单个对端。"""
@@ -919,6 +931,7 @@ class PeersPage:
         view = adapt_peer_view(
             row,
             group_names=group_names or {},
+            tag_names=tag_names or {},
             has_global_ssh_key=has_global_ssh_key,
             busy=peer_id in self._busy_peer_ids,
         )
@@ -1049,6 +1062,7 @@ class PeersPage:
             return
 
         group_options = self._group_id_to_name()
+        tag_options = self._tag_id_to_name()
         fields: dict[str, Any] = {}
 
         def body() -> None:
@@ -1067,10 +1081,19 @@ class PeersPage:
             ui.label("路由策略").classes("section-caption q-mt-sm")
             fields["mesh"] = ui.select(
                 options=group_options,
-                label="Mesh 仅对这些组可见（不选=全部活跃用户）",
+                label="Mesh 可见组（命中任一组或标签即可）",
                 multiple=True,
                 value=[],
+                with_input=True,
             ).props("use-chips clearable").classes("w-full")
+            fields["mesh_tags"] = ui.select(
+                options=tag_options,
+                label="Mesh 可见标签（与组为 OR 关系）",
+                multiple=True,
+                value=[],
+                with_input=True,
+            ).props("use-chips clearable").classes("w-full")
+            ui.label("组和标签都不选时，对所有活跃用户下发路由；两者都选时，命中任一条件即可。").classes("section-caption")
             fields["masq"] = ui.checkbox("启用对端 SNAT 策略", value=False)
 
             ui.label("SSH 连接").classes("section-caption q-mt-sm")
@@ -1164,6 +1187,16 @@ class PeersPage:
                 "mesh_route_visible_group_ids": [
                     str(value).strip()
                     for value in (fields["mesh"].value or [])
+                    if str(value).strip()
+                ],
+                "mesh_route_visible_tag_ids": [
+                    str(value).strip()
+                    for value in (fields["mesh_tags"].value or [])
+                    if str(value).strip()
+                ],
+                "mesh_route_visible_tag_ids": [
+                    str(value).strip()
+                    for value in (fields["mesh_tags"].value or [])
                     if str(value).strip()
                 ],
                 "ssh_host": str(fields["ssh_host"].value or "").strip(),
@@ -1262,6 +1295,15 @@ class PeersPage:
             usernames = sorted(set(usernames) | {current_user})
 
         group_options = dict(self._group_id_to_name())
+        tag_options = dict(self._tag_id_to_name())
+        current_mesh_tags = [
+            str(value).strip()
+            for value in (row.get("mesh_route_visible_tag_ids") or [])
+            if str(value).strip()
+        ]
+        for tag_id in current_mesh_tags:
+            if tag_id not in tag_options:
+                tag_options[tag_id] = f"{tag_id[:8]}…（标签可能已删）"
         current_mesh = [
             str(value).strip()
             for value in (row.get("mesh_route_visible_group_ids") or [])
@@ -1308,10 +1350,19 @@ class PeersPage:
             ui.label("路由策略").classes("section-caption q-mt-sm")
             fields["mesh"] = ui.select(
                 options=group_options,
-                label="Mesh 仅对这些组可见（不选=全部活跃用户）",
+                label="Mesh 可见组（命中任一组或标签即可）",
                 multiple=True,
                 value=current_mesh,
+                with_input=True,
             ).props("use-chips clearable").classes("w-full")
+            fields["mesh_tags"] = ui.select(
+                options=tag_options,
+                label="Mesh 可见标签（与组为 OR 关系）",
+                multiple=True,
+                value=current_mesh_tags,
+                with_input=True,
+            ).props("use-chips clearable").classes("w-full")
+            ui.label("组和标签都不选时，对所有活跃用户下发路由；两者都选时，命中任一条件即可。").classes("section-caption")
             fields["masq"] = ui.checkbox(
                 "启用对端 SNAT 策略",
                 value=bool(row.get("masquerade_on_peer")),
