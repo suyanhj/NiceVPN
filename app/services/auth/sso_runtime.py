@@ -131,7 +131,9 @@ class ManagementInstance:
         with self.status_condition:
             while not self.runtime.stop_event.is_set():
                 if (self.last_status_clients is not None
-                        and self.last_status_at > after):
+                        and self.last_status_at > after
+                        and time.monotonic() - self.last_status_at
+                        <= STATUS_POLL_MAX_SECONDS + 1.0):
                     return dict(self.last_status_clients), self.last_status_at
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
