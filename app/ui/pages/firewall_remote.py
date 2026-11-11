@@ -344,7 +344,11 @@ class FirewallRemoteMixin:
         chain = str(cache.get("chain") or IptablesManager.peer_chain_name_for_id(peer_id))
         ce = bool(cache.get("chain_exists"))
         rows = list(cache.get("rows") or [])
-        rests = remote_chain_cache.rests_to_push_list(rows)  # type: ignore[arg-type]
+        from app.services.firewall.remote_tag_rules import materialize_remote_chain_rows
+        from app.services.firewall.tag_service import TagService
+        rests = materialize_remote_chain_rows(
+            rows, tag_service=TagService(),
+        )
         try:
             await run.io_bound(self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests)
             remote_chain_cache.record_after_apply(peer_id, chain, bool(ce), rows, True, None)
@@ -516,7 +520,15 @@ class FirewallRemoteMixin:
             return
 
         raw_rows = list(cache.get("rows") or [])
-        rows = adapt_remote_rule_rows(raw_rows, peer_id=peer_id)
+        from app.services.firewall.tag_service import TagService
+        tag_names = {
+            str(tag.get("id") or ""): str(tag.get("name") or "")
+            for tag in TagService().list_all()
+            if tag.get("id")
+        }
+        rows = adapt_remote_rule_rows(
+            raw_rows, peer_id=peer_id, tag_names=tag_names,
+        )
         for row in rows:
             row["actions"] = "操作"
         self._remote_grid_rows = rows
