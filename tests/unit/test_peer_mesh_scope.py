@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """对端 mesh 路由按组可见策略单元测试"""
 
+from app.models.peer_instance import PeerInstance
 from app.services.peer_instance.service import mesh_lan_cidrs_for_user_group
 
 
@@ -56,3 +57,21 @@ def test_empty_group_and_tag_visibility_means_all_users():
         "mesh_route_visible_tag_ids": [],
     }]
     assert mesh_lan_cidrs_for_user_group(peers, "", set()) == ["10.40.0.0/24"]
+
+
+
+def test_peer_model_normalizes_tag_visibility_ids_and_legacy_defaults():
+    legacy = PeerInstance(
+        id="peer-legacy",
+        name="legacy",
+        bound_username="alice",
+    )
+    assert legacy.mesh_route_visible_tag_ids == []
+
+    peer = PeerInstance(
+        id="peer-tag",
+        name="tagged",
+        bound_username="bob",
+        mesh_route_visible_tag_ids=[" tag-a ", "tag-a", "", "tag-b"],
+    )
+    assert peer.mesh_route_visible_tag_ids == ["tag-a", "tag-b"]
