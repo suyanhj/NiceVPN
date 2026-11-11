@@ -152,6 +152,9 @@ class ManagementInstance:
         """
         if not common_name or any(ch in common_name for ch in "\r\n"):
             return 0, 0, 1
+        with self.socket_lock:
+            if self.socket is None:
+                return 0, 0, 1
 
         deadline = time.monotonic() + max(0.1, timeout)
         first = self.wait_for_status(
