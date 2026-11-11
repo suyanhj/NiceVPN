@@ -282,27 +282,47 @@ def adapt_remote_rule_row(
     *,
     index: int,
     peer_id: str,
+    tag_names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """把对端工作副本一行转换为稳定 Grid 行，并保留原始 rest。"""
 
     raw_rest = str(row.get("rest") or "").strip()
     hints = parse_remote_rule_hints(raw_rest)
-    protocol = str(hints.get("proto") or "ALL").upper()
-    if protocol in {"", "ANY", "0"}:
-        protocol = "ALL"
-    action = str(hints.get("action") or "—").upper()
+    binding = row.get("tag_binding") if isinstance(row.get("tag_binding"), dict) else None
+    tag_id = str((binding or {}).get("tag_id") or "").strip()
+    tag_name = str((tag_names or {}).get(tag_id) or (binding or {}).get("tag_name") or tag_id[:8])
+    if binding:
+        protocol = str(binding.get("protocol") or "all").upper()
+        action = str(binding.get("action") or "accept").upper()
+        source = f"标签 · {tag_name}"
+        dest = str(binding.get("dest_ip") or "").strip() or "*"
+        dest_port = str(binding.get("dest_port") or "").strip() or "*"
+        hints = {
+            "proto": protocol,
+            "action": action,
+            "source": source,
+            "dest": dest,
+            "dport": dest_port,
+            "extra": "按标签当前成员动态展开",
+        }
+    else:
+        protocol = str(hints.get("proto") or "ALL").upper()
+        if protocol in {"", "ANY", "0"}:
+            protocol = "ALL"
+        action = str(hints.get("action") or "—").upper()
+        source = str(hints.get("source") or "*")
+        dest = str(hints.get("dest") or "*")
+        dest_port = str(hints.get("dport") or "*")
     action_tone = {
         "ACCEPT": "success",
         "DROP": "failed",
         "REJECT": "warning",
     }.get(action, "unknown")
-    source = str(hints.get("source") or "*")
-    dest = str(hints.get("dest") or "*")
-    dest_port = str(hints.get("dport") or "*")
     enabled = bool(row.get("enabled", True))
     priority = int(row.get("priority", 0) or 0) or ((index + 1) * 10)
     description = (
         str(row.get("description") or "").strip()
+        or (f"标签动态规则 · {tag_name}" if binding else "")
         or str(hints.get("comment") or "").strip()
         or "—"
     )
@@ -327,11 +347,12 @@ def adapt_remote_rule_row(
         "rule_expression": f"{source} → {dest}:{dest_port}",
         "description": description,
         "extra_matches": str(hints.get("extra") or "—"),
-        "raw_rest": raw_rest,
+        "raw_rest": raw_rest or ("动态标签规则" if binding else ""),
+        "tag_binding": binding,
         "parsed_hints": hints,
-        "can_toggle": bool(raw_rest),
-        "can_edit": bool(raw_rest),
-        "can_delete": bool(raw_rest),
+        "can_toggle": bool(raw_rest or binding),
+        "can_edit": bool(raw_rest or binding),
+        "can_delete": bool(raw_rest or binding),
         "raw": dict(row),
         "search_text": " ".join(
             [
@@ -354,11 +375,14 @@ def adapt_remote_rule_rows(
     rows: list[Mapping[str, Any]],
     *,
     peer_id: str,
+    tag_names: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """批量适配对端工作副本规则，稳定 ID 使用 peer_id + 当前行索引。"""
 
     return [
-        adapt_remote_rule_row(row, index=index, peer_id=peer_id)
+        adapt_remote_rule_row(
+            row, index=index, peer_id=peer_id, tag_names=tag_names,
+        )
         for index, row in enumerate(rows)
     ]
 
