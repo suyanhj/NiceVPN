@@ -115,6 +115,24 @@ def generate_server_conf(instance_name: str, config: dict) -> str:
     # 计算管理接口端口：基础端口 + 实例索引
     mgmt_port = config.get("mgmt_port", MGMT_PORT_START)
 
+    # SSO opening is explicit and off by default. The Unix Management
+    # endpoint only accepts root to prevent local user spoofing of approvals.
+    sso_enabled = bool(config.get("enterprise_sso_enabled", False))
+    if sso_enabled:
+        from app.services.auth.sso_runtime import management_socket_path
+        management_line = (
+            f"management {management_socket_path(instance_name)} unix\n"
+            "management-client-user root\n"
+        )
+        sso_auth_lines = (
+            "management-client-auth\n"
+            "auth-user-pass-optional\n"
+            "hand-window 180\n"
+        )
+    else:
+        management_line = f"management 127.0.0.1 {mgmt_port}\n"
+        sso_auth_lines = ""
+
     # 基础目录
     base_dir = config.get("openvpn_conf_dir", "/etc/openvpn")
     pki_dir = config.get("pki_dir", f"{base_dir}/pki")
@@ -152,6 +170,8 @@ def generate_server_conf(instance_name: str, config: dict) -> str:
             "DAEMON_STATUS": daemon_status,
             "DAEMON_LOG": daemon_log,
             "MGMT_PORT": mgmt_port,
+            "MGMT_LINE": management_line,
+            "SSO_AUTH_LINES": sso_auth_lines,
             "MAX_CLIENTS": int(
                 config.get("max_clients", OPENVPN_DEFAULT_MAX_CLIENTS)
             ),
@@ -163,11 +183,12 @@ def generate_server_conf(instance_name: str, config: dict) -> str:
 def write_server_conf(instance_name: str, config: dict, conf_dir: str = "/etc/openvpn") -> Path:
     """将生成的配置写入文件，返回文件路径"""
     merged = dict(config)
-    if "push_lan_routes" not in merged:
+    if "push_lan_routes" not in merged or "enterprise_sso_enabled" not in merged:
         from app.core.config import load_config
 
         sys_cfg = load_config()
-        merged["push_lan_routes"] = list(sys_cfg.get("push_lan_routes") or [])
+        merged.setdefault("push_lan_routes", list(sys_cfg.get("push_lan_routes") or []))
+        merged.setdefault("enterprise_sso_enabled", bool(sys_cfg.get("enterprise_sso_enabled", False)))
     content = generate_server_conf(instance_name, merged)
     conf_path = resolve_server_conf_dir(conf_dir) / f"{instance_name}.conf"
     conf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,6 +249,7 @@ def regenerate_all_server_confs() -> None:
             "pki_dir": str(cfg.get("pki_dir") or ""),
             "openvpn_conf_dir": ovpn_base,
             "mgmt_port": MGMT_PORT_START + idx,
+            "enterprise_sso_enabled": bool(cfg.get("enterprise_sso_enabled", False)),
             "push_lan_routes": push_routes,
             "max_clients": int(cfg.get("max_clients") or OPENVPN_DEFAULT_MAX_CLIENTS),
         }

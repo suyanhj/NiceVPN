@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 from app.core.config import load_config, save_config
 from app.core.constants import BACKUPS_DIR, OPENVPN_DEFAULT_MAX_CLIENTS
 from app.models.config import SystemConfig
+from app.utils.public_domains import first_domain_origin, parse_domains
 from app.services.notify.dingtalk import send_dingtalk_text
 from app.services.notify.rocketchat import send_rocketchat_text
 from app.services.notify.wework import send_wework_text
@@ -83,6 +84,8 @@ class SettingsPage:
             return
 
         allowed_tabs = {
+            "sso",
+            "domains",
             "openvpn",
             "server",
             "device",
@@ -110,7 +113,9 @@ class SettingsPage:
                     self._settings_tabs = st
                     ui.tab("openvpn", label="OpenVPN")
                     ui.tab("server", label="服务端")
+                    ui.tab("domains", label="访问地址")
                     ui.tab("device", label="设备绑定")
+                    ui.tab("sso", label="企业认证")
                     ui.tab("ssh", label="SSH")
                     ui.tab("download", label="下载配置")
                     ui.tab("notify", label="通知")
@@ -125,9 +130,16 @@ class SettingsPage:
                 with ui.tab_panel("server"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_server_connection_panel()
+                with ui.tab_panel("domains"):
+                    with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
+                        self._render_domains_panel()
                 with ui.tab_panel("device"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_device_bind_panel()
+                with ui.tab_panel("sso"):
+                    with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
+                        from app.ui.pages.settings_sso import SsoSettingsPanel
+                        SsoSettingsPanel(self).render()
                 with ui.tab_panel("ssh"):
                     with ui.column().classes("w-full min-h-0 flex-1 gap-0"):
                         self._render_global_ssh_panel()
@@ -939,15 +951,59 @@ class SettingsPage:
             actions=actions,
         )
 
+    def _render_domains_panel(self) -> None:
+        """Shared allow-listed external origins for downloads and office OAuth."""
+        def body() -> None:
+            self.domains_input = field_with_help(
+                lambda: ui.textarea(
+                    "域名 / IP / 端口（支持逗号或换行，多项按顺序排列）",
+                    value=", ".join(self.config.domains or []),
+                    placeholder="xx.hj.com, 192.168.1.1:80",
+                ).classes("w-full").props("autogrow"),
+                "支持 http:// 或 https://；未写协议默认 HTTP。"
+                "域名不追加 API 端口，默认使用 80/443，HTTP 可按服务器重定向至 HTTPS。"
+                "IP 未指定端口时补 API 端口，显式端口保留。"
+                "未填写业务自定义地址时按列表顺序使用全局地址；"
+                "API 下载可匹配地址白名单；SSO 首次跳转使用第一项。",
+                aria_label="全局访问地址规则说明",
+                align="start",
+            )
+
+        render_form_section(
+            "全局访问地址", kicker="Public domains",
+            description="多个对外域名或 IP:端口的统一地址池；API 下载与企业 SSO 均可单独覆盖。",
+            body=body,
+            actions=lambda: primary_action(
+                "保存访问地址", icon="save", on_click=self._save_domains,
+            ),
+        )
+
+    def _save_domains(self) -> bool:
+        try:
+            domains = parse_domains(str(self.domains_input.value or ""))
+            cfg = load_config().to_dict()
+            cfg["domains"] = domains
+            save_config(cfg)
+            self.config = load_config()
+        except ValueError as exc:
+            safe_notify(f"访问地址格式错误：{exc}", type="negative")
+            return False
+        except Exception as exc:
+            logger.exception("全局访问地址保存失败")
+            safe_notify("全局访问地址保存失败", type="negative")
+            return False
+        safe_notify("访问地址已保存；企业 SSO 地址变更需重启 NiceVPN", type="positive")
+        return True
+
     def _render_download_panel(self):
-        """渲染可选下载基址；留空时自动使用 API 监听的本机 IP。"""
+        """渲染下载自定义覆盖地址；空值依次回退到 domains 和自动检测。"""
 
         def body() -> None:
             self.base_url_input = field_with_help(
                 lambda: ui.input(
                     "基础 URL（可选）",
                     value=self.config.download_base_url or "",
-                    placeholder="例 https://download.example.com 或 http://IP:8881",
+                    placeholder=first_domain_origin(self.config.domains or []) or "http://IP:8881",
                 ).classes("w-full"),
                 "可包含反代子路径；不能包含 query、fragment 或 URL 凭据。",
                 aria_label="基础 URL 说明",
@@ -964,7 +1020,7 @@ class SettingsPage:
             "下载链接",
             kicker="Download",
             description=(
-                "可选：填写自定义下载地址（IP 或域名）优先使用；留空时自动使用启动检测的本机 IP + API 端口（默认 8881）。",
+                "优先级：自动获取 < 全局访问地址 < 自定义下载地址。域名默认端口 80/443，IP 未指定端口则追加 API 端口。",
             ),
             body=body,
             actions=actions,
@@ -1474,7 +1530,7 @@ class SettingsPage:
             )
         else:
             safe_notify(
-                "已清空自定义下载地址，自动使用本机 IP 和 API 监听端口",
+                "已清空自定义下载地址；优先使用全局访问地址池，若为空则自动使用本机 IP 和 API 监听端口",
                 type="positive",
             )
         return True

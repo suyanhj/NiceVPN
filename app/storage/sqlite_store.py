@@ -102,6 +102,9 @@ class SqliteStore(
                     migrate_v4=self._migrate_v4_tags,
                     migrate_v5=self._migrate_v5_device_binding_exempt,
                     now_iso=_now_iso,
+                    legacy_sso_audit_export_path=(
+                        self.path.parent / "logs" / "sso-auth-legacy.jsonl"
+                    ),
                 )
                 self._fix_permissions()
             self._initialized = True

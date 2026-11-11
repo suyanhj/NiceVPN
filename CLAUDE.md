@@ -4,6 +4,18 @@
 
 > 文档、注释和对用户说明使用中文；代码标识符使用英文。
 
+## 企业 SSO 分支开发边界（2026-11-10）
+
+- 开发分支：`feature/enterprise-sso-webauth`；PR #78 必须保持 Draft，用户明确验收后才允许合并 `main`。
+- 详细架构与实机验收：[docs/enterprise-sso.md](docs/enterprise-sso.md)。
+- `enterprise_sso_enabled` 默认关闭；登录身份只核实可信 OAuth 返回的企业 ID，**不要**要求钉钉/企业微信用户存在于 VPN 用户表。
+- 证书 CN 原本所属用户/组/标签和防火墙权限保持不变；总开关仅提供 SSO 能力，组或标签编辑开关才强制 SSO。Linux 使用不属于强制 SSO 组/标签的证书，不新增证书豁免系统，也不能依据 `IV_PLAT` 自动绕过。
+- 全局 `domains` 是一个按顺序排列的 http(s) 域名/IP:端口白名单；`download_base_url`、`enterprise_sso_public_base_url` 非空时须优先于全局值。API 只允许匹配名单内的 Host；OpenVPN SSO 初次跳转使用首项（没有 HTTP Host 可判断）。
+- SSO 日志可记录企业 CorpId、应用标识及可用的员工 ID。钉钉不调用 `users/me`；组织名称按需通过官方组织基础信息接口读取，失败仅记录通用错误，不输出 Token、OAuth code、AppSecret 或完整响应体。
+- 启用后由 root 限制的 Unix Management Socket 完成 `WEB_AUTH` 流程；公网仅提供 `/auth/sso` OAuth 回调，不开放管理端与 Management Socket。
+- SSO 授权后设备指纹仅记录，其他证书按旧策略；统一钉钉应用只配置一套加密 OAuth 凭证，多企业使用 `enterprise_sso_allowed_corps` 白名单，支持 CorpId 和已由钉钉服务端核实的组织名称，CorpId 优先。未启用统一认证前保留旧 per-company 凭证；统一模式保存/导入后清理旧企业行。密钥主文件随完整备份保存。
+- 目前代码尚未通过真机 OpenVPN/WebAuth、钉钉/企业微信回调的端到端验收，CI mock 通过不能视为生产就绪。
+
 ## 当前架构
 
 ### 运行模型
@@ -141,7 +153,7 @@ openspec/changes/
 
 - API 与管理 UI 路由集合保持隔离。
 - API Basic 凭据属于运行时数据，不提交版本库。
-- HTTP Basic 对公网必须通过 HTTPS/TLS。
+- Public API 原生支持 HTTP 与 HTTPS（例如 HTTP IP:端口进行开发测试），不能在业务代码中强制要求 HTTPS 或域名；HTTP Basic 在明文 HTTP 下可能泄露认证信息，公网生产建议 HTTPS/TLS。
 - API 相关行为同步更新 [api.md](./api.md)。
 
 ### SQLite
@@ -235,3 +247,23 @@ GitHub Actions 当前主要校验：
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+- 全局地址覆盖优先级：自动获取 < domains < 业务自定义；域名默认 HTTP 80/HTTPS 443 且不追加 8881，裸 IP 在未写端口时补 `NICEVPN_API_PORT`（默认 8881），显式端口保持不变；浏览器自行遵循站点 3xx，不能强制 HTTPS。
+- 钉钉网页登录官方 Scope 仅 `openid` 或 `openid corpid`；NiceVPN 统一认证始终请求 `openid corpid`，不调用 `users/me`，也不请求 `Contact.User.Read`。数据库中的旧个人资料标志仅为历史兼容字段。
+
+- SSO WebAuth 受“开启认证”总开关控制；“所有人生效”打开时所有证书连接均要求 SSO，关闭时**仅对组或标签明确要求企业认证的连接触发**。其他连接经 Management 放行后继续 OpenVPN 证书、CCD 与 client-connect 流程。证书 CA / CRL / 有效期由 OpenVPN 原生验证，NiceVPN 不重复实现。
+- 通过可信企业 SSO 的连接使用受限 120 秒 grant 在 client-connect 钩子里跳过设备指纹绑定，仅记录设备和会话审计；未完成 SSO 的连接继续现有设备绑定策略。客户端 IP/port 使用与 Management 事件一致的 trusted/untrusted 备用字段。
+- SSO 审计改为专用文件 `data/logs/sso-auth.jsonl`（UTC 按天轮转，默认保留 7 天）；schema v9 在升级时将 SQLite 历史审计安全导出到 `data/logs/sso-auth-legacy.jsonl`（0600），然后删除废弃的审计表及索引。服务管理 → 本机实例 →「认证日志」复用有界日志窗口。
+- 系统设置页说明一律使用 `render_form_section(description=...)` 或 `field_with_help` 小问号 Tooltip；不要新增多段常驻 `ui.label` 解释文案。字段帮助必须与输入控件处于同一行。
+
+- 统一钉钉提供商 ID 为 `dingtalk_unified`，通过 `SsoProviderStore.save_unified()` 保存一份 Fernet 加密全局 Client ID/Secret。已配置时 `first_enabled()` 和 `enabled_metadata()` 优先且只返回统一应用，关闭时不自动回退到旧企业提供商。
+- 允许企业白名单为 `SystemConfig.enterprise_sso_allowed_corps`，每项仅 `corp_id` / `name`，至少填写一项。同时填写只比较服务端 Token 返回的 CorpId；仅填写企业名称才查询钉钉 `contact/organizations/authInfos` 中经过服务端确认的 `orgName` 并精确匹配，无法获得组织权限或名称必须拒绝，不能信任浏览器传入的名称、CorpId。UI 使用可增删的双字段企业行。
+- 系统设置页企业认证保留“开启认证 / 所有人生效”，在“统一认证”按认证方式展示钉钉或企业微信配置。钉钉使用一套全局 AppKey/SuiteKey + Secret + 企业白名单，不再逐公司设置 OAuth 密钥；支持显式导入旧版钉钉凭证及企业名单。切换认证方式只激活一个提供商并清除旧 OAuth 缓存；旧配置凭证兼容保留。
+- SSO 认证回调中，`SsoFinishResult.DENIED` 对应 HTTP 403（不允许访问）、`EXPIRED` 对应 410（事务真正失效）、`UNAVAILABLE` 对应 503；旧 `finish()` 布尔 API 继续兼容。不得把明确的企业白名单拒绝显示为过期。
+- v9 迁移先将旧审计表导出到权限 0600 的私有 JSONL 再删除；失败则回滚。只清理已启用统一钉钉时多余的旧 provider 行和旧待认证事务；保留加密全局凭证表及 WebAuth 事务表。
+
+- **SSO 会话持久化（SQLite schema v12）**：`app/services/auth/sso_sessions.py` 的 `SsoSessionStore` 保存 1 小时**离线宽限期**的 OAuth 会话，活跃连接不断续期；键为 VPN 实例、证书 CN、OpenVPN Management 已验证证书的 `tls_digest_sha256_0`、OAuth 提供商 ID，同时绑定 provider App ID、钉钉 CorpId 和经服务端核实的企业名称。不要自己验签、查 CRL 或用 IV_HWADDR、HTTP 参数、只有 CN 的信息充当缓存证明。
+- **新 CONNECT 复用**：在组/标签要求 SSO 的前提下，OpenVPN 已完成证书原生检查；NiceVPN 核对持久化有效期、应用是否仍启用、白名单，再为新源 IP/端口发布 client-connect 设备绑定豁免 grant，调用原 `client-auth-nt`。会话失效则重新钉钉 OAuth，不能静默绕过认证。
+- **在线续期与 REAUTH**：Management 每个实例随机 1–5 秒一次 `status 3`；确认完整在线快照后，SQLite 约每 55 分钟批量原地更新现有行（比 1 小时有效期提前 5 分钟），绝不为心跳追加新行。正常 DISCONNECT 从断开时起保留 1 小时；NiceVPN 单独重启时凭 CID + 服务端连接创建时间恢复，不能凭 CN-only 恢复。REAUTH 仍检查持久化撤销；证书合法性仍由 OpenVPN 负责。
+- **耗时诊断**：日志新增 OAuth 从 CONNECT 到 AUTH 放行的总时间，以及 AUTH 放行到 CLIENT:ESTABLISHED 时间。客户端隧道 TUN、CCD、路由、iptables 等耗时仍由 OpenVPN 自身处理。
+- **会话安全**：持续在线可滚动续期，正常离线超过 1 小时失效；企业白名单/全局 App ID 变化阻止续期和后续 CONNECT/REAUTH 复用。复制 .ovpn 私钥可在同证书的授权有效期内复用 SSO；不要承诺设备级隔离。支持存储层显式 revoke，但未增加管理员 UI。管理状态查询失败时不得自行续期。

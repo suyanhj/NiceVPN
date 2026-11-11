@@ -16,6 +16,7 @@ from app.core.constants import (
     DEVICE_BIND_LOG_FILE,
     OPENVPN_DAEMON_LOG_DIR,
     OPENVPN_UPGRADE_LOG_FILE,
+    SSO_AUTH_AUDIT_LOG_FILE,
 )
 from app.services.config_editor.config_backup import backup_before_edit, save_with_backup
 from app.services.monitor.service_monitor import InstanceStatus, ServiceMonitor
@@ -161,6 +162,11 @@ class ServicesPage:
                                 self._running_chip = ui.label("0 运行").classes("services-running-chip")
                                 ui.space()
                                 secondary_action(
+                                    "认证日志",
+                                    icon="verified_user",
+                                    on_click=self._show_sso_auth_log_viewer,
+                                ).tooltip("查看企业 SSO 登录与认证审计日志")
+                                secondary_action(
                                     "升级日志",
                                     icon="article",
                                     on_click=self._show_openvpn_upgrade_log_viewer,
@@ -181,6 +187,23 @@ class ServicesPage:
                                 self._peer_total_chip = ui.label("0 个").classes("services-running-chip")
                         self._peer_list_container = ui.column().classes("mgmt-record-list w-full")
                         self._refresh_peer_client_list()
+
+    def _show_sso_auth_log_viewer(self) -> None:
+        """Use the shared bounded file-tail viewer, not a large settings table."""
+        log_path = SSO_AUTH_AUDIT_LOG_FILE
+
+        def load() -> tuple[str, str]:
+            if not log_path.exists():
+                return f"日志: {log_path}", "(尚无企业认证日志)"
+            return f"日志: {log_path}", self._read_log_tail(log_path)
+
+        self._open_log_tail_dialog(
+            "企业认证日志",
+            load,
+            precheck_file=False,
+            watch_path=lambda: log_path,
+            caption_for_path=lambda path: f"日志: {path}",
+        )
 
     def _show_openvpn_upgrade_log_viewer(self) -> None:
         """查看独立 OpenVPN 升级日志，避免大量编译输出占据升级弹窗。"""

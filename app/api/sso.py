@@ -1,0 +1,295 @@
+# -*- coding: utf-8 -*-
+"""Anonymous, narrowly scoped OAuth callbacks for OpenVPN WEB_AUTH.
+
+Only mounted on the separate public FastAPI listener, never on NiceGUI admin.
+Callbacks never accept a VPN common name, instance ID, CID or KID from HTTP.
+"""
+from __future__ import annotations
+
+import logging
+from html import escape
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from app.core.config import load_config
+from app.services.auth.office_oauth import (
+    OfficeAuthError, authorization_url, exchange_code,
+)
+from app.services.auth.provider_store import SsoProviderStore, UNIFIED_DINGTALK_ID
+from app.services.auth.dingtalk_enterprise_lookup import (
+    get_dingtalk_enterprise_lookup_store,
+)
+from app.services.auth.sso_runtime import SsoFinishResult, get_sso_runtime
+from app.services.auth.sso_transactions import WebAuthTransactionStore
+from app.utils.sso_enterprises import (
+    is_allowed_enterprise, needs_enterprise_name_lookup,
+)
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/auth/sso", tags=["Office SSO"])
+
+_NO_CACHE = {
+    "Cache-Control": "no-store, max-age=0",
+    "Pragma": "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _html(message: str, *, code: int = 200, show_vpn_hint: bool = False) -> HTMLResponse:
+    # No JS, tracking images or third-party scripts; mobile browsers may stay
+    # open after the backend approves the parallel OpenVPN connection.
+    safe_message = escape(message)
+    body = (
+        "<!doctype html><html lang='zh-CN'><head>"
+        "<meta charset='utf-8'><meta name='viewport' "
+        "content='width=device-width,initial-scale=1'>"
+        "<title>NiceVPN 企业认证</title></head>"
+        "<body style='font:16px system-ui,sans-serif;text-align:center;"
+        "padding:16vh 2rem;line-height:1.8'>"
+        f"<h2>NiceVPN 企业认证</h2><p>{safe_message}</p>"
+        + ("<p>可以返回 VPN 客户端查看连接状态。</p>" if show_vpn_hint else "")
+        + "</body></html>"
+    )
+    return HTMLResponse(
+        body, status_code=code,
+        headers={**_NO_CACHE, "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"},
+    )
+
+
+@router.get("/start", include_in_schema=False)
+async def start_sso(t: str = ""):
+    runtime = get_sso_runtime()
+    if runtime is None or runtime.stop_event.is_set():
+        raise HTTPException(503, "SSO unavailable")
+    transaction = runtime.transactions.get_pending_by_token(t)
+    if transaction is None:
+        return _html("认证链接已过期或已经使用。请重新连接 VPN。", code=410)
+    available = runtime.providers.enabled_metadata()
+    if len(available) > 1:
+        # Present only an administrator-approved set, no arbitrary CorpId.
+        fields = []
+        for provider_meta in available:
+            pid = escape(str(provider_meta["id"]), quote=True)
+            label = "钉钉" if provider_meta["kind"] == "dingtalk" else "企业微信"
+            fields.append(
+                f'<form method="POST" action="/auth/sso/provider">'
+                f'<input type="hidden" name="t" value="{escape(t, quote=True)}">'
+                f'<button name="provider_id" value="{pid}" type="submit">'
+                f'{label} · {escape(str(provider_meta["display_name"] or provider_meta["id"]))}</button></form>'
+            )
+        body = (
+            '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>NiceVPN 企业认证</title></head>'
+            '<body style="font:16px system-ui,sans-serif;margin:12vh auto;'
+            'max-width:34rem;padding:0 1.2rem;text-align:center">'
+            '<h2>选择企业身份认证方式</h2>'
+            + "".join(fields)
+            + '</body></html>'
+        )
+        return HTMLResponse(body, headers={
+            **_NO_CACHE,
+            "Content-Security-Policy": "default-src 'none'; form-action 'self'",
+        })
+    provider = runtime.providers.get(transaction.provider_id)
+    if provider is None:
+        return _html("企业身份提供商不可用。请联系管理员。", code=503)
+    state = WebAuthTransactionStore.state_for_token(t)
+    callback = runtime.public_base_url + f"/auth/sso/{provider.kind}/callback"
+    url = authorization_url(provider, callback, state)
+    return RedirectResponse(url, status_code=303, headers=_NO_CACHE)
+
+
+@router.post("/provider", include_in_schema=False)
+async def choose_provider(request: Request):
+    runtime = get_sso_runtime()
+    if runtime is None or runtime.stop_event.is_set():
+        raise HTTPException(503, "SSO unavailable")
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+        return _html("请求格式错误。", code=415)
+    data = await request.body()
+    if len(data) > 2048:
+        return _html("认证请求过长。", code=413)
+    try:
+        form = parse_qs(data.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
+    except (ValueError, UnicodeDecodeError):
+        return _html("认证请求格式错误。", code=400)
+    if set(form) != {"t", "provider_id"} or any(len(values) != 1 for values in form.values()):
+        return _html("认证请求格式错误。", code=400)
+    token, provider_id = form["t"][0], form["provider_id"][0]
+    transaction = runtime.transactions.get_pending_by_token(token)
+    if transaction is None:
+        return _html("认证链接已经失效，请重新连接 VPN。", code=410)
+    if not runtime.select_provider(
+        token=token, request=transaction, provider_id=provider_id,
+    ):
+        return _html("认证提供商不可用或已失效。", code=403)
+    provider = runtime.providers.get(provider_id)
+    if provider is None:
+        return _html("认证提供商不可用。", code=503)
+    logger.info(
+        "SSO provider selected: provider=%s kind=%s",
+        provider.id, provider.kind,
+    )
+    callback = runtime.public_base_url + f"/auth/sso/{provider.kind}/callback"
+    url = authorization_url(
+        provider, callback, WebAuthTransactionStore.state_for_token(token),
+    )
+    return RedirectResponse(url, status_code=303, headers=_NO_CACHE)
+
+
+@router.get("/dingtalk/enterprise-lookup/start", include_in_schema=False)
+async def start_dingtalk_enterprise_lookup(state: str = ""):
+    """Start a read-only CorpId lookup created by the authenticated admin UI."""
+    lookup_store = get_dingtalk_enterprise_lookup_store()
+    if not state or len(state) > 128:
+        return _html("企业查询请求无效或已过期。", code=410)
+    lookup = lookup_store.begin_start(state)
+    if lookup is None:
+        return _html("企业查询请求无效、已使用或已过期。", code=410)
+    try:
+        provider = SsoProviderStore().get(
+            UNIFIED_DINGTALK_ID, require_enabled=False,
+        )
+        if provider is None or provider.app_id != lookup.app_id:
+            lookup_store.fail(state, "DingTalk provider unavailable or changed")
+            return _html("钉钉应用配置不可用或已变更，请返回设置页重新发起查询。", code=503)
+        url = authorization_url(provider, lookup.callback_url, state)
+    except Exception as exc:
+        lookup_store.fail(state, "DingTalk provider configuration unavailable")
+        logger.warning(
+            "SSO DingTalk enterprise lookup could not start: error=%s",
+            type(exc).__name__,
+        )
+        return _html("钉钉应用配置不可用，请检查 Client ID、Secret 和密钥文件。", code=503)
+    logger.info("SSO DingTalk enterprise lookup started: app_id=%s", provider.app_id)
+    return RedirectResponse(url, status_code=303, headers=_NO_CACHE)
+
+
+@router.get("/dingtalk/enterprise-lookup/callback", include_in_schema=False)
+async def dingtalk_enterprise_lookup_callback(request: Request):
+    """Complete one administrator-initiated OAuth lookup; never changes policy."""
+    state = str(request.query_params.get("state") or "")
+    if not state or len(state) > 128:
+        return _html("企业查询请求无效或已过期。", code=410)
+    lookup_store = get_dingtalk_enterprise_lookup_store()
+    lookup = lookup_store.begin_callback(state)
+    if lookup is None:
+        return _html("企业查询请求无效、已使用或已过期。", code=410)
+
+    code = str(
+        request.query_params.get("authCode")
+        or request.query_params.get("code")
+        or ""
+    )
+    if request.query_params.get("error") or not code:
+        lookup_store.fail(state, "DingTalk authorization was cancelled")
+        return _html("钉钉授权未完成。可以返回 NiceVPN 设置页重新查询。", code=403)
+
+    try:
+        provider = SsoProviderStore().get(
+            UNIFIED_DINGTALK_ID, require_enabled=False,
+        )
+        if provider is None or provider.app_id != lookup.app_id:
+            lookup_store.fail(state, "DingTalk provider unavailable or changed")
+            return _html("钉钉应用配置已变更，请返回设置页重新发起查询。", code=503)
+        identity = await exchange_code(
+            provider, code, fetch_enterprise_name=True,
+        )
+        if not identity.enterprise_id:
+            lookup_store.fail(state, "DingTalk did not return a CorpId")
+            return _html("钉钉未返回企业 CorpId，请检查 OAuth scope 是否包含 corpid。", code=403)
+        if not lookup_store.complete(
+            state,
+            corp_id=identity.enterprise_id,
+            enterprise_name=identity.enterprise_name,
+        ):
+            return _html("企业查询已过期，请返回设置页重新发起。", code=410)
+        logger.info(
+            "SSO DingTalk enterprise lookup completed: app_id=%s corp_id=%s "
+            "enterprise_name=%r",
+            provider.app_id, identity.enterprise_id,
+            identity.enterprise_name or "<unavailable>",
+        )
+        name_text = (
+            f"企业名称：{identity.enterprise_name}"
+            if identity.enterprise_name else "企业名称暂不可读取，不影响 CorpId 查询。"
+        )
+        return _html(
+            f"企业查询成功。CorpId：{identity.enterprise_id}。{name_text}"
+            "。请返回 NiceVPN 设置页，查询结果会自动填入企业白名单。"
+        )
+    except OfficeAuthError as exc:
+        lookup_store.fail(state, "DingTalk OAuth verification failed")
+        logger.warning(
+            "SSO DingTalk enterprise lookup failed: app_id=%s reason=%s",
+            lookup.app_id, str(exc),
+        )
+        return _html("钉钉企业查询失败，请检查授权状态和应用配置。", code=403)
+    except Exception as exc:
+        lookup_store.fail(state, "DingTalk enterprise lookup unavailable")
+        logger.exception(
+            "SSO DingTalk enterprise lookup unavailable: app_id=%s error=%s",
+            lookup.app_id, type(exc).__name__,
+        )
+        return _html("钉钉企业查询暂时不可用，请查看 NiceVPN 服务日志。", code=503)
+
+
+@router.get("/{provider_kind}/callback", include_in_schema=False)
+async def office_callback(provider_kind: str, request: Request):
+    runtime = get_sso_runtime()
+    if runtime is None or runtime.stop_event.is_set():
+        raise HTTPException(503, "SSO unavailable")
+    if provider_kind not in {"dingtalk", "wecom"}:
+        raise HTTPException(404, "Unknown SSO provider")
+    state = str(request.query_params.get("state") or "")
+    if not state or len(state) > 256:
+        return _html("认证请求不合法或已经失效。", code=400)
+    transaction = runtime.transactions.get_pending_by_state(state)
+    if transaction is None:
+        return _html("认证已过期，无法重复使用。", code=410)
+    provider = runtime.providers.get(transaction.provider_id)
+    if provider is None or provider.kind != provider_kind:
+        return _html("企业身份提供商不匹配。", code=403)
+
+    code = str(
+        request.query_params.get("authCode")
+        or request.query_params.get("code")
+        or ""
+    )
+    if request.query_params.get("error") or not code:
+        runtime.finish(transaction, state, None)
+        return _html("办公系统登录未完成或已取消。", code=403)
+    try:
+        allowed = load_config() if provider.id == UNIFIED_DINGTALK_ID else None
+        def lookup_name(corp_id: str) -> bool:
+            return (
+                allowed is not None
+                and needs_enterprise_name_lookup(allowed)
+                and not is_allowed_enterprise(allowed, corp_id)
+            )
+        verified = await exchange_code(
+            provider, code,
+            fetch_enterprise_name=lookup_name if allowed is not None else False,
+        )
+    except OfficeAuthError as exc:
+        # Do not log the third-party code, token or provider secret. OfficeAuthError
+        # messages are controlled, non-secret reasons (e.g. missing CorpId).
+        runtime.finish(transaction, state, None)
+        logger.warning(
+            "Office SSO verification rejected: provider=%s kind=%s reason=%s",
+            provider.id, provider.kind, str(exc),
+        )
+        return _html("企业身份认证未通过。", code=403)
+
+    result = runtime.finish_with_result(transaction, state, verified)
+    if result == SsoFinishResult.DENIED:
+        return _html("当前企业未获授权，不允许访问 VPN。", code=403)
+    if result == SsoFinishResult.EXPIRED:
+        return _html("认证事务已失效。请重新发起 VPN 连接。", code=410)
+    if result == SsoFinishResult.UNAVAILABLE:
+        return _html("VPN 认证服务暂时不可用。请重新连接。", code=503)
+    return _html("企业身份验证成功，VPN 正在继续连接。", show_vpn_hint=True)

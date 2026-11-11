@@ -88,7 +88,7 @@ def test_settings_help_hints_are_attached_to_their_controls() -> None:
 
     assert "from app.ui.components.help import field_with_help" in source
     assert "help_hint(" not in source
-    assert source.count("field_with_help(") == 6
+    assert source.count("field_with_help(") == 7
     assert "control_grow=False" in source
 
 
@@ -905,3 +905,25 @@ def test_full_backup_restore_tab_requires_verified_upload_and_typed_confirmation
     assert "pre-restore" in backup_source
     assert "sync_packaged_openvpn_scripts" in backup_source
     assert "restart_instance(" not in backup_source
+
+
+
+def test_dingtalk_lookup_fills_blank_row_and_does_not_duplicate():
+    from types import SimpleNamespace
+    from app.ui.pages.settings_sso import SsoSettingsPanel
+
+    panel = object.__new__(SsoSettingsPanel)
+    corp = SimpleNamespace(value="")
+    name = SimpleNamespace(value="")
+    panel.allowed_company_rows = [(object(), corp, name)]
+    panel._add_allowed_company = lambda corp_id, enterprise_name: (_ for _ in ()).throw(
+        AssertionError("should fill existing blank row")
+    )
+
+    panel._apply_enterprise_lookup("dingCorp", "示例企业")
+    assert corp.value == "dingCorp"
+    assert name.value == "示例企业"
+
+    panel._apply_enterprise_lookup("dingCorp", "另一个展示名称")
+    assert corp.value == "dingCorp"
+    assert name.value == "示例企业"

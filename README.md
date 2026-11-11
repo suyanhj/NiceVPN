@@ -8,6 +8,11 @@
 - **进程模型**：一个 NiceVPN Python 进程、一个 systemd 服务、两个 HTTP 监听端口。
 - **结构化存储**：SQLite，默认 `data/nicevpn.db`。
 
+
+> **统一访问地址与企业认证（开发分支）**：系统设置 → 访问地址支持全局 `domains`；系统设置 → 企业认证通过“开启认证 / 所有人生效”控制范围，并在“统一认证 → 认证方式”选择钉钉或企业微信后配置相应凭证。钉钉使用一套 Client ID / Secret 和可增删的企业名单，每家 CorpId/企业名称至少填一项，两项同填以 CorpId 为准；仅填名称时须有钉钉组织基础信息读取权限，无法获取可信名称则拒绝。不读取员工个人资料。关闭“所有人生效”时仍按组/标签 SSO 策略执行。
+
+> **开发中的功能（尚未验收）**：企业身份 SSO（钉钉/企业微信）在 `feature/enterprise-sso-webauth` 独立分支与 [Draft PR #78](https://github.com/suyanhj/NiceVPN/pull/78) 开发，默认关闭，未通过真实 OpenVPN/办公系统实机验收，**不可在生产环境直接启用**。配置、认证策略和 POC 验收参见 [企业 SSO 文档](docs/enterprise-sso.md)。
+
 ## 主要能力
 
 - **OpenVPN / PKI**：EasyRSA、CRL、tls-crypt-v2、CCD、固定虚拟 IP、OVPN 生成。
@@ -18,7 +23,7 @@
 - **管理界面**：NiceGUI 管理壳 + AG Grid / Vue 预编译前端资源。
 - **CLI**：用户、用户组、设备绑定、OVPN、防火墙等命令行操作。
 - **公网 API**：HTTP Basic 下的用户创建、批量创建、切组、删除、重置设备绑定与一次性下载。
-- **诊断、备份与日志**：系统诊断、备份恢复、OpenVPN/NiceVPN 日志轮转。
+- **诊断、备份与日志**：系统诊断、备份恢复、OpenVPN/NiceVPN 日志轮转；企业 SSO 认证事件独立记录于 `data/logs/sso-auth.jsonl`，可在「服务管理 → 本机实例 → 认证日志」按需查看。
 
 完整能力说明见 [docs/overview.md](./docs/overview.md)。
 
@@ -226,3 +231,6 @@ GitHub Actions 当前覆盖：
 - 按改动范围执行 Chrome browser smoke。
 
 代码注释和文档字符串使用中文，代码标识符使用英文。架构与开发边界以 [CLAUDE.md](./CLAUDE.md)、代码和当前 OpenSpec 为准。
+> **SSO 升级清理**：schema v9 将 SQLite 旧认证审计导出到 `data/logs/sso-auth-legacy.jsonl` 后删除废弃表，统一钉钉配置成功保存/导入后清理旧企业凭证。建议升级前备份数据库和 `data/sso_provider_master.key`。
+
+> **企业认证自动重连（SQLite v12）**：钉钉首次登录通过后，NiceVPN 按原证书指纹复用 SSO 会话；OpenVPN 仍自行验证证书、CRL 与 TLS。在线客户端由 Management `status 3` 按每实例随机 1–5 秒确认，SQLite 约每 55 分钟原地刷新同一条会话记录（为 1 小时超时预留 5 分钟余量）；**正常断开后保留 1 小时复用窗口，持续在线按周期续期**。支持 OpenVPN / NiceVPN 重启及 TLS REAUTH；撤销、白名单失效、缺少可信证书指纹等情况仍不能绕过认证。详见 `docs/enterprise-sso.md`。

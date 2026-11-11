@@ -11,6 +11,7 @@ from app.core.constants import DEFAULT_PORT
 from starlette.requests import Request
 
 from app.utils.listen_lan import get_listen_http_base
+from app.utils.public_domains import first_domain_origin, match_domain_origin, with_default_ip_api_port
 
 
 def _is_loopback_host(host: Optional[str]) -> bool:
@@ -34,7 +35,7 @@ def public_base_url_from_request(request: Request) -> str:
     if forwarded_host:
         host = forwarded_host.split(",")[0].strip()
         forwarded_proto = headers.get("x-forwarded-proto")
-        scheme = (forwarded_proto or "https").split(",")[0].strip()
+        scheme = (forwarded_proto or request.url.scheme).split(",")[0].strip()
         fwd_prefix = (headers.get("x-forwarded-prefix") or "").strip()
         root_path = (request.scope.get("root_path") or "").strip()
         prefix = (fwd_prefix + root_path).rstrip("/")
@@ -65,8 +66,22 @@ def resolve_download_base_url(
                 return None
         except ValueError:
             return None
-        return url
+        return with_default_ip_api_port(url)
 
+    # Only configured allow-listed entries may override the historical
+    # startup-IP fallback. A forged Host/X-Forwarded-Host cannot add a URL.
+    from app.core.config import load_config
+
+    domains = load_config().get("domains") or []
+    if domains:
+        if request is not None:
+            headers = request.headers
+            host = (headers.get("x-forwarded-host") or headers.get("host") or "").split(",")[0].strip()
+            scheme = (headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip().lower()
+            selected = match_domain_origin(domains, host, scheme)
+            if selected:
+                return selected
+        return first_domain_origin(domains)
     return get_listen_http_base()
 
 

@@ -338,6 +338,7 @@ class TagsPage:
             fields["name"] = ui.input("标签名称").classes("w-full")
             fields["description"] = ui.input("说明（选填）").classes("w-full")
             fields["device_binding_exempt"] = ui.switch("豁免设备绑定", value=False)
+            fields["sso_required"] = ui.switch("启用企业认证（SSO）", value=False)
 
         def submit() -> bool:
             name = str(fields["name"].value or "").strip()
@@ -346,7 +347,8 @@ class TagsPage:
                 return False
             try:
                 self.service.create(name, str(fields["description"].value or "").strip(),
-                                    device_binding_exempt=bool(fields["device_binding_exempt"].value))
+                                    device_binding_exempt=bool(fields["device_binding_exempt"].value),
+                                    sso_required=bool(fields["sso_required"].value))
                 safe_notify("标签已创建", type="positive")
                 self._refresh()
                 return True
@@ -368,6 +370,9 @@ class TagsPage:
             fields["device_binding_exempt"] = ui.switch(
                 "豁免设备绑定", value=bool(tag.get("device_binding_exempt", False))
             )
+            fields["sso_required"] = ui.switch(
+                "启用企业认证（SSO）", value=bool(tag.get("sso_required", False))
+            )
 
         def submit() -> bool:
             try:
@@ -375,6 +380,7 @@ class TagsPage:
                     tag["id"], name=fields["name"].value,
                     description=fields["description"].value,
                     device_binding_exempt=bool(fields["device_binding_exempt"].value),
+                    sso_required=bool(fields["sso_required"].value),
                 )
                 safe_notify("标签已更新", type="positive")
                 self._refresh()

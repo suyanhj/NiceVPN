@@ -28,7 +28,7 @@ class GroupService:
 
     # ---- 创建 ----
 
-    def create(self, name: str, subnet: str, *, device_binding_exempt: bool = False) -> dict:
+    def create(self, name: str, subnet: str, *, device_binding_exempt: bool = False, sso_required: bool = False) -> dict:
         """创建组：校验名称唯一性，调用子网冲突检测，通过后保存。
 
         规则：
@@ -86,6 +86,7 @@ class GroupService:
             status="active",
             user_count=0,
             device_binding_exempt=device_binding_exempt,
+            sso_required=bool(sso_required),
             created_at=now,
             updated_at=now,
         )
@@ -197,7 +198,7 @@ class GroupService:
         )
         return data
 
-    def update_details(self, group_id: str, *, name: str, subnet: str, device_binding_exempt: bool | None = None) -> dict:
+    def update_details(self, group_id: str, *, name: str, subnet: str, device_binding_exempt: bool | None = None, sso_required: bool | None = None) -> dict:
         """同时更新组名称与子网；名称修改为增量能力，子网继续复用既有安全校验。"""
 
         current = self._load_group_or_raise(group_id)
@@ -222,11 +223,14 @@ class GroupService:
             current = self._load_group_or_raise(group_id)
 
         exempt_changed = device_binding_exempt is not None and bool(device_binding_exempt) != bool(current.get("device_binding_exempt", False))
-        if new_name != str(current.get("name") or "") or exempt_changed:
+        sso_changed = sso_required is not None and bool(sso_required) != bool(current.get("sso_required", False))
+        if new_name != str(current.get("name") or "") or exempt_changed or sso_changed:
             old_name = str(current.get("name") or "")
             current["name"] = new_name
             if device_binding_exempt is not None:
                 current["device_binding_exempt"] = bool(device_binding_exempt)
+            if sso_required is not None:
+                current["sso_required"] = bool(sso_required)
             current["updated_at"] = datetime.now(timezone.utc).isoformat()
             current = Group(**current).model_dump()
             self.store.upsert_group(current)
@@ -235,7 +239,8 @@ class GroupService:
                 "group",
                 group_id,
                 {"old_name": old_name, "name": new_name,
-                 "device_binding_exempt": bool(current.get("device_binding_exempt", False))},
+                 "device_binding_exempt": bool(current.get("device_binding_exempt", False)),
+                 "sso_required": bool(current.get("sso_required", False))},
                 "success",
             )
 

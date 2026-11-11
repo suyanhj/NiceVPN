@@ -46,11 +46,14 @@ DOWNLOAD_LINKS_DIR = DATA_DIR / "download_links"
 DOWNLOAD_BUNDLES_DIR = DATA_DIR / "download_bundles"
 AUDIT_DIR = DATA_DIR / "audit"
 LOGS_DIR = DATA_DIR / "logs"
+# SSO 认证事件：独立于系统设置页和 SQLite，文件仅在服务端读取
+SSO_AUTH_AUDIT_LOG_FILE = LOGS_DIR / "sso-auth.jsonl"
 OPENVPN_UPGRADE_LOG_FILE = LOGS_DIR / "openvpn-upgrade.log"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 # 管理后台登录会话签名密钥，与管理员密码哈希分离并仅由服务进程读取
 ADMIN_SESSION_SECRET_FILE = DATA_DIR / "admin_session_secret"
+SSO_PROVIDER_MASTER_KEY_FILE = DATA_DIR / "sso_provider_master.key"
 # 公网 VPN 管理 API（HTTP Basic）凭据 JSON：{"username":"vpn","password":"…"}，仅首次创建
 API_BASIC_CREDENTIALS_FILE = DATA_DIR / "api_basic_credentials.json"
 

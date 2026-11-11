@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from app.api.download import router as download_router
 from app.api.vpn_ops import router as vpn_ops_router
+from app.api.sso import router as sso_router
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ def create_api_app() -> FastAPI:
     )
     api_app.include_router(vpn_ops_router, prefix="/api")
     api_app.include_router(download_router)
+    api_app.include_router(sso_router)
     return api_app
 
 

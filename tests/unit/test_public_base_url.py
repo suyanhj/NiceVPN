@@ -67,6 +67,13 @@ def test_public_base_forwarded():
     assert public_base_url_from_request(r) == "https://vpn.example.com/app/mgmt"
 
 
+def test_forwarded_host_without_protocol_uses_request_scheme():
+    http_request = _make_request(forwarded_host="192.168.10.5:8881", scheme="http")
+    assert public_base_url_from_request(http_request) == "http://192.168.10.5:8881"
+    https_request = _make_request(forwarded_host="vpn.example.org", scheme="https")
+    assert public_base_url_from_request(https_request) == "https://vpn.example.org"
+
+
 def test_resolve_configured_overrides(monkeypatch):
     monkeypatch.setattr(
         "app.utils.public_base_url.get_listen_http_base",

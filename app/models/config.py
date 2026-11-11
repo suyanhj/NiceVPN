@@ -8,6 +8,8 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.constants import OPENVPN_DEFAULT_MAX_CLIENTS
+from app.utils.public_domains import parse_domains
+from app.utils.sso_enterprises import parse_allowed_enterprises
 
 
 _ARGON2ID_HASH_PATTERN = re.compile(
@@ -103,11 +105,15 @@ class SystemConfig(BaseModel):
         default="OpenVPN",
         description="Rocket.Chat attachment 标题",
     )
+    domains: list[str] = Field(
+        default_factory=list,
+        description="允许作为对外访问入口的域名/IP:端口列表；按顺序优先，未写协议默认 HTTP",
+    )
     download_base_url: Optional[str] = Field(
         default=None,
         description=(
-            "下载链接基础 URL；配置后优先使用，留空则使用启动时识别的"
-            "本机 IP（优先 eth0）和 API 监听端口，无需域名"
+            "下载基础 URL；优先级：自动检测 < domains 全局配置 < 本字段自定义。"
+            "域名默认端口 80/443，IP 未指定端口自动使用 API 端口。"
         ),
     )
     github_proxy_urls: list[str] = Field(
@@ -132,6 +138,22 @@ class SystemConfig(BaseModel):
             "weak_fingerprint=全体IV_HWADDR；退化：iOS/Mac/Win用UV_UUID，安卓IV_PLAT|IV_PLAT_VER，其它IV_PLAT_VER|IV_GUI_VER；"
             "strict_hwaddr=必须 IV_HWADDR，无则拒绝（OpenVPN 2.x 核心安卓端常不兼容）"
         ),
+    )
+    enterprise_sso_public_base_url: Optional[str] = Field(
+        default=None,
+        description="SSO 自定义认证地址；优先级：自动获取 < domains < 自定义。域名使用 80/443，IP 可自动补 API 端口",
+    )
+    enterprise_sso_allowed_corps: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="统一钉钉企业白名单：CorpId/企业名至少填写一项；同时填写以 CorpId 为准",
+    )
+    enterprise_sso_enabled: bool = Field(
+        default=False,
+        description="全局企业身份认证总开关；默认关闭，开启须先完成提供商、WebAuth、管理通道预检",
+    )
+    enterprise_sso_all_users: bool = Field(
+        default=False,
+        description="企业身份认证对所有 VPN 证书连接生效；关闭时仅按组/标签 SSO 策略执行",
     )
     device_bind_exemption_enabled: bool = Field(
         default=False,
@@ -255,6 +277,16 @@ class SystemConfig(BaseModel):
                 raise ValueError(f"push_lan_routes 仅支持 IPv4: {item}")
             out.append(str(net))
         return out
+
+    @field_validator("enterprise_sso_allowed_corps", mode="before")
+    @classmethod
+    def validate_allowed_sso_enterprises(cls, value):
+        return parse_allowed_enterprises(value)
+
+    @field_validator("domains", mode="before")
+    @classmethod
+    def parse_public_domains(cls, value):
+        return parse_domains(value)
 
     @field_validator("github_proxy_urls", mode="before")
     @classmethod

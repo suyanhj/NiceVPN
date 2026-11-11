@@ -156,9 +156,9 @@ class UsersPage:
                 track_bulk=True,
             )
             icon_action(
-                "power_settings_new",
-                "批量踢下线",
-                self._batch_kick_offline,
+                "restart_alt",
+                "批量重置连接",
+                self._batch_reset_connection_confirm,
                 disabled_action=True,
                 track_bulk=True,
             )
@@ -1049,10 +1049,9 @@ class UsersPage:
                         lambda: self._toggle_user_status(username),
                     )
                 icon_action(
-                    "power_settings_new",
-                    "踢下线",
-                    lambda: self._kick_offline(username),
-                    disabled=not is_online,
+                    "restart_alt",
+                    "重置连接",
+                    lambda: self._reset_connection_confirm(username),
                 )
                 icon_action(
                     "drive_file_move",
@@ -1146,23 +1145,61 @@ class UsersPage:
             on_confirm=lambda: self._batch_set_status(False),
         )
 
-    def _batch_kick_offline(self) -> None:
+    def _batch_reset_connection_confirm(self) -> None:
         if not self.selected_users:
             safe_notify("请先选择用户", type="warning")
             return
-        success = skipped = failed = 0
-        for username in list(self.selected_users):
+        usernames = tuple(sorted(self.selected_users))
+        confirm_dialog.show(
+            "确定重置所选用户的连接？",
+            title="批量重置连接",
+            impact=(
+                "清除所选用户所有实例的 SSO 缓存并取消未完成的认证；"
+                "在线连接会被 OpenVPN 断开，客户端重连后需要重新企业登录；"
+                "离线用户清理缓存后，下次连接需要重新登录。不会删除账号或证书。"
+            ),
+            object_count=len(usernames),
+            danger_level="warning",
+            on_confirm=lambda: self._reset_connections(usernames),
+        )
+
+    def _reset_connection_confirm(self, username: str) -> None:
+        confirm_dialog.show(
+            f"确定重置用户 {username} 的连接？",
+            title="重置连接",
+            impact=(
+                "清除 SSO 缓存并取消未完成的认证；在线连接会被 OpenVPN 断开，"
+                "客户端重连后需要重新企业登录；离线用户下次连接需要重新登录。"
+                "不会删除账号或证书。"
+            ),
+            object_count=1,
+            danger_level="warning",
+            on_confirm=lambda: self._reset_connections((username,)),
+        )
+
+    def _reset_connections(self, usernames: tuple[str, ...]) -> None:
+        success = failed = revoked = pending = 0
+        online = disconnected = disconnect_failed = 0
+        for username in usernames:
             try:
-                if self.user_service.kick_offline(username):
-                    success += 1
-                else:
-                    skipped += 1
+                rows, canceled, found, confirmed, not_confirmed = (
+                    self.user_service.reset_connection(username)
+                )
+                revoked += rows
+                pending += canceled
+                online += found
+                disconnected += confirmed
+                disconnect_failed += not_confirmed
+                success += 1
             except Exception:
-                logger.exception("批量踢下线失败 user=%s", username)
+                logger.exception("重置连接失败 user=%s", username)
                 failed += 1
         safe_notify(
-            f"批量下线完成：成功 {success}，跳过 {skipped}，失败 {failed}",
-            type="positive" if failed == 0 else "warning",
+            f"连接重置完成：成功 {success} 人，失败 {failed} 人；"
+            f"清理 SSO 缓存 {revoked} 条，取消待认证 {pending} 条；"
+            f"在线连接 {online} 条，确认断开 {disconnected} 条，"
+            f"未确认 {disconnect_failed} 条",
+            type="positive" if failed == 0 and disconnect_failed == 0 else "warning",
         )
         self._refresh_user_list()
 
@@ -1337,15 +1374,6 @@ class UsersPage:
             self._refresh_user_list()
         except Exception as exc:
             safe_notify(f"操作失败: {exc}", type="negative")
-
-    def _kick_offline(self, username: str):
-        """踢掉用户当前在线会话。"""
-        try:
-            self.user_service.kick_offline(username)
-            safe_notify(f"已踢下线: {username}", type="positive")
-            self._refresh_user_list()
-        except Exception as exc:
-            safe_notify(f"踢下线失败: {exc}", type="negative")
 
     def _show_change_group_dialog(self, username: str):
         """显示用户切换组弹窗。"""
