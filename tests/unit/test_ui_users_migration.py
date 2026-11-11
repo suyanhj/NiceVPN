@@ -535,7 +535,7 @@ def test_users_v2_visual_contract_uses_shared_table_and_dialog_system() -> None:
         "批量下载",
         "批量启用",
         "批量停用",
-        "批量踢下线",
+        "批量重置连接",
         "批量切换组",
         "批量重置绑定",
         "批量删除",
