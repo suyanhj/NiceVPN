@@ -142,7 +142,7 @@ async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path
             return httpx.Response(
                 200, json={"corpId": "dingVerified", "accessToken": "USER_TOKEN"},
             )
-        return httpx.Response(403, json={"message": "permission denied"})
+        return httpx.Response(403, json={"code": "permission.denied", "message": "permission denied", "requestid": "ding-req-403", "requiredScopes": ["Contact.Org.Read"]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
         identity = await exchange_code(
@@ -152,6 +152,12 @@ async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path
     assert identity.enterprise_name == ""
     assert "SSO DingTalk organization name unavailable" in caplog.text
     assert "enterprise_name='<empty>'" in caplog.text
+    assert "http_status=403" in caplog.text
+    assert "api_code='permission.denied'" in caplog.text
+    assert "api_message='permission denied'" in caplog.text
+    assert "request_id='ding-req-403'" in caplog.text
+    assert "required_scopes='Contact.Org.Read'" in caplog.text
+    assert "USER_TOKEN" not in caplog.text
     config = {"enterprise_sso_allowed_corps": [
         {"corp_id": "", "name": "可信企业名称"},
     ]}
