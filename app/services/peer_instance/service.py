@@ -682,8 +682,9 @@ class PeerService:
     def sync_all_mesh_push_routes_in_ccd(self) -> None:
         """按当前磁盘上全部对端实例，向各活跃用户 CCD 重写 mesh push route 块。
 
-        每个用户收到的 CIDR 并集由 ``mesh_route_visible_group_ids`` 决定：某对端列表为空则
-        该对端 LAN 对所有组用户下发；非空则仅对 ``group_id`` 命中的用户下发。
+        每个用户收到的 CIDR 并集由对端的组/标签可见范围决定：组和标签采用 OR 关系，
+        命中任一组或任一直接/组继承标签即可；两类限制均为空则对所有活跃用户下发。
+        停用用户会清除其 Mesh push 块；已删除用户不再有 CCD 文件。
 
         无匹配 CIDR 时移除该块。任一 CCD 写入失败则抛出 RuntimeError。
 
