@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from typing import Callable
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -41,6 +42,7 @@ class EnterpriseIdentity:
     provider_kind: str
     enterprise_id: str
     external_user_id: str
+    enterprise_name: str = ""  # verified by provider API, never browser input
 
 
 def _callback_url(callback: str) -> None:
@@ -97,6 +99,7 @@ async def _get_json(response: httpx.Response) -> dict:
 async def exchange_code(
     provider: OfficeProvider, code: str, *,
     client: httpx.AsyncClient | None = None,
+    fetch_enterprise_name: bool | Callable[[str], bool] = False,
 ) -> EnterpriseIdentity:
     """Validate employee and organization via trusted HTTPS provider APIs.
 
@@ -137,9 +140,54 @@ async def exchange_code(
             # SsoRuntime.finish, with the verified token result, not browser input.
             if not is_unified and corp_id != provider.enterprise_id:
                 raise OfficeAuthError("DingTalk enterprise verification failed")
-            # Membership authorization uses only the verified enterprise.
-            # There is no Contact.User.Read request or employee profile lookup.
-            return EnterpriseIdentity("dingtalk", corp_id, "")
+            # Optional organization-name lookup is separate from personal
+            # directory access. Never trust a browser-supplied display name
+            # or an undocumented field from the OAuth token response.
+            name = ""
+            needs_name = (
+                fetch_enterprise_name(corp_id)
+                if callable(fetch_enterprise_name) else fetch_enterprise_name
+            )
+            if needs_name:
+                organization = {}
+                try:
+                    organization = await _get_json(await http.get(
+                        "https://api.dingtalk.com/v1.0/contact/organizations/authInfos",
+                        params={"targetCorpId": corp_id},
+                        headers={"x-acs-dingtalk-access-token": access_token},
+                    ))
+                except (httpx.HTTPError, ValueError, TypeError):
+                    pass
+                possible = organization.get("orgName")
+                if not isinstance(possible, str) or not possible.strip():
+                    # Org APIs can require an application access token rather
+                    # than the login user's token. Internal applications can
+                    # obtain one using the already configured AppKey/Secret.
+                    try:
+                        app_token = await _get_json(await http.post(
+                            "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                            json={"appKey": provider.app_id,
+                                  "appSecret": provider.secret},
+                        ))
+                        app_access = str(app_token.get("accessToken") or "")
+                        if app_access:
+                            organization = await _get_json(await http.get(
+                                "https://api.dingtalk.com/v1.0/contact/organizations/authInfos",
+                                params={"targetCorpId": corp_id},
+                                headers={"x-acs-dingtalk-access-token": app_access},
+                            ))
+                    except (httpx.HTTPError, ValueError, TypeError):
+                        pass  # No personal-directory fallback is permitted.
+                possible = organization.get("orgName")
+                if (isinstance(possible, str) and possible.strip()
+                        and len(possible.strip()) <= 80
+                        and not any(ord(ch) < 32 for ch in possible)):
+                    name = possible.strip()
+                if not name:
+                    # CorpId-only entries still work without this permission;
+                    # name-only entries must fail closed in SsoRuntime.
+                    logger.info("SSO DingTalk organization name unavailable: provider=%s", provider.id)
+            return EnterpriseIdentity("dingtalk", corp_id, "", name)
 
         app_token_data = await _get_json(await http.get(
             "https://qyapi.weixin.qq.com/cgi-bin/gettoken",

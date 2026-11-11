@@ -11,9 +11,9 @@
 - `enterprise_sso_enabled` 默认关闭；登录身份只核实可信 OAuth 返回的企业 ID，**不要**要求钉钉/企业微信用户存在于 VPN 用户表。
 - 证书 CN 原本所属用户/组/标签和防火墙权限保持不变；总开关仅提供 SSO 能力，组或标签编辑开关才强制 SSO。Linux 使用不属于强制 SSO 组/标签的证书，不新增证书豁免系统，也不能依据 `IV_PLAT` 自动绕过。
 - 全局 `domains` 是一个按顺序排列的 http(s) 域名/IP:端口白名单；`download_base_url`、`enterprise_sso_public_base_url` 非空时须优先于全局值。API 只允许匹配名单内的 Host；OpenVPN SSO 初次跳转使用首项（没有 HTTP Host 可判断）。
-- SSO 日志可记录企业 CorpId、应用标识及可用的员工 ID，钉钉 `users/me` 403 时仅输出 HTTP 状态、错误码、缺少的 scopes；禁止输出 accessToken、refreshToken、OAuth code、AppSecret 或完整响应体。
+- SSO 日志可记录企业 CorpId、应用标识及可用的员工 ID。钉钉不调用 `users/me`；组织名称按需通过官方组织基础信息接口读取，失败仅记录通用错误，不输出 Token、OAuth code、AppSecret 或完整响应体。
 - 启用后由 root 限制的 Unix Management Socket 完成 `WEB_AUTH` 流程；公网仅提供 `/auth/sso` OAuth 回调，不开放管理端与 Management Socket。
-- SSO 授权后设备指纹仅记录，其他证书按旧策略；统一钉钉应用只配置一套加密 OAuth 凭证，多个企业使用 `enterprise_sso_allowed_corps` 中的 CorpId 白名单（企业名称仅展示）。未启用统一认证前保留旧 per-company 凭证；统一模式成功保存/导入后清理不再使用的旧企业行。密钥主文件随完整备份保存。
+- SSO 授权后设备指纹仅记录，其他证书按旧策略；统一钉钉应用只配置一套加密 OAuth 凭证，多企业使用 `enterprise_sso_allowed_corps` 白名单，支持 CorpId 和已由钉钉服务端核实的组织名称，CorpId 优先。未启用统一认证前保留旧 per-company 凭证；统一模式保存/导入后清理旧企业行。密钥主文件随完整备份保存。
 - 目前代码尚未通过真机 OpenVPN/WebAuth、钉钉/企业微信回调的端到端验收，CI mock 通过不能视为生产就绪。
 
 ## 当前架构
@@ -257,13 +257,13 @@ GitHub Actions 当前主要校验：
 - 系统设置页说明一律使用 `render_form_section(description=...)` 或 `field_with_help` 小问号 Tooltip；不要新增多段常驻 `ui.label` 解释文案。字段帮助必须与输入控件处于同一行。
 
 - 统一钉钉提供商 ID 为 `dingtalk_unified`，通过 `SsoProviderStore.save_unified()` 保存一份 Fernet 加密全局 Client ID/Secret。已配置时 `first_enabled()` 和 `enabled_metadata()` 优先且只返回统一应用，关闭时不自动回退到旧企业提供商。
-- 允许企业白名单为 `SystemConfig.enterprise_sso_allowed_corps`，每项仅 `corp_id` / `name`。只有从钉钉 `userAccessToken` 服务端响应获得的 CorpId 精确命中名单才能在 `SsoRuntime.finish()` 放行；禁止浏览器参数直接决定权限。
+- 允许企业白名单为 `SystemConfig.enterprise_sso_allowed_corps`，每项仅 `corp_id` / `name`，至少填写一项。同时填写只比较服务端 Token 返回的 CorpId；仅填写企业名称才查询钉钉 `contact/organizations/authInfos` 中经过服务端确认的 `orgName` 并精确匹配，无法获得组织权限或名称必须拒绝，不能信任浏览器传入的名称、CorpId。UI 使用可增删的双字段企业行。
 - 系统设置页企业认证保留“开启认证 / 所有人生效”，在“统一认证”按认证方式展示钉钉或企业微信配置。钉钉使用一套全局 AppKey/SuiteKey + Secret + 企业白名单，不再逐公司设置 OAuth 密钥；支持显式导入旧版钉钉凭证及企业名单。切换认证方式只激活一个提供商并清除旧 OAuth 缓存；旧配置凭证兼容保留。
 - SSO 认证回调中，`SsoFinishResult.DENIED` 对应 HTTP 403（不允许访问）、`EXPIRED` 对应 410（事务真正失效）、`UNAVAILABLE` 对应 503；旧 `finish()` 布尔 API 继续兼容。不得把明确的企业白名单拒绝显示为过期。
 - v9 迁移先将旧审计表导出到权限 0600 的私有 JSONL 再删除；失败则回滚。只清理已启用统一钉钉时多余的旧 provider 行和旧待认证事务；保留加密全局凭证表及 WebAuth 事务表。
 
-- **SSO 会话持久化（SQLite schema v11）**：`app/services/auth/sso_sessions.py` 的 `SsoSessionStore` 保存 8 小时**离线宽限期**的 OAuth 会话，活跃连接不断续期；键为 VPN 实例、证书 CN、OpenVPN Management 已验证证书的 `tls_digest_sha256_0`、OAuth 提供商 ID，同时绑定 provider App ID 和钉钉 CorpId。不要自己验签、查 CRL 或用 IV_HWADDR、HTTP 参数、只有 CN 的信息充当缓存证明。
+- **SSO 会话持久化（SQLite schema v12）**：`app/services/auth/sso_sessions.py` 的 `SsoSessionStore` 保存 1 小时**离线宽限期**的 OAuth 会话，活跃连接不断续期；键为 VPN 实例、证书 CN、OpenVPN Management 已验证证书的 `tls_digest_sha256_0`、OAuth 提供商 ID，同时绑定 provider App ID、钉钉 CorpId 和经服务端核实的企业名称。不要自己验签、查 CRL 或用 IV_HWADDR、HTTP 参数、只有 CN 的信息充当缓存证明。
 - **新 CONNECT 复用**：在组/标签要求 SSO 的前提下，OpenVPN 已完成证书原生检查；NiceVPN 核对持久化有效期、应用是否仍启用、白名单，再为新源 IP/端口发布 client-connect 设备绑定豁免 grant，调用原 `client-auth-nt`。会话失效则重新钉钉 OAuth，不能静默绕过认证。
-- **在线续期与 REAUTH**：Management 每个实例随机 1–5 秒一次 `status 3`；确认完整在线快照后，SQLite 最多每 5 分钟批量原地更新现有行，绝不为心跳追加新行。NiceVPN 单独重启时凭既有 CID + 服务端连接创建时间恢复，不能凭 CN-only 恢复；新 CONNECT 按 OpenVPN 验证的证书指纹在 8 小时离线窗口内复用。REAUTH 仍检查持久化撤销。不要把证书合法性校验从 OpenVPN 搬进 NiceVPN；没有可信 tls_digest_sha256_0 不做跨重启认证缓存。
+- **在线续期与 REAUTH**：Management 每个实例随机 1–5 秒一次 `status 3`；确认完整在线快照后，SQLite 约每 55 分钟批量原地更新现有行（比 1 小时有效期提前 5 分钟），绝不为心跳追加新行。正常 DISCONNECT 从断开时起保留 1 小时；NiceVPN 单独重启时凭 CID + 服务端连接创建时间恢复，不能凭 CN-only 恢复。REAUTH 仍检查持久化撤销；证书合法性仍由 OpenVPN 负责。
 - **耗时诊断**：日志新增 OAuth 从 CONNECT 到 AUTH 放行的总时间，以及 AUTH 放行到 CLIENT:ESTABLISHED 时间。客户端隧道 TUN、CCD、路由、iptables 等耗时仍由 OpenVPN 自身处理。
-- **会话安全**：持续在线可滚动续期，完全离线超过 8 小时失效；企业白名单/全局 App ID 变化阻止续期和后续 CONNECT/REAUTH 复用。复制 .ovpn 私钥可在同证书的授权有效期内复用 SSO，且在线授权可能长期存在；不要承诺设备级隔离。支持存储层显式 revoke，但未增加管理员 UI。管理状态查询失败时不得自行续期。
+- **会话安全**：持续在线可滚动续期，正常离线超过 1 小时失效；企业白名单/全局 App ID 变化阻止续期和后续 CONNECT/REAUTH 复用。复制 .ovpn 私钥可在同证书的授权有效期内复用 SSO；不要承诺设备级隔离。支持存储层显式 revoke，但未增加管理员 UI。管理状态查询失败时不得自行续期。

@@ -145,7 +145,7 @@ class SystemConfig(BaseModel):
     )
     enterprise_sso_allowed_corps: list[dict[str, str]] = Field(
         default_factory=list,
-        description="统一钉钉登录的企业 CorpId 白名单（名称仅用于展示）",
+        description="统一钉钉企业白名单：CorpId/企业名至少填写一项；同时填写以 CorpId 为准",
     )
     enterprise_sso_enabled: bool = Field(
         default=False,

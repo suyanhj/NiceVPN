@@ -277,7 +277,7 @@ def test_schema_v3_keeps_query_indexes_and_normalizes_group_cidrs(tmp_path: Path
     store = SqliteStore(tmp_path / "db.sqlite")
     store.initialize()
 
-    assert store.schema_version() == 11
+    assert store.schema_version() == 12
     with store.connection() as conn:
         peer_columns = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(peers)").fetchall()
@@ -351,7 +351,7 @@ def test_schema_v3_migrates_existing_group_payload_cidr(tmp_path: Path) -> None:
     store._initialized = False
     store.initialize()
 
-    assert store.schema_version() == 11
+    assert store.schema_version() == 12
     assert store.get_group("g-old")["subnet"] == "10.8.1.0/24"
 
 

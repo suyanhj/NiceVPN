@@ -109,6 +109,7 @@ def test_fingerprint_is_only_trusted_management_sha256_not_cn_or_iv():
 
 
 def test_offline_expiry_and_revoke_without_certificate_validation(tmp_path):
+    assert SSO_SESSION_TTL_SECONDS == 3600
     store = SsoSessionStore(SqliteStore(tmp_path / "cache.db"))
     session = store.remember(
         instance_id="server", common_name="alice",
@@ -153,7 +154,7 @@ def test_online_heartbeat_updates_existing_row_not_append(tmp_path):
     store.remember(**identity, enterprise_id="dingAllowed", now=1000)
     binding = OnlineSsoBinding("alice", FP_A, "dingtalk_unified", "app1",
                                "dingAllowed", 55, 900)
-    for now in (1001, 2000, 10000, 30000, 50000):
+    for now in (1001, 2000, 3000, 4000, 5000):
         assert store.refresh_online(
             instance_id="server", bindings=[binding], now=now,
         ) == {("alice", FP_A)}
@@ -162,26 +163,27 @@ def test_online_heartbeat_updates_existing_row_not_append(tmp_path):
         row = conn.execute("SELECT COUNT(*), MAX(last_used_at), MAX(expires_at), "
                            "MAX(active_client_id), MAX(active_connected_at) "
                            "FROM sso_auth_sessions").fetchone()
-        assert tuple(row) == (1, 50000, 50000 + SSO_SESSION_TTL_SECONDS, 55, 900)
+        assert tuple(row) == (1, 5000, 5000 + SSO_SESSION_TTL_SECONDS, 55, 900)
     assert store.recover_online(
         instance_id="server", common_name="alice", client_id=55,
         connected_at=900, provider_id="dingtalk_unified",
-        provider_app_id="app1", now=50001,
+        provider_app_id="app1", now=5001,
     ) is not None
     assert store.recover_online(
         instance_id="server", common_name="alice", client_id=55,
         connected_at=901, provider_id="dingtalk_unified",
-        provider_app_id="app1", now=50001,
+        provider_app_id="app1", now=5001,
     ) is None
-    store.disconnected(instance_id="server", client_id=55)
+    store.disconnected(instance_id="server", client_id=55, now=5001)
     assert store.recover_online(
         instance_id="server", common_name="alice", client_id=55,
         connected_at=900, provider_id="dingtalk_unified",
-        provider_app_id="app1", now=50001,
+        provider_app_id="app1", now=5001,
     ) is None
-    assert store.get(**identity, now=50001) is not None  # 8-hour offline grace.
-    assert store.get(**identity, now=50000 + SSO_SESSION_TTL_SECONDS) is None
-    assert store.prune_expired(now=50000 + SSO_SESSION_TTL_SECONDS) == 1
+    assert store.get(**identity, now=5001) is not None  # One-hour offline grace.
+    assert store.get(**identity, now=5000 + SSO_SESSION_TTL_SECONDS) is not None
+    assert store.get(**identity, now=5001 + SSO_SESSION_TTL_SECONDS) is None
+    assert store.prune_expired(now=5001 + SSO_SESSION_TTL_SECONDS) == 1
 
 
 def test_heartbeat_never_resurrects_expired_or_revoked_rows(tmp_path):
@@ -197,6 +199,37 @@ def test_heartbeat_never_resurrects_expired_or_revoked_rows(tmp_path):
     store.remember(**kwargs, now=1000)
     assert store.revoke(instance_id="server", common_name="alice") == 1
     assert not store.refresh_online(instance_id="server", bindings=[binding], now=1001)
+    with store.store.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 0
+
+
+def test_disconnect_does_not_renew_expired_or_revoked_session(tmp_path):
+    store = SsoSessionStore(SqliteStore(tmp_path / "disconnect.db"))
+    identity = dict(
+        instance_id="server", common_name="alice",
+        cert_fingerprint=FP_A, provider_id="dingtalk_unified",
+        provider_app_id="app1", enterprise_id="dingAllowed",
+    )
+    binding = OnlineSsoBinding(
+        "alice", FP_A, "dingtalk_unified", "app1",
+        "dingAllowed", 19, 100,
+    )
+    store.remember(**identity, now=1000)
+    assert store.refresh_online(
+        instance_id="server", bindings=[binding], now=1001,
+    )
+    store.disconnected(instance_id="server", client_id=19, now=5000)
+    assert store.get(
+        instance_id="server", common_name="alice", cert_fingerprint=FP_A,
+        provider_id="dingtalk_unified", provider_app_id="app1", now=5000,
+    ) is None
+
+    store.remember(**identity, now=6000)
+    assert store.refresh_online(
+        instance_id="server", bindings=[binding], now=6001,
+    )
+    assert store.revoke(instance_id="server", common_name="alice") == 1
+    store.disconnected(instance_id="server", client_id=19, now=6002)
     with store.store.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM sso_auth_sessions").fetchone()[0] == 0
 
@@ -229,6 +262,45 @@ def test_management_online_status_refreshes_and_recovers_after_restart(setup):
     runtime3, manager3 = make_runtime(db, providers, policy, tmp_path)
     runtime3.on_status(manager3, {70: ("alice", 100000)})
     assert not runtime3.sessions
+
+
+def test_verified_enterprise_name_is_required_for_name_only_cached_reconnect(
+    setup, monkeypatch,
+):
+    db, providers, policy, tmp_path, _, _ = setup
+    name_config = {"enterprise_sso_allowed_corps": [
+        {"corp_id": "", "name": "可信公司"},
+    ]}
+    monkeypatch.setattr(
+        "app.services.auth.sso_runtime.load_config", lambda: name_config,
+    )
+    runtime, manager = make_runtime(db, providers, policy, tmp_path)
+    runtime.on_event(manager, connect(80))
+    token_url = manager.commands[-1].split(
+        "WEB_AUTH:external:", 1,
+    )[1].rsplit(" ", 1)[0]
+    token = parse_qs(urlsplit(token_url).query)["t"][0]
+    transaction = runtime.transactions.get_pending_by_token(token)
+    assert runtime.finish(
+        transaction, WebAuthTransactionStore.state_for_token(token),
+        EnterpriseIdentity("dingtalk", "dingNew", "", "可信公司"),
+    )
+    cached = runtime.session_cache.get(
+        instance_id="server", common_name="alice", cert_fingerprint=FP_A,
+        provider_id="dingtalk_unified", provider_app_id="app1",
+    )
+    assert cached.enterprise_name == "可信公司"
+    runtime.clear_instance("server")
+    restarted, mgr2 = make_runtime(db, providers, policy, tmp_path)
+    restarted.on_event(mgr2, connect(81))
+    assert mgr2.commands == ["client-auth-nt 81 0\n"]
+
+    # A policy edit revokes name-only reuse even while the row is unexpired.
+    name_config["enterprise_sso_allowed_corps"] = [
+        {"corp_id": "", "name": "另一家公司"},
+    ]
+    restarted.on_event(mgr2, connect(82))
+    assert mgr2.commands[-1].startswith("client-pending-auth 82 0")
 
 
 def test_first_management_heartbeat_persists_when_monotonic_is_below_interval(

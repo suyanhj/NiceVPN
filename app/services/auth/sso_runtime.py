@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 STATUS_POLL_MIN_SECONDS = 1.0
 STATUS_POLL_MAX_SECONDS = 5.0
 STATUS_RESPONSE_TIMEOUT_SECONDS = 10.0
-ONLINE_LEASE_WRITE_SECONDS = 300.0
+# Refresh a little before the one-hour expiry; exactly 3600 seconds would
+# race a delayed Management status response and cause unwanted re-login.
+ONLINE_LEASE_WRITE_SECONDS = 55 * 60.0
 EXPIRED_SESSION_PRUNE_SECONDS = 1800.0
 
 
@@ -86,6 +88,7 @@ class ActiveSsoSession:
     expires_at: int
     provider_app_id: str = ""
     connected_at: int = 0
+    enterprise_name: str = ""
 
 
 class ManagementInstance:
@@ -368,7 +371,7 @@ class SsoRuntime:
                 active = ActiveSsoSession(
                     stored.common_name, stored.provider_id, stored.enterprise_id,
                     stored.cert_fingerprint, stored.expires_at,
-                    stored.provider_app_id, connected_at,
+                    stored.provider_app_id, connected_at, stored.enterprise_name,
                 )
                 with self.lock:
                     self.sessions[key] = active
@@ -383,7 +386,9 @@ class SsoRuntime:
             if last_write is not None and now - last_write < ONLINE_LEASE_WRITE_SECONDS:
                 continue
             if provider.id == UNIFIED_DINGTALK_ID:
-                if not is_allowed_enterprise(sso_config, active.enterprise_id):
+                if not is_allowed_enterprise(
+                    sso_config, active.enterprise_id, active.enterprise_name,
+                ):
                     continue
             elif active.enterprise_id != provider.enterprise_id:
                 continue
@@ -396,6 +401,7 @@ class SsoRuntime:
             bindings.append(OnlineSsoBinding(
                 common_name, active.cert_fingerprint, provider.id,
                 provider.app_id, active.enterprise_id, cid, connected_at,
+                active.enterprise_name,
             ))
 
         if bindings:
@@ -468,9 +474,9 @@ class SsoRuntime:
             manager.send(auth_deny(event.cid, event.kid, "SSO unavailable"))
             return
 
-        def corp_allowed(corp_id: str) -> bool:
+        def corp_allowed(corp_id: str, enterprise_name: str = "") -> bool:
             if provider.id == UNIFIED_DINGTALK_ID:
-                return is_allowed_enterprise(load_config(), corp_id)
+                return is_allowed_enterprise(load_config(), corp_id, enterprise_name)
             return corp_id == provider.enterprise_id
 
         with self.lock:
@@ -487,7 +493,7 @@ class SsoRuntime:
                 and (active.cert_fingerprint or active.expires_at > int(time.time()))
                 and active.provider_app_id == provider.app_id
                 and fingerprint_unchanged
-                and corp_allowed(active.enterprise_id)
+                and corp_allowed(active.enterprise_id, active.enterprise_name)
             )
             if valid and active.cert_fingerprint:
                 # Respect administrator revocation even for a live TLS REAUTH.
@@ -496,7 +502,11 @@ class SsoRuntime:
                     cert_fingerprint=active.cert_fingerprint,
                     provider_id=provider.id, provider_app_id=provider.app_id,
                 )
-                valid = stored is not None and stored.enterprise_id == active.enterprise_id
+                valid = (
+                    stored is not None
+                    and stored.enterprise_id == active.enterprise_id
+                    and stored.enterprise_name == active.enterprise_name
+                )
             if valid:
                 manager.send(auth_allow(event.cid, event.kid))
                 logger.info(
@@ -520,7 +530,9 @@ class SsoRuntime:
                 cert_fingerprint=fingerprint, provider_id=provider.id,
                 provider_app_id=provider.app_id,
             )
-            if stored is not None and corp_allowed(stored.enterprise_id):
+            if stored is not None and corp_allowed(
+                stored.enterprise_id, stored.enterprise_name,
+            ):
                 peer_ip = (event.env.get("trusted_ip") or event.env.get("trusted_ip6")
                            or event.env.get("untrusted_ip")
                            or event.env.get("untrusted_ip6") or "")
@@ -538,6 +550,7 @@ class SsoRuntime:
                     self.sessions[(inst, event.cid)] = ActiveSsoSession(
                         event.common_name, provider.id, stored.enterprise_id,
                         fingerprint, stored.expires_at, provider.app_id,
+                        enterprise_name=stored.enterprise_name,
                     )
                     if event.kind == "CONNECT":
                         self.establish_timings[(inst, event.cid)] = (
@@ -657,7 +670,9 @@ class SsoRuntime:
                 if provider is None or identity.provider_kind != provider.kind:
                     identity = None
                 elif provider.id == UNIFIED_DINGTALK_ID:
-                    if not is_allowed_enterprise(load_config(), identity.enterprise_id):
+                    if not is_allowed_enterprise(
+                        load_config(), identity.enterprise_id, identity.enterprise_name,
+                    ):
                         logger.warning(
                             "SSO unified DingTalk rejected: corp_id=%s not in allow-list",
                             identity.enterprise_id,
@@ -713,6 +728,7 @@ class SsoRuntime:
                     self.sessions[(request.instance_id, request.cid)] = ActiveSsoSession(
                         request.common_name, provider.id, identity.enterprise_id,
                         pending.cert_fingerprint, expires_at, provider.app_id,
+                        enterprise_name=identity.enterprise_name,
                     )
                     self.establish_timings[(request.instance_id, request.cid)] = (
                         time.monotonic(), "oauth",
@@ -725,6 +741,7 @@ class SsoRuntime:
                             cert_fingerprint=pending.cert_fingerprint,
                             provider_id=provider.id, provider_app_id=provider.app_id,
                             enterprise_id=identity.enterprise_id,
+                            enterprise_name=identity.enterprise_name,
                         )
                     except Exception:
                         # The client was already authorized by OpenVPN. A cache

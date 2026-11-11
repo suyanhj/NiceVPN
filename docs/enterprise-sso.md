@@ -51,7 +51,7 @@
 ## 管理端配置（开发分支，未完成实机验收）
 
 1. 在钉钉开放平台准备 **一套统一 OAuth 应用凭证**：Client ID（企业内部应用为 AppKey，第三方企业应用为 SuiteKey）和 Client Secret，并在应用后台登记登录回调地址。
-2. 在 `系统设置 → 企业认证 → 统一认证` 选择认证方式：**钉钉**填写一套全局 Client ID / Secret 和多家企业的 `CorpId | 企业名称`（每行一条，名称仅展示）；**企业微信**填写企业 CorpId、应用 AgentId 与 Secret。保存后只有选中的认证方式生效。
+2. 在 `系统设置 → 企业认证 → 统一认证` 选择认证方式：**钉钉**填写一套 Client ID / Secret，并在“允许企业”表单逐行添加企业，每行的 **CorpId / 企业名称至少填一项，两项同填以 CorpId 为准**；**企业微信**填写企业 CorpId、应用 AgentId 与 Secret。保存后只有选中的认证方式生效。
 3. 原有多企业配置仅在未启用统一登录前保留；完成统一登录配置保存/导入后会清除旧企业应用凭证。操作前请备份数据库。已有旧配置可点击「从旧多企业配置导入」，以第一套已启用钉钉应用凭证作为全局应用，同时导入已有公司 CorpId；操作完成后必须在钉钉实际验证该应用能否为其他企业登录，不能将导入视作已完成跨企业授权。
 4. 在办公系统登记 OAuth 回调 URI：
    - 钉钉：`http://服务器IP:API端口/auth/sso/dingtalk/callback`（也支持 HTTPS 域名）
@@ -112,7 +112,7 @@ xx.hj.com,192.168.1.1:80,https://sso.example.com
 
 SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换取返回的 CorpId**。钉钉不再额外读取个人资料，外部用户 ID 留空；企业微信仍使用官方必需的员工身份接口确认内部成员。**系统设置页不展示最近认证记录**。认证事件独立追加写入 `data/logs/sso-auth.jsonl`（JSONL），包含证书 CN、企业 ID、外部用户 ID（如提供商返回）、结果与原因代码，可在 **服务管理 → 本机实例 → 认证日志** 查看，按 UTC 日期轮转并保留 7 天。SQLite schema v9 自动将旧 `sso_auth_audit` 认证历史导出到私有 `data/logs/sso-auth-legacy.jsonl`，再删除旧表与无效索引。文件不包含 OAuth Code、Token 或密钥。
 
-钉钉统一认证只调用 OAuth Token 接口验证企业身份，不再请求 `GET /v1.0/contact/users/me`，因此不需要 `Contact.User.Read` 个人通讯录权限；日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
+钉钉统一认证不请求个人资料 `GET /v1.0/contact/users/me`，因此不需要 `Contact.User.Read`。仅在配置“企业名称、无 CorpId”的名单时，额外调用组织基础信息接口。日志不会记录 HTTP 响应正文、Token、OAuth code 或 AppSecret。
 
 ## 域名、IP 和外部 API 端口的规范（2026-11-10）
 
@@ -132,14 +132,14 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换
 | --- | --- | --- |
 | 基础 | `open_app_api_base` | 获取钉钉用户访问凭证；企业扫码登录所需 |
 
-`openid corpid` 属于 OAuth 登录授权范围，企业身份由钉钉返回的 CorpId 与 NiceVPN 白名单匹配。**统一认证不提供读取个人资料开关**，不调用 `users/me`，不需要 `Contact.User.Read` 或手机号、邮箱、部门等通讯录权限。数据库内旧字段为兼容历史版本而保留，不影响当前认证行为。
+`openid corpid` 属于 OAuth 登录授权范围，企业身份由钉钉返回的 CorpId 与 NiceVPN 白名单匹配。**统一认证不提供读取个人资料开关**，不调用 `users/me`，不需要 `Contact.User.Read` 或手机号、邮箱、部门等个人通讯录权限。仅使用名称匹配时须在钉钉开放平台为应用授权**通讯录组织基础信息读权限**，才能通过 `GET /v1.0/contact/organizations/authInfos?targetCorpId=...` 读取可信的 `orgName`。接口无权限、失败或返回空名称均拒绝名称匹配；部分跨企业应用可能无法取得其他企业名称，应改用 CorpId。数据库内旧个人资料字段为历史兼容而保留。
 
 ## 统一钉钉登录与企业白名单（当前实现）
 
 - 统一应用凭证加密存储于原 `sso_auth_providers` 表的 `dingtalk_unified` 记录，密钥文件仍为 `data/sso_provider_master.key`。原多企业凭证不删、不覆盖、不自动加入认证流量；未启用统一应用时仍支持历史认证链路。
-- 允许企业保存于 `config.json` 的 `enterprise_sso_allowed_corps`：`[{ "corp_id": "dingAAAA", "name": "公司A" }]`。管理员可在界面逐行填写 `CorpId | 企业名称`，支持多家企业。不存在或不匹配一律拒绝；名称不参与授权。
+- 允许企业保存于 `config.json` 的 `enterprise_sso_allowed_corps`：`[{ "corp_id": "dingAAAA", "name": "公司A" }, { "corp_id": "", "name": "公司B" }]`。界面为可添加/删除的双字段企业行。每项至少填一个：有 CorpId 时只按钉钉 Token 中的 CorpId 判断，名称不影响结果；没有 CorpId 时才调用钉钉组织信息 API 并与已验证的名称**完全相等**才允许。不支持模糊匹配；企业名称可能重名、改名，安全性及稳定性不及 CorpId。
 - 钉钉网页登录固定 `scope=openid corpid`；钉钉负责提供扫码或账号登录 UI。NiceVPN 不收集钉钉账号密码；钉钉客户端是否能直接免登录由用户设备与钉钉会话决定，不在 NiceVPN 强制跳转到原生客户端。
-- 登录统一应用后直接跳钉钉，不出现旧版多企业提供商选择器；服务端换回访问凭证并取得 `CorpId`，在 Management `client-auth-nt` 前校验 NiceVPN 精确企业白名单。禁止信任浏览器传入的 `CorpId`。
+- 登录统一应用后直接跳钉钉，不出现旧版多企业提供商选择器；服务端换回访问凭证并取得 `CorpId`，必要时使用它查询并验证官方组织名称，再在 Management `client-auth-nt` 前校验 NiceVPN 精确企业白名单。禁止信任浏览器传入的 `CorpId` 或企业名称。
 - 「从旧多企业配置导入」是**管理员主动操作**：复制第一套已启用的钉钉应用密钥到统一应用，并导入原启用钉钉公司名单，成功后清理无效的旧企业应用凭证。是否允许外部企业的 OAuth 授权必须在钉钉真实环境 POC 证实；导入后并不保证任意公司均能登录。
 - 此版本只使用登录时返回的企业声明与本地白名单。**严格核验在职员工、读取外部企业通讯录可能需要企业管理员授权**，不应将 `openid corpid` 解释为已经获得外部企业所有通讯录权限。
 
@@ -151,20 +151,20 @@ SSO 接入时，`office_oauth` 会记录企业/应用标识和**钉钉 Token 换
 - `sso_auth_providers` 表仍存储统一钉钉加密应用凭证，`sso_login_transactions` 表负责 WebAuth 单次使用，两表必须保留。schema v9 删除不再使用的旧审计表和旧索引；已经启用统一登录时，清理旧逐企业记录及其待认证事务。未启用统一应用则保留旧凭证直至主动迁移。
 - 升级前建议备份 `data/nicevpn.db` 和 `data/sso_provider_master.key`。
 
-## 持久化 SSO 在线续期与自动重连（schema v11）
+## 持久化 SSO 在线续期与自动重连（schema v12）
 
 OpenVPN 负责 CA、CRL、证书有效期、TLS 握手、重启和客户端自动重连。NiceVPN **不再次验证客户端证书**，仅使用可信 Management CONNECT/REAUTH 环境变量 `tls_digest_sha256_0`，将已经通过 OAuth 的会话与同一份证书绑定；该指纹由 OpenVPN 输出，不来自浏览器或客户端自定义 IV_* 字段。
 
-- **首次登录**：全员认证或组/标签要求 SSO → OpenVPN 证书验证 → 办公系统 OAuth 身份校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 为已验证证书创建一条 8 小时**离线宽限期**的会话。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止宽限期内复用。
-- **在线续期**：每个 OpenVPN 实例的 Unix Management 连接随机间隔 1–5 秒发送一次 `status 3`（**每实例一次全量查询，不按客户端逐个查询**）；只把完整响应中能够以 CID、CN、连接创建时间匹配到已认证 SSO 会话的客户端视为在线。每条在线会话最多每 5 分钟批量原地 `UPDATE last_used_at/expires_at`，不会添加心跳行或审计行。离线时停止续期，继续保留最后一次确认在线时间起约 8 小时的复用窗口；定时删除过期行以防表膨胀。查询异常时不续期、不据此踢人。
+- **首次登录**：全员认证或组/标签要求 SSO → OpenVPN 证书验证 → 办公系统 OAuth 身份校验 → Management `client-auth-nt` → SQLite `sso_auth_sessions` 为已验证证书创建一条 **1 小时**有效的会话。同一份证书的公网 IP、源端口、CID/KID 改变都不阻止有效期内复用。
+- **在线续期**：每个 OpenVPN 实例的 Unix Management 连接随机间隔 1–5 秒发送一次 `status 3`（**每实例一次全量查询，不按客户端逐个查询**）；只把完整响应中能够以 CID、CN、连接创建时间匹配到已认证 SSO 会话的客户端视为在线。每条在线会话约每 **55 分钟**批量原地 `UPDATE last_used_at/expires_at`，预留 5 分钟余量避免整点时间竞态，不添加心跳行或审计行。正常 DISCONNECT 时从断开时起重置 1 小时离线宽限期；异常断线未收到 DISCONNECT 时，从最近一次已确认在线的续期时间起最多保留 1 小时。定时删除过期行以防表膨胀。查询异常时不续期、不据此踢人。
 - **NiceVPN 单独重启时**：原 OpenVPN 通道尚在线，管理进程从 SQLite 已记录的 CID + OpenVPN `Connected Since (time_t)` 绑定恢复可信会话，继续原地续期。仅有相同 CN 或只有相同 CID 均不能恢复认证身份；真正的 OpenVPN 重启则通过新 CONNECT 和可信证书指纹复用宽限期内授权。
 - **重新 CONNECT**（OpenVPN 重启、网络中断或客户端主动断开后重连）：NiceVPN 使用来自本次 Management 事件的实例、CN、SHA256 证书指纹查找 SSO 会话，再核对已启用 OAuth 应用与企业白名单；命中即重新发布短期设备指纹豁免授权，直接向 OpenVPN 发送 `client-auth-nt`，无需浏览器重登。原有 OpenVPN client-connect、CCD、IP 分配和防火墙逻辑完全不变。
-- **TLS REAUTH**：当前活跃连接仍要检查持久化授权记录与撤销状态；长期持续在线的记录因在线确认而续期，不会仅因首次 OAuth 过去 8 小时就要求重新扫码。
+- **TLS REAUTH**：当前活跃连接仍要检查持久化授权记录与撤销状态；长期持续在线的记录因在线确认而续期，不会仅因首次 OAuth 过去 1 小时就要求重新扫码。
 - **缓存失败/过期**：继续原来的钉钉 WebAuth，不退化为仅凭 CN 放行。没有 `tls_digest_sha256_0` 或指纹格式无效时不创建或复用跨重启缓存；当前活跃 TLS 连接仍沿用已授权的内存会话。
 - **安全边界**：管理员禁用 SSO 组标签策略后回到原连接流程；企业从白名单删除、全局 OAuth App ID 切换、缓存过期或管理员显式删除会话时，不再复用缓存；不支持 WEB_AUTH 的全新连接仍不能绕过强制 SSO。会话撤销仅阻止下一次 CONNECT/REAUTH，不会代替 OpenVPN 主动踢出已经建立的隧道。
-- **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，在会话有效期间也可能复用 SSO；在线持续续期意味着风险窗口不再固定为 8 小时。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌，而不是在 NiceVPN 再做 CA 证书校验。
+- **安全权衡**：同一份 .ovpn 客户端证书+私钥若被复制到另一台设备，在会话有效期间也可能复用 SSO；在线持续续期意味着只要持续连接，授权仍可超过 1 小时。因为企业认证成功后按产品需求跳过设备绑定，所以必须严格保护私钥；如需区分物理设备，应另外设计设备级令牌，而不是在 NiceVPN 再做 CA 证书校验。
 
-Schema v10 创建 `sso_auth_sessions` 表，v11 只给原表增加 `active_client_id` / `active_connected_at` 两列并保留原记录；会话仍以 `(instance_id, common_name, cert_fingerprint, provider_id)` 为唯一主键，在线刷新不增加行数。NiceVPN 服务重启只清理内存状态，不清理 SQLite 缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 服务端主动撤销方法；本版尚未新增管理界面按钮。生产部署后仍须实测不同 OpenVPN 版本的 Management `status 3` 输出及长期运行稳定性。
+Schema v10 创建 `sso_auth_sessions` 表，v11 给原表增加 `active_client_id` / `active_connected_at`，v12 再增加 `enterprise_name` 列，以便重连时安全复核名称名单；旧记录的名称为空，只能继续按 CorpId 白名单复用。会话仍以 `(instance_id, common_name, cert_fingerprint, provider_id)` 为唯一主键，在线刷新不增加行数。NiceVPN 服务重启只清理内存状态，不清理 SQLite 缓存。提供 `SsoSessionStore.revoke(instance_id=..., common_name=...)` 主动撤销方法；尚未新增管理界面按钮。生产部署后仍须实测不同 OpenVPN 版本的 Management `status 3` 输出、组织权限和长期运行稳定性。
 
 ### NiceVPN 可观测耗时
 

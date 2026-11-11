@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 _SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
 _KNOWN_SQL = frozenset({
     "001_initial.sql",
@@ -27,6 +27,7 @@ _KNOWN_SQL = frozenset({
     "009_sso_unified_cleanup.sql",
     "010_sso_session_cache.sql",
     "011_sso_online_lease.sql",
+    "012_sso_verified_enterprise_name.sql",
 })
 
 
@@ -237,6 +238,17 @@ def ensure_schema(
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (11, "sso-online-lease", now_iso()),
+            )
+        if current < 12:
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(sso_auth_sessions)")
+            }
+            if "enterprise_name" not in columns:
+                execute_sql_file(conn, "012_sso_verified_enterprise_name.sql")
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (12, "sso-verified-enterprise-name", now_iso()),
             )
         conn.commit()
     except BaseException:

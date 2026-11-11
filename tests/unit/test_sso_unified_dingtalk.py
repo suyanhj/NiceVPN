@@ -20,7 +20,8 @@ from app.services.auth.sso_runtime import SsoRuntime
 from app.services.auth.sso_transactions import WebAuthTransactionStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.sso_enterprises import (
-    format_allowed_enterprises, is_allowed_enterprise, parse_allowed_enterprises,
+    format_allowed_enterprises, is_allowed_enterprise, needs_enterprise_name_lookup,
+    parse_allowed_enterprises,
 )
 
 
@@ -41,6 +42,149 @@ def test_enterprise_allowlist_parser_and_exact_match():
     with pytest.raises(ValueError):
         parse_allowed_enterprises("** | 企业")
 
+def test_enterprise_name_only_is_exact_and_never_overrides_configured_corp_id():
+    companies = parse_allowed_enterprises([
+        {"corp_id": "", "name": "只配置名称的企业"},
+        {"corp_id": "dingActual", "name": "同时配置的企业"},
+    ])
+    config = SystemConfig(enterprise_sso_allowed_corps=companies).model_dump()
+    assert needs_enterprise_name_lookup(config)
+    assert format_allowed_enterprises(companies).startswith("| 只配置名称的企业")
+    assert is_allowed_enterprise(config, "dingOther", "只配置名称的企业")
+    assert not is_allowed_enterprise(config, "dingOther", "同时配置的企业")
+    assert is_allowed_enterprise(config, "dingActual", "不同的名称")
+    assert not is_allowed_enterprise(config, "dingOther", "")
+    assert not is_allowed_enterprise(config, "", "只配置名称的企业")
+    with pytest.raises(ValueError, match="至少填写"):
+        parse_allowed_enterprises([{"corp_id": "", "name": ""}])
+    with pytest.raises(ValueError, match="重复"):
+        parse_allowed_enterprises([
+            {"corp_id": "", "name": "同名"}, {"corp_id": "", "name": "同名"},
+        ])
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_name_lookup_uses_verified_corp_id_and_provider_api(tmp_path):
+    providers = SsoProviderStore(
+        SqliteStore(tmp_path / "name.db"), key_path=tmp_path / "secret.key",
+    )
+    providers.save_unified(app_id="app", secret="secret")
+    requests_seen = []
+
+    def response(request):
+        requests_seen.append(request)
+        if request.url.path.endswith("userAccessToken"):
+            return httpx.Response(
+                200, json={"corpId": "dingVerified", "accessToken": "USER_TOKEN"},
+            )
+        if request.url.path.endswith("/authInfos"):
+            return httpx.Response(200, json={"orgName": "可信企业名称"})
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        identity = await exchange_code(
+            providers.get_unified(), "code", client=client,
+            fetch_enterprise_name=True,
+        )
+    assert identity.enterprise_id == "dingVerified"
+    assert identity.enterprise_name == "可信企业名称"
+    assert len(requests_seen) == 2
+    assert requests_seen[1].url.params["targetCorpId"] == "dingVerified"
+    assert requests_seen[1].headers["x-acs-dingtalk-access-token"] == "USER_TOKEN"
+    assert all("/users/me" not in request.url.path for request in requests_seen)
+
+
+@pytest.mark.asyncio
+async def test_corp_id_match_skips_optional_organization_lookup(tmp_path):
+    providers = SsoProviderStore(
+        SqliteStore(tmp_path / "skip.db"), key_path=tmp_path / "secret.key",
+    )
+    providers.save_unified(app_id="app", secret="secret")
+    requested = []
+
+    def response(request):
+        requested.append(request.url.path)
+        return httpx.Response(
+            200, json={"corpId": "dingKnown", "accessToken": "USER_TOKEN"},
+        )
+
+    config = {"enterprise_sso_allowed_corps": [
+        {"corp_id": "dingKnown", "name": "无需校验名称"},
+        {"corp_id": "", "name": "另一个名称-only企业"},
+    ]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        identity = await exchange_code(
+            providers.get_unified(), "code", client=client,
+            fetch_enterprise_name=lambda corp_id: (
+                needs_enterprise_name_lookup(config)
+                and not is_allowed_enterprise(config, corp_id)
+            ),
+        )
+    assert identity.enterprise_id == "dingKnown"
+    assert identity.enterprise_name == ""
+    assert requested == ["/v1.0/oauth2/userAccessToken"]
+
+
+@pytest.mark.asyncio
+async def test_missing_organization_permission_cannot_authorize_by_name(tmp_path):
+    providers = SsoProviderStore(
+        SqliteStore(tmp_path / "deny.db"), key_path=tmp_path / "secret.key",
+    )
+    providers.save_unified(app_id="app", secret="secret")
+
+    def response(request):
+        if request.url.path.endswith("userAccessToken"):
+            return httpx.Response(
+                200, json={"corpId": "dingVerified", "accessToken": "USER_TOKEN"},
+            )
+        return httpx.Response(403, json={"message": "permission denied"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        identity = await exchange_code(
+            providers.get_unified(), "code", client=client,
+            fetch_enterprise_name=True,
+        )
+    assert identity.enterprise_name == ""
+    config = {"enterprise_sso_allowed_corps": [
+        {"corp_id": "", "name": "可信企业名称"},
+    ]}
+    assert not is_allowed_enterprise(
+        config, identity.enterprise_id, identity.enterprise_name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_internal_app_token_can_resolve_org_name_when_user_token_denied(tmp_path):
+    providers = SsoProviderStore(
+        SqliteStore(tmp_path / "internal.db"), key_path=tmp_path / "secret.key",
+    )
+    providers.save_unified(app_id="app", secret="secret")
+    called = []
+
+    def response(request):
+        called.append(request.url.path)
+        if request.url.path.endswith("userAccessToken"):
+            return httpx.Response(200, json={
+                "corpId": "dingVerified", "accessToken": "USER_TOKEN",
+            })
+        if request.url.path.endswith("accessToken"):
+            return httpx.Response(200, json={"accessToken": "APP_TOKEN"})
+        if request.headers["x-acs-dingtalk-access-token"] == "APP_TOKEN":
+            return httpx.Response(200, json={"orgName": "内部企业"})
+        return httpx.Response(403, json={"code": "permission.denied"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        identity = await exchange_code(
+            providers.get_unified(), "code", client=client,
+            fetch_enterprise_name=True,
+        )
+    assert identity.enterprise_name == "内部企业"
+    assert called == [
+        "/v1.0/oauth2/userAccessToken",
+        "/v1.0/contact/organizations/authInfos",
+        "/v1.0/oauth2/accessToken",
+        "/v1.0/contact/organizations/authInfos",
+    ]
 
 @pytest.mark.asyncio
 async def test_global_dingtalk_token_requires_corp_but_no_single_expected_corp(tmp_path):
@@ -213,7 +357,7 @@ def test_callback_denied_enterprise_shows_403_not_expired(
 
     monkeypatch.setattr(sso, "get_sso_runtime", lambda: runtime)
 
-    async def fake_exchange(_provider, _code):
+    async def fake_exchange(_provider, _code, **_kwargs):
         return EnterpriseIdentity("dingtalk", "dingBlocked", "external-uid")
 
     monkeypatch.setattr(sso, "exchange_code", fake_exchange)

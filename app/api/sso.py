@@ -13,11 +13,16 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.core.config import load_config
 from app.services.auth.office_oauth import (
     OfficeAuthError, authorization_url, exchange_code,
 )
+from app.services.auth.provider_store import UNIFIED_DINGTALK_ID
 from app.services.auth.sso_runtime import SsoFinishResult, get_sso_runtime
 from app.services.auth.sso_transactions import WebAuthTransactionStore
+from app.utils.sso_enterprises import (
+    is_allowed_enterprise, needs_enterprise_name_lookup,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/sso", tags=["Office SSO"])
@@ -155,7 +160,17 @@ async def office_callback(provider_kind: str, request: Request):
         runtime.finish(transaction, state, None)
         return _html("办公系统登录未完成或已取消。", code=403)
     try:
-        verified = await exchange_code(provider, code)
+        allowed = load_config() if provider.id == UNIFIED_DINGTALK_ID else None
+        def lookup_name(corp_id: str) -> bool:
+            return (
+                allowed is not None
+                and needs_enterprise_name_lookup(allowed)
+                and not is_allowed_enterprise(allowed, corp_id)
+            )
+        verified = await exchange_code(
+            provider, code,
+            fetch_enterprise_name=lookup_name if allowed is not None else False,
+        )
     except OfficeAuthError:
         # Do not leak the third-party code, token, provider secret or CorpId.
         runtime.finish(transaction, state, None)

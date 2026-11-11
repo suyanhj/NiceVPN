@@ -11,7 +11,7 @@ from app.services.auth.provider_store import (
     SsoProviderStore, UNIFIED_DINGTALK_ID, UNIFIED_WECOM_ID,
 )
 from app.utils.public_domains import resolve_sso_origin, with_default_ip_api_port
-from app.utils.sso_enterprises import parse_allowed_enterprises, format_allowed_enterprises
+from app.utils.sso_enterprises import parse_allowed_enterprises
 from app.ui.components.actions import primary_action
 from app.ui.components.feedback import safe_notify
 from app.ui.components.form_section import render_form_section
@@ -99,16 +99,22 @@ class SsoSettingsPanel:
                     "Client Secret（留空则不修改）",
                     password=True, password_toggle_button=True,
                 ).classes("w-full")
-                self.allowed_corps = field_with_help(
-                    lambda: ui.textarea(
-                        "允许企业（每行：CorpId | 企业名称）",
-                        value=format_allowed_enterprises(
-                            self.cfg.get("enterprise_sso_allowed_corps") or []
-                        ),
-                        placeholder="dingxxxxxxxxxx | 广州公司\\ndingyyyyyyyyyy | 深圳公司",
-                    ).classes("w-full").props("autogrow"),
-                    "仅以钉钉返回的 CorpId 校验企业身份。",
-                    aria_label="钉钉企业白名单说明", align="start",
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.label("允许企业")
+                    ui.icon("help_outline").classes("text-gray-400 cursor-help").tooltip(
+                        "CorpId 或企业名称至少填一项；两项都填时以 CorpId 为准。"
+                        "仅填名称需要钉钉“通讯录组织基础信息读权限”。"
+                    )
+                self.allowed_company_rows = []
+                self.allowed_company_container = ui.column().classes("w-full gap-2")
+                configured = self.cfg.get("enterprise_sso_allowed_corps") or []
+                for company in configured or [{"corp_id": "", "name": ""}]:
+                    self._add_allowed_company(
+                        str(company.get("corp_id") or ""),
+                        str(company.get("name") or ""),
+                    )
+                ui.button("添加企业", icon="add", on_click=lambda: self._add_allowed_company()).props(
+                    "outline no-caps"
                 )
                 if dingtalk is None and self.providers.legacy_dingtalk_companies():
                     ui.button(
@@ -135,6 +141,27 @@ class SsoSettingsPanel:
                 "保存", icon="save", on_click=self._save_unified,
             ),
         )
+
+    def _add_allowed_company(self, corp_id: str = "", name: str = "") -> None:
+        with self.allowed_company_container:
+            with ui.row().classes("w-full items-start gap-2") as container:
+                corp_input = ui.input(
+                    "CorpId（可选）", value=corp_id,
+                ).classes("flex-1 min-w-0")
+                name_input = ui.input(
+                    "企业名称（可选）", value=name,
+                ).classes("flex-1 min-w-0")
+                ui.button(
+                    icon="delete_outline",
+                    on_click=lambda: self._remove_allowed_company(container),
+                ).props("flat round color=negative").classes("mt-2")
+        self.allowed_company_rows.append((container, corp_input, name_input))
+
+    def _remove_allowed_company(self, container) -> None:
+        self.allowed_company_rows = [
+            row for row in self.allowed_company_rows if row[0] is not container
+        ]
+        container.delete()
 
     def _save_global(self) -> bool:
         origin = str(self.base_url.value or "").strip().rstrip("/")
@@ -178,9 +205,14 @@ class SsoSettingsPanel:
         selected = str(self.auth_method.value or "")
         try:
             if selected == "dingtalk":
-                corps = parse_allowed_enterprises(str(self.allowed_corps.value or ""))
+                corps = parse_allowed_enterprises([
+                    {"corp_id": str(corp.value or "").strip(),
+                     "name": str(name.value or "").strip()}
+                    for _, corp, name in self.allowed_company_rows
+                    if str(corp.value or "").strip() or str(name.value or "").strip()
+                ])
                 if not corps:
-                    raise ValueError("至少配置一个允许登录的企业 CorpId")
+                    raise ValueError("至少配置一个企业 CorpId 或企业名称")
                 app_id = str(self.unified_app_id.value or "").strip()
                 if not app_id:
                     raise ValueError("请填写钉钉 Client ID")
