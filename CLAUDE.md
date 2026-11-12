@@ -157,6 +157,13 @@ openspec/changes/
 - Python 选择顺序必须优先项目 `.venv/bin/python`，且不得 realpath 到 uv 的基础解释器。
 - systemd unit 中应固定实际项目目录和选定 Python 解释器路径。
 
+### OpenVPN / EasyRSA 初始化
+
+- 初始化向导必须独立检测 OpenVPN 与 EasyRSA。检测到已有 OpenVPN 不代表 EasyRSA 已安装；PKI 初始化前若缺少 EasyRSA，应自动调用独立 EasyRSA 安装入口补齐。
+- EasyRSA 单独安装必须复用 `openvpn-install-common.sh` 中的 release 下载/安装函数，但不能重新安装、升级或改写现有 OpenVPN 包、二进制、systemd unit。
+- EasyRSA 安装成功后重新扫描并保存 `easyrsa_dir`，然后再进入 PKI 检测；已有完整 PKI 必须复用，残缺 PKI 必须拒绝覆盖。
+- 安装过程在初始化页 PKI 后台任务中执行并实时输出；安装失败要明确提示并允许重试，不能静默跳过。
+
 ### Public API
 
 - API 与管理 UI 路由集合保持隔离。

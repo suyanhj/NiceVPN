@@ -188,8 +188,44 @@ class InitWizard:
                 callback(message)
 
         easyrsa_dir = str(self.config.get("easyrsa_dir") or "").strip()
+        openvpn_bin = str(self.config.get("openvpn_bin") or "").strip()
         if not easyrsa_dir:
-            return StepResult(False, "未找到 EasyRSA，请检查 OpenVPN 安装")
+            easyrsa_dir = find_easyrsa(openvpn_bin or None)
+
+        if not easyrsa_dir:
+            emit("[检测] 已有 OpenVPN，但未找到 EasyRSA，开始自动安装")
+            try:
+                from app.services.openvpn.installer import install_easyrsa
+
+                installed_path = install_easyrsa(on_output=emit)
+                # 安装后重新扫描标准路径；返回路径作为最后兜底。
+                easyrsa_dir = find_easyrsa(openvpn_bin or None) or installed_path
+                if not Path(easyrsa_dir).is_file():
+                    raise FileNotFoundError(
+                        f"EasyRSA 安装后未找到可执行脚本: {easyrsa_dir}"
+                    )
+                emit(f"[完成] 已检测到 EasyRSA: {easyrsa_dir}")
+                self.audit.log(
+                    "install_easyrsa",
+                    "system",
+                    None,
+                    {"path": easyrsa_dir},
+                    "success",
+                )
+            except Exception as exc:
+                logger.exception("OpenVPN 已存在，但 EasyRSA 自动安装失败")
+                emit(f"[错误] EasyRSA 自动安装失败: {exc}")
+                self.audit.log(
+                    "install_easyrsa",
+                    "system",
+                    None,
+                    {"error": str(exc)},
+                    "failure",
+                )
+                return StepResult(False, f"EasyRSA 自动安装失败: {exc}")
+
+        self.config.easyrsa_dir = easyrsa_dir
+        save_config(self.config)
 
         requested_pki = str(data.get("pki_dir") or "").strip()
         configured_pki = str(self.config.get("pki_dir") or "").strip()

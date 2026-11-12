@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
-from app.core.constants import OPENVPN_MIN_VERSION
+from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +160,32 @@ def install_openvpn_server_systemd_from_staged_source(
     _run_command(["bash", str(script_path)], on_output, env=env)
 
 
+def install_easyrsa(
+    on_output: Callable[[str], None] | None = None,
+) -> str:
+    """仅安装 EasyRSA，不触碰已存在的 OpenVPN 包、二进制或服务。"""
+
+    env = _build_easyrsa_install_env(on_output)
+    env["EASYRSA_INSTALL_DIR"] = str(EASYRSA_INSTALL_DIR)
+    script_path = _INSTALL_SCRIPTS_DIR / "easyrsa-install.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"EasyRSA 安装脚本不存在: {script_path}")
+
+    _emit(on_output, f"[信息] OpenVPN 已就绪，单独安装 EasyRSA（{script_path.name}）...")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env(env),
+    )
+
+    installed_bin = Path(EASYRSA_INSTALL_DIR) / "current" / "easyrsa"
+    if not installed_bin.is_file():
+        raise RuntimeError(f"EasyRSA 安装命令完成，但脚本不存在: {installed_bin}")
+
+    _emit(on_output, f"[完成] EasyRSA 安装成功: {installed_bin}")
+    return str(installed_bin)
+
+
 def install_openvpn(
     distro: str,
     version_id: str,
@@ -250,24 +276,35 @@ def _build_install_env(
         "APT_KEY_URL": _APT_KEY_URL,
     }
     if install_easyrsa:
-        easyrsa_release = _resolve_latest_release_asset(
-            repo="OpenVPN/easy-rsa",
-            asset_prefix="EasyRSA-",
-            asset_suffixes=(".tar.gz", ".tgz"),
-            fallback_tag=_EASYRSA_FALLBACK_TAG,
-            fallback_asset=_EASYRSA_FALLBACK_ASSET,
-            on_output=on_output,
-        )
-        env["EASYRSA_TAG"] = easyrsa_release["tag_name"]
-        env["EASYRSA_ASSET"] = easyrsa_release["asset_name"]
-        env["EASYRSA_DOWNLOAD_URLS"] = "\n".join(
-            _build_github_candidate_urls(easyrsa_release["download_url"])
-        )
+        env.update(_build_easyrsa_install_env(on_output))
     if distro == "debian":
         env["DEBIAN_CODENAME"] = _get_codename(version_id)
     elif distro != "rhel":
         raise ValueError(f"不支持的发行版族: {distro}")
     return env
+
+
+def _build_easyrsa_install_env(
+    on_output: Callable[[str], None] | None,
+) -> dict[str, str]:
+    """独立解析 EasyRSA release，避免为了补装 EasyRSA 再请求 OpenVPN release。"""
+
+    release = _resolve_latest_release_asset(
+        repo="OpenVPN/easy-rsa",
+        asset_prefix="EasyRSA-",
+        asset_suffixes=(".tar.gz", ".tgz"),
+        fallback_tag=_EASYRSA_FALLBACK_TAG,
+        fallback_asset=_EASYRSA_FALLBACK_ASSET,
+        on_output=on_output,
+    )
+    return {
+        "INSTALL_EASYRSA": "1",
+        "EASYRSA_TAG": release["tag_name"],
+        "EASYRSA_ASSET": release["asset_name"],
+        "EASYRSA_DOWNLOAD_URLS": "\n".join(
+            _build_github_candidate_urls(release["download_url"])
+        ),
+    }
 
 
 def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
