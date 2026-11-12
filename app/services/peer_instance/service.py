@@ -263,7 +263,7 @@ class PeerService:
         return fetch_peer_filter_chain_snapshot_via_ssh(row)
 
     def apply_remote_peer_filter_chain_rests(self, peer_id: str, rests: list[str]) -> None:
-        """经 SSH 按序回写对端本 peer 的 filter 用户链（仅该链，空列表则清链）。"""
+        """兼容原始规则调用；通过原子 iptables-restore 回写对端本 peer 用户链。"""
         from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_rests_via_ssh
 
         row = self.get(peer_id)
