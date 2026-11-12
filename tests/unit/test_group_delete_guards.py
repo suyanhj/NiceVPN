@@ -144,3 +144,17 @@ def test_groups_page_loads_delete_block_reasons_in_one_batch():
     assert groups[0]["delete_block_reason"] == (
         "用户组无法删除：仍被 1 个标签关联。请先解除关联后重试"
     )
+
+
+
+def test_groups_page_disables_delete_action_when_blocked():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "app" / "ui" / "pages" / "groups.py"
+    ).read_text(encoding="utf-8")
+
+    assert "delete_block_reasons" in source
+    assert "disabled=bool(delete_block_reason)" in source
+    assert "tooltip=delete_block_reason or None" in source
