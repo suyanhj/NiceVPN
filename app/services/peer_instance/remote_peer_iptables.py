@@ -110,6 +110,12 @@ def _remove_remote_peer_chain_and_jump(
     _exec_ssh(client, f"{sp}iptables -X {shlex.quote(chain)} 2>/dev/null || true", timeout=timeout)
 
 
+def _is_managed_peer_global_allow_rule(rest: str, peer_id: str) -> bool:
+    """识别由站点组网维护的兜底 ACCEPT，不把它当作用户防火墙规则。"""
+    body = str(rest or "").strip()
+    return COMMENT_FWD_TMPL.format(peer_id=str(peer_id or "").strip()) in body
+
+
 def _peer_site_rules_already_current(
     client: paramiko.SSHClient,
     peer_id: str,
@@ -137,7 +143,14 @@ def _peer_site_rules_already_current(
     forward_peer_lines = [
         line for line in out_forward.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line
     ]
-    chain_peer_lines = [line for line in out_chain.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line]
+    chain_rules = [
+        line.strip() for line in out_chain.splitlines()
+        if line.strip().startswith(f"-A {chain} ")
+    ]
+    chain_peer_lines = [
+        line for line in chain_rules
+        if _is_managed_peer_global_allow_rule(line, peer_id)
+    ]
     nat_peer_lines = [line for line in out_nat.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line]
 
     c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
@@ -145,8 +158,14 @@ def _peer_site_rules_already_current(
         part in forward_peer_lines[0] for part in (c_jump, f"-j {chain}")
     )
     c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
-    fwd_ok = len(chain_peer_lines) == 1 and all(
-        part in chain_peer_lines[0] for part in (f"-s {global_subnet}", c_fwd, "-j ACCEPT")
+    fwd_ok = (
+        len(chain_peer_lines) == 1
+        and bool(chain_rules)
+        and chain_rules[-1] == chain_peer_lines[0]
+        and all(
+            part in chain_peer_lines[0]
+            for part in (f"-s {global_subnet}", c_fwd, "-j ACCEPT")
+        )
     )
     if not jump_ok or not fwd_ok:
         return False
@@ -263,8 +282,9 @@ def apply_peer_site_iptables_via_ssh(
 
             c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
             c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
+            # 全局网段 ACCEPT 是兜底规则，必须放在用户/标签策略之后，不能抢先绕过 DROP/REJECT。
             fw_rule = (
-                f"{sp}iptables -I {shlex.quote(chain)} 1 -s {shlex.quote(gs)} "
+                f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
                 f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
             )
             _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
@@ -397,7 +417,10 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
                         "forward_refs": forward_refs,
                     }
                 raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
-            rests = _filter_chain_rests_from_iptables_s(out, chain)
+            rests = [
+                rest for rest in _filter_chain_rests_from_iptables_s(out, chain)
+                if not _is_managed_peer_global_allow_rule(rest, peer_id)
+            ]
             return {
                 "ok": True,
                 "chain": chain,
@@ -474,6 +497,21 @@ def replace_peer_filter_chain_plan_via_ssh(
                     )
                 raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
 
+            # 站点组网的 global_subnet ACCEPT 不是用户策略；拉取时隐藏它，写回时保留并放在链尾。
+            chain_prefix = f"-A {expect} "
+            site_fallbacks = list(dict.fromkeys(
+                line.strip()[len(chain_prefix):].strip()
+                for line in pout.splitlines()
+                if line.strip().startswith(chain_prefix)
+                and _is_managed_peer_global_allow_rule(
+                    line.strip()[len(chain_prefix):], peer_id,
+                )
+            ))
+            clean_rests = [
+                body for body in clean_rests
+                if not _is_managed_peer_global_allow_rule(body, peer_id)
+            ]
+
             newly_created: set[str] = set()
             if ipsets:
                 newly_created = reconcile_remote_peer_tag_ipsets(
@@ -508,6 +546,8 @@ def replace_peer_filter_chain_plan_via_ssh(
 
             payload_lines = ["*filter", f"-F {expect}"]
             payload_lines.extend(f"-A {expect} {body}" for body in clean_rests)
+            # 用户策略先匹配；未命中时再按原站点语义放行中心 VPN 地址池。
+            payload_lines.extend(f"-A {expect} {body}" for body in site_fallbacks)
             payload_lines.append("COMMIT")
             payload = "\n".join(payload_lines) + "\n"
             command = (
@@ -525,13 +565,13 @@ def replace_peer_filter_chain_plan_via_ssh(
                 )
 
             keep_names = {spec.name for spec in ipsets}
-            keep_names.update(referenced_peer_tag_ipsets(clean_rests, peer_id))
+            keep_names.update(referenced_peer_tag_ipsets(clean_rests + site_fallbacks, peer_id))
             removed = gc_remote_peer_tag_ipsets(
                 client, sp, peer_id, keep_names, _exec_ssh, timeout=exec_timeout,
             )
             logger.info(
                 "对端链原子写回完成 peer=%s rules=%s tag_ipsets=%s gc=%s",
-                peer_id[:8], len(clean_rests), len(ipsets), len(removed),
+                peer_id[:8], len(clean_rests) + len(site_fallbacks), len(ipsets), len(removed),
             )
         finally:
             client.close()
