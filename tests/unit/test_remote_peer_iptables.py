@@ -141,16 +141,19 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
 
 
 def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> None:
+    from app.services.firewall.iptables_mgr import IptablesManager
+
     client = _FakeClient()
-    tag_rule = "-A VPN_PEER_test -m set --match-set nvpnpt_1234567890_abcdef123456 src -j ACCEPT"
+    chain = IptablesManager.peer_chain_name_for_id("peer-1")
+    tag_rule = f"-A {chain} -m set --match-set nvpnpt_1234567890_abcdef123456 src -j ACCEPT"
     old_base = (
-        '-A VPN_PEER_test -s 10.8.0.0/16 -m comment '
+        f'-A {chain} -s 10.8.0.0/16 -m comment '
         '--comment "ovpn-mgmt-peer peer=peer-1 role=fwd-global" -j ACCEPT'
     )
 
     def fake_exec(_client, command: str, *, timeout: int):
         client.commands.append(command)
-        if command.endswith("iptables -S VPN_PEER_test"):
+        if command.endswith(f"iptables -S {chain}"):
             return f"{tag_rule}\n{old_base}\n", "", 0
         return "", "", 0
 
@@ -171,8 +174,8 @@ def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> Non
                 ):
                     apply_peer_site_iptables_via_ssh(row, "10.8.0.0/16", force=True)
 
-    assert any("iptables -D VPN_PEER_test " in cmd and "role=fwd-global" in cmd for cmd in client.commands)
-    assert any("iptables -I VPN_PEER_test 1 -s 10.8.0.0/16" in cmd for cmd in client.commands)
-    assert not any("iptables -D VPN_PEER_test " in cmd and "nvpnpt_" in cmd for cmd in client.commands)
-    assert not any("iptables -F VPN_PEER_test" in cmd or "iptables -X VPN_PEER_test" in cmd for cmd in client.commands)
+    assert any(f"iptables -D {chain} " in cmd and "role=fwd-global" in cmd for cmd in client.commands)
+    assert any(f"iptables -I {chain} 1 -s 10.8.0.0/16" in cmd for cmd in client.commands)
+    assert not any(f"iptables -D {chain} " in cmd and "nvpnpt_" in cmd for cmd in client.commands)
+    assert not any(f"iptables -F {chain}" in cmd or f"iptables -X {chain}" in cmd for cmd in client.commands)
     assert client.closed is True
