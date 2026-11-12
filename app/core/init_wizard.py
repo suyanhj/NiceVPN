@@ -163,7 +163,7 @@ class InitWizard:
             result = detect_openvpn()
             if result["installed"] and result["meets_requirement"]:
                 try:
-                    unit_path = self._ensure_openvpn_server_unit(result["path"], data)
+                    unit_path = self._ensure_openvpn_server_unit(result["path"], data, result.get("version"))
                     logger.info("OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
                 except Exception as exc:
                     self.audit.log(
