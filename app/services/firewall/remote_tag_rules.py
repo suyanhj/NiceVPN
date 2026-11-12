@@ -8,6 +8,10 @@ from ipaddress import IPv4Network, ip_network
 from typing import Any, Iterable
 
 from app.services.firewall.tag_service import TagService
+from app.services.peer_instance.remote_peer_ipset import (
+    RemoteIpsetSpec,
+    build_remote_tag_ipset_spec,
+)
 from app.services.peer_instance import remote_chain_cache
 from app.services.peer_instance.service import PeerService
 
@@ -129,6 +133,80 @@ def materialize_remote_chain_rows(
     return rests
 
 
+def materialize_remote_chain_plan(
+    rows: list[dict[str, Any]],
+    *,
+    peer_id: str,
+    tag_service: TagService | None = None,
+) -> dict[str, Any]:
+    """生成对端规则与标签 ipset 的完整期望计划。
+
+    每个逻辑标签只生成一个 hash:net 集合，iptables 规则通过 set matcher 匹配源地址，
+    不再按成员 IP 展开多条规则。普通原始规则保持原样；空标签不生成规则和集合。
+    """
+    from app.services.firewall.simple_rule_import import remote_rests_from_create_fields
+
+    pid = str(peer_id or "").strip()
+    if not pid:
+        raise ValueError("peer_id 不能为空")
+    tags = tag_service or TagService()
+    rests: list[str] = []
+    ipsets_by_tag: dict[str, RemoteIpsetSpec] = {}
+    ccd_ips: dict[str, str] | None = None
+    if any(_tag_binding(row) for row in rows if isinstance(row, dict)) and hasattr(tags, "store"):
+        from app.services.user.crud import UserService
+        ccd_ips = UserService(store=tags.store).list_ccd_virtual_ipv4_by_username()
+
+    addresses_by_tag: dict[str, list[str]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not bool(row.get("enabled", True)):
+            continue
+        binding = _tag_binding(row)
+        if binding is None:
+            raw = str(row.get("rest") or "").strip()
+            if raw:
+                rests.append(raw)
+            continue
+
+        tag_id = str(binding.get("tag_id") or "").strip()
+        if tag_id not in addresses_by_tag:
+            try:
+                if ccd_ips is None:
+                    resolved = tags.resolve_addresses(tag_id)
+                else:
+                    resolved = tags.resolve_addresses(tag_id, ccd_ips=ccd_ips)
+                addresses_by_tag[tag_id] = _minimal_source_addresses(resolved)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"远端标签规则引用的标签或地址无效: {tag_id}: {exc}"
+                ) from exc
+        addresses = addresses_by_tag[tag_id]
+        if not addresses:
+            logger.info("远端标签规则当前无有效成员，跳过下发 tag=%s", tag_id[:8])
+            continue
+
+        spec = ipsets_by_tag.get(tag_id)
+        if spec is None:
+            spec = build_remote_tag_ipset_spec(pid, tag_id, addresses)
+            ipsets_by_tag[tag_id] = spec
+        rests.extend(
+            remote_rests_from_create_fields(
+                source_subnet=None,
+                source_ips=None,
+                source_set=spec.name,
+                action=str(binding.get("action") or "accept"),
+                protocol=str(binding.get("protocol") or "all"),
+                dest_ip=str(binding.get("dest_ip") or "").strip() or None,
+                dest_port=str(binding.get("dest_port") or "").strip() or None,
+            )
+        )
+
+    return {
+        "rests": rests,
+        "ipsets": list(ipsets_by_tag.values()),
+    }
+
+
 def mark_remote_tag_rules_pending(tag_ids: Iterable[str], *, store=None) -> list[str]:
     """先持久化待同步状态，进程重启时也不会把远端滞后伪装成已同步。"""
     wanted = {str(value).strip() for value in tag_ids if str(value).strip()}
@@ -190,8 +268,13 @@ def sync_remote_tag_firewall_rules(tag_ids: Iterable[str], *, store=None) -> dic
                 peer_id, chain, chain_exists, rows,
             )
             prepared = True
-            rests = materialize_remote_chain_rows(rows, tag_service=tag_service)
-            peer_service.apply_remote_peer_filter_chain_rests(peer_id, rests)
+            plan = materialize_remote_chain_plan(
+                rows, peer_id=peer_id, tag_service=tag_service,
+            )
+            rests = list(plan["rests"])
+            peer_service.apply_remote_peer_filter_chain_plan(
+                peer_id, rests, list(plan["ipsets"]),
+            )
             remote_chain_cache.record_after_apply(
                 peer_id, chain, chain_exists, rows, True, None,
             )
