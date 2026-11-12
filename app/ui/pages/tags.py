@@ -63,7 +63,7 @@ class TagsPage:
                     )
                     ui.select(
                         {"all": "全部标签", "assigned": "已关联成员",
-                         "empty": "空标签", "referenced": "已引用规则"},
+                         "empty": "空标签", "referenced": "已被引用"},
                         value="all",
                         on_change=self._on_filter,
                         label="筛选",
