@@ -74,6 +74,10 @@ class FakePeerService:
         self.apply_calls.append((peer_id, list(rests)))
         return True
 
+    def apply_remote_peer_filter_chain_plan(self, peer_id: str, rests: list[str], ipsets=None):
+        self.apply_calls.append((peer_id, list(rests)))
+        return True
+
     def list_peer_lan_firewall_presets_for_center_form(self):
         return [
             {
