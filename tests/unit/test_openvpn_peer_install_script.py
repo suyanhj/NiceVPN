@@ -126,6 +126,15 @@ def test_stage_source_build_uses_distribution_install_entry(
     assert result["binary"] == str(prefix / "sbin" / "openvpn")
 
 
+def test_systemd_common_generator_accepts_detected_openvpn_binary() -> None:
+    common = _read_install_script_text("openvpn-install-common.sh")
+    assert 'OPENVPN_SBIN_DIR:=${OPENVPN_PREFIX}/sbin' in common
+    assert 'OPENVPN_BIN:=${OPENVPN_SBIN_DIR}/openvpn' in common
+    assert ': "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"' in common
+    assert 'exec_new="ExecStart=${OPENVPN_BIN} --suppress-timestamps --config %i.conf"' in common
+    assert 's#@sbindir@#${OPENVPN_SBIN_DIR}#g' in common
+
+
 def test_systemd_install_entry_reuses_common_helpers() -> None:
     script = _read_install_script_text("openvpn-install-systemd.sh")
     assert "source " in script and "openvpn-install-common.sh" in script

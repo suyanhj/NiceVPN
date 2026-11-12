@@ -73,6 +73,21 @@ class InitWizard:
             return StepResult(False, f"未知步骤: {step}")
         return handler(data or {})
 
+    def _ensure_openvpn_server_unit(
+        self,
+        openvpn_bin: str,
+        data: dict,
+        openvpn_version: str | None = None,
+    ):
+        """缺少 OpenVPN server unit 时复用原安装逻辑补齐。"""
+        from app.services.openvpn.installer import ensure_openvpn_server_systemd_unit
+
+        return ensure_openvpn_server_systemd_unit(
+            openvpn_bin,
+            openvpn_version=openvpn_version,
+            on_output=data.get("on_output"),
+        )
+
     def _detect_openvpn(self, data: dict) -> StepResult:
         """步骤一：检测 OpenVPN 安装状态"""
         logger.info("步骤 1/5：开始检测 OpenVPN 环境")
@@ -85,7 +100,18 @@ class InitWizard:
             logger.warning("步骤 1/5：未检测到 OpenVPN")
 
         if result["installed"] and result["meets_requirement"]:
-            # 已安装且满足版本要求
+            # 已安装且满足版本要求；NiceVPN 还要求 server 模板单元可用。
+            try:
+                unit_path = self._ensure_openvpn_server_unit(result["path"], data, result.get("version"))
+                logger.info("OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
+            except Exception as exc:
+                logger.exception("OpenVPN 已检测到，但服务端 systemd 单元补齐失败")
+                return StepResult(
+                    False,
+                    f"OpenVPN 已检测到，但服务文件检查/安装失败: {exc}",
+                    data=result,
+                )
+
             easyrsa_path = find_easyrsa(result["path"])
             self.config.openvpn_bin = result["path"]
             self.config.easyrsa_dir = easyrsa_path
@@ -136,6 +162,23 @@ class InitWizard:
             # 安装后重新检测
             result = detect_openvpn()
             if result["installed"] and result["meets_requirement"]:
+                try:
+                    unit_path = self._ensure_openvpn_server_unit(result["path"], data, result.get("version"))
+                    logger.info("OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
+                except Exception as exc:
+                    self.audit.log(
+                        "install_openvpn",
+                        "system",
+                        None,
+                        {"error": str(exc), "stage": "systemd_unit"},
+                        "failure",
+                    )
+                    return StepResult(
+                        False,
+                        f"OpenVPN 已安装，但服务文件检查/安装失败: {exc}",
+                        data=result,
+                    )
+
                 easyrsa_path = find_easyrsa(result["path"])
                 self.config.openvpn_bin = result["path"]
                 self.config.easyrsa_dir = easyrsa_path
@@ -160,6 +203,16 @@ class InitWizard:
         logger.info("步骤 1/5：开始验证自定义 OpenVPN 路径: %s", custom_path)
         result = validate_custom_path(custom_path)
         if result["valid"]:
+            try:
+                unit_path = self._ensure_openvpn_server_unit(custom_path, data, result.get("version"))
+                logger.info("自定义 OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
+            except Exception as exc:
+                logger.exception("自定义 OpenVPN 路径有效，但服务端 systemd 单元补齐失败")
+                return StepResult(
+                    False,
+                    f"OpenVPN 路径有效，但服务文件检查/安装失败: {exc}",
+                )
+
             easyrsa_path = find_easyrsa(custom_path)
             self.config.openvpn_bin = custom_path
             self.config.easyrsa_dir = easyrsa_path
@@ -497,6 +550,11 @@ class InitWizard:
         }
 
         try:
+            # 启动前再做一次兜底检查，避免跳过前置步骤时因缺少 unit 直接失败。
+            openvpn_bin = str(self.config.get("openvpn_bin") or "").strip()
+            if openvpn_bin:
+                self._ensure_openvpn_server_unit(openvpn_bin, data)
+
             # 先部署 client-connect / client-disconnect 脚本，再写 server.conf
             sync_packaged_openvpn_scripts(ovpn_base)
 
