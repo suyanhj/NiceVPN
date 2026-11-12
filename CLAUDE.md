@@ -163,9 +163,9 @@ openspec/changes/
 - EasyRSA 单独安装必须复用 `openvpn-install-common.sh` 中的 release 下载/安装函数，但不能重新安装、升级或改写现有 OpenVPN 包、二进制、systemd unit。
 - EasyRSA 安装成功后重新扫描并保存 `easyrsa_dir`，然后再进入 PKI 检测；已有完整 PKI 必须复用，残缺 PKI 必须拒绝覆盖。
 - 安装过程在初始化页 PKI 后台任务中执行并实时输出；安装失败要明确提示并允许重试，不能静默跳过。
-- 初始化检测 OpenVPN 时必须独立检查 `openvpn-server@.service` 模板单元；优先复用发行版已有 unit，缺失时安装 `deploy/systemd/openvpn-server@.service.in`，并将 `ExecStart` 指向当前检测到的 OpenVPN binary。
-- systemd 补齐必须是独立脚本 `app/scripts/install/openvpn-install-systemd-fallback.sh`：只补 unit / NiceVPN 所需 drop-in，不编译、不安装、不替换 OpenVPN binary，不覆盖 `/usr/lib`、`/lib` 中发行版已有 unit。
-- 自动编译安装仍使用 OpenVPN 源码自带 unit；手动编译/自定义路径则由初始化检测负责补齐缺失 unit。启动实例前还要做一次兜底检查。
+- 初始化检测 OpenVPN 时通过 `systemctl list-unit-files --type=service` 检查是否已有 `openvpn-server@` 服务单元；存在则不改动，缺失时复用 `openvpn-install-systemd.sh` / `openvpn_install_server_systemd_from_src` 原有生成逻辑补齐。
+- 复用原生成逻辑时，`OPENVPN_BIN` 与 `OPENVPN_SBIN_DIR` 必须指向实际检测到的二进制路径，不能假定所有手动编译都安装在 `/opt/openvpn`。
+- 不为这项检查另建一套 systemd 模板或 fallback 安装脚本；补齐只生成服务文件及原有的 NiceVPN drop-in，不重新编译或替换 OpenVPN。
 
 ### Public API
 
