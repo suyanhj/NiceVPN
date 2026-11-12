@@ -45,6 +45,8 @@ http://<主机>:8880/
 
 未完成初始化时会进入 First Run Setup。
 
+初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA。
+
 正式 Vue 运行产物已经提交在 `app/ui/vue/dist/`，普通生产启动**不需要 Node/npm，也不需要 Docker 来构建前端**。
 
 ### Python 解释器选择

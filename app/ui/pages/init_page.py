@@ -471,7 +471,7 @@ class InitPage:
 
             render_form_section(
                 "正在建立证书体系",
-                description="自动生成 CA、服务端证书、DH、CRL 与 tls-crypt-v2；日志不展示私钥内容。",
+                description="缺少 EasyRSA 时会先自动安装；随后自动生成 CA、服务端证书、DH、CRL 与 tls-crypt-v2。日志不展示私钥内容。",
                 kicker="PKI",
                 body=body,
             )
@@ -514,7 +514,9 @@ class InitPage:
                 break
 
             log_area.push(message)
-            if "创建 PKI 目录" in message:
+            if "安装 EasyRSA" in message or "EasyRSA" in message:
+                self.status_label.text = "正在准备 EasyRSA..."
+            elif "创建 PKI 目录" in message:
                 self.status_label.text = "正在创建 PKI 目录..."
             elif "生成无密码 CA" in message:
                 self.status_label.text = "正在生成 CA..."
@@ -587,6 +589,7 @@ class InitPage:
         def body() -> None:
             ui.label(
                 "优先识别系统已有 EasyRSA PKI；也可手动填写 PKI 工作目录。"
+                " 如果系统未安装 EasyRSA，点击开始后会自动补装。"
                 " 此处不是 easyrsa 脚本路径，也不是单独的证书文件路径。"
             ).classes("section-caption")
             refs["path"] = ui.input(
