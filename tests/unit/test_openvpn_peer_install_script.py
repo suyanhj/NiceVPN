@@ -161,15 +161,15 @@ def _run_common_shell(
         pkg_config = bin_dir / "pkg-config"
         if pkg_config_module_available and pkg_config_version:
             body = (
-                "#!/bin/sh\\n"
-                'if [ "$1" = "--modversion" ] && [ "$2" = "libnl-genl-3.0" ]; then\\n'
-                f'    printf "%s\\n" "{pkg_config_version}"\\n'
-                "    exit 0\\n"
-                "fi\\n"
-                "exit 1\\n"
+                "#!/bin/sh\n"
+                'if [ "$1" = "--modversion" ] && [ "$2" = "libnl-genl-3.0" ]; then\n'
+                f'    printf "%s\n" "{pkg_config_version}"\n'
+                "    exit 0\n"
+                "fi\n"
+                "exit 1\n"
             )
         else:
-            body = "#!/bin/sh\\nexit 1\\n"
+            body = "#!/bin/sh\nexit 1\n"
         pkg_config.write_text(body, encoding="utf-8")
         pkg_config.chmod(0o755)
 
@@ -178,7 +178,7 @@ def _run_common_shell(
     env["PKG_CONFIG"] = pkg_config_command
     env.update(extra_env or {})
     common_path = shlex.quote(str(_INSTALL_SCRIPTS_DIR / "openvpn-install-common.sh"))
-    shell = f"set -euo pipefail\\nsource {common_path}\\n{command}\\n"
+    shell = f"set -euo pipefail\nsource {common_path}\n{command}\n"
     return subprocess.run(
         ["bash", "-c", shell],
         cwd=tmp_path,
@@ -239,9 +239,9 @@ def test_configure_passes_disable_dco_when_libnl_is_too_old(tmp_path) -> None:
     args_log = tmp_path / "configure-args.log"
     configure = tmp_path / "configure"
     configure.write_text(
-        "#!/usr/bin/env bash\\n"
-        'printf "%s\\n" "$*" >> "$CONFIGURE_ARGS_LOG"\\n'
-        "exit 0\\n",
+        "#!/usr/bin/env bash\n"
+        'printf "%s\n" "$*" >> "$CONFIGURE_ARGS_LOG"\n'
+        "exit 0\n",
         encoding="utf-8",
     )
     configure.chmod(0o755)
@@ -265,11 +265,11 @@ def test_configure_retries_without_dco_on_specific_dependency_error(tmp_path) ->
     args_log = tmp_path / "configure-args.log"
     configure = tmp_path / "configure"
     configure.write_text(
-        "#!/usr/bin/env bash\\n"
-        'printf "%s\\n" "$*" >> "$CONFIGURE_ARGS_LOG"\\n'
-        'if [[ " $* " == *" --disable-dco "* ]]; then exit 0; fi\\n'
-        'printf "%s\\n" "configure: error: libnl-genl-3.0 package not found or too old" > config.log\\n'
-        "exit 1\\n",
+        "#!/usr/bin/env bash\n"
+        'printf "%s\n" "$*" >> "$CONFIGURE_ARGS_LOG"\n'
+        'if [[ " $* " == *" --disable-dco "* ]]; then exit 0; fi\n'
+        'printf "%s\n" "configure: error: libnl-genl-3.0 package not found or too old" > config.log\n'
+        "exit 1\n",
         encoding="utf-8",
     )
     configure.chmod(0o755)
@@ -292,10 +292,10 @@ def test_configure_does_not_hide_non_dco_errors(tmp_path) -> None:
     args_log = tmp_path / "configure-args.log"
     configure = tmp_path / "configure"
     configure.write_text(
-        "#!/usr/bin/env bash\\n"
-        'printf "%s\\n" "$*" >> "$CONFIGURE_ARGS_LOG"\\n'
-        'printf "%s\\n" "configure: error: OpenSSL version too old" > config.log\\n'
-        "exit 2\\n",
+        "#!/usr/bin/env bash\n"
+        'printf "%s\n" "$*" >> "$CONFIGURE_ARGS_LOG"\n'
+        'printf "%s\n" "configure: error: OpenSSL version too old" > config.log\n'
+        "exit 2\n",
         encoding="utf-8",
     )
     configure.chmod(0o755)
@@ -318,6 +318,6 @@ def test_dco_development_packages_are_best_effort() -> None:
     assert "if apt install -y libnl-3-dev libnl-genl-3-dev; then" in debian
     assert "if ${PM} install -y libnl3-devel; then" in rhel
     for source in (debian, rhel):
-        required = source.split("install_source_dependencies() {", 1)[1].split("\\n}", 1)[0]
+        required = source.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
         assert "libnl-genl-3-dev" not in required
         assert "libnl3-devel" not in required
