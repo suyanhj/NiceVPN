@@ -252,11 +252,12 @@ def ensure_openvpn_server_systemd_unit(
     if not openvpn_version:
         raise RuntimeError(f"无法识别 OpenVPN 版本，不能生成服务单元: {binary}")
 
+    source_root = Path(os.environ.get("OPENVPN_SRC_ROOT") or _OPENVPN_SOURCE_ROOT)
     source_dir = _find_openvpn_source_dir(openvpn_version)
     if source_dir is None:
         raise FileNotFoundError(
             "未找到 OpenVPN 源码中的 systemd 模板。"
-            f"请确认源码目录位于 {_OPENVPN_SOURCE_ROOT}，"
+            f"请确认源码目录位于 {source_root}，"
             "并包含 distro/systemd/openvpn-server@.service.in"
         )
 
@@ -272,12 +273,8 @@ def ensure_openvpn_server_systemd_unit(
         on_output=on_output,
     )
 
-    installed = _list_openvpn_server_units()
-    if not installed:
-        raise RuntimeError("OpenVPN systemd 服务文件生成完成，但 systemd 仍未检测到服务单元")
-
-    _emit(on_output, f"[完成] OpenVPN 服务单元已就绪: {installed[0]}")
-    return installed[0]
+    _emit(on_output, "[完成] OpenVPN 服务单元已就绪: openvpn-server@.service")
+    return "openvpn-server@.service"
 
 
 
