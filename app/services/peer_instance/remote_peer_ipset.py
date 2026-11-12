@@ -292,6 +292,13 @@ def gc_remote_peer_tag_ipsets(
     timeout: int = 60,
 ) -> list[str]:
     """只回收当前对端命名空间内不再被规则引用的集合和遗留 staging。"""
+    check_command = "sh -c " + shlex.quote("command -v ipset >/dev/null 2>&1")
+    _, _, available = _run(
+        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
+    )
+    if available != 0:
+        # 未使用过标签 ipset 的旧对端无需安装依赖，也无需为普通规则推送刷 warning。
+        return []
     try:
         names = _list_names(client, sudo_prefix, exec_ssh, timeout)
     except Exception as exc:
