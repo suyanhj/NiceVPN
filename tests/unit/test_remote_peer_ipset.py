@@ -78,6 +78,8 @@ def test_remote_tag_ipset_gc_only_removes_current_peer_orphans_and_stage():
     }
 
     def fake_exec(_client, command: str, *, timeout: int):
+        if "command -v ipset" in command:
+            return "", "", 0
         if "ipset list -n" in command:
             return "\n".join(sorted(state["names"])), "", 0
         if "ipset destroy " in command:
