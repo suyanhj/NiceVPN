@@ -4,8 +4,8 @@ import json
 import logging
 import os
 import shlex
-import subprocess
 import shutil
+import subprocess
 import urllib.request
 from pathlib import Path
 from typing import Callable
