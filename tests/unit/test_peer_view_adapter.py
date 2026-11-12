@@ -59,7 +59,7 @@ def test_peer_adapter_resolves_binding_lan_and_mesh_groups() -> None:
     assert row["bound_username"] == "peer-gz"
     assert row["lan_label"] == "192.168.10.0/24、192.168.20.0/24"
     assert row["visible_group_names"] == ["开发组", "运维组"]
-    assert row["mesh_label"] == "开发组、运维组"
+    assert row["mesh_label"] == "组：开发组、运维组"
 
 
 def test_peer_adapter_empty_mesh_scope_means_all_groups() -> None:
