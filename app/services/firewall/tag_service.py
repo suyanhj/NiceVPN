@@ -84,7 +84,8 @@ class TagService:
             if not cache:
                 continue
             for index, row in enumerate(cache.get("rows") or []):
-                binding = row.get("tag_binding") if isinstance(row, dict) else None
+                raw_binding = row.get("tag_binding") if isinstance(row, dict) else None
+                binding = raw_binding if isinstance(raw_binding, dict) else None
                 tag_id = str((binding or {}).get("tag_id") or "").strip()
                 if not tag_id:
                     continue
