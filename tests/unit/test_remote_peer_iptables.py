@@ -21,7 +21,7 @@ def _remote_tag_plan_exec(state, *, fail_restore=False):
     def fake_exec(_client, command: str, *, timeout: int):
         state["commands"].append(command)
         if "iptables -S " in command:
-            return "-N VPN_PEER_test\\n", "", 0
+            return "-N VPN_PEER_test\n", "", 0
         if "command -v ipset" in command:
             return "", "", 0
         if "ipset list -n" in command:
@@ -93,7 +93,7 @@ def test_remote_chain_plan_preserves_site_allow_as_last_fallback():
     def fake_exec(_client, command: str, *, timeout: int):
         commands.append(command)
         if command.endswith(f"iptables -S {chain}"):
-            return f"-N {chain}\\n-A {chain} {fallback}\\n", "", 0
+            return f"-N {chain}\n-A {chain} {fallback}\n", "", 0
         if "command -v ipset" in command:
             return "", "", 1
         if "iptables-restore" in command:
@@ -135,9 +135,9 @@ def test_fetch_remote_chain_snapshot_hides_managed_site_fallback():
     def fake_exec(_client, command: str, *, timeout: int):
         client.commands.append(command)
         if command.endswith("iptables -S FORWARD"):
-            return f"-A FORWARD -j {chain}\\n", "", 0
+            return f"-A FORWARD -j {chain}\n", "", 0
         if command.endswith(f"iptables -S {chain}"):
-            return f"-N {chain}\\n-A {chain} {fallback}\\n-A {chain} {user_drop}\\n", "", 0
+            return f"-N {chain}\n-A {chain} {fallback}\n-A {chain} {user_drop}\n", "", 0
         return "", "", 0
 
     row = {"id": peer_id, "ssh_host": "h", "ssh_username": "u", "ssh_password": "p"}
@@ -172,7 +172,7 @@ def test_peer_site_rules_are_not_current_when_global_allow_precedes_user_policy(
             if command.endswith("iptables -S FORWARD"):
                 return forward_jump, "", 0
             if command.endswith(f"iptables -S {chain}"):
-                return f"-N {chain}\\n" + "\\n".join(chain_rules), "", 0
+                return f"-N {chain}\n" + "\n".join(chain_rules), "", 0
             if "iptables -t nat -S POSTROUTING" in command:
                 return "", "", 0
             raise AssertionError(command)
