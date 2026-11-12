@@ -129,8 +129,12 @@ def _ensure_ipset_installed(
             "对端未安装 ipset，自动安装暂不支持该发行版；"
             f"请手动安装 ipset（id={info.get('id')!r}）"
         )
+    install_command = (
+        f"{sudo_prefix}sh -c {shlex.quote(install)}"
+        if sudo_prefix else install
+    )
     out, install_err, install_code = _run(
-        exec_ssh, client, f"{sudo_prefix}{install}", timeout=max(timeout, 300),
+        exec_ssh, client, install_command, timeout=max(timeout, 300),
     )
     if install_code != 0:
         raise RuntimeError(
