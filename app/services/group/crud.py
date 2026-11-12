@@ -307,49 +307,56 @@ class GroupService:
 
     # ---- 删除 ----
 
+    @staticmethod
+    def _format_delete_block_reason(blockers: dict) -> str:
+        """把组的关联统计转换为可直接展示给管理员的删除阻止原因。"""
+        parts: list[str] = []
+        users = int(blockers.get("users") or 0)
+        tags = int(blockers.get("tags") or 0)
+        rules = int(blockers.get("firewall_rules") or 0)
+        mesh_peers = int(blockers.get("mesh_peers") or 0)
+        if users:
+            parts.append(f"组内有 {users} 个用户")
+        if tags:
+            parts.append(f"仍被 {tags} 个标签关联")
+        if rules:
+            parts.append(f"仍被 {rules} 条中心防火墙规则引用")
+        if mesh_peers:
+            parts.append(f"仍被 {mesh_peers} 个对端 Mesh 路由范围引用")
+        if not parts:
+            return ""
+        return "用户组无法删除：" + "；".join(parts) + "。请先解除关联后重试"
+
+    def delete_block_reasons(self, group_ids: list[str]) -> dict[str, str]:
+        """批量返回组删除阻止原因，供 UI 当前页展示，不产生逐行查询。"""
+        blockers = self.store.get_group_delete_blockers(group_ids)
+        return {
+            str(group_id): self._format_delete_block_reason(counts)
+            for group_id, counts in blockers.items()
+        }
+
     def delete(self, group_id: str) -> bool:
-        """删除组：仅在组内无用户时允许删除。
+        """仅允许删除没有用户、标签、中心规则或对端 Mesh 引用的非根组。
 
-        根组（初始化创建的全局组）不允许删除，只允许修改子网。
-
-        参数:
-            group_id: 组 ID
-
-        返回:
-            True 表示删除成功
-
-        异常:
-            ValueError: 组不存在、有活跃用户或为根组
+        所有引用均先在服务层检查并向 UI 提供明确原因；仓储层还会在真正
+        删除的 SQLite 写事务内重复校验，避免并发新增关联绕过保护。
         """
         data = self._load_group_or_raise(group_id)
 
-        if data.get("user_count", 0) > 0:
-            raise ValueError(f"组内有 {data['user_count']} 个用户，无法删除")
-
-        # 根组（第一个组）永远不允许删除，只允许修改子网
+        # 根组（第一个组）永远不允许删除，只允许修改子网。
         all_groups = self.list_all()
         if all_groups and all_groups[0]["id"] == group_id:
             raise ValueError(
                 f"根组「{data.get('name', '')}」是全局组，不允许删除，只允许修改子网"
             )
 
-        # 组被中心规则引用时禁止删除，避免留下仍可能生效的孤儿规则。
-        # 包含停用规则：否则启用后同样无法解析原归属。
-        linked_rules = [
-            rule for rule in self.store.get_firewall_owner(group_id)
-            if str(rule.get("owner_type") or "group") == "group"
-        ]
-        if linked_rules:
-            raise ValueError(
-                f"用户组仍被 {len(linked_rules)} 条中心防火墙规则引用，"
-                "请先在防火墙管理中处理这些规则再删除组"
-            )
+        blockers = self.store.get_group_delete_blockers([group_id]).get(str(group_id), {})
+        reason = self._format_delete_block_reason(blockers)
+        if reason:
+            raise ValueError(reason)
 
-        from app.services.firewall.tag_service import TagService
-        tag_service = TagService(self.store)
-        affected_tags = tag_service.get_entity_tag_ids("group", group_id)
+        # delete_group 会在同一写事务中再次检查所有关联。
         self.store.delete_group(group_id)
-        tag_service.refresh_for_tags(affected_tags)
 
         self.audit.log(
             "delete_group", "group", group_id,
