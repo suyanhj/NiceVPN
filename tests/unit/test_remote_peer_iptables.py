@@ -15,6 +15,91 @@ class _FakeClient:
         self.closed = True
 
 
+def _remote_tag_plan_exec(state, *, fail_restore=False):
+    import shlex
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        state["commands"].append(command)
+        if "iptables -S " in command:
+            return "-N VPN_PEER_test\\n", "", 0
+        if "command -v ipset" in command:
+            return "", "", 0
+        if "ipset list -n" in command:
+            return "\\n".join(sorted(state["sets"])), "", 0
+        if "ipset create " in command:
+            parts = shlex.split(command)
+            state["sets"].add(parts[parts.index("create") + 1])
+            return "", "", 0
+        if "ipset add " in command or "ipset swap " in command:
+            return "", "", 0
+        if "ipset destroy " in command:
+            parts = shlex.split(command)
+            state["sets"].discard(parts[-1])
+            return "", "", 0
+        if "iptables -m set -h" in command:
+            return "", "", 0
+        if "iptables-restore" in command:
+            return ("", "simulated restore failure", 1) if fail_restore else ("", "", 0)
+        raise AssertionError(command)
+
+    return fake_exec
+
+
+def test_remote_tag_ipset_is_prepared_before_atomic_iptables_restore():
+    from app.services.peer_instance.remote_peer_ipset import build_remote_tag_ipset_spec
+    from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
+
+    client = _FakeClient()
+    state = {"sets": set(), "commands": []}
+    spec = build_remote_tag_ipset_spec("peer-1", "tag-ops", ["10.8.0.10", "10.8.0.11"])
+    row = {
+        "id": "peer-1",
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+    }
+    rest = f"-m set --match-set {spec.name} src -p tcp --dport 443 -j ACCEPT"
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=_remote_tag_plan_exec(state)):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                replace_peer_filter_chain_plan_via_ssh(row, [rest], [spec])
+
+    commands = state["commands"]
+    create_index = next(i for i, command in enumerate(commands) if "ipset create " in command and spec.name not in command.split())
+    restore_index = next(i for i, command in enumerate(commands) if "iptables-restore" in command)
+    assert create_index < restore_index
+    assert "--match-set " + spec.name in commands[restore_index]
+    assert any("ipset swap " in command for command in commands)
+    assert spec.name in state["sets"]
+    assert client.closed is True
+
+
+def test_remote_tag_ipset_new_sets_are_removed_when_atomic_restore_fails():
+    import pytest
+    from app.services.peer_instance.remote_peer_ipset import build_remote_tag_ipset_spec
+    from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
+
+    client = _FakeClient()
+    state = {"sets": set(), "commands": []}
+    spec = build_remote_tag_ipset_spec("peer-1", "tag-ops", ["10.8.0.10"])
+    row = {
+        "id": "peer-1",
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+    }
+    rest = f"-m set --match-set {spec.name} src -j ACCEPT"
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=_remote_tag_plan_exec(state, fail_restore=True)):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                with pytest.raises(RuntimeError, match="旧规则保持不变"):
+                    replace_peer_filter_chain_plan_via_ssh(row, [rest], [spec])
+
+    assert spec.name not in state["sets"]
+    assert any("iptables-restore" in command for command in state["commands"])
+    assert client.closed is True
+
+
 def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
     client = _FakeClient()
 
