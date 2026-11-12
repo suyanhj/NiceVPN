@@ -276,25 +276,27 @@ def remove_peer_site_iptables_via_ssh(row: dict, *, exec_timeout: int = 120) -> 
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chain = IptablesManager.peer_chain_name_for_id(peer_id)
-        _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
-        removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-        removed_sets = cleanup_remote_peer_tag_ipsets(
-            client, sp, peer_id, _exec_ssh, timeout=exec_timeout,
-        )
-        logger.info(
-            "对端 SSH iptables 已清理 peer=%s removed=%s tag_ipsets=%s",
-            peer_id, removed, len(removed_sets),
-        )
-        return {
-            "ok": True, "peer_id": peer_id,
-            "removed": removed, "removed_tag_ipsets": len(removed_sets),
-        }
-    finally:
-        client.close()
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chain = IptablesManager.peer_chain_name_for_id(peer_id)
+            _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
+            removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
+            removed_sets = cleanup_remote_peer_tag_ipsets(
+                client, sp, peer_id, _exec_ssh, timeout=exec_timeout,
+            )
+            logger.info(
+                "对端 SSH iptables 已清理 peer=%s removed=%s tag_ipsets=%s",
+                peer_id, removed, len(removed_sets),
+            )
+            return {
+                "ok": True, "peer_id": peer_id,
+                "removed": removed, "removed_tag_ipsets": len(removed_sets),
+            }
+        finally:
+            client.close()
 
 
 def _filter_chain_rests_from_iptables_s(out: str, chain: str) -> list[str]:
