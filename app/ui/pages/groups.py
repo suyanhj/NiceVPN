@@ -163,17 +163,19 @@ class GroupsPage:
 
         groups = [dict(group) for group in groups]
         blockers_method = getattr(self.group_service, "delete_block_reasons", None)
-        if callable(blockers_method):
+        has_delete_blockers = callable(blockers_method)
+        if has_delete_blockers:
             reasons = blockers_method([str(group.get("id") or "") for group in groups])
         else:
             reasons = {}
         for group in groups:
             group_id = str(group.get("id") or "")
             reason = str(reasons.get(group_id) or "")
-            # 兼容仅提供基础 CRUD 的轻量测试替身；正式服务会返回完整关联原因。
-            if not reason and int(group.get("user_count") or 0) > 0:
+            # 兼容仅提供基础 CRUD 的轻量测试替身；正式服务使用数据库实时关联统计。
+            if not has_delete_blockers and not reason and int(group.get("user_count") or 0) > 0:
                 reason = f"组内有 {int(group['user_count'])} 个用户，无法删除"
             group["delete_block_reason"] = reason
+            group["delete_blockers_loaded"] = has_delete_blockers
         return groups, int(total), root_id
 
     def _refresh_group_page(self) -> None:
@@ -712,7 +714,7 @@ class GroupsPage:
             safe_notify(delete_block_reason, type="warning")
             return
         user_count = int(group.get("user_count") or 0)
-        if user_count > 0:
+        if not group.get("delete_blockers_loaded") and user_count > 0:
             safe_notify(f"「{name}」内有 {user_count} 个用户，无法删除", type="warning")
             return
         confirm_dialog.show(
