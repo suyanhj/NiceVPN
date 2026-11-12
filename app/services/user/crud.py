@@ -294,7 +294,9 @@ class UserService:
         # 减少组用户计数
         self._increment_group_user_count(user_data.get("group_id", ""), -1)
         from app.services.firewall.tag_service import TagService
-        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
+        TagService(self.store).refresh_if_referenced(
+            entity_type="user", entity_id=username, refresh_mesh_routes=False,
+        )
 
         self.audit.log("delete_user", "user", username, {}, "success")
         return True
@@ -441,7 +443,10 @@ class UserService:
             self._kill_client_session(username)
             from app.services.firewall.tag_service import TagService
             TagService(self.store).refresh_if_referenced(
-                entity_type="user", entity_id=username, other_group_id=old_group_id,
+                entity_type="user",
+                entity_id=username,
+                other_group_id=old_group_id,
+                refresh_mesh_routes=False,
             )
 
             result = {
