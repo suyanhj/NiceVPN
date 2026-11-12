@@ -266,7 +266,8 @@ def test_batch_tag_service_refreshes_once_and_rolls_back(store, monkeypatch):
         TagService(store).batch_change_entities(
             "user", ["alice", "bob"], ["b"], operation="add"
         )
-    assert len(calls) == 1
+    # 首次刷新失败后会回滚关联，并再尝试一次内核收敛。
+    assert len(calls) == 2
     assert store.list_entity_tag_ids("user", "alice") == ["a"]
     assert store.list_entity_tag_ids("user", "bob") == []
 
