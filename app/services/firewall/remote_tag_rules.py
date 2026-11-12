@@ -74,65 +74,6 @@ def _minimal_source_addresses(addresses: Iterable[str]) -> list[str]:
     ]
 
 
-def materialize_remote_chain_rows(
-    rows: list[dict[str, Any]],
-    *,
-    tag_service: TagService | None = None,
-) -> list[str]:
-    """把逻辑标签规则按当前成员地址展开为远端 iptables rest 列表。
-
-    标签规则在本地缓存中保持一行逻辑记录；每次真正推送时重新读取成员，
-    因此成员增删、切组、CCD IP 变化不会依赖创建规则时的静态地址快照。
-    空标签不生成任何规则，避免退化为无源地址限制的 ACCEPT。
-    """
-    from app.services.firewall.simple_rule_import import remote_rests_from_create_fields
-
-    tags = tag_service or TagService()
-    rests: list[str] = []
-    addresses_by_tag: dict[str, list[str]] = {}
-    ccd_ips: dict[str, str] | None = None
-    if any(_tag_binding(row) for row in rows if isinstance(row, dict)) and hasattr(tags, "store"):
-        # 一次扫描 CCD，多个标签共用快照，避免每条标签规则重复遍历目录。
-        from app.services.user.crud import UserService
-        ccd_ips = UserService(store=tags.store).list_ccd_virtual_ipv4_by_username()
-
-    for row in rows:
-        if not isinstance(row, dict) or not bool(row.get("enabled", True)):
-            continue
-        binding = _tag_binding(row)
-        if binding is None:
-            raw = str(row.get("rest") or "").strip()
-            if raw:
-                rests.append(raw)
-            continue
-
-        tag_id = str(binding.get("tag_id") or "").strip()
-        if tag_id not in addresses_by_tag:
-            try:
-                if ccd_ips is None:
-                    resolved = tags.resolve_addresses(tag_id)
-                else:
-                    resolved = tags.resolve_addresses(tag_id, ccd_ips=ccd_ips)
-                addresses_by_tag[tag_id] = _minimal_source_addresses(resolved)
-            except ValueError as exc:
-                raise RuntimeError(f"远端标签规则引用的标签或地址无效: {tag_id}: {exc}") from exc
-        addresses = addresses_by_tag[tag_id]
-        if not addresses:
-            logger.info("远端标签规则当前无有效成员，跳过下发 tag=%s", tag_id[:8])
-            continue
-        rests.extend(
-            remote_rests_from_create_fields(
-                source_subnet=None,
-                source_ips=list(addresses),
-                action=str(binding.get("action") or "accept"),
-                protocol=str(binding.get("protocol") or "all"),
-                dest_ip=str(binding.get("dest_ip") or "").strip() or None,
-                dest_port=str(binding.get("dest_port") or "").strip() or None,
-            )
-        )
-    return rests
-
-
 def materialize_remote_chain_plan(
     rows: list[dict[str, Any]],
     *,
