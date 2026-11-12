@@ -194,7 +194,7 @@ def apply_peer_site_iptables_via_ssh(
                 msg = "远端 firewalld 处于 active，iptables-nft 规则可能被 firewalld 覆盖，请现网核对"
                 logger.warning(msg)
                 warnings.append(msg)
-    
+
             sp = _detect_sudo_prefix(client, timeout=15)
             chain = IptablesManager.peer_chain_name_for_id(peer_id)
             want_masquerade = bool(row.get("masquerade_on_peer"))
@@ -217,7 +217,7 @@ def apply_peer_site_iptables_via_ssh(
                     "already_current": True,
                     "warnings": warnings,
                 }
-    
+
             # 只清理本 peer 的 FORWARD 跳转与 NAT 规则，不再 flush 整条用户链；
             # 用户链内的远端防火墙规则（尤其是标签 ipset matcher）必须保留。
             removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
@@ -277,7 +277,7 @@ def apply_peer_site_iptables_via_ssh(
             _, err_j, cj = _exec_ssh(client, jump_cmd, timeout=exec_timeout)
             if cj != 0:
                 raise RuntimeError(f"写入 FORWARD 跳转至 {chain} 失败: {err_j.strip()}")
-    
+
             masq_n = 0
             if want_masquerade:
                 c_nat = COMMENT_MASQ_TMPL.format(peer_id=peer_id, idx=0)
@@ -289,7 +289,7 @@ def apply_peer_site_iptables_via_ssh(
                 if cn != 0:
                     raise RuntimeError(f"写入 POSTROUTING SNAT 失败: {err_n.strip()}")
                 masq_n = 1
-    
+
             logger.info(
                 "对端 SSH iptables 下发成功 peer=%s removed=%s masq=%s",
                 peer_id,
