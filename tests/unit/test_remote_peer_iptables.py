@@ -126,7 +126,7 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
 
     nat_commands = [cmd for cmd in client.commands if "-t nat -I POSTROUTING" in cmd]
     forward_commands = [cmd for cmd in client.commands if "iptables -I FORWARD" in cmd]
-    peer_chain_commands = [cmd for cmd in client.commands if "iptables -A VPN_PEER_" in cmd]
+    peer_chain_commands = [cmd for cmd in client.commands if "iptables -I VPN_PEER_" in cmd]
     assert ret["masquerade_rules"] == 1
     assert len(forward_commands) == 1
     assert "-i " not in forward_commands[0]
@@ -136,4 +136,43 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
     assert "-s 10.8.0.0/16" in nat_commands[0]
     assert "-d " not in nat_commands[0]
     assert "-o tun0" not in nat_commands[0]
+    assert not any("iptables -F VPN_PEER_" in cmd or "iptables -X VPN_PEER_" in cmd for cmd in client.commands)
+    assert client.closed is True
+
+
+def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> None:
+    client = _FakeClient()
+    tag_rule = "-A VPN_PEER_test -m set --match-set nvpnpt_1234567890_abcdef123456 src -j ACCEPT"
+    old_base = (
+        '-A VPN_PEER_test -s 10.8.0.0/16 -m comment '
+        '--comment "ovpn-mgmt-peer peer=peer-1 role=fwd-global" -j ACCEPT'
+    )
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        client.commands.append(command)
+        if command.endswith("iptables -S VPN_PEER_test"):
+            return f"{tag_rule}\\n{old_base}\\n", "", 0
+        return "", "", 0
+
+    row = {
+        "id": "peer-1",
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+        "lan_cidrs": ["192.168.10.0/24"],
+        "masquerade_on_peer": False,
+    }
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                with patch(
+                    "app.services.peer_instance.remote_peer_iptables._peer_site_rules_already_current",
+                    return_value=False,
+                ):
+                    apply_peer_site_iptables_via_ssh(row, "10.8.0.0/16", force=True)
+
+    assert any("iptables -D VPN_PEER_test " in cmd and "role=fwd-global" in cmd for cmd in client.commands)
+    assert any("iptables -I VPN_PEER_test 1 -s 10.8.0.0/16" in cmd for cmd in client.commands)
+    assert not any("iptables -D VPN_PEER_test " in cmd and "nvpnpt_" in cmd for cmd in client.commands)
+    assert not any("iptables -F VPN_PEER_test" in cmd or "iptables -X VPN_PEER_test" in cmd for cmd in client.commands)
     assert client.closed is True
