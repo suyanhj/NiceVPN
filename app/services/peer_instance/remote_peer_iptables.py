@@ -410,7 +410,7 @@ def replace_peer_filter_chain_plan_via_ssh(
         body = str(raw or "").strip()
         if not body:
             continue
-        if any(char in body for char in ("\\n", "\\r", "\\x00")):
+        if any(char in body for char in ("\n", "\r", "\x00")):
             raise ValueError("单条规则含非法字符")
         validate_iptables_rest_line_addr_tokens(body)
         clean_rests.append(body)
@@ -425,7 +425,7 @@ def replace_peer_filter_chain_plan_via_ssh(
                 client, f"{sp}iptables -S {chq}", timeout=exec_timeout,
             )
             if pcode != 0:
-                msg = f"{(perr or '').strip()}\\n{(pout or '').strip()}"
+                msg = f"{(perr or '').strip()}\n{(pout or '').strip()}"
                 if _chain_missing_message(msg):
                     raise ValueError(
                         f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
@@ -463,7 +463,7 @@ def replace_peer_filter_chain_plan_via_ssh(
             payload_lines = ["*filter", f"-F {expect}"]
             payload_lines.extend(f"-A {expect} {body}" for body in clean_rests)
             payload_lines.append("COMMIT")
-            payload = "\\n".join(payload_lines) + "\\n"
+            payload = "\n".join(payload_lines) + "\n"
             command = (
                 f"printf %s {shlex.quote(payload)} | "
                 f"{sp}iptables-restore -w 5 --noflush"
