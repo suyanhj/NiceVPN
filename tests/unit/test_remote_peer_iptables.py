@@ -151,7 +151,7 @@ def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> Non
     def fake_exec(_client, command: str, *, timeout: int):
         client.commands.append(command)
         if command.endswith("iptables -S VPN_PEER_test"):
-            return f"{tag_rule}\\n{old_base}\\n", "", 0
+            return f"{tag_rule}\n{old_base}\n", "", 0
         return "", "", 0
 
     row = {
