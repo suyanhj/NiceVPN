@@ -76,11 +76,11 @@ def test_missing_server_unit_reuses_existing_systemd_generator(
     template.write_text("[Unit]\n", encoding="utf-8")
     monkeypatch.setattr(installer_mod, "_OPENVPN_SOURCE_ROOT", tmp_path)
 
-    outputs = iter([
-        _systemctl_result("openvpn-client@.service disabled enabled\n"),
-        _systemctl_result("openvpn-server@.service disabled enabled\n"),
-    ])
-    monkeypatch.setattr(installer_mod.subprocess, "run", lambda *_args, **_kwargs: next(outputs))
+    monkeypatch.setattr(
+        installer_mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _systemctl_result("openvpn-client@.service disabled enabled\n"),
+    )
 
     calls: list[dict] = []
 
@@ -113,6 +113,7 @@ def test_missing_server_unit_without_source_template_fails_clearly(
 ) -> None:
     binary = _make_openvpn_binary(tmp_path / "openvpn")
     monkeypatch.setattr(installer_mod, "_OPENVPN_SOURCE_ROOT", tmp_path)
+    monkeypatch.setenv("OPENVPN_SRC_ROOT", str(tmp_path))
     monkeypatch.setattr(
         installer_mod.subprocess,
         "run",
@@ -163,5 +164,6 @@ def test_staged_systemd_installer_passes_explicit_binary(
         openvpn_bin=binary,
     )
 
+    assert calls[0]["env"]["OPENVPN_SRC_DIR"] == str(tmp_path / "source")
     assert calls[0]["env"]["OPENVPN_BIN"] == str(binary.resolve())
     assert calls[0]["env"]["OPENVPN_SBIN_DIR"] == str(binary.resolve().parent)
