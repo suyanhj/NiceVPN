@@ -22,14 +22,24 @@ source "${SCRIPT_DIR}/openvpn-install-common.sh"
 
 export DEBIAN_FRONTEND=noninteractive
 
+install_optional_dco_dependencies() {
+    # DCO 依赖不是 OpenVPN 基础安装条件；老发行版可能没有足够新的 libnl-genl。
+    if apt install -y libnl-3-dev libnl-genl-3-dev; then
+        _log "已安装可选 DCO 开发依赖"
+    else
+        _log "警告：无法安装可选 libnl-genl 开发包，继续安装；编译前将检测并按需禁用 DCO"
+    fi
+}
+
 install_source_dependencies() {
     apt install -y \
         build-essential curl ca-certificates pkg-config autoconf automake libtool \
-        libssl-dev libnl-3-dev libnl-genl-3-dev libpam0g-dev libcap-ng-dev \
+        libssl-dev libpam0g-dev libcap-ng-dev \
         liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev conntrack
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         apt install -y logrotate
     fi
+    install_optional_dco_dependencies
 }
 
 _log "Debian 系安装：codename=${DEBIAN_CODENAME} min_version=${OPENVPN_MIN_VERSION}"

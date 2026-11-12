@@ -18,6 +18,7 @@
 : "${INSTALL_SERVER_OVERRIDE:=0}"
 : "${OPENVPN_CREATE_SYMLINK:=1}"
 : "${OPENVPN_FORCE_SOURCE:=0}"
+: "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
 
 OPENVPN_SRC_DIR="${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}"
 
@@ -28,6 +29,60 @@ version_ge() {
 
 _log() {
     echo "[openvpn-install] $*"
+}
+
+# DCO 是可选性能优化：libnl-genl 不满足要求时，不应阻断 OpenVPN 基础安装。
+openvpn_detect_dco_support() {
+    local pkg_config_bin="${PKG_CONFIG:-pkg-config}"
+    local libnl_version=""
+
+    if ! command -v "${pkg_config_bin}" >/dev/null 2>&1; then
+        _log "可选功能 DCO：未找到 ${pkg_config_bin}，编译时禁用 DCO"
+        return 1
+    fi
+
+    if ! libnl_version="$("${pkg_config_bin}" --modversion libnl-genl-3.0 2>/dev/null)" \
+        || [ -z "${libnl_version}" ]; then
+        _log "可选功能 DCO：未找到 libnl-genl-3.0 开发包，编译时禁用 DCO"
+        return 1
+    fi
+
+    if ! version_ge "${libnl_version}" "${OPENVPN_DCO_MIN_LIBNL_VERSION}"; then
+        _log "可选功能 DCO：libnl-genl-3.0 ${libnl_version} 低于要求 ${OPENVPN_DCO_MIN_LIBNL_VERSION}，编译时禁用 DCO"
+        return 1
+    fi
+
+    _log "可选功能 DCO：libnl-genl-3.0 ${libnl_version} 满足要求，保留 DCO 编译支持"
+    return 0
+}
+
+openvpn_configure_with_optional_features() {
+    local -a configure_args=(
+        "--prefix=${OPENVPN_PREFIX}"
+        --enable-async-push
+        --enable-systemd
+    )
+    local configure_status=0
+
+    if openvpn_detect_dco_support; then
+        if ./configure "${configure_args[@]}"; then
+            return 0
+        else
+            configure_status=$?
+        fi
+
+        # 处理预检与 configure 实际检测结果不一致的情况，只对明确的 DCO 依赖错误回退。
+        if [ -f config.log ] && grep -Eqi \
+            'libnl-genl-3\.0 package not found or too old|3\.4\.0 or newer for DCO' config.log; then
+            _log "警告：configure 检测到 DCO 依赖不可用，自动禁用 DCO 后重试"
+            ./configure "${configure_args[@]}" --disable-dco
+            return $?
+        fi
+        return "${configure_status}"
+    fi
+
+    _log "继续编译 OpenVPN 基础功能（DCO 已禁用）"
+    ./configure "${configure_args[@]}" --disable-dco
 }
 
 openvpn_download_source() {
@@ -67,7 +122,7 @@ openvpn_compile_install() {
         exit 1
     }
     cd "${OPENVPN_SRC_DIR}"
-    ./configure --prefix="${OPENVPN_PREFIX}" --enable-async-push --enable-systemd
+    openvpn_configure_with_optional_features
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
     make install
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then

@@ -21,14 +21,24 @@ else
     exit 1
 fi
 
+install_optional_dco_dependencies() {
+    # RHEL 系 libnl3-devel 提供 libnl-genl；旧仓库可能只有低版本，失败不能阻断安装。
+    if ${PM} install -y libnl3-devel; then
+        _log "已安装可选 DCO 开发依赖"
+    else
+        _log "警告：无法安装可选 libnl3-devel，继续安装；编译前将检测并按需禁用 DCO"
+    fi
+}
+
 install_source_dependencies() {
     ${PM} install -y \
         gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
-        openssl-devel libnl3-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
+        openssl-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
         pkcs11-helper-devel systemd-devel which conntrack-tools
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         ${PM} install -y logrotate
     fi
+    install_optional_dco_dependencies
 }
 
 _log "RHEL 系安装：pm=${PM} min_version=${OPENVPN_MIN_VERSION}"
