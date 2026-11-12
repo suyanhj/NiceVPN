@@ -64,7 +64,7 @@ def peer_tag_ipset_name(peer_id: str, tag_id: str, entries: Iterable[str]) -> st
     normalized = sorted(set(normalized))
     if not normalized:
         raise ValueError("不能为无成员标签创建 ipset")
-    digest_source = tid + "\\0" + "\\n".join(normalized)
+    digest_source = tid + "\0" + "\n".join(normalized)
     digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:12]
     name = f"{peer_tag_ipset_prefix(peer_id)}{digest}"
     if len(name) > _MAX_NAME_LENGTH:
@@ -339,7 +339,7 @@ def referenced_peer_tag_ipsets(rests: Iterable[str], peer_id: str) -> set[str]:
     found: set[str] = set()
     for rest in rests:
         for match in re.finditer(
-            r"(?:--match-set|--set)\\s+([A-Za-z0-9_.-]{1,31})",
+            r"(?:--match-set|--set)\s+([A-Za-z0-9_.-]{1,31})",
             str(rest or ""),
         ):
             name = match.group(1)
