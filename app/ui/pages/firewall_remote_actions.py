@@ -205,8 +205,8 @@ class FirewallRemoteActionsMixin:
 
         def body() -> None:
             ui.label(
-                "这是一条动态标签规则。每次写回时，NiceVPN 会按标签当前关联的用户/组重新展开源 IP；"
-                "标签没有有效成员时不会下发规则。"
+                "这是一条动态标签规则。每次写回时，NiceVPN 会按标签当前用户/组成员更新对端 ipset，"
+                "iptables 通过集合匹配源地址，不会为每个用户单独生成一条规则；标签没有有效成员时不会下发。"
             ).classes("section-caption")
             fields["tag"] = ui.select(
                 options, label="来源标签", value=current_tag_id, with_input=True,
