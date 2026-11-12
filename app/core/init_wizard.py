@@ -73,12 +73,18 @@ class InitWizard:
             return StepResult(False, f"未知步骤: {step}")
         return handler(data or {})
 
-    def _ensure_openvpn_server_unit(self, openvpn_bin: str, data: dict):
-        """确保初始化后可通过 openvpn-server@实例名 管理 OpenVPN。"""
+    def _ensure_openvpn_server_unit(
+        self,
+        openvpn_bin: str,
+        data: dict,
+        openvpn_version: str | None = None,
+    ):
+        """缺少 OpenVPN server unit 时复用原安装逻辑补齐。"""
         from app.services.openvpn.installer import ensure_openvpn_server_systemd_unit
 
         return ensure_openvpn_server_systemd_unit(
             openvpn_bin,
+            openvpn_version=openvpn_version,
             on_output=data.get("on_output"),
         )
 
@@ -96,7 +102,7 @@ class InitWizard:
         if result["installed"] and result["meets_requirement"]:
             # 已安装且满足版本要求；NiceVPN 还要求 server 模板单元可用。
             try:
-                unit_path = self._ensure_openvpn_server_unit(result["path"], data)
+                unit_path = self._ensure_openvpn_server_unit(result["path"], data, result.get("version"))
                 logger.info("OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
             except Exception as exc:
                 logger.exception("OpenVPN 已检测到，但服务端 systemd 单元补齐失败")
@@ -198,7 +204,7 @@ class InitWizard:
         result = validate_custom_path(custom_path)
         if result["valid"]:
             try:
-                unit_path = self._ensure_openvpn_server_unit(custom_path, data)
+                unit_path = self._ensure_openvpn_server_unit(custom_path, data, result.get("version"))
                 logger.info("自定义 OpenVPN 服务端 systemd 单元就绪: %s", unit_path)
             except Exception as exc:
                 logger.exception("自定义 OpenVPN 路径有效，但服务端 systemd 单元补齐失败")
