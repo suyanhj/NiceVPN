@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from ipaddress import IPv4Network, ip_network
 from typing import Any, Iterable
 
 from app.services.firewall.tag_service import TagService
@@ -40,6 +41,35 @@ def has_remote_tag_rule_references(tag_ids: Iterable[str], *, store=None) -> boo
     return False
 
 
+def _minimal_source_addresses(addresses: Iterable[str]) -> list[str]:
+    """折叠被更大 CIDR 覆盖的单 IP/子网，避免组标签产生大量冗余规则。"""
+    networks: set[IPv4Network] = set()
+    for raw in addresses:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        network = ip_network(value, strict=False)
+        if network.version != 4:
+            raise ValueError(f"远端标签规则暂不支持 IPv6 源地址: {value}")
+        networks.add(network)
+
+    minimal: list[IPv4Network] = []
+    for network in sorted(
+        networks,
+        key=lambda item: (item.prefixlen, int(item.network_address)),
+    ):
+        if any(network.subnet_of(parent) for parent in minimal):
+            continue
+        minimal.append(network)
+
+    return [
+        str(network.network_address)
+        if network.prefixlen == 32
+        else str(network)
+        for network in minimal
+    ]
+
+
 def materialize_remote_chain_rows(
     rows: list[dict[str, Any]],
     *,
@@ -55,6 +85,13 @@ def materialize_remote_chain_rows(
 
     tags = tag_service or TagService()
     rests: list[str] = []
+    addresses_by_tag: dict[str, list[str]] = {}
+    ccd_ips: dict[str, str] | None = None
+    if any(_tag_binding(row) for row in rows if isinstance(row, dict)) and hasattr(tags, "store"):
+        # 一次扫描 CCD，多个标签共用快照，避免每条标签规则重复遍历目录。
+        from app.services.user.crud import UserService
+        ccd_ips = UserService(store=tags.store).list_ccd_virtual_ipv4_by_username()
+
     for row in rows:
         if not isinstance(row, dict) or not bool(row.get("enabled", True)):
             continue
@@ -66,10 +103,16 @@ def materialize_remote_chain_rows(
             continue
 
         tag_id = str(binding.get("tag_id") or "").strip()
-        try:
-            addresses = tags.resolve_addresses(tag_id)
-        except ValueError as exc:
-            raise RuntimeError(f"远端标签规则引用的标签不存在: {tag_id}") from exc
+        if tag_id not in addresses_by_tag:
+            try:
+                if ccd_ips is None:
+                    resolved = tags.resolve_addresses(tag_id)
+                else:
+                    resolved = tags.resolve_addresses(tag_id, ccd_ips=ccd_ips)
+                addresses_by_tag[tag_id] = _minimal_source_addresses(resolved)
+            except ValueError as exc:
+                raise RuntimeError(f"远端标签规则引用的标签或地址无效: {tag_id}: {exc}") from exc
+        addresses = addresses_by_tag[tag_id]
         if not addresses:
             logger.info("远端标签规则当前无有效成员，跳过下发 tag=%s", tag_id[:8])
             continue
