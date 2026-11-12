@@ -72,7 +72,7 @@ def test_peer_adapter_empty_mesh_scope_means_all_groups() -> None:
         },
     )
 
-    assert row["mesh_label"] == "全部组"
+    assert row["mesh_label"] == "全部用户"
     assert row["lan_label"] == "无内网"
 
 
@@ -89,3 +89,21 @@ def test_peer_adapter_busy_disables_mutating_remote_actions() -> None:
     assert row["can_push"] is False
     assert row["can_edit"] is False
     assert row["can_delete"] is False
+
+
+
+def test_peer_adapter_displays_tag_mesh_visibility():
+    row = adapt_peer_view(
+        {
+            **BASE,
+            "mesh_route_visible_group_ids": ["group-dev"],
+            "mesh_route_visible_tag_ids": ["tag-ops", "tag-eng"],
+            "ssh_password": "secret",
+        },
+        group_names={"group-dev": "开发组"},
+        tag_names={"tag-ops": "运维", "tag-eng": "研发"},
+    )
+
+    assert row["visible_group_names"] == ["开发组"]
+    assert row["visible_tag_names"] == ["运维", "研发"]
+    assert row["mesh_label"] == "组：开发组；标签：运维、研发"

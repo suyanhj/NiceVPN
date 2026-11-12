@@ -10,12 +10,14 @@ def adapt_peer_view(
     row: Mapping[str, Any],
     *,
     group_names: Mapping[str, str] | None = None,
+    tag_names: Mapping[str, str] | None = None,
     has_global_ssh_key: bool = False,
     busy: bool = False,
 ) -> dict[str, Any]:
     """标准化对端展示、SSH 能力和操作可用性。"""
 
     groups = group_names or {}
+    tags = tag_names or {}
     peer_id = str(row.get("id") or "").strip()
     name = str(row.get("name") or peer_id or "未命名对端").strip()
     bound_username = str(row.get("bound_username") or "").strip()
@@ -30,17 +32,39 @@ def adapt_peer_view(
         if str(value).strip()
     ]
 
-    if visible_group_ids:
-        visible_group_names = [
-            str(groups.get(group_id) or group_id[:8])
-            for group_id in visible_group_ids
-        ]
+    visible_tag_ids = [
+        str(value).strip()
+        for value in (row.get("mesh_route_visible_tag_ids") or [])
+        if str(value).strip()
+    ]
+    visible_group_names = [
+        str(groups.get(group_id) or f"{group_id[:8]}…")
+        for group_id in visible_group_ids
+    ]
+    visible_tag_names = [
+        str(tags.get(tag_id) or f"{tag_id[:8]}…")
+        for tag_id in visible_tag_ids
+    ]
+    if not visible_group_ids and not visible_tag_ids:
+        mesh_label = "全部用户"
+    elif visible_group_ids and not visible_tag_ids:
+        # 保留旧版仅组范围的展示文案，避免无关 UI 回归。
         mesh_label = "、".join(visible_group_names[:3])
         if len(visible_group_names) > 3:
             mesh_label += f" 等{len(visible_group_names)}组"
     else:
-        visible_group_names = []
-        mesh_label = "全部组"
+        parts = []
+        if visible_group_names:
+            group_label = "、".join(visible_group_names[:3])
+            if len(visible_group_names) > 3:
+                group_label += f" 等{len(visible_group_names)}组"
+            parts.append(f"组：{group_label}")
+        if visible_tag_names:
+            tag_label = "、".join(visible_tag_names[:3])
+            if len(visible_tag_names) > 3:
+                tag_label += f" 等{len(visible_tag_names)}标签"
+            parts.append(f"标签：{tag_label}")
+        mesh_label = "；".join(parts)
 
     ssh_host = str(row.get("ssh_host") or "").strip()
     ssh_username = str(row.get("ssh_username") or "").strip()
@@ -75,6 +99,8 @@ def adapt_peer_view(
         "lan_label": "、".join(lan_cidrs) if lan_cidrs else "无内网",
         "visible_group_ids": visible_group_ids,
         "visible_group_names": visible_group_names,
+        "visible_tag_ids": visible_tag_ids,
+        "visible_tag_names": visible_tag_names,
         "mesh_label": mesh_label,
         "ssh_host": ssh_host,
         "ssh_username": ssh_username,

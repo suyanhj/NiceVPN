@@ -52,6 +52,8 @@ data/nicevpn.db
 - peers
 - firewall rules
 - tags / user_tags / group_tags
+- 对端 Mesh 路由支持 `mesh_route_visible_group_ids` 与 `mesh_route_visible_tag_ids`，两者 OR；用户直接标签 + 活动组继承标签参与匹配。
+- 对端远端防火墙标签规则以逻辑 `tag_binding` 存于远端链工作副本，每次推送动态展开当前成员；标签成员变化通过后台 SSH 刷新，失败持久化 `pending_sync`。
 - 其它 schema migration 管理的结构化数据
 
 旧版 `data/users/*.json`、`data/groups/*.json`、`data/peers/*.json`、`data/firewall/*.json` **只用于启动迁移**，不是当前运行时主存储。

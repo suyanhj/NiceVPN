@@ -46,7 +46,7 @@ class FirewallRemoteMixin:
         """进入「对端远端」：同步下拉后必须先 SSH 取对端真值落库，再谈编辑（与换节点时一致）。"""
         self._ensure_remote_tab_synced_with_peers()
         self._refresh_remote_view()
-        self._schedule_remote_fetch_via_ssh()
+        self._schedule_remote_fetch_via_ssh(auto=True)
 
     def _ensure_remote_tab_synced_with_peers(self) -> None:
         """根据 :meth:`PeerService.list_all` 重建或更新对端下拉的选项（避免首屏/新建对端后 UI 不刷新）。"""
@@ -77,14 +77,39 @@ class FirewallRemoteMixin:
         self._remote_filter_model = {}
         self._remote_grid_sort_active = False
         self._refresh_remote_view()
-        self._schedule_remote_fetch_via_ssh()
+        self._schedule_remote_fetch_via_ssh(auto=True)
 
-    def _schedule_remote_fetch_via_ssh(self) -> None:
-        """在「对端远端」对当前选中的对端：SSH 拉取 → ``record_from_fetch`` 落库；失败 ``notify`` + ``logger``。"""
+    def _schedule_remote_fetch_via_ssh(
+        self, *, force: bool = False, auto: bool = False,
+    ) -> None:
+        """SSH 拉取远端真值；覆盖动态标签逻辑规则前必须由管理员显式确认。"""
         if self._center_tab_active:
             return
         target = self._active_remote_peer_id()
         if not target:
+            return
+        cache = remote_chain_cache.read_remote_chain_cache(target) or {}
+        tag_rows = [
+            row for row in (cache.get("rows") or [])
+            if isinstance(row.get("tag_binding"), dict)
+        ]
+        if tag_rows and not force:
+            if auto:
+                logger.info(
+                    "对端缓存含动态标签规则，跳过自动拉取以保护标签绑定 peer=%s",
+                    target[:8],
+                )
+                return
+            confirm_dialog.show(
+                "拉取会覆盖动态标签规则，确定继续？",
+                impact=(
+                    "远端链拉取会把标签规则展开后的 iptables 行当作普通原始规则，"
+                    "本地标签与动态成员绑定将丢失。若只是更新标签成员，请直接推送或等待自动同步。"
+                ),
+                object_count=len(tag_rows),
+                danger_level="warning",
+                on_confirm=lambda: self._schedule_remote_fetch_via_ssh(force=True),
+            )
             return
         if self._remote_fetch_running_peer == target:
             logger.info("对端链正在拉取，跳过重复请求 peer=%s", target)
@@ -317,21 +342,10 @@ class FirewallRemoteMixin:
         return str(self._remote_peer_select.value or "").strip()
 
     async def _on_remote_pull(self) -> None:
+        """兼容旧按钮入口；统一走带标签绑定保护的拉取调度。"""
         if not self._require_remote_strategy_tab():
             return
-        pid = self._active_remote_peer_id()
-        if not pid:
-            self._notify_for_page("请选择对端", type="warning")
-            return
-        try:
-            snap = await run.io_bound(self._peer_service.fetch_remote_peer_filter_chain_snapshot, pid)
-        except Exception as exc:
-            logger.error("拉取对端链失败 peer=%s: %s", pid, exc)
-            self._notify_for_page(f"拉取失败: {exc}", type="negative")
-            return
-        remote_chain_cache.record_from_fetch(snap, pid)
-        self._notify_for_page("已拉取", type="positive")
-        self._refresh_remote_view()
+        self._schedule_remote_fetch_via_ssh()
 
     async def _apply_remote_cache_to_peer(self, peer_id: str) -> bool:
         """将当前本地工作副本（库内 ``rows``）经 SSH 写回对端机链；与拉取成对，保「真值→改库→推对端」。
@@ -344,8 +358,12 @@ class FirewallRemoteMixin:
         chain = str(cache.get("chain") or IptablesManager.peer_chain_name_for_id(peer_id))
         ce = bool(cache.get("chain_exists"))
         rows = list(cache.get("rows") or [])
-        rests = remote_chain_cache.rests_to_push_list(rows)  # type: ignore[arg-type]
+        from app.services.firewall.remote_tag_rules import materialize_remote_chain_rows
+        from app.services.firewall.tag_service import TagService
         try:
+            rests = materialize_remote_chain_rows(
+                rows, tag_service=TagService(),
+            )
             await run.io_bound(self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests)
             remote_chain_cache.record_after_apply(peer_id, chain, bool(ce), rows, True, None)
         except Exception as exc:
@@ -516,7 +534,15 @@ class FirewallRemoteMixin:
             return
 
         raw_rows = list(cache.get("rows") or [])
-        rows = adapt_remote_rule_rows(raw_rows, peer_id=peer_id)
+        from app.services.firewall.tag_service import TagService
+        tag_names = {
+            str(tag.get("id") or ""): str(tag.get("name") or "")
+            for tag in TagService().list_all()
+            if tag.get("id")
+        }
+        rows = adapt_remote_rule_rows(
+            raw_rows, peer_id=peer_id, tag_names=tag_names,
+        )
         for row in rows:
             row["actions"] = "操作"
         self._remote_grid_rows = rows
@@ -679,9 +705,29 @@ class FirewallRemoteMixin:
             "vpn-form-dialog firewall-action-dialog w-full max-w-md"
         ):
             ui.label(f"对端规则 #{index + 1}").classes("text-h6")
-            ui.label(str(row.get("rest") or "")).classes(
-                "font-mono text-caption break-all"
-            )
+            binding = row.get("tag_binding") if isinstance(row.get("tag_binding"), dict) else None
+            if binding:
+                from app.services.firewall.tag_service import TagService
+                bound_tag = TagService().store.get_tag(str(binding.get("tag_id") or ""))
+                bound_tag_name = (
+                    str(bound_tag.get("name") or "")
+                    if bound_tag else str(binding.get("tag_name") or "")
+                )
+                ui.label(
+                    f"动态标签规则 · {bound_tag_name or str(binding.get('tag_id') or '')[:8]}"
+                ).classes("font-medium")
+                ui.label(
+                    "源地址会在每次推送时按标签当前成员计算；标签无有效成员时不会下发。"
+                ).classes("text-caption text-grey-7")
+                ui.label(
+                    f"{str(binding.get('action') or 'accept').upper()} · "
+                    f"{str(binding.get('protocol') or 'all').upper()} · "
+                    f"目标 {binding.get('dest_ip') or '*'}:{binding.get('dest_port') or '*'}"
+                ).classes("font-mono text-caption break-all")
+            else:
+                ui.label(str(row.get("rest") or "")).classes(
+                    "font-mono text-caption break-all"
+                )
             with ui.column().classes("w-full gap-2 q-mt-sm"):
                 secondary_action(
                     "编辑",
@@ -701,13 +747,14 @@ class FirewallRemoteMixin:
                         ),
                     ),
                 )
-                secondary_action(
-                    "复制原始规则",
-                    icon="content_copy",
-                    on_click=lambda: self._schedule_remote_text_copy(
-                        str(row.get("rest") or "")
-                    ),
-                )
+                if not binding:
+                    secondary_action(
+                        "复制原始规则",
+                        icon="content_copy",
+                        on_click=lambda: self._schedule_remote_text_copy(
+                            str(row.get("rest") or "")
+                        ),
+                    )
                 danger_action(
                     "删除",
                     icon="delete",

@@ -148,7 +148,7 @@ class UserService:
                        {"group_id": group_id}, "success")
         from app.services.peer_instance.service import PeerService
 
-        PeerService().sync_all_mesh_push_routes_in_ccd()
+        PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
         return user
 
     def _write_ovpn_from_current_material(
@@ -294,7 +294,9 @@ class UserService:
         # 减少组用户计数
         self._increment_group_user_count(user_data.get("group_id", ""), -1)
         from app.services.firewall.tag_service import TagService
-        TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
+        TagService(self.store).refresh_if_referenced(
+            entity_type="user", entity_id=username, refresh_mesh_routes=False,
+        )
 
         self.audit.log("delete_user", "user", username, {}, "success")
         return True
@@ -366,6 +368,11 @@ class UserService:
         # 停用时通过管理接口踢人下线
         if new_status == "disabled":
             self._kill_client_session(username)
+
+        # Mesh 路由只下发给 active 用户；停用时从 CCD 移除，启用时重新计算。
+        from app.services.peer_instance.service import PeerService
+        PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
+
         from app.services.firewall.tag_service import TagService
         TagService(self.store).refresh_if_referenced(entity_type="user", entity_id=username)
 
@@ -432,11 +439,14 @@ class UserService:
 
             from app.services.peer_instance.service import PeerService
 
-            PeerService().sync_all_mesh_push_routes_in_ccd()
+            PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
             self._kill_client_session(username)
             from app.services.firewall.tag_service import TagService
             TagService(self.store).refresh_if_referenced(
-                entity_type="user", entity_id=username, other_group_id=old_group_id,
+                entity_type="user",
+                entity_id=username,
+                other_group_id=old_group_id,
+                refresh_mesh_routes=False,
             )
 
             result = {

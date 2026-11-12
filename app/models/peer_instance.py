@@ -44,7 +44,11 @@ class PeerInstance(BaseModel):
     )
     mesh_route_visible_group_ids: list[str] = Field(
         default_factory=list,
-        description="mesh push 路由仅对这些组用户下发本对端 LAN；空列表表示对所有活跃用户下发",
+        description="mesh push 路由允许访问本对端 LAN 的组 ID；与标签条件为 OR",
+    )
+    mesh_route_visible_tag_ids: list[str] = Field(
+        default_factory=list,
+        description="mesh push 路由允许访问本对端 LAN 的标签 ID；与组条件为 OR",
     )
     ssh_host: str = Field(default="", description="SSH 管理主机（自动/手动后续使用）")
     ssh_port: int = Field(default=22, ge=1, le=65535, description="SSH 端口")
@@ -74,17 +78,17 @@ class PeerInstance(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(), description="创建时间 ISO8601")
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat(), description="更新时间 ISO8601")
 
-    @field_validator("mesh_route_visible_group_ids")
+    @field_validator("mesh_route_visible_group_ids", "mesh_route_visible_tag_ids")
     @classmethod
-    def validate_mesh_route_visible_group_ids(cls, v: list[str]) -> list[str]:
+    def validate_mesh_visibility_ids(cls, v: list[str]) -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
         for raw in v or []:
-            s = str(raw).strip()
-            if not s or s in seen:
+            value = str(raw).strip()
+            if not value or value in seen:
                 continue
-            seen.add(s)
-            out.append(s)
+            seen.add(value)
+            out.append(value)
         return out
 
     @field_validator("center_forward_dest_ip", "center_forward_dest_port", "center_forward_rule_description")

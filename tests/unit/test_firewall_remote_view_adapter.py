@@ -203,3 +203,34 @@ def test_format_remote_cache_timestamp_handles_invalid_and_empty() -> None:
     assert format_remote_cache_timestamp(None) == "—"
     assert format_remote_cache_timestamp("2026-10-20T00:00:00Z") == "2026-10-20 08:00:00"
     assert format_remote_cache_timestamp("not-a-date") == "not-a-date"
+
+
+
+def test_remote_tag_rule_adapter_displays_dynamic_tag_owner():
+    row = adapt_remote_rule_row(
+        {
+            "rest": "",
+            "enabled": True,
+            "priority": 20,
+            "tag_binding": {
+                "tag_id": "tag-ops",
+                "tag_name": "运维",
+                "action": "accept",
+                "protocol": "tcp",
+                "dest_ip": "192.168.10.10",
+                "dest_port": "443",
+            },
+        },
+        index=0,
+        peer_id="peer-001",
+        tag_names={"tag-ops": "运维组"},
+    )
+
+    assert row["source"] == "标签 · 运维组"
+    assert row["action_label"] == "ACCEPT"
+    assert row["protocol"] == "TCP"
+    assert row["dest"] == "192.168.10.10"
+    assert row["dest_port"] == "443"
+    assert row["can_toggle"] is True
+    assert row["can_edit"] is True
+    assert row["can_delete"] is True

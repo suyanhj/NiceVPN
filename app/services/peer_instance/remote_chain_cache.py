@@ -93,6 +93,27 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _normalize_tag_binding(raw: Any) -> dict[str, str] | None:
+    """只保留受支持的标签规则字段，防止缓存元数据夹带任意内容。"""
+    if not isinstance(raw, dict):
+        return None
+    tag_id = str(raw.get("tag_id") or "").strip()
+    action = str(raw.get("action") or "accept").strip().lower()
+    protocol = str(raw.get("protocol") or "all").strip().lower() or "all"
+    if not tag_id or len(tag_id) > 128 or action not in {"accept", "drop", "reject"}:
+        return None
+    if len(protocol) > 32:
+        return None
+    return {
+        "tag_id": tag_id,
+        "tag_name": str(raw.get("tag_name") or "").strip()[:120],
+        "action": action,
+        "protocol": protocol,
+        "dest_ip": str(raw.get("dest_ip") or "").strip()[:512],
+        "dest_port": str(raw.get("dest_port") or "").strip()[:128],
+    }
+
+
 def _normalize_rows_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if raw.get("rows") and isinstance(raw["rows"], list):
         out: list[dict[str, Any]] = []
@@ -100,9 +121,12 @@ def _normalize_rows_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(x, dict):
                 continue
             r = str(x.get("rest", "")).strip()
-            if not r:
+            tag_binding = _normalize_tag_binding(x.get("tag_binding"))
+            if not r and tag_binding is None:
                 continue
             row: dict[str, Any] = {"rest": r, "enabled": bool(x.get("enabled", True))}
+            if tag_binding is not None:
+                row["tag_binding"] = tag_binding
             ds = str(x.get("description") or "").strip()
             if ds:
                 row["description"] = ds
@@ -115,6 +139,16 @@ def _normalize_rows_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
         return out
     rests = [str(s).strip() for s in (raw.get("rests") or []) if str(s).strip()]
     return [{"rest": s, "enabled": True} for s in rests]
+
+
+def delete_remote_chain_cache(peer_id: str) -> None:
+    """删除已删除对端的本地工作副本及写回前备份，避免孤儿标签引用。"""
+    for path in (_path_for_peer(peer_id), _prepush_bak_path(peer_id)):
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as exc:
+            logger.warning("删除对端链缓存失败 peer=%s path=%s: %s", peer_id, path, exc)
 
 
 def read_remote_chain_cache(peer_id: str) -> dict[str, Any] | None:
@@ -154,9 +188,12 @@ def write_remote_chain_cache(
         if not isinstance(x, dict):
             continue
         r = str(x.get("rest", "")).strip()
-        if not r:
+        tag_binding = _normalize_tag_binding(x.get("tag_binding"))
+        if not r and tag_binding is None:
             continue
         base: dict[str, Any] = {"rest": r, "enabled": bool(x.get("enabled", True))}
+        if tag_binding is not None:
+            base["tag_binding"] = tag_binding
         ds = str(x.get("description") or "").strip()
         if ds:
             base["description"] = ds
@@ -196,8 +233,14 @@ def write_remote_chain_cache(
 
 
 def rests_to_push_list(rows: list[dict[str, Any]]) -> list[str]:
-    """按行顺序、仅启用的片段，供 ``replace_peer_filter_chain_rests_via_ssh``。"""
-    return [str(x.get("rest", "")).strip() for x in rows if str(x.get("rest", "")).strip() and x.get("enabled", True)]
+    """提取普通原始规则；动态标签行必须经标签解析器展开，禁止下发占位符。"""
+    return [
+        str(x.get("rest", "")).strip()
+        for x in rows
+        if str(x.get("rest", "")).strip()
+        and x.get("enabled", True)
+        and not isinstance(x.get("tag_binding"), dict)
+    ]
 
 
 def record_from_fetch(snap: dict[str, Any], peer_id: str) -> None:

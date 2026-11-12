@@ -32,6 +32,9 @@ def change_group_env(monkeypatch, tmp_path: Path):
     sync_calls = {"count": 0}
 
     class PeerServiceStub:
+        def __init__(self, store=None):
+            self.store = store
+
         def sync_all_mesh_push_routes_in_ccd(self):
             sync_calls["count"] += 1
 

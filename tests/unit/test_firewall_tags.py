@@ -214,6 +214,7 @@ def test_tags_page_list_filters_and_independent_expansion_state():
     assert not match(tag, "", "assigned", users=0, groups=0, rules=0)
     assert match(tag, "", "assigned", users=2, groups=0, rules=0)
     assert match(tag, "", "referenced", users=0, groups=0, rules=1)
+    assert match(tag, "", "referenced", users=0, groups=0, rules=0, peer_refs=1)
     assert not match(tag, "无关", "all", users=1, groups=1, rules=1)
 
     page = TagsPage()
@@ -266,7 +267,8 @@ def test_batch_tag_service_refreshes_once_and_rolls_back(store, monkeypatch):
         TagService(store).batch_change_entities(
             "user", ["alice", "bob"], ["b"], operation="add"
         )
-    assert len(calls) == 1
+    # 首次刷新失败后会回滚关联，并再尝试一次内核收敛。
+    assert len(calls) == 2
     assert store.list_entity_tag_ids("user", "alice") == ["a"]
     assert store.list_entity_tag_ids("user", "bob") == []
 
@@ -277,3 +279,146 @@ def test_batch_group_tag_association(store):
         "group", ["g1"], ["g-tag"], operation="add"
     )
     assert store.list_entity_tag_ids("group", "g1") == ["g-tag"]
+
+
+
+def test_bulk_tag_memberships_include_direct_users_and_groups(store):
+    store.create_tag("tag-route", "Mesh 路由")
+    store.create_tag("tag-fw", "远端防火墙")
+    store.set_tag_members(
+        "tag-route", usernames=["alice"], group_ids=["g1"],
+    )
+    store.set_tag_members(
+        "tag-fw", usernames=["bob"], group_ids=[],
+    )
+
+    memberships = store.list_tag_memberships()
+    assert memberships["users"] == {
+        "alice": ["tag-route"],
+        "bob": ["tag-fw"],
+    }
+    assert memberships["groups"] == {"g1": ["tag-route"]}
+
+
+
+def test_tag_membership_change_refreshes_mesh_routes_for_referencing_peer(store, monkeypatch):
+    from app.services.peer_instance.service import PeerService
+
+    store.create_tag("tag-mesh", "Mesh 可见")
+    store.upsert_peer({
+        "id": "peer-mesh",
+        "name": "站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.20.0/24"],
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": ["tag-mesh"],
+    })
+    calls = []
+    monkeypatch.setattr(
+        PeerService,
+        "sync_all_mesh_push_routes_in_ccd",
+        lambda self: calls.append("sync"),
+    )
+
+    TagService(store).set_members(
+        "tag-mesh", usernames=["alice"], group_ids=[],
+    )
+
+    assert calls == ["sync"]
+
+
+def test_tag_service_lists_peer_mesh_and_remote_firewall_references(
+    store, tmp_path, monkeypatch,
+):
+    from app.services.peer_instance import remote_chain_cache
+
+    store.create_tag("tag-peer", "对端引用")
+    store.upsert_peer({
+        "id": "peer-reference",
+        "name": "深圳站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.40.0/24"],
+        "mesh_route_visible_tag_ids": ["tag-peer"],
+    })
+    monkeypatch.setattr(
+        remote_chain_cache, "REMOTE_PEER_CHAINS_DIR", tmp_path / "remote-cache",
+    )
+    remote_chain_cache.write_remote_chain_cache(
+        "peer-reference",
+        chain="VPN_PEER_reference",
+        chain_exists=True,
+        rows=[{
+            "rest": "",
+            "enabled": True,
+            "priority": 30,
+            "tag_binding": {
+                "tag_id": "tag-peer",
+                "tag_name": "对端引用",
+                "action": "accept",
+                "protocol": "tcp",
+                "dest_ip": "192.168.40.10",
+                "dest_port": "443",
+            },
+        }],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+
+    service = TagService(store)
+    refs = service.list_peer_tag_references("tag-peer")
+    assert {item["reference_type"] for item in refs} == {"Mesh 路由", "远端防火墙"}
+    assert service.peer_tag_reference_counts()["tag-peer"] == 2
+    assert any(item.get("peer_name") == "深圳站点" for item in refs)
+
+
+def test_tag_delete_is_blocked_while_peer_mesh_route_references_tag(store):
+    store.create_tag("tag-mesh", "Mesh 可见")
+    store.upsert_peer({
+        "id": "peer-mesh",
+        "name": "站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.20.0/24"],
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": ["tag-mesh"],
+    })
+
+    with pytest.raises(ValueError, match="对端路由"):
+        TagService(store).delete("tag-mesh")
+
+
+
+def test_tag_delete_is_blocked_while_remote_firewall_rule_references_tag(
+    store, tmp_path, monkeypatch,
+):
+    from app.services.peer_instance import remote_chain_cache
+
+    store.create_tag("tag-remote", "远端防火墙标签")
+    store.upsert_peer({
+        "id": "peer-remote",
+        "name": "远端站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.30.0/24"],
+    })
+    monkeypatch.setattr(
+        remote_chain_cache, "REMOTE_PEER_CHAINS_DIR", tmp_path / "remote-cache",
+    )
+    remote_chain_cache.write_remote_chain_cache(
+        "peer-remote",
+        chain="VPN_PEER_remote",
+        chain_exists=True,
+        rows=[{
+            "rest": "",
+            "enabled": True,
+            "tag_binding": {
+                "tag_id": "tag-remote",
+                "tag_name": "远端防火墙标签",
+                "action": "accept",
+                "protocol": "all",
+            },
+        }],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+
+    with pytest.raises(ValueError, match="远端防火墙规则"):
+        TagService(store).delete("tag-remote")

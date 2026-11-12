@@ -105,3 +105,20 @@ def test_update_lan_triggers_all(monkeypatch, isolated_peers):
         m_fw_cls.return_value.refresh_vpn_forward_only.assert_called_once()
         m_merge.assert_called_once()
         m_mesh.assert_called_once()
+
+
+
+def test_update_mesh_tags_triggers_mesh_only(monkeypatch, isolated_peers):
+    row = _mk_row(id="p1", mesh_route_visible_tag_ids=["tag-a"])
+    svc = PeerService()
+    with patch.object(svc, "_apply_ccd_and_vpn_forward"), patch.object(svc, "sync_all_mesh_push_routes_in_ccd"):
+        svc.create(dict(row))
+
+    _patch_peer_os(monkeypatch, "posix")
+    with patch("app.services.firewall.rule_service.FirewallRuleService") as m_fw_cls, patch.object(
+        svc, "_merge_ccd"
+    ) as m_merge, patch.object(svc, "sync_all_mesh_push_routes_in_ccd") as m_mesh:
+        svc.update("p1", {"mesh_route_visible_tag_ids": ["tag-b"]})
+        m_fw_cls.assert_not_called()
+        m_merge.assert_not_called()
+        m_mesh.assert_called_once()
