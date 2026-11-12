@@ -5,6 +5,7 @@ import logging
 import os
 import shlex
 import subprocess
+import shutil
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -15,6 +16,16 @@ from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
+
+_OPENVPN_SERVER_UNIT_NAME = "openvpn-server@.service"
+_OPENVPN_SERVER_UNIT_INSTALL_PATH = Path("/etc/systemd/system") / _OPENVPN_SERVER_UNIT_NAME
+_OPENVPN_SERVER_UNIT_SEARCH_PATHS = (
+    _OPENVPN_SERVER_UNIT_INSTALL_PATH,
+    Path("/run/systemd/system") / _OPENVPN_SERVER_UNIT_NAME,
+    Path("/usr/local/lib/systemd/system") / _OPENVPN_SERVER_UNIT_NAME,
+    Path("/usr/lib/systemd/system") / _OPENVPN_SERVER_UNIT_NAME,
+    Path("/lib/systemd/system") / _OPENVPN_SERVER_UNIT_NAME,
+)
 
 _APT_KEY_URL = "https://swupdate.openvpn.net/repos/repo-public.gpg"
 _GITHUB_API_LATEST = "https://api.github.com/repos/{repo}/releases/latest"
@@ -158,6 +169,71 @@ def install_openvpn_server_systemd_from_staged_source(
         }
     )
     _run_command(["bash", str(script_path)], on_output, env=env)
+
+
+def _find_openvpn_server_systemd_unit() -> Path | None:
+    """查找 systemd 当前可用的 OpenVPN 服务端模板单元。"""
+
+    for candidate in _OPENVPN_SERVER_UNIT_SEARCH_PATHS:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def ensure_openvpn_server_systemd_unit(
+    openvpn_bin: str | Path,
+    on_output: Callable[[str], None] | None = None,
+) -> Path:
+    """确保 NiceVPN 使用的 openvpn-server@.service 模板单元存在。
+
+    优先复用发行版已安装的服务单元；缺失时才安装仓库自带模板，
+    并将 ExecStart 精确指向当前检测到的 OpenVPN 二进制。
+    """
+
+    binary = Path(openvpn_bin).expanduser()
+    if not binary.is_file():
+        raise FileNotFoundError(f"OpenVPN 二进制不存在: {binary}")
+    binary = binary.resolve()
+
+    existing = _find_openvpn_server_systemd_unit()
+    if existing is not None:
+        _emit(on_output, f"[检查] 已存在 OpenVPN 服务单元，直接复用: {existing}")
+        return existing
+
+    if shutil.which("systemctl") is None:
+        raise RuntimeError("未找到 systemctl，无法安装 OpenVPN 服务端 systemd 单元")
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-install-systemd-fallback.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN systemd 补齐脚本不存在: {script_path}")
+
+    _emit(
+        on_output,
+        "[检查] 未找到 openvpn-server@.service，使用 NiceVPN 自带模板补齐",
+    )
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env({"OPENVPN_BIN": str(binary)}),
+    )
+
+    installed = _OPENVPN_SERVER_UNIT_INSTALL_PATH
+    if installed.is_file():
+        _emit(on_output, f"[完成] OpenVPN 服务单元已安装: {installed}")
+        return installed
+
+    # 脚本执行期间若发行版服务包并发安装，仍接受系统目录中的有效模板。
+    existing = _find_openvpn_server_systemd_unit()
+    if existing is not None:
+        _emit(on_output, f"[完成] 检测到 OpenVPN 服务单元: {existing}")
+        return existing
+
+    raise RuntimeError(
+        "服务单元安装脚本已执行，但未找到 openvpn-server@.service"
+    )
 
 
 def install_easyrsa(
