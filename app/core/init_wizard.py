@@ -225,7 +225,6 @@ class InitWizard:
                 return StepResult(False, f"EasyRSA 自动安装失败: {exc}")
 
         self.config.easyrsa_dir = easyrsa_dir
-        save_config(self.config)
 
         requested_pki = str(data.get("pki_dir") or "").strip()
         configured_pki = str(self.config.get("pki_dir") or "").strip()
