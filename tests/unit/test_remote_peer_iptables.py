@@ -25,7 +25,7 @@ def _remote_tag_plan_exec(state, *, fail_restore=False):
         if "command -v ipset" in command:
             return "", "", 0
         if "ipset list -n" in command:
-            return "\\n".join(sorted(state["sets"])), "", 0
+            return "\n".join(sorted(state["sets"])), "", 0
         if "ipset create " in command:
             parts = shlex.split(command)
             state["sets"].add(parts[parts.index("create") + 1])
