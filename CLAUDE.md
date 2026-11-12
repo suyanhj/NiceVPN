@@ -53,7 +53,10 @@ data/nicevpn.db
 - firewall rules
 - tags / user_tags / group_tags
 - 对端 Mesh 路由支持 `mesh_route_visible_group_ids` 与 `mesh_route_visible_tag_ids`，两者 OR；用户直接标签 + 活动组继承标签参与匹配。
-- 对端远端防火墙标签规则以逻辑 `tag_binding` 存于远端链工作副本，每次推送动态展开当前成员；标签成员变化通过后台 SSH 刷新，失败持久化 `pending_sync`。
+- 对端远端防火墙标签规则以逻辑 `tag_binding` 存于远端链工作副本；推送必须走 `materialize_remote_chain_plan` + `PeerService.apply_remote_peer_filter_chain_plan`，按每个对端独立的内容寻址 `hash:net` ipset 生成 set matcher，禁止回退为逐 IP 展开。
+- 远端标签 ipset 使用 `nvpnpt_<peer-hash>_<content-hash>` 命名，先 staging/swap，再通过 `iptables-restore --noflush` 原子更新用户链；成功后只 GC 当前 peer 命名空间，手工原始规则引用的本 peer 集合要保留，不能触碰其他前缀。
+- 标签成员变化通过后台 SSH 重建集合并刷新规则，失败持久化 `pending_sync`；首次使用时 Debian/RHEL 对端可自动安装 ipset。
+- 标签删除必须同时检查用户/组成员、中心规则、Mesh 路由和远端防火墙引用；服务层与 SQLite repository 都要防止绕过 UI 直接删除。
 - 其它 schema migration 管理的结构化数据
 
 旧版 `data/users/*.json`、`data/groups/*.json`、`data/peers/*.json`、`data/firewall/*.json` **只用于启动迁移**，不是当前运行时主存储。
@@ -168,7 +171,7 @@ openspec/changes/
 ### ipset / iptables
 
 - ipset 使用声明式 reconcile，不恢复旧的 create/update/delete 递增式生命周期。
-- stable name 统一由 `IpsetManager.stable_name` 等正式入口生成。
+- stable name 统一由 `IpsetManager.stable_name` 等正式入口生成；对端远端标签集合由 `remote_peer_ipset.py` 负责独立 peer 命名空间和生命周期。
 - 历史 iptables chain / hook 清理代码如果仍承担升级清理职责，不应当作死代码删除。
 - 防火墙页面 CRUD 与系统级 rebuild 的边界保持清晰。
 
