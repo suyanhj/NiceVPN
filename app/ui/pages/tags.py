@@ -25,7 +25,10 @@ class TagsPage:
         self.list_container = None
 
     @staticmethod
-    def _matches_filter(tag: dict, query: str, mode: str, *, users: int, groups: int, rules: int) -> bool:
+    def _matches_filter(
+        tag: dict, query: str, mode: str, *,
+        users: int, groups: int, rules: int, peer_refs: int = 0,
+    ) -> bool:
         """标签列表的纯数据筛选逻辑，方便回归测试。"""
         keyword = (query or "").strip().casefold()
         if keyword and keyword not in (
@@ -36,7 +39,7 @@ class TagsPage:
             return False
         if mode == "empty" and users + groups != 0:
             return False
-        if mode == "referenced" and rules == 0:
+        if mode == "referenced" and rules + peer_refs == 0:
             return False
         return True
 
@@ -89,7 +92,7 @@ class TagsPage:
         self._refresh()
 
     def _change_detail_tab(self, tag_id: str, kind: str) -> None:
-        if kind not in ("users", "groups", "rules"):
+        if kind not in ("users", "groups", "rules", "peer_refs"):
             return
         self.detail_tabs[tag_id] = kind
         self._refresh_detail(tag_id)
@@ -126,13 +129,18 @@ class TagsPage:
         try:
             tags = self.service.list_all()
             counts_by_tag = self.service.store.list_tag_counts()
+            peer_counts = self.service.peer_tag_reference_counts()
             cards = []
             for tag in tags:
                 tag_id = str(tag["id"])
-                counts = counts_by_tag.get(tag_id, {"users": 0, "groups": 0, "rules": 0})
+                counts = {
+                    **counts_by_tag.get(tag_id, {"users": 0, "groups": 0, "rules": 0}),
+                    "peer_refs": peer_counts.get(tag_id, 0),
+                }
                 if self._matches_filter(
                     tag, self.query, self.filter_mode,
-                    users=counts["users"], groups=counts["groups"], rules=counts["rules"],
+                    users=counts["users"], groups=counts["groups"],
+                    rules=counts["rules"], peer_refs=counts["peer_refs"],
                 ):
                     cards.append((tag, counts))
             if hasattr(self, "total_label"):
@@ -199,7 +207,10 @@ class TagsPage:
                         ui.label(f"组 {counts['groups']}")
                     with ui.element("span").classes("mgmt-meta-item"):
                         ui.icon("shield", size="14px")
-                        ui.label(f"规则 {counts['rules']}")
+                        ui.label(f"中心规则 {counts['rules']}")
+                    with ui.element("span").classes("mgmt-meta-item"):
+                        ui.icon("hub", size="14px")
+                        ui.label(f"对端引用 {counts['peer_refs']}")
                 with ui.element("div").classes("mgmt-actions tags-record-actions"):
                     secondary_action(
                         "编辑", icon="edit",
@@ -208,8 +219,11 @@ class TagsPage:
                     danger_action(
                         "删除", icon="delete",
                         on_click=lambda data=dict(tag): self._show_delete_dialog(data),
-                        disabled=bool(counts["rules"]),
-                        tooltip="该标签被防火墙规则引用，请先删除规则" if counts["rules"] else None,
+                        disabled=bool(counts["rules"] or counts["peer_refs"]),
+                        tooltip=(
+                            "该标签仍被中心规则或对端路由/防火墙引用，请先解除引用"
+                            if counts["rules"] or counts["peer_refs"] else None
+                        ),
                     ).props("dense")
             if expanded:
                 with ui.column().classes("tags-record-details"):
@@ -225,7 +239,8 @@ class TagsPage:
                     ):
                         ui.tab("users", label=f"关联用户 ({counts['users']})", icon="people")
                         ui.tab("groups", label=f"关联组 ({counts['groups']})", icon="folder_shared")
-                        ui.tab("rules", label=f"引用规则 ({counts['rules']})", icon="shield")
+                        ui.tab("rules", label=f"中心规则 ({counts['rules']})", icon="shield")
+                        ui.tab("peer_refs", label=f"对端引用 ({counts['peer_refs']})", icon="hub")
                     with ui.column().classes("tags-detail-panel tags-detail-panels w-full") as detail:
                         self.detail_containers[tag_id] = detail
                         self._render_detail_page(tag_id, kind)
@@ -234,32 +249,55 @@ class TagsPage:
         key = (tag_id, kind)
         page = self.detail_pages.get(key, 1)
         search = self.detail_search.get(key, "")
-        if kind in ("users", "groups"):
+        if kind in ("users", "groups", "peer_refs"):
+            placeholders = {
+                "users": "搜索用户名",
+                "groups": "搜索组名称或 ID",
+                "peer_refs": "搜索对端名称、引用类型或规则",
+            }
             with ui.row().classes("w-full items-center gap-2"):
                 search_input = ui.input(
-                    placeholder="搜索用户名" if kind == "users" else "搜索组名称或 ID",
+                    placeholder=placeholders[kind],
                     value=search,
                 ).props("outlined dense clearable").classes("flex-grow")
                 secondary_action(
                     "查询", icon="search",
                     on_click=lambda: self._apply_detail_search(tag_id, kind, search_input.value),
                 ).props("dense")
-        rows, total = self.service.store.list_tag_detail_page(
-            tag_id, kind, offset=(page - 1) * self.DETAIL_PAGE_SIZE,
-            limit=self.DETAIL_PAGE_SIZE, search=search,
-        )
-        last_page = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
-        if page > last_page:
-            page = last_page
+
+        if kind == "peer_refs":
+            rows = self.service.list_peer_tag_references(tag_id)
+            if search:
+                keyword = search.casefold()
+                rows = [
+                    row for row in rows
+                    if keyword in " ".join(str(value) for value in row.values()).casefold()
+                ]
+            total = len(rows)
+            last_page = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
+            page = min(page, last_page)
             self.detail_pages[key] = page
+            start = (page - 1) * self.DETAIL_PAGE_SIZE
+            rows = rows[start:start + self.DETAIL_PAGE_SIZE]
+        else:
             rows, total = self.service.store.list_tag_detail_page(
                 tag_id, kind, offset=(page - 1) * self.DETAIL_PAGE_SIZE,
                 limit=self.DETAIL_PAGE_SIZE, search=search,
             )
+            last_page = max(1, (total + self.DETAIL_PAGE_SIZE - 1) // self.DETAIL_PAGE_SIZE)
+            if page > last_page:
+                page = last_page
+                self.detail_pages[key] = page
+                rows, total = self.service.store.list_tag_detail_page(
+                    tag_id, kind, offset=(page - 1) * self.DETAIL_PAGE_SIZE,
+                    limit=self.DETAIL_PAGE_SIZE, search=search,
+                )
         if kind == "users":
             self._render_user_members(rows)
         elif kind == "groups":
             self._render_group_members(rows)
+        elif kind == "peer_refs":
+            self._render_peer_references(rows)
         else:
             self._render_rule_refs(rows)
         if total > self.DETAIL_PAGE_SIZE:
@@ -305,6 +343,41 @@ class TagsPage:
                     ui.label(str(info.get("subnet") or "—")).classes(
                         "font-mono text-sm"
                     )
+
+    @staticmethod
+    def _render_peer_references(references: list[dict]) -> None:
+        if not references:
+            ui.label("暂无对端路由或远端防火墙引用").classes("tags-detail-empty")
+            return
+        with ui.column().classes("tags-detail-list w-full"):
+            for reference in references:
+                kind = str(reference.get("reference_type") or "对端配置")
+                peer_name = str(reference.get("peer_name") or reference.get("peer_id") or "未知对端")
+                with ui.row().classes(
+                    "tags-detail-row w-full items-center justify-between gap-3 flex-wrap"
+                ):
+                    with ui.column().classes("gap-0"):
+                        ui.label(f"{peer_name} · {kind}").classes("font-medium")
+                        if kind == "远端防火墙":
+                            detail = (
+                                f"规则 #{reference.get('row_index', '—')} · "
+                                f"优先级 {reference.get('priority', '—')} · "
+                                f"{reference.get('action', '—')} / "
+                                f"{reference.get('protocol', 'ALL')} · "
+                                f"目标 {reference.get('dest_ip') or '*'}:"
+                                f"{reference.get('dest_port') or '*'}"
+                            )
+                            if reference.get("description"):
+                                detail += f" · {reference['description']}"
+                        else:
+                            detail = str(reference.get("description") or "按标签成员下发 Mesh 路由")
+                        ui.label(detail).classes("tags-detail-muted")
+                        ui.label(str(reference.get("peer_id") or "")).classes(
+                            "tags-detail-muted font-mono"
+                        )
+                    ui.badge(
+                        "启用" if reference.get("enabled", True) else "停用"
+                    ).props("outline")
 
     @staticmethod
     def _render_rule_refs(rules: list[dict]) -> None:
