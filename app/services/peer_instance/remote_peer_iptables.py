@@ -479,7 +479,11 @@ def replace_peer_filter_chain_plan_via_ssh(
                 newly_created = reconcile_remote_peer_tag_ipsets(
                     client, sp, peer_id, ipsets, _exec_ssh, timeout=exec_timeout,
                 )
-                # ipset 包安装后，确保内核 xt_set 匹配模块可用。
+                # ipset 包安装后，尽力预加载内核 xt_set；部分发行版为内建模块，modprobe 失败不代表不可用。
+                _exec_ssh(
+                    client, f"{sp}modprobe xt_set >/dev/null 2>&1 || true",
+                    timeout=exec_timeout,
+                )
                 _, set_err, set_code = _exec_ssh(
                     client, f"{sp}iptables -m set -h >/dev/null 2>&1",
                     timeout=exec_timeout,
