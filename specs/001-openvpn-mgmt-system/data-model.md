@@ -227,7 +227,7 @@ active / disabled → [删除] → deleted（触发证书吊销 + CRL 更新）
 | 全局子网唯一且格式合法 | SystemConfig | 初始化时一次性校验 |
 | 组子网不与全局或其他组重叠 | Group | 创建/修改组时 |
 | 活跃用户阻止修改组子网 | Group + User | 修改 Group.subnet 时 |
-| 组内有用户时阻止删除组 | Group + User | 删除 Group 时 |
+| 组被用户、标签、中心防火墙规则或对端 Mesh 路由引用时阻止删除 | Group + User + Tag + FirewallRule + Peer | 删除 Group 时；SQLite 写事务内复核全部关联 |
 | 删除用户必须先吊销证书并更新 CRL | User + Certificate | 删除 User 时（原子事务） |
 | 防火墙规则三重校验（端口/CIDR/优先级） | FirewallRule | 创建/修改规则时 |
 | 下载链接一次性消费 | DownloadLink | GET /download/{token} 时 |
