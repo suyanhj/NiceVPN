@@ -342,21 +342,10 @@ class FirewallRemoteMixin:
         return str(self._remote_peer_select.value or "").strip()
 
     async def _on_remote_pull(self) -> None:
+        """兼容旧按钮入口；统一走带标签绑定保护的拉取调度。"""
         if not self._require_remote_strategy_tab():
             return
-        pid = self._active_remote_peer_id()
-        if not pid:
-            self._notify_for_page("请选择对端", type="warning")
-            return
-        try:
-            snap = await run.io_bound(self._peer_service.fetch_remote_peer_filter_chain_snapshot, pid)
-        except Exception as exc:
-            logger.error("拉取对端链失败 peer=%s: %s", pid, exc)
-            self._notify_for_page(f"拉取失败: {exc}", type="negative")
-            return
-        remote_chain_cache.record_from_fetch(snap, pid)
-        self._notify_for_page("已拉取", type="positive")
-        self._refresh_remote_view()
+        self._schedule_remote_fetch_via_ssh()
 
     async def _apply_remote_cache_to_peer(self, peer_id: str) -> bool:
         """将当前本地工作副本（库内 ``rows``）经 SSH 写回对端机链；与拉取成对，保「真值→改库→推对端」。
