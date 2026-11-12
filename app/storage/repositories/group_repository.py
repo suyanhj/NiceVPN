@@ -178,7 +178,8 @@ class GroupRepositoryMixin:
             (
                 "firewall_rules",
                 f"SELECT owner_id AS ref_id, COUNT(*) AS n FROM firewall_rules "
-                f"WHERE owner_type='group' AND owner_id IN ({placeholders}) GROUP BY owner_id",
+                f"WHERE COALESCE(owner_type, '') IN ('', 'group') "
+                f"AND owner_id IN ({placeholders}) GROUP BY owner_id",
             ),
         )
         for key, sql in queries:
@@ -190,6 +191,8 @@ class GroupRepositoryMixin:
         wanted_set = set(wanted)
         for row in conn.execute("SELECT payload FROM peers").fetchall():
             peer = _load_payload(row["payload"]) or {}
+            if not isinstance(peer, dict):
+                continue
             raw_group_ids = peer.get("mesh_route_visible_group_ids") or []
             if not isinstance(raw_group_ids, (list, tuple, set)):
                 continue
@@ -240,6 +243,12 @@ class GroupRepositoryMixin:
         with self.connection(
             write=True, device_binding_changed=changed,
         ) as conn:
+            root = conn.execute(
+                "SELECT id FROM groups ORDER BY created_at, id LIMIT 1"
+            ).fetchone()
+            if root is not None and str(root["id"]) == gid:
+                raise ValueError("根组是全局组，不允许删除，只允许修改子网")
+
             blockers = self._group_delete_blockers_in_connection(conn, [gid]).get(gid, {})
             reason = self._group_delete_blocker_message(blockers)
             if reason:
