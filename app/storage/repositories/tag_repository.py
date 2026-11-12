@@ -68,15 +68,37 @@ class TagRepositoryMixin:
                 raise ValueError("标签不存在")
 
     def delete_tag(self, tag_id: str) -> None:
+        """仅允许删除没有用户/组成员和中心规则引用的标签。
+
+        检查与 DELETE 在同一 SQLite 写事务内执行，避免并发新增成员/规则绕过保护。
+        对端 Mesh/远端规则位于外部配置与缓存，由 TagService 在调用本方法前检查。
+        """
         changed = [False]
+        tid = str(tag_id)
         with self.connection(
             write=True, device_binding_changed=changed,
         ) as conn:
             old = conn.execute(
-                "SELECT device_binding_exempt FROM tags WHERE id=?", (str(tag_id),)
+                "SELECT device_binding_exempt FROM tags WHERE id=?", (tid,)
             ).fetchone()
-            changed[0] = bool(old and old[0])
-            conn.execute("DELETE FROM tags WHERE id=?", (str(tag_id),))
+            if old is None:
+                raise ValueError("标签不存在")
+            users = int(conn.execute(
+                "SELECT COUNT(*) FROM user_tags WHERE tag_id=?", (tid,)
+            ).fetchone()[0])
+            groups = int(conn.execute(
+                "SELECT COUNT(*) FROM group_tags WHERE tag_id=?", (tid,)
+            ).fetchone()[0])
+            rules = int(conn.execute(
+                "SELECT COUNT(*) FROM firewall_rules WHERE owner_type='tag' AND owner_id=?",
+                (tid,),
+            ).fetchone()[0])
+            if users or groups or rules:
+                raise ValueError(
+                    f"标签仍在使用中：用户 {users} 个、组 {groups} 个、中心规则 {rules} 条"
+                )
+            changed[0] = bool(old[0])
+            conn.execute("DELETE FROM tags WHERE id=?", (tid,))
 
     def set_tag_members(
         self, tag_id: str, *, usernames: Sequence[str] = (), group_ids: Sequence[str] = (),

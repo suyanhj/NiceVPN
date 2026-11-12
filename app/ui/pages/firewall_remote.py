@@ -358,13 +358,18 @@ class FirewallRemoteMixin:
         chain = str(cache.get("chain") or IptablesManager.peer_chain_name_for_id(peer_id))
         ce = bool(cache.get("chain_exists"))
         rows = list(cache.get("rows") or [])
-        from app.services.firewall.remote_tag_rules import materialize_remote_chain_rows
+        from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
         from app.services.firewall.tag_service import TagService
         try:
-            rests = materialize_remote_chain_rows(
-                rows, tag_service=TagService(),
+            plan = materialize_remote_chain_plan(
+                rows, peer_id=peer_id, tag_service=TagService(),
             )
-            await run.io_bound(self._peer_service.apply_remote_peer_filter_chain_rests, peer_id, rests)
+            rests = list(plan["rests"])
+            ipsets = list(plan["ipsets"])
+            await run.io_bound(
+                self._peer_service.apply_remote_peer_filter_chain_plan,
+                peer_id, rests, ipsets,
+            )
             remote_chain_cache.record_after_apply(peer_id, chain, bool(ce), rows, True, None)
         except Exception as exc:
             logger.error("写回对端链失败 peer=%s: %s", peer_id, exc)

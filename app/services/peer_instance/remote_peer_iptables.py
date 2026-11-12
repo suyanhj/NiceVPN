@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+import threading
 from typing import Any
 
 import paramiko
@@ -22,6 +23,14 @@ from app.services.peer_instance.ccd_merge import sorted_unique_ipv4_cidrs
 from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_from_row
 from app.utils.cidr import validate_iptables_rest_line_addr_tokens
 from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
+from app.services.peer_instance.remote_peer_ipset import (
+    RemoteIpsetSpec,
+    cleanup_remote_peer_tag_ipsets,
+    discard_remote_peer_tag_ipsets,
+    gc_remote_peer_tag_ipsets,
+    reconcile_remote_peer_tag_ipsets,
+    referenced_peer_tag_ipsets,
+)
 
 logger = logging.getLogger("peer.remote")
 
@@ -101,6 +110,12 @@ def _remove_remote_peer_chain_and_jump(
     _exec_ssh(client, f"{sp}iptables -X {shlex.quote(chain)} 2>/dev/null || true", timeout=timeout)
 
 
+def _is_managed_peer_global_allow_rule(rest: str, peer_id: str) -> bool:
+    """识别由站点组网维护的兜底 ACCEPT，不把它当作用户防火墙规则。"""
+    body = str(rest or "").strip()
+    return COMMENT_FWD_TMPL.format(peer_id=str(peer_id or "").strip()) in body
+
+
 def _peer_site_rules_already_current(
     client: paramiko.SSHClient,
     peer_id: str,
@@ -128,7 +143,14 @@ def _peer_site_rules_already_current(
     forward_peer_lines = [
         line for line in out_forward.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line
     ]
-    chain_peer_lines = [line for line in out_chain.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line]
+    chain_rules = [
+        line.strip() for line in out_chain.splitlines()
+        if line.strip().startswith(f"-A {chain} ")
+    ]
+    chain_peer_lines = [
+        line for line in chain_rules
+        if _is_managed_peer_global_allow_rule(line, peer_id)
+    ]
     nat_peer_lines = [line for line in out_nat.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line]
 
     c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
@@ -136,8 +158,14 @@ def _peer_site_rules_already_current(
         part in forward_peer_lines[0] for part in (c_jump, f"-j {chain}")
     )
     c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
-    fwd_ok = len(chain_peer_lines) == 1 and all(
-        part in chain_peer_lines[0] for part in (f"-s {global_subnet}", c_fwd, "-j ACCEPT")
+    fwd_ok = (
+        len(chain_peer_lines) == 1
+        and bool(chain_rules)
+        and chain_rules[-1] == chain_peer_lines[0]
+        and all(
+            part in chain_peer_lines[0]
+            for part in (f"-s {global_subnet}", c_fwd, "-j ACCEPT")
+        )
     )
     if not jump_ok or not fwd_ok:
         return False
@@ -175,91 +203,130 @@ def apply_peer_site_iptables_via_ssh(
     gs = str(global_subnet or "").strip()
     if not gs:
         raise ValueError("global_subnet 未配置，请在系统设置中填写后再下发对端规则")
-    warnings: list[str] = []
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        out_act, _, c_act = _exec_ssh(client, "systemctl is-active firewalld 2>/dev/null", timeout=10)
-        if c_act == 0 and out_act.strip() == "active":
-            msg = "远端 firewalld 处于 active，iptables-nft 规则可能被 firewalld 覆盖，请现网核对"
-            logger.warning(msg)
-            warnings.append(msg)
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        warnings: list[str] = []
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            out_act, _, c_act = _exec_ssh(client, "systemctl is-active firewalld 2>/dev/null", timeout=10)
+            if c_act == 0 and out_act.strip() == "active":
+                msg = "远端 firewalld 处于 active，iptables-nft 规则可能被 firewalld 覆盖，请现网核对"
+                logger.warning(msg)
+                warnings.append(msg)
 
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chain = IptablesManager.peer_chain_name_for_id(peer_id)
-        want_masquerade = bool(row.get("masquerade_on_peer"))
-        if not force and _peer_site_rules_already_current(
-            client,
-            peer_id,
-            chain,
-            sp,
-            gs,
-            want_masquerade,
-            timeout=exec_timeout,
-        ):
-            logger.info("对端 SSH iptables 已是最新，跳过重写 peer=%s masq=%s", peer_id, int(want_masquerade))
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chain = IptablesManager.peer_chain_name_for_id(peer_id)
+            want_masquerade = bool(row.get("masquerade_on_peer"))
+            if not force and _peer_site_rules_already_current(
+                client,
+                peer_id,
+                chain,
+                sp,
+                gs,
+                want_masquerade,
+                timeout=exec_timeout,
+            ):
+                logger.info("对端 SSH iptables 已是最新，跳过重写 peer=%s masq=%s", peer_id, int(want_masquerade))
+                return {
+                    "ok": True,
+                    "peer_id": peer_id,
+                    "global_subnet": gs,
+                    "removed_prior": 0,
+                    "masquerade_rules": int(want_masquerade),
+                    "already_current": True,
+                    "warnings": warnings,
+                }
+
+            # 只清理本 peer 的 FORWARD 跳转与 NAT 规则，不再 flush 整条用户链；
+            # 用户链内的远端防火墙规则（尤其是标签 ipset matcher）必须保留。
+            removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
+
+            chain_out, chain_err, chain_code = _exec_ssh(
+                client, f"{sp}iptables -S {shlex.quote(chain)}", timeout=exec_timeout,
+            )
+            removed_base = 0
+            if chain_code == 0:
+                prefix = f"-A {chain} "
+                peer_marker = f"peer={peer_id}"
+                for line in chain_out.splitlines():
+                    current = line.strip()
+                    if not current.startswith(prefix):
+                        continue
+                    if peer_marker not in current or "role=fwd-global" not in current:
+                        continue
+                    delete_command = (
+                        f"{sp}iptables -D {shlex.quote(chain)} "
+                        f"{current[len(prefix):]}"
+                    )
+                    _, delete_err, delete_code = _exec_ssh(
+                        client, delete_command, timeout=exec_timeout,
+                    )
+                    if delete_code != 0:
+                        raise RuntimeError(
+                            f"更新对端全局放行规则失败: {(delete_err or '').strip()}"
+                        )
+                    removed_base += 1
+            elif _chain_missing_message(f"{chain_err or ''} {chain_out or ''}"):
+                create_command = f"{sp}iptables -N {shlex.quote(chain)}"
+                _, create_err, create_code = _exec_ssh(
+                    client, create_command, timeout=exec_timeout,
+                )
+                if create_code != 0:
+                    raise RuntimeError(
+                        f"创建对端链 {chain} 失败: {(create_err or '').strip()}"
+                    )
+            else:
+                raise RuntimeError(
+                    f"读取对端链 {chain} 失败: {(chain_err or chain_out or '').strip()}"
+                )
+
+            c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
+            c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
+            # 全局网段 ACCEPT 是兜底规则，必须放在用户/标签策略之后，不能抢先绕过 DROP/REJECT。
+            fw_rule = (
+                f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
+                f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
+            )
+            _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
+            if cf != 0:
+                raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
+            jump_cmd = (
+                f"{sp}iptables -I FORWARD 1 -m comment --comment {shlex.quote(c_jump)} "
+                f"-j {shlex.quote(chain)}"
+            )
+            _, err_j, cj = _exec_ssh(client, jump_cmd, timeout=exec_timeout)
+            if cj != 0:
+                raise RuntimeError(f"写入 FORWARD 跳转至 {chain} 失败: {err_j.strip()}")
+
+            masq_n = 0
+            if want_masquerade:
+                c_nat = COMMENT_MASQ_TMPL.format(peer_id=peer_id, idx=0)
+                nat_cmd = (
+                    f"{sp}iptables -t nat -I POSTROUTING 1 -s {shlex.quote(gs)} "
+                    f"-m comment --comment {shlex.quote(c_nat)} -j MASQUERADE"
+                )
+                _, err_n, cn = _exec_ssh(client, nat_cmd, timeout=exec_timeout)
+                if cn != 0:
+                    raise RuntimeError(f"写入 POSTROUTING SNAT 失败: {err_n.strip()}")
+                masq_n = 1
+
+            logger.info(
+                "对端 SSH iptables 下发成功 peer=%s removed=%s masq=%s",
+                peer_id,
+                removed,
+                masq_n,
+            )
             return {
                 "ok": True,
                 "peer_id": peer_id,
                 "global_subnet": gs,
-                "removed_prior": 0,
-                "masquerade_rules": int(want_masquerade),
-                "already_current": True,
+                "removed_prior": removed + removed_base,
+                "masquerade_rules": masq_n,
+                "already_current": False,
                 "warnings": warnings,
             }
-
-        _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
-        removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-
-        c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
-        c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
-        mk = f"{sp}iptables -N {shlex.quote(chain)}"
-        _, err_n, cn = _exec_ssh(client, mk, timeout=exec_timeout)
-        if cn != 0:
-            logger.warning("创建链 %s（可能已存在将依赖后续 -A）: %s", chain, (err_n or "").strip())
-        fw_rule = (
-            f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
-            f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
-        )
-        _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
-        if cf != 0:
-            raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
-        jump_cmd = (
-            f"{sp}iptables -I FORWARD 1 -m comment --comment {shlex.quote(c_jump)} "
-            f"-j {shlex.quote(chain)}"
-        )
-        _, err_j, cj = _exec_ssh(client, jump_cmd, timeout=exec_timeout)
-        if cj != 0:
-            raise RuntimeError(f"写入 FORWARD 跳转至 {chain} 失败: {err_j.strip()}")
-
-        masq_n = 0
-        if want_masquerade:
-            c_nat = COMMENT_MASQ_TMPL.format(peer_id=peer_id, idx=0)
-            nat_cmd = (
-                f"{sp}iptables -t nat -I POSTROUTING 1 -s {shlex.quote(gs)} "
-                f"-m comment --comment {shlex.quote(c_nat)} -j MASQUERADE"
-            )
-            _, err_n, cn = _exec_ssh(client, nat_cmd, timeout=exec_timeout)
-            if cn != 0:
-                raise RuntimeError(f"写入 POSTROUTING SNAT 失败: {err_n.strip()}")
-            masq_n = 1
-
-        logger.info(
-            "对端 SSH iptables 下发成功 peer=%s removed=%s masq=%s",
-            peer_id,
-            removed,
-            masq_n,
-        )
-        return {
-            "ok": True,
-            "peer_id": peer_id,
-            "global_subnet": gs,
-            "removed_prior": removed,
-            "masquerade_rules": masq_n,
-            "already_current": False,
-            "warnings": warnings,
-        }
-    finally:
-        client.close()
+        finally:
+            client.close()
 
 
 def remove_peer_site_iptables_via_ssh(row: dict, *, exec_timeout: int = 120) -> dict[str, Any]:
@@ -267,16 +334,27 @@ def remove_peer_site_iptables_via_ssh(row: dict, *, exec_timeout: int = 120) -> 
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chain = IptablesManager.peer_chain_name_for_id(peer_id)
-        _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
-        removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-        logger.info("对端 SSH iptables 已清理 peer=%s removed=%s", peer_id, removed)
-        return {"ok": True, "peer_id": peer_id, "removed": removed}
-    finally:
-        client.close()
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chain = IptablesManager.peer_chain_name_for_id(peer_id)
+            _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
+            removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
+            removed_sets = cleanup_remote_peer_tag_ipsets(
+                client, sp, peer_id, _exec_ssh, timeout=exec_timeout,
+            )
+            logger.info(
+                "对端 SSH iptables 已清理 peer=%s removed=%s tag_ipsets=%s",
+                peer_id, removed, len(removed_sets),
+            )
+            return {
+                "ok": True, "peer_id": peer_id,
+                "removed": removed, "removed_tag_ipsets": len(removed_sets),
+            }
+        finally:
+            client.close()
 
 
 def _filter_chain_rests_from_iptables_s(out: str, chain: str) -> list[str]:
@@ -316,37 +394,52 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
-    chain = IptablesManager.peer_chain_name_for_id(peer_id)
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chq = shlex.quote(chain)
-        f_out, f_err, f_code = _exec_ssh(client, f"{sp}iptables -S FORWARD", timeout=exec_timeout)
-        if f_code != 0:
-            raise RuntimeError(f"iptables -S FORWARD 失败: {(f_err or f_out or '').strip()}")
-        forward_refs = _forward_lines_jumping_to_chain(f_out, chain)
-        out, err, code = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
-        if code != 0:
-            msg = f"{(err or '').strip()}\n{(out or '').strip()}"
-            if _chain_missing_message(msg):
-                return {
-                    "ok": True,
-                    "chain": chain,
-                    "chain_exists": False,
-                    "chain_rests": [],
-                    "forward_refs": forward_refs,
-                }
-            raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
-        rests = _filter_chain_rests_from_iptables_s(out, chain)
-        return {
-            "ok": True,
-            "chain": chain,
-            "chain_exists": True,
-            "chain_rests": rests,
-            "forward_refs": forward_refs,
-        }
-    finally:
-        client.close()
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        chain = IptablesManager.peer_chain_name_for_id(peer_id)
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chq = shlex.quote(chain)
+            f_out, f_err, f_code = _exec_ssh(client, f"{sp}iptables -S FORWARD", timeout=exec_timeout)
+            if f_code != 0:
+                raise RuntimeError(f"iptables -S FORWARD 失败: {(f_err or f_out or '').strip()}")
+            forward_refs = _forward_lines_jumping_to_chain(f_out, chain)
+            out, err, code = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
+            if code != 0:
+                msg = f"{(err or '').strip()}\n{(out or '').strip()}"
+                if _chain_missing_message(msg):
+                    return {
+                        "ok": True,
+                        "chain": chain,
+                        "chain_exists": False,
+                        "chain_rests": [],
+                        "forward_refs": forward_refs,
+                    }
+                raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
+            rests = [
+                rest for rest in _filter_chain_rests_from_iptables_s(out, chain)
+                if not _is_managed_peer_global_allow_rule(rest, peer_id)
+            ]
+            return {
+                "ok": True,
+                "chain": chain,
+                "chain_exists": True,
+                "chain_rests": rests,
+                "forward_refs": forward_refs,
+            }
+        finally:
+            client.close()
+
+
+_REMOTE_CHAIN_LOCKS: dict[str, Any] = {}
+_REMOTE_CHAIN_LOCKS_GUARD = threading.Lock()
+
+
+def _remote_chain_lock(peer_id: str):
+    """同一对端的标签同步、手动推送串行执行，避免集合与规则交叉切换。"""
+    with _REMOTE_CHAIN_LOCKS_GUARD:
+        return _REMOTE_CHAIN_LOCKS.setdefault(str(peer_id), threading.Lock())
 
 
 def replace_peer_filter_chain_rests_via_ssh(
@@ -355,43 +448,130 @@ def replace_peer_filter_chain_rests_via_ssh(
     *,
     exec_timeout: int = 120,
 ) -> None:
-    """清空对端本对端 ``VPN_PEER_*`` 链后按序 ``-A`` 写回。``rests`` 为与 ``-S`` 解析得到的片段同形字符串。"""
+    """兼容旧调用；统一进入原子规则计划写回路径。"""
+    replace_peer_filter_chain_plan_via_ssh(
+        row, rests, [], exec_timeout=exec_timeout,
+    )
+
+
+def replace_peer_filter_chain_plan_via_ssh(
+    row: dict,
+    rests: list[str],
+    ipsets: list[RemoteIpsetSpec],
+    *,
+    exec_timeout: int = 180,
+) -> None:
+    """原子更新对端用户链，并声明式管理本对端的标签 ipset。
+
+    顺序：预建内容寻址 ipset → iptables-restore 原子替换链 → GC 孤儿集合。
+    如果准备集合失败或 iptables-restore 失败，旧链不被清空；本轮新建集合会回收。
+    """
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
     expect = IptablesManager.peer_chain_name_for_id(peer_id)
-    for r in rests:
-        s = (r or "").strip()
-        if s and (("\n" in s) or ("\r" in s) or ("\x00" in s)):
+    clean_rests: list[str] = []
+    for raw in rests:
+        body = str(raw or "").strip()
+        if not body:
+            continue
+        if any(char in body for char in ("\n", "\r", "\x00")):
             raise ValueError("单条规则含非法字符")
-    for r in rests:
-        s = (r or "").strip()
-        if s:
-            # 在 ``-F`` 清链**之前**校验，避免已下发失败且远端链已被清空
-            validate_iptables_rest_line_addr_tokens(s)
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chq = shlex.quote(expect)
-        pout, perr, pcode = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
-        if pcode != 0:
-            msg = f"{(perr or '').strip()}\n{(pout or '').strip()}"
-            if _chain_missing_message(msg):
-                raise ValueError(
-                    f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
+        validate_iptables_rest_line_addr_tokens(body)
+        clean_rests.append(body)
+
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chq = shlex.quote(expect)
+            pout, perr, pcode = _exec_ssh(
+                client, f"{sp}iptables -S {chq}", timeout=exec_timeout,
+            )
+            if pcode != 0:
+                msg = f"{(perr or '').strip()}\n{(pout or '').strip()}"
+                if _chain_missing_message(msg):
+                    raise ValueError(
+                        f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
+                    )
+                raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
+
+            # 站点组网的 global_subnet ACCEPT 不是用户策略；拉取时隐藏它，写回时保留并放在链尾。
+            chain_prefix = f"-A {expect} "
+            site_fallbacks = list(dict.fromkeys(
+                line.strip()[len(chain_prefix):].strip()
+                for line in pout.splitlines()
+                if line.strip().startswith(chain_prefix)
+                and _is_managed_peer_global_allow_rule(
+                    line.strip()[len(chain_prefix):], peer_id,
                 )
-            raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
-        _exec_ssh(client, f"{sp}iptables -F {chq}", timeout=exec_timeout)
-        n = 0
-        for r in rests:
-            body = (r or "").strip()
-            if not body:
-                continue
-            cmd = f"{sp}iptables -A {chq} {body}"
-            o2, e2, c2 = _exec_ssh(client, cmd, timeout=exec_timeout)
-            if c2 != 0:
-                raise RuntimeError(f"追加对端链规则失败: {cmd}\n{(e2 or o2 or '').strip()}")
-            n += 1
-        logger.debug("对端链 %s 已写回 %s 条", expect, n)
-    finally:
-        client.close()
+            ))
+            clean_rests = [
+                body for body in clean_rests
+                if not _is_managed_peer_global_allow_rule(body, peer_id)
+            ]
+
+            newly_created: set[str] = set()
+            if ipsets:
+                newly_created = reconcile_remote_peer_tag_ipsets(
+                    client, sp, peer_id, ipsets, _exec_ssh, timeout=exec_timeout,
+                )
+                # ipset 包安装后，尽力预加载内核 xt_set；部分发行版为内建模块，modprobe 失败不代表不可用。
+                _exec_ssh(
+                    client, f"{sp}modprobe xt_set >/dev/null 2>&1 || true",
+                    timeout=exec_timeout,
+                )
+                _, set_err, set_code = _exec_ssh(
+                    client, f"{sp}iptables -m set -h >/dev/null 2>&1",
+                    timeout=exec_timeout,
+                )
+                if set_code != 0:
+                    _, mod_err, mod_code = _exec_ssh(
+                        client, f"{sp}modprobe xt_set", timeout=exec_timeout,
+                    )
+                    _, retry_err, retry_code = _exec_ssh(
+                        client, f"{sp}iptables -m set -h >/dev/null 2>&1",
+                        timeout=exec_timeout,
+                    )
+                    if retry_code != 0:
+                        discard_remote_peer_tag_ipsets(
+                            client, sp, newly_created, _exec_ssh, timeout=exec_timeout,
+                        )
+                        raise RuntimeError(
+                            "对端 iptables 的 set 匹配模块不可用；"
+                            f"modprobe: {(mod_err or '').strip()}；"
+                            f"iptables: {(retry_err or set_err or '').strip()}"
+                        )
+
+            payload_lines = ["*filter", f"-F {expect}"]
+            payload_lines.extend(f"-A {expect} {body}" for body in clean_rests)
+            # 用户策略先匹配；未命中时再按原站点语义放行中心 VPN 地址池。
+            payload_lines.extend(f"-A {expect} {body}" for body in site_fallbacks)
+            payload_lines.append("COMMIT")
+            payload = "\n".join(payload_lines) + "\n"
+            command = (
+                f"printf %s {shlex.quote(payload)} | "
+                f"{sp}iptables-restore -w 5 --noflush"
+            )
+            out, err, code = _exec_ssh(client, command, timeout=exec_timeout)
+            if code != 0:
+                discard_remote_peer_tag_ipsets(
+                    client, sp, newly_created, _exec_ssh, timeout=exec_timeout,
+                )
+                raise RuntimeError(
+                    "对端 iptables-restore 原子更新失败，旧规则保持不变："
+                    f"{(err or out or '').strip()[-2000:]}"
+                )
+
+            keep_names = {spec.name for spec in ipsets}
+            keep_names.update(referenced_peer_tag_ipsets(clean_rests + site_fallbacks, peer_id))
+            removed = gc_remote_peer_tag_ipsets(
+                client, sp, peer_id, keep_names, _exec_ssh, timeout=exec_timeout,
+            )
+            logger.info(
+                "对端链原子写回完成 peer=%s rules=%s tag_ipsets=%s gc=%s",
+                peer_id[:8], len(clean_rests) + len(site_fallbacks), len(ipsets), len(removed),
+            )
+        finally:
+            client.close()

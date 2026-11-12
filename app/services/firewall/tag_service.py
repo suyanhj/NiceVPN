@@ -29,9 +29,18 @@ class TagService:
         return self.store.get_tag(tag_id) or {}
 
     def delete(self, tag_id: str) -> None:
-        """拒绝删除仍有防火墙规则引用的标签，避免悬空规则。"""
+        """仅允许删除完全未使用的标签；成员与中心规则由仓储层再次原子校验。"""
         if self.store.get_tag(tag_id) is None:
             raise ValueError("标签不存在")
+
+        members = self.store.get_tag_members(tag_id)
+        user_count = len(members.get("usernames") or [])
+        group_count = len(members.get("group_ids") or [])
+        if user_count or group_count:
+            raise ValueError(
+                f"标签仍关联 {user_count} 个用户、{group_count} 个组，请先解除全部成员关联"
+            )
+
         referenced = [
             row for row in self.store.list_firewall_rules()
             if row.get("owner_type") == "tag" and str(row.get("owner_id")) == str(tag_id)

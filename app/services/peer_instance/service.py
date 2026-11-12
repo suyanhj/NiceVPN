@@ -263,13 +263,26 @@ class PeerService:
         return fetch_peer_filter_chain_snapshot_via_ssh(row)
 
     def apply_remote_peer_filter_chain_rests(self, peer_id: str, rests: list[str]) -> None:
-        """经 SSH 按序回写对端本 peer 的 filter 用户链（仅该链，空列表则清链）。"""
+        """兼容原始规则调用；通过原子 iptables-restore 回写对端本 peer 用户链。"""
         from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_rests_via_ssh
 
         row = self.get(peer_id)
         if not row:
             raise ValueError(f"对端实例不存在: {peer_id}")
         replace_peer_filter_chain_rests_via_ssh(row, rests)
+
+    def apply_remote_peer_filter_chain_plan(
+        self, peer_id: str, rests: list[str], ipsets: list | None = None,
+    ) -> None:
+        """经 SSH 原子应用对端防火墙规则与标签 ipset 完整计划。"""
+        from app.services.peer_instance.remote_peer_iptables import (
+            replace_peer_filter_chain_plan_via_ssh,
+        )
+
+        row = self.get(peer_id)
+        if not row:
+            raise ValueError(f"对端实例不存在: {peer_id}")
+        replace_peer_filter_chain_plan_via_ssh(row, rests, list(ipsets or []))
 
     def deploy_peer_ovpn_via_ssh(self, peer_id: str, *, remote_path: str | None = None) -> dict:
         """经 SSH 将本地 ``OVPN_PROFILES_DIR/<绑定用户>.ovpn`` 上传到对端。

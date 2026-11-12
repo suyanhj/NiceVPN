@@ -124,6 +124,7 @@ def remote_rests_from_create_fields(
     protocol: str,
     dest_ip: str | None,
     dest_port: str | None,
+    source_set: str | None = None,
 ) -> list[str]:
     """与中心页「新建规则」相同的源/目标字段，生成对端用户链 ``-A <chain>`` 之后的 ``rest`` 列表。
 
@@ -158,6 +159,36 @@ def remote_rests_from_create_fields(
         dest_port=dp,
     )
     dest = (dest_ip or "").strip() or None
+    set_name = str(source_set or "").strip()
+    if set_name:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,30}", set_name):
+            raise ValueError("ipset 名称包含非法字符或超过 31 个字符")
+        if source_ips or (source_subnet or "").strip():
+            raise ValueError("ipset 来源不能与静态源 IP/CIDR 同时指定")
+        if dest:
+            for part in dest.split(","):
+                token = part.strip()
+                if token:
+                    validate_iptables_addr_or_cidr(token)
+        out: list[str] = []
+        target = {"accept": "ACCEPT", "drop": "DROP", "reject": "REJECT"}[act]
+        for variant in _proto_port_variants(p, dp):
+            parts = [f"-m set --match-set {set_name} src"]
+            if dest:
+                parts.append(f"-d {dest}")
+            proto = variant.get("proto")
+            if proto:
+                parts.extend(["-p", str(proto)])
+            if variant.get("multiport"):
+                parts.extend(["-m multiport --dports", str(variant["multiport"])])
+            elif variant.get("dport"):
+                parts.extend(["--dport", str(variant["dport"])])
+            parts.extend(["-j", target])
+            line = " ".join(parts)
+            validate_iptables_rest_line_addr_tokens(line)
+            out.append(line)
+        return out
+
     src_list: list[str | None] = []
     if source_ips:
         for ip in source_ips:

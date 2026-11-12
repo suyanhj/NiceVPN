@@ -178,6 +178,41 @@ def test_failed_firewall_refresh_restores_tag_associations(store, monkeypatch):
     assert store.list_entity_tag_ids("user", "alice") == ["tag1"]
 
 
+def test_tag_delete_blocked_while_user_or_group_memberships_remain(store):
+    store.create_tag("tag-members", "有关联成员")
+    store.set_tag_members(
+        "tag-members", usernames=["alice"], group_ids=["g1"],
+    )
+
+    with pytest.raises(ValueError, match="仍关联 1 个用户、1 个组"):
+        TagService(store).delete("tag-members")
+    assert store.get_tag("tag-members") is not None
+
+    # 解除全部成员后，未被规则/对端引用的标签允许删除。
+    store.set_tag_members("tag-members", usernames=[], group_ids=[])
+    TagService(store).delete("tag-members")
+    assert store.get_tag("tag-members") is None
+
+
+def test_repository_rejects_direct_delete_while_membership_or_rule_exists(store):
+    store.create_tag("tag-storage-guard", "仓储保护")
+    store.set_tag_members("tag-storage-guard", usernames=["alice"])
+
+    with pytest.raises(ValueError, match="仍在使用中"):
+        store.delete_tag("tag-storage-guard")
+    assert store.get_tag("tag-storage-guard") is not None
+
+    store.set_tag_members("tag-storage-guard", usernames=[])
+    store.replace_firewall_owner("tag-storage-guard", [
+        FirewallRule(
+            id="tag-storage-rule", owner_type="tag", owner_id="tag-storage-guard",
+            action="drop", priority=10, enabled=False,
+        ).model_dump()
+    ])
+    with pytest.raises(ValueError, match="仍在使用中"):
+        store.delete_tag("tag-storage-guard")
+
+
 def test_tag_delete_rejected_while_rule_references_tag(store):
     service = TagService(store)
     store.create_tag("tag1", "核心")
@@ -216,6 +251,13 @@ def test_tags_page_list_filters_and_independent_expansion_state():
     assert match(tag, "", "referenced", users=0, groups=0, rules=1)
     assert match(tag, "", "referenced", users=0, groups=0, rules=0, peer_refs=1)
     assert not match(tag, "无关", "all", users=1, groups=1, rules=1)
+
+    from app.ui.pages.tags import TagsPage
+    assert TagsPage._delete_block_reason({"users": 1}) is not None
+    assert TagsPage._delete_block_reason({"groups": 1}) is not None
+    assert TagsPage._delete_block_reason({"rules": 1}) is not None
+    assert TagsPage._delete_block_reason({"peer_refs": 1}) is not None
+    assert TagsPage._delete_block_reason({}) is None
 
     page = TagsPage()
     page.expanded_tags = set()
