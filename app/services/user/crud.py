@@ -148,7 +148,7 @@ class UserService:
                        {"group_id": group_id}, "success")
         from app.services.peer_instance.service import PeerService
 
-        PeerService().sync_all_mesh_push_routes_in_ccd()
+        PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
         return user
 
     def _write_ovpn_from_current_material(
@@ -437,7 +437,7 @@ class UserService:
 
             from app.services.peer_instance.service import PeerService
 
-            PeerService().sync_all_mesh_push_routes_in_ccd()
+            PeerService(store=self.store).sync_all_mesh_push_routes_in_ccd()
             self._kill_client_session(username)
             from app.services.firewall.tag_service import TagService
             TagService(self.store).refresh_if_referenced(
