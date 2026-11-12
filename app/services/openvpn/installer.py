@@ -174,7 +174,7 @@ def install_openvpn_server_systemd_from_staged_source(
 def _find_openvpn_source_dir(version: str | None = None) -> Path | None:
     """查找 NiceVPN 编译流程保留的 OpenVPN 源码目录。"""
 
-    source_root = Path(os.environ.get("OPENVPN_SRC_ROOT", str(_OPENVPN_SOURCE_ROOT)))
+    source_root = Path(os.environ.get("OPENVPN_SRC_ROOT") or _OPENVPN_SOURCE_ROOT)
     template_name = Path("distro/systemd/openvpn-server@.service.in")
 
     if version:
