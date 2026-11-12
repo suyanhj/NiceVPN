@@ -45,7 +45,7 @@ http://<主机>:8880/
 
 未完成初始化时会进入 First Run Setup。
 
-初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA；同时检查 `openvpn-server@.service` 模板单元；系统未提供时，会使用项目自带 systemd 模板补齐，并让 `ExecStart` 指向检测到的 OpenVPN 二进制，不重新编译 OpenVPN，也不覆盖发行版已有的服务单元。
+初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA。同时检查 systemd 中是否已有 OpenVPN server 服务单元；没有时，复用项目原有的 OpenVPN 源码模板生成脚本补齐服务文件，不重新编译 OpenVPN。
 
 正式 Vue 运行产物已经提交在 `app/ui/vue/dist/`，普通生产启动**不需要 Node/npm，也不需要 Docker 来构建前端**。
 
