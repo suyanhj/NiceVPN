@@ -36,6 +36,8 @@ def _remote_tag_plan_exec(state, *, fail_restore=False):
             parts = shlex.split(command)
             state["sets"].discard(parts[-1])
             return "", "", 0
+        if "modprobe xt_set" in command:
+            return "", "", 0
         if "iptables -m set -h" in command:
             return "", "", 0
         if "iptables-restore" in command:
