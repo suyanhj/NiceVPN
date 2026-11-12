@@ -22,6 +22,14 @@ from app.services.peer_instance.ccd_merge import sorted_unique_ipv4_cidrs
 from app.services.peer_instance.peer_ssh_connect import connect_peer_ssh_client_from_row
 from app.utils.cidr import validate_iptables_rest_line_addr_tokens
 from app.services.peer_instance.remote_ssh_exec import exec_ssh as _exec_ssh
+from app.services.peer_instance.remote_peer_ipset import (
+    RemoteIpsetSpec,
+    cleanup_remote_peer_tag_ipsets,
+    discard_remote_peer_tag_ipsets,
+    gc_remote_peer_tag_ipsets,
+    reconcile_remote_peer_tag_ipsets,
+    referenced_peer_tag_ipsets,
+)
 
 logger = logging.getLogger("peer.remote")
 
@@ -273,8 +281,17 @@ def remove_peer_site_iptables_via_ssh(row: dict, *, exec_timeout: int = 120) -> 
         chain = IptablesManager.peer_chain_name_for_id(peer_id)
         _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
         removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-        logger.info("对端 SSH iptables 已清理 peer=%s removed=%s", peer_id, removed)
-        return {"ok": True, "peer_id": peer_id, "removed": removed}
+        removed_sets = cleanup_remote_peer_tag_ipsets(
+            client, sp, peer_id, _exec_ssh, timeout=exec_timeout,
+        )
+        logger.info(
+            "对端 SSH iptables 已清理 peer=%s removed=%s tag_ipsets=%s",
+            peer_id, removed, len(removed_sets),
+        )
+        return {
+            "ok": True, "peer_id": peer_id,
+            "removed": removed, "removed_tag_ipsets": len(removed_sets),
+        }
     finally:
         client.close()
 
@@ -349,49 +366,125 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
         client.close()
 
 
+_REMOTE_CHAIN_LOCKS: dict[str, Any] = {}
+_REMOTE_CHAIN_LOCKS_GUARD = __import__("threading").Lock()
+
+
+def _remote_chain_lock(peer_id: str):
+    """同一对端的标签同步、手动推送串行执行，避免集合与规则交叉切换。"""
+    with _REMOTE_CHAIN_LOCKS_GUARD:
+        return _REMOTE_CHAIN_LOCKS.setdefault(str(peer_id), __import__("threading").Lock())
+
+
 def replace_peer_filter_chain_rests_via_ssh(
     row: dict,
     rests: list[str],
     *,
     exec_timeout: int = 120,
 ) -> None:
-    """清空对端本对端 ``VPN_PEER_*`` 链后按序 ``-A`` 写回。``rests`` 为与 ``-S`` 解析得到的片段同形字符串。"""
+    """兼容旧调用；统一进入原子规则计划写回路径。"""
+    replace_peer_filter_chain_plan_via_ssh(
+        row, rests, [], exec_timeout=exec_timeout,
+    )
+
+
+def replace_peer_filter_chain_plan_via_ssh(
+    row: dict,
+    rests: list[str],
+    ipsets: list[RemoteIpsetSpec],
+    *,
+    exec_timeout: int = 180,
+) -> None:
+    """原子更新对端用户链，并声明式管理本对端的标签 ipset。
+
+    顺序：预建内容寻址 ipset → iptables-restore 原子替换链 → GC 孤儿集合。
+    如果准备集合失败或 iptables-restore 失败，旧链不被清空；本轮新建集合会回收。
+    """
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
     expect = IptablesManager.peer_chain_name_for_id(peer_id)
-    for r in rests:
-        s = (r or "").strip()
-        if s and (("\n" in s) or ("\r" in s) or ("\x00" in s)):
+    clean_rests: list[str] = []
+    for raw in rests:
+        body = str(raw or "").strip()
+        if not body:
+            continue
+        if any(char in body for char in ("\\n", "\\r", "\\x00")):
             raise ValueError("单条规则含非法字符")
-    for r in rests:
-        s = (r or "").strip()
-        if s:
-            # 在 ``-F`` 清链**之前**校验，避免已下发失败且远端链已被清空
-            validate_iptables_rest_line_addr_tokens(s)
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chq = shlex.quote(expect)
-        pout, perr, pcode = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
-        if pcode != 0:
-            msg = f"{(perr or '').strip()}\n{(pout or '').strip()}"
-            if _chain_missing_message(msg):
-                raise ValueError(
-                    f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
+        validate_iptables_rest_line_addr_tokens(body)
+        clean_rests.append(body)
+
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chq = shlex.quote(expect)
+            pout, perr, pcode = _exec_ssh(
+                client, f"{sp}iptables -S {chq}", timeout=exec_timeout,
+            )
+            if pcode != 0:
+                msg = f"{(perr or '').strip()}\\n{(pout or '').strip()}"
+                if _chain_missing_message(msg):
+                    raise ValueError(
+                        f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
+                    )
+                raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
+
+            newly_created: set[str] = set()
+            if ipsets:
+                newly_created = reconcile_remote_peer_tag_ipsets(
+                    client, sp, peer_id, ipsets, _exec_ssh, timeout=exec_timeout,
                 )
-            raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
-        _exec_ssh(client, f"{sp}iptables -F {chq}", timeout=exec_timeout)
-        n = 0
-        for r in rests:
-            body = (r or "").strip()
-            if not body:
-                continue
-            cmd = f"{sp}iptables -A {chq} {body}"
-            o2, e2, c2 = _exec_ssh(client, cmd, timeout=exec_timeout)
-            if c2 != 0:
-                raise RuntimeError(f"追加对端链规则失败: {cmd}\n{(e2 or o2 or '').strip()}")
-            n += 1
-        logger.debug("对端链 %s 已写回 %s 条", expect, n)
-    finally:
-        client.close()
+                # ipset 包安装后，确保内核 xt_set 匹配模块可用。
+                _, set_err, set_code = _exec_ssh(
+                    client, f"{sp}iptables -m set -h >/dev/null 2>&1",
+                    timeout=exec_timeout,
+                )
+                if set_code != 0:
+                    _, mod_err, mod_code = _exec_ssh(
+                        client, f"{sp}modprobe xt_set", timeout=exec_timeout,
+                    )
+                    _, retry_err, retry_code = _exec_ssh(
+                        client, f"{sp}iptables -m set -h >/dev/null 2>&1",
+                        timeout=exec_timeout,
+                    )
+                    if retry_code != 0:
+                        discard_remote_peer_tag_ipsets(
+                            client, sp, newly_created, _exec_ssh, timeout=exec_timeout,
+                        )
+                        raise RuntimeError(
+                            "对端 iptables 的 set 匹配模块不可用；"
+                            f"modprobe: {(mod_err or '').strip()}；"
+                            f"iptables: {(retry_err or set_err or '').strip()}"
+                        )
+
+            payload_lines = ["*filter", f"-F {expect}"]
+            payload_lines.extend(f"-A {expect} {body}" for body in clean_rests)
+            payload_lines.append("COMMIT")
+            payload = "\\n".join(payload_lines) + "\\n"
+            command = (
+                f"printf %s {shlex.quote(payload)} | "
+                f"{sp}iptables-restore -w 5 --noflush"
+            )
+            out, err, code = _exec_ssh(client, command, timeout=exec_timeout)
+            if code != 0:
+                discard_remote_peer_tag_ipsets(
+                    client, sp, newly_created, _exec_ssh, timeout=exec_timeout,
+                )
+                raise RuntimeError(
+                    "对端 iptables-restore 原子更新失败，旧规则保持不变："
+                    f"{(err or out or '').strip()[-2000:]}"
+                )
+
+            keep_names = {spec.name for spec in ipsets}
+            keep_names.update(referenced_peer_tag_ipsets(clean_rests, peer_id))
+            removed = gc_remote_peer_tag_ipsets(
+                client, sp, peer_id, keep_names, _exec_ssh, timeout=exec_timeout,
+            )
+            logger.info(
+                "对端链原子写回完成 peer=%s rules=%s tag_ipsets=%s gc=%s",
+                peer_id[:8], len(clean_rests), len(ipsets), len(removed),
+            )
+        finally:
+            client.close()
