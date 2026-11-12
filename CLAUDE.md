@@ -55,6 +55,7 @@ data/nicevpn.db
 - 对端 Mesh 路由支持 `mesh_route_visible_group_ids` 与 `mesh_route_visible_tag_ids`，两者 OR；用户直接标签 + 活动组继承标签参与匹配。
 - 对端远端防火墙标签规则以逻辑 `tag_binding` 存于远端链工作副本；推送必须走 `materialize_remote_chain_plan` + `PeerService.apply_remote_peer_filter_chain_plan`，按每个对端独立的内容寻址 `hash:net` ipset 生成 set matcher，禁止回退为逐 IP 展开。
 - 远端标签 ipset 使用 `nvpnpt_<peer-hash>_<content-hash>` 命名，先 staging/swap，再通过 `iptables-restore --noflush` 原子更新用户链；成功后只 GC 当前 peer 命名空间，手工原始规则引用的本 peer 集合要保留，不能触碰其他前缀。
+- 对端站点基础防火墙重下发只能更新 FORWARD 跳转、POSTROUTING SNAT 和用户链中的 `role=fwd-global` 基础放行规则；不得 flush/delete 整条 `VPN_PEER_*` 用户链，否则会误删远端防火墙规则与标签 ipset matcher。
 - 标签成员变化通过后台 SSH 重建集合并刷新规则，失败持久化 `pending_sync`；首次使用时 Debian/RHEL 对端可自动安装 ipset。
 - 标签删除必须同时检查用户/组成员、中心规则、Mesh 路由和远端防火墙引用；服务层与 SQLite repository 都要防止绕过 UI 直接删除。
 - 其它 schema migration 管理的结构化数据
