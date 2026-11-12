@@ -68,6 +68,8 @@ PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
 
 项目存在 `.venv` 时会保留 `.venv/bin/python` 路径，不解析到 uv 的基础 Python，以确保 systemd 继续使用该虚拟环境的依赖。
 
+OpenVPN 的 `client-connect` / `client-disconnect` 钩子不继承 NiceVPN 主进程的虚拟环境。NiceVPN 同步 `/etc/openvpn/scripts/` 时会自动把当前运行的 Python（通常为项目 `.venv/bin/python`）写入钩子脚本；不修改系统 `/usr/bin/python3`。旧版已部署脚本升级后可通过重启 NiceVPN（或触发服务配置重新生成）同步，OpenVPN 会在下次连接/断开时执行新脚本。需要临时指定其他解释器时，可在 OpenVPN server.conf 使用 `setenv PY3_BIND /绝对路径/python` 与 `setenv PY3_AUDIT /绝对路径/python`，要求 Python 3.10+。修改 server.conf 后需重启对应 OpenVPN 实例才会生效。
+
 ## 生产部署
 
 ### systemd
