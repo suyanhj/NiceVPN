@@ -6,7 +6,7 @@
 # ============================================================
 OVPN_ETC="/etc/openvpn"
 SESSION_AUDIT_LOG="__VPN_SESSION_AUDIT_LOG_FILE__"
-case "$SESSION_AUDIT_LOG" in *"__VPN_SESSION_AUDIT_LOG_FILE__"*)
+case "$SESSION_AUDIT_LOG" in __VPN_SESSION_*)
     SESSION_AUDIT_LOG="${OVPN_ETC}/log/openvpn-session-audit.jsonl"
     ;;
 esac
