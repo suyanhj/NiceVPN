@@ -184,91 +184,93 @@ def apply_peer_site_iptables_via_ssh(
     gs = str(global_subnet or "").strip()
     if not gs:
         raise ValueError("global_subnet 未配置，请在系统设置中填写后再下发对端规则")
-    warnings: list[str] = []
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        out_act, _, c_act = _exec_ssh(client, "systemctl is-active firewalld 2>/dev/null", timeout=10)
-        if c_act == 0 and out_act.strip() == "active":
-            msg = "远端 firewalld 处于 active，iptables-nft 规则可能被 firewalld 覆盖，请现网核对"
-            logger.warning(msg)
-            warnings.append(msg)
-
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chain = IptablesManager.peer_chain_name_for_id(peer_id)
-        want_masquerade = bool(row.get("masquerade_on_peer"))
-        if not force and _peer_site_rules_already_current(
-            client,
-            peer_id,
-            chain,
-            sp,
-            gs,
-            want_masquerade,
-            timeout=exec_timeout,
-        ):
-            logger.info("对端 SSH iptables 已是最新，跳过重写 peer=%s masq=%s", peer_id, int(want_masquerade))
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        warnings: list[str] = []
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            out_act, _, c_act = _exec_ssh(client, "systemctl is-active firewalld 2>/dev/null", timeout=10)
+            if c_act == 0 and out_act.strip() == "active":
+                msg = "远端 firewalld 处于 active，iptables-nft 规则可能被 firewalld 覆盖，请现网核对"
+                logger.warning(msg)
+                warnings.append(msg)
+    
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chain = IptablesManager.peer_chain_name_for_id(peer_id)
+            want_masquerade = bool(row.get("masquerade_on_peer"))
+            if not force and _peer_site_rules_already_current(
+                client,
+                peer_id,
+                chain,
+                sp,
+                gs,
+                want_masquerade,
+                timeout=exec_timeout,
+            ):
+                logger.info("对端 SSH iptables 已是最新，跳过重写 peer=%s masq=%s", peer_id, int(want_masquerade))
+                return {
+                    "ok": True,
+                    "peer_id": peer_id,
+                    "global_subnet": gs,
+                    "removed_prior": 0,
+                    "masquerade_rules": int(want_masquerade),
+                    "already_current": True,
+                    "warnings": warnings,
+                }
+    
+            _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
+            removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
+    
+            c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
+            c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
+            mk = f"{sp}iptables -N {shlex.quote(chain)}"
+            _, err_n, cn = _exec_ssh(client, mk, timeout=exec_timeout)
+            if cn != 0:
+                logger.warning("创建链 %s（可能已存在将依赖后续 -A）: %s", chain, (err_n or "").strip())
+            fw_rule = (
+                f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
+                f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
+            )
+            _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
+            if cf != 0:
+                raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
+            jump_cmd = (
+                f"{sp}iptables -I FORWARD 1 -m comment --comment {shlex.quote(c_jump)} "
+                f"-j {shlex.quote(chain)}"
+            )
+            _, err_j, cj = _exec_ssh(client, jump_cmd, timeout=exec_timeout)
+            if cj != 0:
+                raise RuntimeError(f"写入 FORWARD 跳转至 {chain} 失败: {err_j.strip()}")
+    
+            masq_n = 0
+            if want_masquerade:
+                c_nat = COMMENT_MASQ_TMPL.format(peer_id=peer_id, idx=0)
+                nat_cmd = (
+                    f"{sp}iptables -t nat -I POSTROUTING 1 -s {shlex.quote(gs)} "
+                    f"-m comment --comment {shlex.quote(c_nat)} -j MASQUERADE"
+                )
+                _, err_n, cn = _exec_ssh(client, nat_cmd, timeout=exec_timeout)
+                if cn != 0:
+                    raise RuntimeError(f"写入 POSTROUTING SNAT 失败: {err_n.strip()}")
+                masq_n = 1
+    
+            logger.info(
+                "对端 SSH iptables 下发成功 peer=%s removed=%s masq=%s",
+                peer_id,
+                removed,
+                masq_n,
+            )
             return {
                 "ok": True,
                 "peer_id": peer_id,
                 "global_subnet": gs,
-                "removed_prior": 0,
-                "masquerade_rules": int(want_masquerade),
-                "already_current": True,
+                "removed_prior": removed,
+                "masquerade_rules": masq_n,
+                "already_current": False,
                 "warnings": warnings,
             }
-
-        _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
-        removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-
-        c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
-        c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
-        mk = f"{sp}iptables -N {shlex.quote(chain)}"
-        _, err_n, cn = _exec_ssh(client, mk, timeout=exec_timeout)
-        if cn != 0:
-            logger.warning("创建链 %s（可能已存在将依赖后续 -A）: %s", chain, (err_n or "").strip())
-        fw_rule = (
-            f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
-            f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
-        )
-        _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
-        if cf != 0:
-            raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
-        jump_cmd = (
-            f"{sp}iptables -I FORWARD 1 -m comment --comment {shlex.quote(c_jump)} "
-            f"-j {shlex.quote(chain)}"
-        )
-        _, err_j, cj = _exec_ssh(client, jump_cmd, timeout=exec_timeout)
-        if cj != 0:
-            raise RuntimeError(f"写入 FORWARD 跳转至 {chain} 失败: {err_j.strip()}")
-
-        masq_n = 0
-        if want_masquerade:
-            c_nat = COMMENT_MASQ_TMPL.format(peer_id=peer_id, idx=0)
-            nat_cmd = (
-                f"{sp}iptables -t nat -I POSTROUTING 1 -s {shlex.quote(gs)} "
-                f"-m comment --comment {shlex.quote(c_nat)} -j MASQUERADE"
-            )
-            _, err_n, cn = _exec_ssh(client, nat_cmd, timeout=exec_timeout)
-            if cn != 0:
-                raise RuntimeError(f"写入 POSTROUTING SNAT 失败: {err_n.strip()}")
-            masq_n = 1
-
-        logger.info(
-            "对端 SSH iptables 下发成功 peer=%s removed=%s masq=%s",
-            peer_id,
-            removed,
-            masq_n,
-        )
-        return {
-            "ok": True,
-            "peer_id": peer_id,
-            "global_subnet": gs,
-            "removed_prior": removed,
-            "masquerade_rules": masq_n,
-            "already_current": False,
-            "warnings": warnings,
-        }
-    finally:
-        client.close()
+        finally:
+            client.close()
 
 
 def remove_peer_site_iptables_via_ssh(row: dict, *, exec_timeout: int = 120) -> dict[str, Any]:
@@ -336,37 +338,39 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
     peer_id = str(row.get("id") or "").strip()
     if not peer_id:
         raise ValueError("对端 id 为空")
-    chain = IptablesManager.peer_chain_name_for_id(peer_id)
-    client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
-    try:
-        sp = _detect_sudo_prefix(client, timeout=15)
-        chq = shlex.quote(chain)
-        f_out, f_err, f_code = _exec_ssh(client, f"{sp}iptables -S FORWARD", timeout=exec_timeout)
-        if f_code != 0:
-            raise RuntimeError(f"iptables -S FORWARD 失败: {(f_err or f_out or '').strip()}")
-        forward_refs = _forward_lines_jumping_to_chain(f_out, chain)
-        out, err, code = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
-        if code != 0:
-            msg = f"{(err or '').strip()}\n{(out or '').strip()}"
-            if _chain_missing_message(msg):
-                return {
-                    "ok": True,
-                    "chain": chain,
-                    "chain_exists": False,
-                    "chain_rests": [],
-                    "forward_refs": forward_refs,
-                }
-            raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
-        rests = _filter_chain_rests_from_iptables_s(out, chain)
-        return {
-            "ok": True,
-            "chain": chain,
-            "chain_exists": True,
-            "chain_rests": rests,
-            "forward_refs": forward_refs,
-        }
-    finally:
-        client.close()
+    lock = _remote_chain_lock(peer_id)
+    with lock:
+        chain = IptablesManager.peer_chain_name_for_id(peer_id)
+        client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
+        try:
+            sp = _detect_sudo_prefix(client, timeout=15)
+            chq = shlex.quote(chain)
+            f_out, f_err, f_code = _exec_ssh(client, f"{sp}iptables -S FORWARD", timeout=exec_timeout)
+            if f_code != 0:
+                raise RuntimeError(f"iptables -S FORWARD 失败: {(f_err or f_out or '').strip()}")
+            forward_refs = _forward_lines_jumping_to_chain(f_out, chain)
+            out, err, code = _exec_ssh(client, f"{sp}iptables -S {chq}", timeout=exec_timeout)
+            if code != 0:
+                msg = f"{(err or '').strip()}\n{(out or '').strip()}"
+                if _chain_missing_message(msg):
+                    return {
+                        "ok": True,
+                        "chain": chain,
+                        "chain_exists": False,
+                        "chain_rests": [],
+                        "forward_refs": forward_refs,
+                    }
+                raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
+            rests = _filter_chain_rests_from_iptables_s(out, chain)
+            return {
+                "ok": True,
+                "chain": chain,
+                "chain_exists": True,
+                "chain_rests": rests,
+                "forward_refs": forward_refs,
+            }
+        finally:
+            client.close()
 
 
 _REMOTE_CHAIN_LOCKS: dict[str, Any] = {}
