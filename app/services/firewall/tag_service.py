@@ -38,26 +38,86 @@ class TagService:
         ]
         if referenced:
             raise ValueError(f"标签仍被 {len(referenced)} 条中心防火墙规则引用，请先删除规则")
-        from app.services.peer_instance.service import PeerService
-        peer_refs = [
-            row for row in PeerService(store=self.store).list_all()
-            if str(tag_id) in {
-                str(value).strip()
-                for value in (row.get("mesh_route_visible_tag_ids") or [])
-            }
-        ]
-        from app.services.firewall.remote_tag_rules import has_remote_tag_rule_references
-        remote_ref = has_remote_tag_rule_references([tag_id], store=self.store)
-        if peer_refs or remote_ref:
-            references = []
-            if peer_refs:
-                references.append("对端路由")
-            if remote_ref:
-                references.append("远端防火墙规则")
+        peer_refs = self.list_peer_tag_references(tag_id)
+        if peer_refs:
+            reference_types = sorted({
+                str(item.get("reference_type") or "对端配置")
+                for item in peer_refs
+            })
             raise ValueError(
-                f"标签仍被{'、'.join(references)}引用，请先移除对端引用后再删除"
+                f"标签仍被{'、'.join(reference_types)}引用，请先移除对端引用后再删除"
             )
         self.store.delete_tag(tag_id)
+
+    def _list_all_peer_tag_references(self) -> list[dict]:
+        """读取对端 Mesh 标签范围和远端防火墙逻辑标签规则引用。"""
+        from app.services.peer_instance import remote_chain_cache
+        from app.services.peer_instance.service import PeerService
+
+        references: list[dict] = []
+        for peer in PeerService(store=self.store).list_all():
+            peer_id = str(peer.get("id") or "").strip()
+            if not peer_id:
+                continue
+            peer_name = str(peer.get("name") or peer_id)
+            mesh_tag_ids = {
+                str(value).strip()
+                for value in (peer.get("mesh_route_visible_tag_ids") or [])
+                if str(value).strip()
+            }
+            for tag_id in sorted(mesh_tag_ids):
+                references.append({
+                    "tag_id": tag_id,
+                    "reference_type": "Mesh 路由",
+                    "peer_id": peer_id,
+                    "peer_name": peer_name,
+                    "description": "该对端 LAN 路由按标签成员下发",
+                    "enabled": True,
+                })
+
+            cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+            if not cache:
+                continue
+            for index, row in enumerate(cache.get("rows") or []):
+                binding = row.get("tag_binding") if isinstance(row, dict) else None
+                tag_id = str((binding or {}).get("tag_id") or "").strip()
+                if not tag_id:
+                    continue
+                references.append({
+                    "tag_id": tag_id,
+                    "reference_type": "远端防火墙",
+                    "peer_id": peer_id,
+                    "peer_name": peer_name,
+                    "row_index": index + 1,
+                    "priority": int(row.get("priority") or (index + 1) * 10),
+                    "description": str(row.get("description") or "").strip(),
+                    "action": str(binding.get("action") or "accept").upper(),
+                    "protocol": str(binding.get("protocol") or "all").upper(),
+                    "dest_ip": str(binding.get("dest_ip") or "").strip(),
+                    "dest_port": str(binding.get("dest_port") or "").strip(),
+                    "enabled": bool(row.get("enabled", True)),
+                })
+        return references
+
+    def peer_tag_reference_counts(self) -> dict[str, int]:
+        """返回每个标签被 Mesh 路由和远端防火墙引用的数量。"""
+        counts: dict[str, int] = {}
+        for reference in self._list_all_peer_tag_references():
+            tag_id = str(reference.get("tag_id") or "")
+            if tag_id:
+                counts[tag_id] = counts.get(tag_id, 0) + 1
+        return counts
+
+    def list_peer_tag_references(self, tag_id: str) -> list[dict]:
+        """列出引用指定标签的对端路由与远端防火墙规则。"""
+        wanted = str(tag_id or "").strip()
+        if not wanted:
+            return []
+        return [
+            reference
+            for reference in self._list_all_peer_tag_references()
+            if str(reference.get("tag_id") or "") == wanted
+        ]
 
     def rule_count(self, tag_id: str) -> int:
         return sum(
