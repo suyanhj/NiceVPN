@@ -214,6 +214,7 @@ def test_tags_page_list_filters_and_independent_expansion_state():
     assert not match(tag, "", "assigned", users=0, groups=0, rules=0)
     assert match(tag, "", "assigned", users=2, groups=0, rules=0)
     assert match(tag, "", "referenced", users=0, groups=0, rules=1)
+    assert match(tag, "", "referenced", users=0, groups=0, rules=0, peer_refs=1)
     assert not match(tag, "无关", "all", users=1, groups=1, rules=1)
 
     page = TagsPage()
