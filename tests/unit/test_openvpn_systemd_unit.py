@@ -75,6 +75,7 @@ def test_missing_server_unit_reuses_existing_systemd_generator(
     template.parent.mkdir(parents=True)
     template.write_text("[Unit]\n", encoding="utf-8")
     monkeypatch.setattr(installer_mod, "_OPENVPN_SOURCE_ROOT", tmp_path)
+    monkeypatch.setenv("OPENVPN_SRC_ROOT", str(tmp_path))
 
     monkeypatch.setattr(
         installer_mod.subprocess,
