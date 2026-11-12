@@ -326,6 +326,50 @@ def test_tag_membership_change_refreshes_mesh_routes_for_referencing_peer(store,
     assert calls == ["sync"]
 
 
+def test_tag_service_lists_peer_mesh_and_remote_firewall_references(
+    store, tmp_path, monkeypatch,
+):
+    from app.services.peer_instance import remote_chain_cache
+
+    store.create_tag("tag-peer", "对端引用")
+    store.upsert_peer({
+        "id": "peer-reference",
+        "name": "深圳站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.40.0/24"],
+        "mesh_route_visible_tag_ids": ["tag-peer"],
+    })
+    monkeypatch.setattr(
+        remote_chain_cache, "REMOTE_PEER_CHAINS_DIR", tmp_path / "remote-cache",
+    )
+    remote_chain_cache.write_remote_chain_cache(
+        "peer-reference",
+        chain="VPN_PEER_reference",
+        chain_exists=True,
+        rows=[{
+            "rest": "",
+            "enabled": True,
+            "priority": 30,
+            "tag_binding": {
+                "tag_id": "tag-peer",
+                "tag_name": "对端引用",
+                "action": "accept",
+                "protocol": "tcp",
+                "dest_ip": "192.168.40.10",
+                "dest_port": "443",
+            },
+        }],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+
+    service = TagService(store)
+    refs = service.list_peer_tag_references("tag-peer")
+    assert {item["reference_type"] for item in refs} == {"Mesh 路由", "远端防火墙"}
+    assert service.peer_tag_reference_counts()["tag-peer"] == 2
+    assert any(item.get("peer_name") == "深圳站点" for item in refs)
+
+
 def test_tag_delete_is_blocked_while_peer_mesh_route_references_tag(store):
     store.create_tag("tag-mesh", "Mesh 可见")
     store.upsert_peer({
