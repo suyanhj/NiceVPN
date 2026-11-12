@@ -239,7 +239,7 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
 
     nat_commands = [cmd for cmd in client.commands if "-t nat -I POSTROUTING" in cmd]
     forward_commands = [cmd for cmd in client.commands if "iptables -I FORWARD" in cmd]
-    peer_chain_commands = [cmd for cmd in client.commands if "iptables -I VPN_PEER_" in cmd]
+    peer_chain_commands = [cmd for cmd in client.commands if "iptables -A VPN_PEER_" in cmd]
     assert ret["masquerade_rules"] == 1
     assert len(forward_commands) == 1
     assert "-i " not in forward_commands[0]
