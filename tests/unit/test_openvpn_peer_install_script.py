@@ -138,7 +138,11 @@ def test_systemd_fallback_entry_uses_project_template_without_rebuilding_openvpn
 
     assert "openvpn-server@.service" in script
     assert "/usr/lib/systemd/system/" in script
-    assert "systemctl daemon-reload" in _read_install_script_text("openvpn-install-common.sh") or "openvpn_install_server_systemd_override" in script
+    common = _read_install_script_text("openvpn-install-common.sh")
+    assert (
+        "systemctl daemon-reload" in common
+        or "openvpn_install_server_systemd_override" in script
+    )
     assert "不覆盖发行版已有的 unit" in script
     assert "OPENVPN_BIN" in script
     assert "@OPENVPN_BIN@" in template
