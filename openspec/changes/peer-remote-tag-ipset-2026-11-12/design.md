@@ -13,8 +13,9 @@
 2. 生成内容寻址的 ipset 期望集合。
 3. SSH 检查 ipset；Debian/Ubuntu 使用 apt，RHEL 系使用 dnf/yum 安装缺失依赖。
 4. 创建 staging 集合并写入完整成员，随后 swap 到 stable 内容寻址名称。
-5. 使用 `iptables-restore --noflush` 在一个 filter 表事务内清空并重建本对端用户链。
-6. iptables 更新成功后，只回收当前 peer 命名空间中不再被逻辑计划或保留的原始规则引用的集合。
+5. 从当前对端链提取系统维护的 `role=fwd-global` 规则；它是 global_subnet 放行兜底，不属于用户工作副本。
+6. 使用 `iptables-restore --noflush` 在一个 filter 表事务内清空并重建本对端用户链：先写用户/标签策略，再把系统兜底 ACCEPT 放在链尾。
+7. iptables 更新成功后，只回收当前 peer 命名空间中不再被逻辑计划或保留的原始规则引用的集合。
 7. iptables 更新失败时，旧链保持不变，只删除本轮新建且尚未被旧规则引用的集合。
 
 ## 手工规则兼容
