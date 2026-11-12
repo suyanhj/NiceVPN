@@ -43,6 +43,20 @@ class TagsPage:
             return False
         return True
 
+    @staticmethod
+    def _delete_block_reason(counts: dict[str, int]) -> str | None:
+        """有任何成员或规则/路由引用时禁止删除标签。"""
+        users = int(counts.get("users", 0) or 0)
+        groups = int(counts.get("groups", 0) or 0)
+        rules = int(counts.get("rules", 0) or 0)
+        peer_refs = int(counts.get("peer_refs", 0) or 0)
+        if not (users or groups or rules or peer_refs):
+            return None
+        return (
+            f"标签仍在使用中：关联用户 {users} 个、关联组 {groups} 个、"
+            f"中心规则 {rules} 条、对端引用 {peer_refs} 项。请先解除全部关联和引用。"
+        )
+
     def render(self) -> None:
         self.expanded_tags: set[str] = set()
         self.tag_page = 1
@@ -216,14 +230,12 @@ class TagsPage:
                         "编辑", icon="edit",
                         on_click=lambda data=dict(tag): self._show_edit_dialog(data),
                     ).props("dense")
+                    delete_block_reason = self._delete_block_reason(counts)
                     danger_action(
                         "删除", icon="delete",
                         on_click=lambda data=dict(tag): self._show_delete_dialog(data),
-                        disabled=bool(counts["rules"] or counts["peer_refs"]),
-                        tooltip=(
-                            "该标签仍被中心规则或对端路由/防火墙引用，请先解除引用"
-                            if counts["rules"] or counts["peer_refs"] else None
-                        ),
+                        disabled=bool(delete_block_reason),
+                        tooltip=delete_block_reason,
                     ).props("dense")
             if expanded:
                 with ui.column().classes("tags-record-details"):
