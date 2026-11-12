@@ -47,6 +47,11 @@ def adapt_peer_view(
     ]
     if not visible_group_ids and not visible_tag_ids:
         mesh_label = "全部用户"
+    elif visible_group_ids and not visible_tag_ids:
+        # 保留旧版仅组范围的展示文案，避免无关 UI 回归。
+        mesh_label = "、".join(visible_group_names[:3])
+        if len(visible_group_names) > 3:
+            mesh_label += f" 等{len(visible_group_names)}组"
     else:
         parts = []
         if visible_group_names:
