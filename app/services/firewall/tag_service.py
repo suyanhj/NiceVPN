@@ -180,8 +180,15 @@ class TagService:
         from app.services.firewall.remote_tag_rules import schedule_remote_tag_firewall_sync
         schedule_remote_tag_firewall_sync(tag_ids, store=self.store)
 
-    def refresh_if_referenced(self, *, entity_type: str, entity_id: str, other_group_id: str = "") -> None:
-        """用户/组状态或地址变动后，收敛中心/对端所有引用到的标签规则与路由。"""
+    def refresh_if_referenced(
+        self, *, entity_type: str, entity_id: str,
+        other_group_id: str = "", refresh_mesh_routes: bool = True,
+    ) -> None:
+        """用户/组状态或地址变动后，收敛中心/对端所有引用到的标签规则与路由。
+
+        调用方若已因用户状态/切组变化执行过全量 Mesh CCD 同步，可关闭
+        refresh_mesh_routes，避免同一事务重复扫描全部用户。
+        """
         relevant = set(self.get_entity_tag_ids(entity_type, entity_id))
         if entity_type == "user":
             user = self.store.get_user(entity_id)
@@ -199,7 +206,8 @@ class TagService:
         if active_refs & relevant:
             from app.services.firewall.rule_service import FirewallRuleService
             FirewallRuleService(store=self.store).refresh_vpn_forward_only()
-        self._refresh_mesh_routes_for_tags(relevant)
+        if refresh_mesh_routes:
+            self._refresh_mesh_routes_for_tags(relevant)
         self._schedule_remote_firewall_refresh(relevant)
 
     def resolve_addresses(self, tag_id: str, *, ccd_ips: dict[str, str] | None = None) -> tuple[str, ...]:
