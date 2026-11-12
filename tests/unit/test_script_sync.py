@@ -81,3 +81,70 @@ def test_hook_python_selector_rejects_unsupported_override(tmp_path: Path) -> No
         capture_output=True, text=True,
     )
     assert result.returncode != 0
+
+
+def test_connect_and_disconnect_hooks_use_selected_python_not_path_python3(
+    tmp_path: Path,
+) -> None:
+    """在 PATH 的 python3 不可用时，部署的两个钩子仍可完整写入会话审计。"""
+    import json
+
+    from app.core.constants import DEVICE_BIND_LOG_FILE, VPN_SESSION_AUDIT_LOG_FILE
+    from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
+
+    sync_packaged_openvpn_scripts(tmp_path)
+    script_dir = tmp_path / "scripts"
+    mgmt_dir = tmp_path / "mgmt"
+    mgmt_dir.mkdir()
+    (mgmt_dir / "device_bind_mode").write_text("weak_log\n", encoding="utf-8")
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    audit_file = log_dir / "session-audit.jsonl"
+    bind_log = log_dir / "device-bind.log"
+
+    connect = script_dir / "device-bind.sh"
+    connect_content = connect.read_text(encoding="utf-8")
+    connect_content = connect_content.replace('OVPN_ETC="/etc/openvpn"', f'OVPN_ETC="{tmp_path}"')
+    connect_content = connect_content.replace(DEVICE_BIND_LOG_FILE.as_posix(), str(bind_log))
+    connect_content = connect_content.replace(VPN_SESSION_AUDIT_LOG_FILE.as_posix(), str(audit_file))
+    connect.write_text(connect_content, encoding="utf-8")
+
+    disconnect = script_dir / "vpn-session-disconnect.sh"
+    disconnect_content = disconnect.read_text(encoding="utf-8")
+    disconnect_content = disconnect_content.replace(VPN_SESSION_AUDIT_LOG_FILE.as_posix(), str(audit_file))
+    disconnect.write_text(disconnect_content, encoding="utf-8")
+
+    bad_path = tmp_path / "fake-path"
+    bad_path.mkdir()
+    marker = tmp_path / "system-python-invoked"
+    fake = bad_path / "python3"
+    fake.write_text(
+        '#!/bin/sh\ntouch "' + str(marker) + '"\nexit 99\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{bad_path}:{os.environ.get('PATH', '')}",
+        "common_name": "audit-test-user",
+        "PY3_BIND": "",
+        "PY3_AUDIT": "",
+    }
+
+    for hook in (connect, disconnect):
+        result = subprocess.run(
+            ["bash", str(hook)],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+
+    events = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines()]
+    assert [event["event_type"] for event in events] == [
+        "vpn_session_start",
+        "vpn_session_end",
+    ]
+    assert not marker.exists(), "不能回退到 PATH 中不受支持的系统 python3"
