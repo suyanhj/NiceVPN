@@ -67,6 +67,34 @@ def test_reconcile_remote_tag_ipsets_stages_swaps_and_cleans_stage():
     assert any("ipset swap" in command for command in state["commands"])
 
 
+def test_missing_ipset_is_installed_under_sudo_for_debian_peer():
+    from app.services.peer_instance.remote_peer_ipset import _ensure_ipset_installed
+
+    commands = []
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        commands.append(command)
+        if "command -v ipset" in command:
+            return "", "", 1 if commands.count(command) == 1 else 0
+        if command.startswith("cat /etc/os-release"):
+            return "ID=ubuntu\\nID_LIKE=debian\\nVERSION_ID=24.04\\n", "", 0
+        if "apt-get update -qq && apt-get install -y ipset" in command:
+            return "", "", 0
+        raise AssertionError(command)
+
+    _ensure_ipset_installed(
+        object(), "sudo -n ", fake_exec, timeout=30,
+    )
+
+    install_commands = [
+        command for command in commands
+        if "apt-get update -qq && apt-get install -y ipset" in command
+    ]
+    assert len(install_commands) == 1
+    assert install_commands[0].startswith("sudo -n sh -c ")
+    assert commands[-1].startswith("sudo -n sh -c ")
+
+
 def test_remote_tag_ipset_gc_only_removes_current_peer_orphans_and_stage():
     state = {
         "names": {
@@ -95,6 +123,31 @@ def test_remote_tag_ipset_gc_only_removes_current_peer_orphans_and_stage():
     assert peer_tag_ipset_name("peer-a", "tag-old", ["10.8.0.11"]) not in state["names"]
     assert peer_tag_ipset_name("peer-b", "tag-other", ["10.8.0.12"]) in state["names"]
     assert len(removed) == 2
+
+
+def test_peer_cleanup_removes_only_its_own_stable_and_stage_sets():
+    from app.services.peer_instance.remote_peer_ipset import cleanup_remote_peer_tag_ipsets
+
+    own = peer_tag_ipset_name("peer-a", "tag-a", ["10.8.0.10"])
+    other = peer_tag_ipset_name("peer-b", "tag-b", ["10.8.0.11"])
+    stage = peer_tag_ipset_stage_prefix("peer-a") + "abcdef12"
+    state = {"names": {own, other, stage}}
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        if "command -v ipset" in command:
+            return "", "", 0
+        if "ipset list -n" in command:
+            return "\\n".join(sorted(state["names"])), "", 0
+        if "ipset destroy " in command:
+            state["names"].discard(command.split()[-1])
+            return "", "", 0
+        raise AssertionError(command)
+
+    removed = cleanup_remote_peer_tag_ipsets(
+        object(), "", "peer-a", fake_exec,
+    )
+    assert set(removed) == {own, stage}
+    assert state["names"] == {other}
 
 
 def test_raw_remote_rules_keep_referenced_peer_owned_tag_sets():
