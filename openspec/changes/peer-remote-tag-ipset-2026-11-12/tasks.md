@@ -10,5 +10,7 @@
 - [x] 用户/组成员关联纳入标签删除保护，服务层与 SQLite 层双重校验
 - [x] 标签列表删除按钮根据所有成员和引用禁用
 - [x] 增加远端 ipset、原子应用、GC 和标签删除测试
-- [x] 更新 firewall-tags 文档与 UI 提示
+- [x] 验证站点 global_subnet ACCEPT 作为末尾兜底，避免绕过远端 DROP/REJECT
+- [x] 远端拉取隐藏系统兜底规则，写回时保留在用户/标签策略之后
+- [x] 更新 firewall-tags、CLAUDE、OpenSpec 文档与删除 UI 提示
 - [ ] Python 3.14、Docker、浏览器 smoke、OpenSpec CI 全部通过
