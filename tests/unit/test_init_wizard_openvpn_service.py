@@ -49,7 +49,7 @@ def test_detect_openvpn_ensures_server_unit_before_continuing(
     monkeypatch.setattr(
         installer_module,
         "ensure_openvpn_server_systemd_unit",
-        lambda path, on_output=None: calls.append((path, on_output)) or "/etc/systemd/system/openvpn-server@.service",
+        lambda path, openvpn_version=None, on_output=None: calls.append((path, openvpn_version, on_output)) or "openvpn-server@.service",
     )
 
     wizard = _wizard()
@@ -58,7 +58,7 @@ def test_detect_openvpn_ensures_server_unit_before_continuing(
 
     assert result.success is True
     assert result.next_step == WizardStep.CONFIG_PKI
-    assert calls == [(binary, logs.append)]
+    assert calls == [(binary, "2.7.8", logs.append)]
     assert wizard.config.openvpn_bin == binary
 
 
