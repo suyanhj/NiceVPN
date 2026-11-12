@@ -40,12 +40,17 @@ class TagService:
             raise ValueError(f"标签仍被 {len(referenced)} 条中心防火墙规则引用，请先删除规则")
         peer_refs = self.list_peer_tag_references(tag_id)
         if peer_refs:
-            reference_types = sorted({
+            reference_types = {
                 str(item.get("reference_type") or "对端配置")
                 for item in peer_refs
-            })
+            }
+            reference_labels = []
+            if "Mesh 路由" in reference_types:
+                reference_labels.append("对端路由(Mesh)")
+            if "远端防火墙" in reference_types:
+                reference_labels.append("远端防火墙规则")
             raise ValueError(
-                f"标签仍被{'、'.join(reference_types)}引用，请先移除对端引用后再删除"
+                f"标签仍被{'、'.join(reference_labels)}引用，请先移除对端引用后再删除"
             )
         self.store.delete_tag(tag_id)
 
