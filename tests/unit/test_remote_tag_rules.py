@@ -42,6 +42,32 @@ def test_materialize_remote_tag_rule_uses_current_member_addresses():
     assert rests[-1] == "-s 10.9.0.0/24 -j DROP"
 
 
+def test_remote_tag_sources_collapse_ips_already_covered_by_group_cidr():
+    rows = [{
+        "rest": "",
+        "enabled": True,
+        "tag_binding": {
+            "tag_id": "tag-mixed",
+            "action": "accept",
+            "protocol": "all",
+        },
+    }]
+
+    rests = materialize_remote_chain_rows(
+        rows,
+        tag_service=FakeTagService([
+            "10.8.0.0/24",
+            "10.8.0.10",
+            "10.8.0.11",
+            "10.9.0.10",
+        ]),
+    )
+
+    assert len(rests) == 2
+    assert "-s 10.8.0.0/24" in rests[0]
+    assert "-s 10.9.0.10" in rests[1]
+
+
 def test_empty_remote_tag_is_fail_closed_and_does_not_create_unrestricted_rule():
     rows = [{
         "rest": "",
