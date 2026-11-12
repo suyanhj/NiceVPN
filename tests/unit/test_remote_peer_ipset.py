@@ -77,7 +77,7 @@ def test_missing_ipset_is_installed_under_sudo_for_debian_peer():
         if "command -v ipset" in command:
             return "", "", 1 if commands.count(command) == 1 else 0
         if command.startswith("cat /etc/os-release"):
-            return "ID=ubuntu\\nID_LIKE=debian\\nVERSION_ID=24.04\\n", "", 0
+            return "ID=ubuntu\nID_LIKE=debian\nVERSION_ID=24.04\n", "", 0
         if "apt-get update -qq && apt-get install -y ipset" in command:
             return "", "", 0
         raise AssertionError(command)
@@ -137,7 +137,7 @@ def test_peer_cleanup_removes_only_its_own_stable_and_stage_sets():
         if "command -v ipset" in command:
             return "", "", 0
         if "ipset list -n" in command:
-            return "\\n".join(sorted(state["names"])), "", 0
+            return "\n".join(sorted(state["names"])), "", 0
         if "ipset destroy " in command:
             state["names"].discard(command.split()[-1])
             return "", "", 0
