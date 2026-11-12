@@ -144,13 +144,117 @@ class GroupRepositoryMixin:
             ).fetchone()
         return str(row["id"]) if row else ""
 
+    @staticmethod
+    def _group_delete_blockers_in_connection(
+        conn,
+        group_ids: Sequence[str],
+    ) -> dict[str, dict[str, int]]:
+        """在同一连接中统计组删除阻塞项；peer Mesh 范围从 peer payload 读取。"""
+        wanted = list(dict.fromkeys(str(value).strip() for value in group_ids if str(value).strip()))
+        result = {
+            group_id: {
+                "users": 0,
+                "tags": 0,
+                "firewall_rules": 0,
+                "mesh_peers": 0,
+            }
+            for group_id in wanted
+        }
+        if not wanted:
+            return result
+
+        placeholders = ",".join("?" for _ in wanted)
+        queries = (
+            (
+                "users",
+                f"SELECT group_id AS ref_id, COUNT(*) AS n FROM users "
+                f"WHERE group_id IN ({placeholders}) GROUP BY group_id",
+            ),
+            (
+                "tags",
+                f"SELECT group_id AS ref_id, COUNT(*) AS n FROM group_tags "
+                f"WHERE group_id IN ({placeholders}) GROUP BY group_id",
+            ),
+            (
+                "firewall_rules",
+                f"SELECT owner_id AS ref_id, COUNT(*) AS n FROM firewall_rules "
+                f"WHERE COALESCE(owner_type, '') IN ('', 'group') "
+                f"AND owner_id IN ({placeholders}) GROUP BY owner_id",
+            ),
+        )
+        for key, sql in queries:
+            for row in conn.execute(sql, wanted).fetchall():
+                group_id = str(row["ref_id"] or "")
+                if group_id in result:
+                    result[group_id][key] = int(row["n"] or 0)
+
+        wanted_set = set(wanted)
+        for row in conn.execute("SELECT payload FROM peers").fetchall():
+            peer = _load_payload(row["payload"]) or {}
+            if not isinstance(peer, dict):
+                continue
+            raw_group_ids = peer.get("mesh_route_visible_group_ids") or []
+            if not isinstance(raw_group_ids, (list, tuple, set)):
+                continue
+            referenced = {
+                str(value).strip()
+                for value in raw_group_ids
+                if str(value).strip()
+            }
+            for group_id in referenced & wanted_set:
+                result[group_id]["mesh_peers"] += 1
+
+        return result
+
+    def get_group_delete_blockers(
+        self,
+        group_ids: Sequence[str],
+    ) -> dict[str, dict[str, int]]:
+        """批量统计组删除阻塞项，供组列表展示禁用原因，避免逐行查询。"""
+        wanted = list(dict.fromkeys(str(value).strip() for value in group_ids if str(value).strip()))
+        if not wanted:
+            return {}
+        with self.connection() as conn:
+            return self._group_delete_blockers_in_connection(conn, wanted)
+
+    @staticmethod
+    def _group_delete_blocker_message(blockers: dict[str, int]) -> str:
+        parts: list[str] = []
+        users = int(blockers.get("users") or 0)
+        tags = int(blockers.get("tags") or 0)
+        rules = int(blockers.get("firewall_rules") or 0)
+        mesh_peers = int(blockers.get("mesh_peers") or 0)
+        if users:
+            parts.append(f"组内有 {users} 个用户")
+        if tags:
+            parts.append(f"仍被 {tags} 个标签关联")
+        if rules:
+            parts.append(f"仍被 {rules} 条中心防火墙规则引用")
+        if mesh_peers:
+            parts.append(f"仍被 {mesh_peers} 个对端 Mesh 路由范围引用")
+        if not parts:
+            return ""
+        return "用户组无法删除：" + "；".join(parts) + "。请先解除关联后重试"
+
     def delete_group(self, group_id: str) -> None:
+        """删除前在写事务内再次检查用户、标签、中心规则和对端 Mesh 引用。"""
+        gid = str(group_id)
         changed = [False]
         with self.connection(
             write=True, device_binding_changed=changed,
         ) as conn:
+            root = conn.execute(
+                "SELECT id FROM groups ORDER BY created_at, id LIMIT 1"
+            ).fetchone()
+            if root is not None and str(root["id"]) == gid:
+                raise ValueError("根组是全局组，不允许删除，只允许修改子网")
+
+            blockers = self._group_delete_blockers_in_connection(conn, [gid]).get(gid, {})
+            reason = self._group_delete_blocker_message(blockers)
+            if reason:
+                raise ValueError(reason)
             result = conn.execute(
-                "DELETE FROM groups WHERE id = ?", (str(group_id),)
+                "DELETE FROM groups WHERE id = ?", (gid,)
             )
             changed[0] = result.rowcount > 0
 
