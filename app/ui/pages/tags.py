@@ -693,7 +693,7 @@ class TagsPage:
     def _show_delete_dialog(self, tag: dict) -> None:
         with ui.dialog() as dialog, ui.card().classes("vpn-form-dialog"):
             ui.label(f"确认删除标签「{tag['name']}」？").classes("text-lg font-medium")
-            ui.label("删除后，用户和用户组的标签关联也会一并删除。").classes("section-caption")
+            ui.label("请先解除全部用户/组关联，并移除中心规则、Mesh 路由及远端防火墙引用后，才能删除标签。").classes("section-caption")
 
             def confirm() -> None:
                 self._delete_tag_and_refresh(str(tag["id"]), dialog)
