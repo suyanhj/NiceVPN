@@ -16,19 +16,19 @@
 OVPN_ETC="/etc/openvpn"
 # 由 script_sync 将 __DEVICE_BIND_LOG_FILE__ 替换为 constants.DEVICE_BIND_LOG_FILE（唯一真相源）
 BIND_LOG="__DEVICE_BIND_LOG_FILE__"
-case "$BIND_LOG" in *"__DEVICE_BIND_LOG_FILE__"*)
+case "$BIND_LOG" in __DEVICE_BIND_*)
     BIND_LOG="${OVPN_ETC}/log/openvpn-device-bind.log"
     ;;
 esac
 SESSION_AUDIT_LOG="__VPN_SESSION_AUDIT_LOG_FILE__"
-case "$SESSION_AUDIT_LOG" in *"__VPN_SESSION_AUDIT_LOG_FILE__"*)
+case "$SESSION_AUDIT_LOG" in __VPN_SESSION_*)
     SESSION_AUDIT_LOG="${OVPN_ETC}/log/openvpn-session-audit.jsonl"
     ;;
 esac
 BINDINGS_DIR="${OVPN_ETC}/mgmt/device_bindings"
 MODE_FILE="${OVPN_ETC}/mgmt/device_bind_mode"
 EXEMPT_FILE="__DEVICE_BIND_EXEMPTIONS_FILE__"
-case "$EXEMPT_FILE" in *"__DEVICE_BIND_EXEMPTIONS_FILE__"*)
+case "$EXEMPT_FILE" in __DEVICE_BIND_*)
     EXEMPT_FILE="${OVPN_ETC}/mgmt/device_bind_exemptions.json"
     ;;
 esac
