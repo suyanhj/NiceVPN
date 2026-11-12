@@ -218,17 +218,53 @@ def apply_peer_site_iptables_via_ssh(
                     "warnings": warnings,
                 }
     
-            _remove_remote_peer_chain_and_jump(client, chain, sp, timeout=exec_timeout)
+            # 只清理本 peer 的 FORWARD 跳转与 NAT 规则，不再 flush 整条用户链；
+            # 用户链内的远端防火墙规则（尤其是标签 ipset matcher）必须保留。
             removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
-    
+
+            chain_out, chain_err, chain_code = _exec_ssh(
+                client, f"{sp}iptables -S {shlex.quote(chain)}", timeout=exec_timeout,
+            )
+            removed_base = 0
+            if chain_code == 0:
+                prefix = f"-A {chain} "
+                peer_marker = f"peer={peer_id}"
+                for line in chain_out.splitlines():
+                    current = line.strip()
+                    if not current.startswith(prefix):
+                        continue
+                    if peer_marker not in current or "role=fwd-global" not in current:
+                        continue
+                    delete_command = (
+                        f"{sp}iptables -D {shlex.quote(chain)} "
+                        f"{current[len(prefix):]}"
+                    )
+                    _, delete_err, delete_code = _exec_ssh(
+                        client, delete_command, timeout=exec_timeout,
+                    )
+                    if delete_code != 0:
+                        raise RuntimeError(
+                            f"更新对端全局放行规则失败: {(delete_err or '').strip()}"
+                        )
+                    removed_base += 1
+            elif _chain_missing_message(f"{chain_err or ''} {chain_out or ''}"):
+                create_command = f"{sp}iptables -N {shlex.quote(chain)}"
+                _, create_err, create_code = _exec_ssh(
+                    client, create_command, timeout=exec_timeout,
+                )
+                if create_code != 0:
+                    raise RuntimeError(
+                        f"创建对端链 {chain} 失败: {(create_err or '').strip()}"
+                    )
+            else:
+                raise RuntimeError(
+                    f"读取对端链 {chain} 失败: {(chain_err or chain_out or '').strip()}"
+                )
+
             c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
             c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
-            mk = f"{sp}iptables -N {shlex.quote(chain)}"
-            _, err_n, cn = _exec_ssh(client, mk, timeout=exec_timeout)
-            if cn != 0:
-                logger.warning("创建链 %s（可能已存在将依赖后续 -A）: %s", chain, (err_n or "").strip())
             fw_rule = (
-                f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
+                f"{sp}iptables -I {shlex.quote(chain)} 1 -s {shlex.quote(gs)} "
                 f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
             )
             _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
@@ -264,7 +300,7 @@ def apply_peer_site_iptables_via_ssh(
                 "ok": True,
                 "peer_id": peer_id,
                 "global_subnet": gs,
-                "removed_prior": removed,
+                "removed_prior": removed + removed_base,
                 "masquerade_rules": masq_n,
                 "already_current": False,
                 "warnings": warnings,
