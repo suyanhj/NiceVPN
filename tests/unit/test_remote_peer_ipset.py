@@ -40,7 +40,7 @@ def test_reconcile_remote_tag_ipsets_stages_swaps_and_cleans_stage():
         if "command -v ipset" in command:
             return "", "", 0
         if "ipset list -n" in command:
-            return "\\n".join(sorted(state["names"])), "", 0
+            return "\n".join(sorted(state["names"])), "", 0
         if "ipset create " in command:
             parts = command.split()
             name = parts[parts.index("create") + 1]
@@ -79,7 +79,7 @@ def test_remote_tag_ipset_gc_only_removes_current_peer_orphans_and_stage():
 
     def fake_exec(_client, command: str, *, timeout: int):
         if "ipset list -n" in command:
-            return "\\n".join(sorted(state["names"])), "", 0
+            return "\n".join(sorted(state["names"])), "", 0
         if "ipset destroy " in command:
             state["names"].discard(command.split()[-1])
             return "", "", 0
