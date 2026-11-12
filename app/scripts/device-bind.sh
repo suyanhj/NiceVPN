@@ -16,19 +16,19 @@
 OVPN_ETC="/etc/openvpn"
 # 由 script_sync 将 __DEVICE_BIND_LOG_FILE__ 替换为 constants.DEVICE_BIND_LOG_FILE（唯一真相源）
 BIND_LOG="__DEVICE_BIND_LOG_FILE__"
-case "$BIND_LOG" in *"__DEVICE_BIND_LOG_FILE__"*)
+case "$BIND_LOG" in __DEVICE_BIND_*)
     BIND_LOG="${OVPN_ETC}/log/openvpn-device-bind.log"
     ;;
 esac
 SESSION_AUDIT_LOG="__VPN_SESSION_AUDIT_LOG_FILE__"
-case "$SESSION_AUDIT_LOG" in *"__VPN_SESSION_AUDIT_LOG_FILE__"*)
+case "$SESSION_AUDIT_LOG" in __VPN_SESSION_*)
     SESSION_AUDIT_LOG="${OVPN_ETC}/log/openvpn-session-audit.jsonl"
     ;;
 esac
 BINDINGS_DIR="${OVPN_ETC}/mgmt/device_bindings"
 MODE_FILE="${OVPN_ETC}/mgmt/device_bind_mode"
 EXEMPT_FILE="__DEVICE_BIND_EXEMPTIONS_FILE__"
-case "$EXEMPT_FILE" in *"__DEVICE_BIND_EXEMPTIONS_FILE__"*)
+case "$EXEMPT_FILE" in __DEVICE_BIND_*)
     EXEMPT_FILE="${OVPN_ETC}/mgmt/device_bind_exemptions.json"
     ;;
 esac
@@ -40,22 +40,16 @@ BD_JSON_PY="${SCRIPT_DIR}/device_binding_json.py"
 SESSION_AUDIT_PY="${SCRIPT_DIR}/vpn_session_audit.py"
 EXEMPT_PY="${SCRIPT_DIR}/device_bind_exemption.py"
 
-# 选用 PATH 中版本号最高的 python3.x（多版本并存时避免 python3 指向旧解释器），最后回退 python3
+# Python 路径由 NiceVPN 同步脚本时写入；保留 PY3_BIND 供人工覆盖。
+# 不再依赖 OpenVPN systemd 服务的 PATH 猜测 Python 版本。
 init_py3_for_bind() {
-    [ -n "${PY3_BIND:-}" ] && return 0
-    local v name
-    for v in 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6; do
-        name="python3.${v}"
-        if command -v "$name" >/dev/null 2>&1; then
-            PY3_BIND="$name"
-            return 0
-        fi
-    done
-    if command -v python3 >/dev/null 2>&1; then
-        PY3_BIND="python3"
-        return 0
+    [ "${PY3_BIND_CHECKED:-0}" = "1" ] && return 0
+    if [ -z "${PY3_BIND:-}" ]; then
+        PY3_BIND=__NICEVPN_PYTHON_BIN__
     fi
-    return 1
+    command -v "${PY3_BIND}" >/dev/null 2>&1 || return 1
+    "${PY3_BIND}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || return 1
+    PY3_BIND_CHECKED=1
 }
 
 log() {
@@ -82,7 +76,7 @@ write_session_start() {
         exit 1
     fi
     if ! init_py3_for_bind; then
-        log "错误: 未找到 python3 / python3.x，无法写入会话审计 JSONL，CN=${CN}"
+        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法写入会话审计 JSONL，CN=${CN}"
         exit 1
     fi
     if ! "${PY3_BIND}" "${SESSION_AUDIT_PY}" \
@@ -214,7 +208,7 @@ write_binding_json() {
         exit 1
     fi
     if ! init_py3_for_bind; then
-        log "错误: 未找到 python3 / python3.x，无法写入绑定 JSON，CN=${CN}"
+        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法写入绑定 JSON，CN=${CN}"
         exit 1
     fi
     if ! "${PY3_BIND}" "${BD_JSON_PY}" write-new \
@@ -236,7 +230,7 @@ update_binding_seen_and_plat() {
         exit 1
     fi
     if ! init_py3_for_bind; then
-        log "错误: 未找到 python3 / python3.x，无法更新绑定 JSON，CN=${CN}"
+        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法更新绑定 JSON，CN=${CN}"
         exit 1
     fi
     if ! "${PY3_BIND}" "${BD_JSON_PY}" update \

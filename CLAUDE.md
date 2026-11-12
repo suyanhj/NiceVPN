@@ -166,6 +166,8 @@ openspec/changes/
 - 初始化检测 OpenVPN 时通过 `systemctl list-unit-files --type=service` 检查是否已有 `openvpn-server@` 服务单元；存在则不改动，缺失时复用 `openvpn-install-systemd.sh` / `openvpn_install_server_systemd_from_src` 原有生成逻辑补齐。
 - 复用原生成逻辑时，`OPENVPN_BIN` 与 `OPENVPN_SBIN_DIR` 必须指向实际检测到的二进制路径，不能假定所有手动编译都安装在 `/opt/openvpn`。
 - 不为这项检查另建一套 systemd 模板或 fallback 安装脚本；补齐只生成服务文件及原有的 NiceVPN drop-in，不重新编译或替换 OpenVPN。
+- OpenVPN 连接与断开钩子的 Python 与 systemd 中 NiceVPN 主进程互相独立；统一在 `script_sync.py` 部署时用 `sys.executable` 的绝对路径替换 `__NICEVPN_PYTHON_BIN__`，保留 uv/.venv 虚拟环境符号链接，不依赖 `PATH` 搜索旧 `python3`。必要时允许 `PY3_BIND` / `PY3_AUDIT` 显式覆盖，但必须是 Python 3.10+。
+- 避免给各个 OpenVPN shell 钩子各写一套 Python 版本遍历逻辑；独立执行的审计 / 设备绑定 Python 脚本使用 3.10+ 类型注解，不能只删除 `from __future__ import annotations` 来号称兼容 3.6。
 
 ### Public API
 

@@ -2,6 +2,9 @@
 """将仓库内的 OpenVPN 钩子脚本同步到服务器配置目录（与 server.conf 中路径一致）。"""
 
 import logging
+import os
+import shlex
+import sys
 from pathlib import Path
 
 from app.core.constants import DEVICE_BIND_LOG_FILE, DEVICE_BIND_EXEMPTIONS_FILE, OPENVPN_ETC_DIR, VPN_SESSION_AUDIT_LOG_FILE
@@ -28,12 +31,15 @@ def sync_packaged_openvpn_scripts(openvpn_conf_dir: str | Path) -> None:
     scripts_dir = base / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     scripts_pkg = Path(__file__).resolve().parent.parent.parent / "scripts"
+    # 必须保留虚拟环境入口，不能 realpath 到 uv 的基础 Python。
+    python_bin = shlex.quote(os.path.abspath(sys.executable))
     for script_name in OPENVPN_SCRIPT_NAMES:
         src = scripts_pkg / script_name
         if not src.is_file():
             logger.warning("打包脚本不存在，跳过同步: %s", src)
             continue
         content = src.read_text(encoding="utf-8").replace("\r\n", "\n")
+        content = content.replace("__NICEVPN_PYTHON_BIN__", python_bin)
         content = content.replace("__OPENVPN_ETC_DIR__", str(OPENVPN_ETC_DIR))
         content = content.replace("__DEVICE_BIND_LOG_FILE__", DEVICE_BIND_LOG_FILE.as_posix())
         content = content.replace("__VPN_SESSION_AUDIT_LOG_FILE__", VPN_SESSION_AUDIT_LOG_FILE.as_posix())
