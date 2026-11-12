@@ -100,6 +100,47 @@ def test_missing_remote_tag_fails_closed():
 
 
 
+def test_disabled_remote_tag_rule_does_not_schedule_member_refresh(
+    tmp_path, monkeypatch,
+):
+    from app.services.firewall.remote_tag_rules import mark_remote_tag_rules_pending
+    from app.services.peer_instance import remote_chain_cache
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "disabled-remote-tag.sqlite")
+    store.create_tag("tag-off", "停用规则标签")
+    store.upsert_peer({
+        "id": "peer-disabled",
+        "name": "远端站点",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.60.0/24"],
+    })
+    monkeypatch.setattr(
+        remote_chain_cache, "REMOTE_PEER_CHAINS_DIR", tmp_path / "remote-cache",
+    )
+    remote_chain_cache.write_remote_chain_cache(
+        "peer-disabled",
+        chain="VPN_PEER_disabled",
+        chain_exists=True,
+        rows=[{
+            "rest": "",
+            "enabled": False,
+            "tag_binding": {
+                "tag_id": "tag-off",
+                "action": "accept",
+                "protocol": "all",
+            },
+        }],
+        pending_sync=False,
+        last_sync_error=None,
+    )
+
+    assert mark_remote_tag_rules_pending(["tag-off"], store=store) == []
+    cache = remote_chain_cache.read_remote_chain_cache("peer-disabled")
+    assert cache is not None
+    assert cache["pending_sync"] is False
+
+
 def test_remote_tag_sync_rebuilds_peer_chain_from_latest_tag_members(
     tmp_path, monkeypatch,
 ):
