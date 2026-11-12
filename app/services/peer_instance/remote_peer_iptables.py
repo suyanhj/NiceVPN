@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+import threading
 from typing import Any
 
 import paramiko
@@ -367,13 +368,13 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
 
 
 _REMOTE_CHAIN_LOCKS: dict[str, Any] = {}
-_REMOTE_CHAIN_LOCKS_GUARD = __import__("threading").Lock()
+_REMOTE_CHAIN_LOCKS_GUARD = threading.Lock()
 
 
 def _remote_chain_lock(peer_id: str):
     """同一对端的标签同步、手动推送串行执行，避免集合与规则交叉切换。"""
     with _REMOTE_CHAIN_LOCKS_GUARD:
-        return _REMOTE_CHAIN_LOCKS.setdefault(str(peer_id), __import__("threading").Lock())
+        return _REMOTE_CHAIN_LOCKS.setdefault(str(peer_id), threading.Lock())
 
 
 def replace_peer_filter_chain_rests_via_ssh(
