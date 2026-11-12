@@ -160,7 +160,21 @@ class GroupsPage:
         else:
             all_groups = self.group_service.list_all()
             root_id = str(all_groups[0].get("id") or "") if all_groups else ""
-        return [dict(group) for group in groups], int(total), root_id
+
+        groups = [dict(group) for group in groups]
+        blockers_method = getattr(self.group_service, "delete_block_reasons", None)
+        if callable(blockers_method):
+            reasons = blockers_method([str(group.get("id") or "") for group in groups])
+        else:
+            reasons = {}
+        for group in groups:
+            group_id = str(group.get("id") or "")
+            reason = str(reasons.get(group_id) or "")
+            # 兼容仅提供基础 CRUD 的轻量测试替身；正式服务会返回完整关联原因。
+            if not reason and int(group.get("user_count") or 0) > 0:
+                reason = f"组内有 {int(group['user_count'])} 个用户，无法删除"
+            group["delete_block_reason"] = reason
+        return groups, int(total), root_id
 
     def _refresh_group_page(self) -> None:
         if self.list_container is None or getattr(self.list_container, "is_deleted", False):
@@ -304,6 +318,7 @@ class GroupsPage:
             "subnet": str(group.get("subnet") or "未配置子网"),
             "status": status if status in {"active", "disabled"} else "disabled",
             "user_count": int(group.get("user_count") or 0),
+            "delete_block_reason": str(group.get("delete_block_reason") or ""),
             "is_root": bool(group_id and group_id == root_id),
         }
 
@@ -390,10 +405,13 @@ class GroupsPage:
                         tooltip="根组定义全局 VPN 子网，不允许删除",
                     ).props("dense")
                 else:
+                    delete_block_reason = str(group.get("delete_block_reason") or "")
                     danger_action(
                         "删除",
                         icon="delete",
                         on_click=lambda current=group: self._confirm_delete(current),
+                        disabled=bool(delete_block_reason),
+                        tooltip=delete_block_reason or None,
                     ).props("dense")
 
     def _toggle_select(self, group_id: str, selected: bool):
@@ -689,13 +707,17 @@ class GroupsPage:
         """删除用户组前的二次确认。"""
 
         name = str(group.get("name") or group["id"])
+        delete_block_reason = str(group.get("delete_block_reason") or "")
+        if delete_block_reason:
+            safe_notify(delete_block_reason, type="warning")
+            return
         user_count = int(group.get("user_count") or 0)
         if user_count > 0:
             safe_notify(f"「{name}」内有 {user_count} 个用户，无法删除", type="warning")
             return
         confirm_dialog.show(
             f"确定删除用户组「{name}」？",
-            impact="删除后不可恢复；仅允许删除没有用户的非根组。",
+            impact="删除后不可恢复；仅允许删除没有用户、标签关联、中心规则和对端 Mesh 路由引用的非根组。",
             object_count=1,
             danger_level="danger",
             on_confirm=lambda: self._do_delete(str(group["id"])),
@@ -719,7 +741,7 @@ class GroupsPage:
             return
         confirm_dialog.show(
             "确定删除所选用户组？",
-            impact="根组或仍有用户的分组会被安全跳过并在结果中报告失败原因。",
+            impact="根组或仍有关联用户、标签、中心规则、对端 Mesh 路由的分组会被安全跳过，并报告失败原因。",
             object_count=len(self.selected_ids),
             danger_level="danger",
             on_confirm=self._do_batch_delete,
