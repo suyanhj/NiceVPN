@@ -104,8 +104,9 @@ def _ensure_ipset_installed(
     *,
     timeout: int,
 ) -> None:
+    check_command = "sh -c " + shlex.quote("command -v ipset >/dev/null 2>&1")
     _, _, code = _run(
-        exec_ssh, client, f"{sudo_prefix}command -v ipset >/dev/null 2>&1", timeout,
+        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
     )
     if code == 0:
         return
@@ -137,7 +138,7 @@ def _ensure_ipset_installed(
             f"{(install_err or out or '').strip()[-1500:]}"
         )
     _, check_err, check_code = _run(
-        exec_ssh, client, f"{sudo_prefix}command -v ipset >/dev/null 2>&1", timeout,
+        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
     )
     if check_code != 0:
         raise RuntimeError(
@@ -264,6 +265,21 @@ def reconcile_remote_peer_tag_ipsets(
         raise
 
     return newly_created
+
+
+def discard_remote_peer_tag_ipsets(
+    client,
+    sudo_prefix: str,
+    names: Iterable[str],
+    exec_ssh: Callable,
+    *,
+    timeout: int = 60,
+) -> None:
+    """iptables 原子切换失败时，清理本轮新建且尚未被规则引用的集合。"""
+    for name in sorted({str(value) for value in names}):
+        if not name.startswith(_STABLE_PREFIX) or len(name) > _MAX_NAME_LENGTH:
+            continue
+        _destroy(client, sudo_prefix, name, exec_ssh, timeout)
 
 
 def gc_remote_peer_tag_ipsets(
