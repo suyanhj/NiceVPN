@@ -31,7 +31,6 @@ def test_install_script_files_exist() -> None:
         "openvpn-install-debian.sh",
         "openvpn-install-rhel.sh",
         "openvpn-install-systemd.sh",
-        "openvpn-install-systemd-fallback.sh",
     ):
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
 
@@ -127,28 +126,12 @@ def test_stage_source_build_uses_distribution_install_entry(
     assert result["binary"] == str(prefix / "sbin" / "openvpn")
 
 
-def test_systemd_fallback_entry_uses_project_template_without_rebuilding_openvpn() -> None:
-    script = _read_install_script_text("openvpn-install-systemd-fallback.sh")
-    template = (
-        _INSTALL_SCRIPTS_DIR.parents[2]
-        / "deploy"
-        / "systemd"
-        / "openvpn-server@.service.in"
-    ).read_text(encoding="utf-8")
-
-    assert "openvpn-server@.service" in script
-    assert "/usr/lib/systemd/system/" in script
+def test_systemd_common_generator_accepts_detected_openvpn_binary() -> None:
     common = _read_install_script_text("openvpn-install-common.sh")
-    assert (
-        "systemctl daemon-reload" in common
-        or "openvpn_install_server_systemd_override" in script
-    )
-    assert "不覆盖发行版已有的 unit" in script
-    assert "OPENVPN_BIN" in script
-    assert "@OPENVPN_BIN@" in template
-    assert "ExecStart=@OPENVPN_BIN@ --suppress-timestamps --config %i.conf" in template
-    assert "WorkingDirectory=/etc/openvpn/server" in template
-    assert "openvpn_compile_install" not in script
+    assert 'OPENVPN_SBIN_DIR:=${OPENVPN_PREFIX}/sbin' in common
+    assert 'OPENVPN_BIN:=${OPENVPN_SBIN_DIR}/openvpn' in common
+    assert 'exec_new="ExecStart=${OPENVPN_BIN} --suppress-timestamps --config %i.conf"' in common
+    assert 's#@sbindir@#${OPENVPN_SBIN_DIR}#g' in common
 
 
 def test_systemd_install_entry_reuses_common_helpers() -> None:
