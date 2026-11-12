@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.firewall.remote_tag_rules import materialize_remote_chain_rows
+from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
 
 
 class FakeTagService:
@@ -31,15 +31,18 @@ def test_materialize_remote_tag_rule_uses_current_member_addresses():
         {"rest": "-s 10.9.0.0/24 -j DROP", "enabled": True},
     ]
 
-    rests = materialize_remote_chain_rows(
+    plan = materialize_remote_chain_plan(
         rows,
+        peer_id="peer-current",
         tag_service=FakeTagService(["10.8.0.10", "10.8.0.11"]),
     )
 
-    assert len(rests) == 3
-    assert any("-s 10.8.0.10" in rest and "--dport 443" in rest for rest in rests)
-    assert any("-s 10.8.0.11" in rest and "--dport 443" in rest for rest in rests)
-    assert rests[-1] == "-s 10.9.0.0/24 -j DROP"
+    assert len(plan["ipsets"]) == 1
+    assert len(plan["rests"]) == 2
+    set_name = plan["ipsets"][0].name
+    assert f"-m set --match-set {set_name} src" in plan["rests"][0]
+    assert "--dport 443" in plan["rests"][0]
+    assert plan["rests"][-1] == "-s 10.9.0.0/24 -j DROP"
 
 
 def test_remote_tag_sources_collapse_ips_already_covered_by_group_cidr():
@@ -53,8 +56,9 @@ def test_remote_tag_sources_collapse_ips_already_covered_by_group_cidr():
         },
     }]
 
-    rests = materialize_remote_chain_rows(
+    plan = materialize_remote_chain_plan(
         rows,
+        peer_id="peer-collapse",
         tag_service=FakeTagService([
             "10.8.0.0/24",
             "10.8.0.10",
@@ -63,14 +67,13 @@ def test_remote_tag_sources_collapse_ips_already_covered_by_group_cidr():
         ]),
     )
 
-    assert len(rests) == 2
-    assert "-s 10.8.0.0/24" in rests[0]
-    assert "-s 10.9.0.10" in rests[1]
+    assert len(plan["ipsets"]) == 1
+    assert len(plan["rests"]) == 1
+    assert plan["ipsets"][0].entries == ("10.8.0.0/24", "10.9.0.10/32")
+    assert f"-m set --match-set {plan['ipsets'][0].name} src" in plan["rests"][0]
 
 
 def test_materialize_remote_tag_rule_uses_one_ipset_matcher_for_many_members():
-    from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
-
     rows = [
         {
             "rest": "",
@@ -116,8 +119,6 @@ def test_materialize_remote_tag_rule_uses_one_ipset_matcher_for_many_members():
 
 
 def test_empty_remote_tag_plan_has_no_rule_or_ipset():
-    from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
-
     plan = materialize_remote_chain_plan(
         [{
             "rest": "",
@@ -147,7 +148,10 @@ def test_empty_remote_tag_is_fail_closed_and_does_not_create_unrestricted_rule()
         },
     }]
 
-    assert materialize_remote_chain_rows(rows, tag_service=FakeTagService([])) == []
+    plan = materialize_remote_chain_plan(
+        rows, peer_id="peer-empty", tag_service=FakeTagService([]),
+    )
+    assert plan == {"rests": [], "ipsets": []}
 
 
 def test_missing_remote_tag_fails_closed():
@@ -162,7 +166,9 @@ def test_missing_remote_tag_fails_closed():
     }]
 
     with pytest.raises(RuntimeError, match="标签不存在"):
-        materialize_remote_chain_rows(rows, tag_service=FakeTagService([]))
+        materialize_remote_chain_plan(
+            rows, peer_id="peer-missing", tag_service=FakeTagService([]),
+        )
 
 
 
