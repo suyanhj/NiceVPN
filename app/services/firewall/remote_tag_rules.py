@@ -144,7 +144,8 @@ def mark_remote_tag_rules_pending(tag_ids: Iterable[str], *, store=None) -> list
             continue
         rows = list(cache.get("rows") or [])
         if not any(
-            str((_tag_binding(row) or {}).get("tag_id") or "") in wanted
+            bool(row.get("enabled", True))
+            and str((_tag_binding(row) or {}).get("tag_id") or "") in wanted
             for row in rows
         ):
             continue
