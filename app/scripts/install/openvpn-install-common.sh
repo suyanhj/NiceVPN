@@ -21,7 +21,7 @@
 : "${OPENVPN_CREATE_SYMLINK:=1}"
 : "${OPENVPN_FORCE_SOURCE:=0}"
 
-OPENVPN_SRC_DIR="${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}"
+: "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"
 
 version_ge() {
     # 用法: version_ge <ver> <min>
