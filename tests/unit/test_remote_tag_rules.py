@@ -68,6 +68,72 @@ def test_remote_tag_sources_collapse_ips_already_covered_by_group_cidr():
     assert "-s 10.9.0.10" in rests[1]
 
 
+def test_materialize_remote_tag_rule_uses_one_ipset_matcher_for_many_members():
+    from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
+
+    rows = [
+        {
+            "rest": "",
+            "enabled": True,
+            "tag_binding": {
+                "tag_id": "tag-ops",
+                "action": "accept",
+                "protocol": "tcp",
+                "dest_ip": "192.168.10.10",
+                "dest_port": "443",
+            },
+        },
+        {
+            "rest": "",
+            "enabled": True,
+            "tag_binding": {
+                "tag_id": "tag-ops",
+                "action": "drop",
+                "protocol": "udp",
+                "dest_ip": "192.168.10.20",
+                "dest_port": "",
+            },
+        },
+    ]
+
+    plan = materialize_remote_chain_plan(
+        rows,
+        peer_id="peer-plan",
+        tag_service=FakeTagService([
+            "10.8.0.10", "10.8.0.11", "10.8.0.12",
+        ]),
+    )
+
+    assert len(plan["ipsets"]) == 1
+    assert len(plan["rests"]) == 2
+    set_name = plan["ipsets"][0].name
+    assert plan["ipsets"][0].entries == (
+        "10.8.0.10/32", "10.8.0.11/32", "10.8.0.12/32",
+    )
+    assert all(f"-m set --match-set {set_name} src" in rest for rest in plan["rests"])
+    assert all(" -s " not in f" {rest} " for rest in plan["rests"])
+    assert "--dport 443" in plan["rests"][0]
+
+
+def test_empty_remote_tag_plan_has_no_rule_or_ipset():
+    from app.services.firewall.remote_tag_rules import materialize_remote_chain_plan
+
+    plan = materialize_remote_chain_plan(
+        [{
+            "rest": "",
+            "enabled": True,
+            "tag_binding": {
+                "tag_id": "tag-empty",
+                "action": "accept",
+                "protocol": "all",
+            },
+        }],
+        peer_id="peer-empty",
+        tag_service=FakeTagService([]),
+    )
+    assert plan == {"rests": [], "ipsets": []}
+
+
 def test_empty_remote_tag_is_fail_closed_and_does_not_create_unrestricted_rule():
     rows = [{
         "rest": "",
@@ -189,8 +255,10 @@ def test_remote_tag_sync_rebuilds_peer_chain_from_latest_tag_members(
     pushed = []
     monkeypatch.setattr(
         PeerService,
-        "apply_remote_peer_filter_chain_rests",
-        lambda self, peer_id, rests: pushed.append((peer_id, list(rests))),
+        "apply_remote_peer_filter_chain_plan",
+        lambda self, peer_id, rests, ipsets: pushed.append(
+            (peer_id, list(rests), list(ipsets))
+        ),
     )
 
     result = sync_remote_tag_firewall_rules(["tag-ops"], store=store)
@@ -198,9 +266,13 @@ def test_remote_tag_sync_rebuilds_peer_chain_from_latest_tag_members(
     assert result["updated"] == ["peer-remote-tag"]
     assert result["failed"] == []
     assert len(pushed) == 1
-    peer_id, rests = pushed[0]
+    peer_id, rests, ipsets = pushed[0]
     assert peer_id == "peer-remote-tag"
-    assert any("-s 10.8.9.0/24" in rest and "--dport 443" in rest for rest in rests)
+    assert len(ipsets) == 1
+    assert any(
+        f"-m set --match-set {ipsets[0].name} src" in rest and "--dport 443" in rest
+        for rest in rests
+    )
     assert rests[-1] == "-s 10.9.0.0/24 -j DROP"
     cache = remote_chain_cache.read_remote_chain_cache("peer-remote-tag")
     assert cache is not None
