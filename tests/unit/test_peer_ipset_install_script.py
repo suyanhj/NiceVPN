@@ -42,13 +42,13 @@ def _run_installer(
 
     calls_path = tmp_path / "package-calls.txt"
     package_stub = """#!/bin/bash
-printf '%s %s\\n' "${0##*/}" "$*" >> "$NICEVPN_TEST_COMMANDS"
+printf '%s %s\n' "${0##*/}" "$*" >> "$NICEVPN_TEST_COMMANDS"
 if [[ "$1" == "install" && "$NICEVPN_TEST_CREATE_COMMANDS" == "1" ]]; then
     shift 2
     for package in "$@"; do
         case "$package" in
             iptables|ipset)
-                printf '#!/bin/bash\\nexit 0\\n' > "$NICEVPN_TEST_PATH/$package"
+                printf '#!/bin/bash\nexit 0\n' > "$NICEVPN_TEST_PATH/$package"
                 /bin/chmod +x "$NICEVPN_TEST_PATH/$package"
                 ;;
         esac
