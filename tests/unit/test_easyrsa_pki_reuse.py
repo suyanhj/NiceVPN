@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -60,7 +61,7 @@ def test_find_easyrsa_requires_an_executable_script(
     )
     monkeypatch.setattr(
         "app.services.openvpn.detector.subprocess.run",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
             args=["which", "easyrsa"], returncode=1, stdout="", stderr=""
         ),
     )
