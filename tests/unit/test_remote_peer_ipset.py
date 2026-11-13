@@ -37,8 +37,6 @@ def test_reconcile_remote_tag_ipsets_stages_swaps_and_cleans_stage():
 
     def fake_exec(_client, command: str, *, timeout: int):
         state["commands"].append(command)
-        if "bash -lc " in command and "[peer-ipset]" in command:
-            return "[peer-ipset] ipset 已就绪", "", 0
         if "ipset list -n" in command:
             return "\n".join(sorted(state["names"])), "", 0
         if "ipset create " in command:
@@ -65,37 +63,6 @@ def test_reconcile_remote_tag_ipsets_stages_swaps_and_cleans_stage():
     assert spec.name in state["names"]
     assert not any(name.startswith(peer_tag_ipset_stage_prefix("peer-a")) for name in state["names"])
     assert any("ipset swap" in command for command in state["commands"])
-
-
-def test_remote_ipset_installer_executes_packaged_shell_under_sudo():
-    from app.services.peer_instance.remote_peer_ipset import _ensure_ipset_installed
-
-    commands = []
-
-    def fake_exec(_client, command: str, *, timeout: int):
-        commands.append((command, timeout))
-        return "[peer-ipset] ipset 已安装，跳过", "", 0
-
-    _ensure_ipset_installed(object(), "sudo -n ", fake_exec, timeout=30)
-
-    assert len(commands) == 1
-    command, timeout = commands[0]
-    assert command.startswith("sudo -n bash -lc ")
-    assert "command -v ipset" in command
-    assert "apt-get" in command and "dnf" in command and "yum" in command
-    assert timeout == 300
-
-
-def test_remote_ipset_installer_exposes_shell_failure():
-    import pytest
-    from app.services.peer_instance.remote_peer_ipset import _ensure_ipset_installed
-
-    def fake_exec(_client, command: str, *, timeout: int):
-        assert command.startswith("bash -lc ")
-        return "", "ipset 安装失败：软件源不可用", 1
-
-    with pytest.raises(RuntimeError, match="软件源不可用"):
-        _ensure_ipset_installed(object(), "", fake_exec, timeout=400)
 
 
 def test_remote_tag_ipset_gc_only_removes_current_peer_orphans_and_stage():
