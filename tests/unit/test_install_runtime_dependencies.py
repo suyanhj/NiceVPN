@@ -75,7 +75,7 @@ fi
 
     for command in installed_commands:
         binary = bin_dir / command
-        binary.write_text("#!/bin/bash\\nexit 0\\n", encoding="utf-8")
+        binary.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
         binary.chmod(0o755)
 
     script_text = SCRIPT.read_text(encoding="utf-8")
@@ -115,7 +115,7 @@ def test_existing_openvpn_runtime_tools_skip_package_manager(tmp_path: Path):
         "conntrack", "sysctl", "logrotate",
     )
     result, calls = _run_profile(
-        tmp_path, "ID=debian\\n", "openvpn-runtime",
+        tmp_path, "ID=debian\n", "openvpn-runtime",
         installed_commands=commands,
     )
 
@@ -127,7 +127,7 @@ def test_existing_openvpn_repairs_all_missing_runtime_tools_in_one_debian_transa
     tmp_path: Path,
 ):
     result, calls = _run_profile(
-        tmp_path, "ID=ubuntu\\nID_LIKE=debian\\n", "openvpn-runtime",
+        tmp_path, "ID=ubuntu\nID_LIKE=debian\n", "openvpn-runtime",
     )
 
     assert result.returncode == 0, result.stderr
@@ -141,7 +141,7 @@ def test_existing_openvpn_repairs_all_missing_runtime_tools_in_one_rhel_transact
     tmp_path: Path,
 ):
     result, calls = _run_profile(
-        tmp_path, "ID=rocky\\nID_LIKE=rhel\\n", "openvpn-runtime",
+        tmp_path, "ID=rocky\nID_LIKE=rhel\n", "openvpn-runtime",
         manager="dnf",
     )
 
@@ -153,7 +153,7 @@ def test_existing_openvpn_repairs_all_missing_runtime_tools_in_one_rhel_transact
 
 def test_existing_easyrsa_only_repairs_openssl_runtime_dependency(tmp_path: Path):
     result, calls = _run_profile(
-        tmp_path, "ID=debian\\n", "easyrsa-runtime",
+        tmp_path, "ID=debian\n", "easyrsa-runtime",
     )
 
     assert result.returncode == 0, result.stderr
@@ -165,7 +165,7 @@ def test_existing_easyrsa_only_repairs_openssl_runtime_dependency(tmp_path: Path
 
 def test_missing_easyrsa_installs_all_download_and_unpack_tools_once(tmp_path: Path):
     result, calls = _run_profile(
-        tmp_path, "ID=debian\\n", "easyrsa-install",
+        tmp_path, "ID=debian\n", "easyrsa-install",
     )
 
     assert result.returncode == 0, result.stderr
@@ -177,7 +177,7 @@ def test_missing_easyrsa_installs_all_download_and_unpack_tools_once(tmp_path: P
 
 def test_runtime_dependency_profile_rejects_unknown_profile(tmp_path: Path):
     result, calls = _run_profile(
-        tmp_path, "ID=debian\\n", "unknown-profile",
+        tmp_path, "ID=debian\n", "unknown-profile",
     )
 
     assert result.returncode == 2
