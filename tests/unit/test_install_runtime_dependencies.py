@@ -30,6 +30,9 @@ def _run_profile(
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "mock-bin"
     bin_dir.mkdir()
+    dirname_bin = shutil.which("dirname")
+    if dirname_bin:
+        (bin_dir / "dirname").symlink_to(dirname_bin)
     os_release_path = tmp_path / "os-release"
     os_release_path.write_text(os_release, encoding="utf-8")
     calls_path = tmp_path / "package-calls.txt"
