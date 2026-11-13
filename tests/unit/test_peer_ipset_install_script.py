@@ -181,3 +181,50 @@ def test_installer_rejects_missing_command_after_package_install(tmp_path: Path)
         "apt-get update -qq",
         "apt-get install -y iptables ipset",
     ]
+
+
+
+def test_shared_helper_deduplicates_packages_for_multiple_commands(tmp_path: Path):
+    bin_dir = tmp_path / "mock-bin"
+    bin_dir.mkdir()
+    os_release = tmp_path / "os-release"
+    os_release.write_text("ID=debian\\n", encoding="utf-8")
+    calls_path = tmp_path / "calls.txt"
+    manager = bin_dir / "apt-get"
+    manager.write_text(
+        "#!/bin/bash\\n"
+        'printf "%s\\n" "$*" >> "$NICEVPN_TEST_COMMANDS"\\n'
+        'if [[ "$1" == "install" ]]; then\\n'
+        '  shift 2\\n'
+        '  for package in "$@"; do\\n'
+        '    if [[ "$package" == "coreutils" ]]; then\\n'
+        '      for command in cp ln; do printf "#!/bin/bash\\nexit 0\\n" > "$NICEVPN_TEST_PATH/$command"; chmod +x "$NICEVPN_TEST_PATH/$command"; done\\n'
+        '    fi\\n'
+        '  done\\n'
+        'fi\\n',
+        encoding="utf-8",
+    )
+    manager.chmod(0o755)
+
+    script = COMMON.read_text(encoding="utf-8") + "\\nnicevpn_ensure_commands cp coreutils ln coreutils\\n"
+    env = dict(os.environ)
+    env.update({
+        "PATH": str(bin_dir),
+        "NICEVPN_TEST_PATH": str(bin_dir),
+        "NICEVPN_OS_RELEASE_FILE": str(os_release),
+        "NICEVPN_TEST_COMMANDS": str(calls_path),
+    })
+    result = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls_path.read_text(encoding="utf-8").splitlines() == [
+        "update -qq",
+        "install -y coreutils",
+    ]
