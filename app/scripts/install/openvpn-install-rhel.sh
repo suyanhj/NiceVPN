@@ -33,13 +33,17 @@ install_optional_dco_dependencies() {
 }
 
 install_source_dependencies() {
-    ${PM} install -y \
-        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
-        openssl-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
+    local -a packages=(
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool
+        openssl-devel pam-devel libcap-ng-devel lzo-devel lz4-devel
         pkcs11-helper-devel systemd-devel which conntrack-tools
+        iptables ipset
+    )
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
-        ${PM} install -y logrotate
+        packages+=(logrotate)
     fi
+    # 基础依赖一次性安装；DCO 开发包可选，单独尝试且失败不阻断编译。
+    ${PM} install -y "${packages[@]}"
     install_optional_dco_dependencies
 }
 
@@ -59,7 +63,7 @@ PKG_VERSION="$(${PM} -q info openvpn 2>/dev/null \
 
 if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION}"; then
     _log "仓库 openvpn ${PKG_VERSION} 满足 ${OPENVPN_MIN_VERSION}+，使用系统包安装"
-    packages=(openvpn conntrack-tools)
+    packages=(openvpn conntrack-tools iptables ipset)
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         packages+=(logrotate)
     fi
