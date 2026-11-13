@@ -114,7 +114,8 @@ def _ensure_ipset_installed(
     except OSError as exc:
         raise RuntimeError(f"无法读取对端 ipset 安装脚本或共享函数: {exc}") from exc
 
-    command = f"{sudo_prefix}bash -lc {shlex.quote(common + chr(10) + script)}"
+    payload = common + "\n" + script
+    command = f"{sudo_prefix}bash -lc {shlex.quote(payload)}"
     out, err, code = _run(exec_ssh, client, command, max(timeout, 300))
     if code != 0:
         raise RuntimeError(
