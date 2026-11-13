@@ -10,37 +10,20 @@ source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
 : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
 
-ensure_easyrsa_tools() {
-    local missing=()
-    local tool
-    for tool in curl tar gzip openssl find cp ln mktemp; do
-        if ! command -v "${tool}" >/dev/null 2>&1; then
-            missing+=("${tool}")
-        fi
-    done
-
-    [ "${#missing[@]}" -gt 0 ] || return 0
-
-    _log "缺少 EasyRSA 安装工具: ${missing[*]}，尝试通过系统包管理器补齐"
-    local manager
-    manager="$(nicevpn_package_manager)" || {
-        echo "无法自动补齐 EasyRSA 安装工具：发行版或包管理器不受支持" >&2
-        return 1
-    }
-    if [ "${manager}" = "apt-get" ]; then
-        apt-get update -qq
-    fi
-    nicevpn_install_packages "${manager}" curl tar gzip openssl findutils coreutils
-
-    for tool in "${missing[@]}"; do
-        command -v "${tool}" >/dev/null 2>&1 || {
-            echo "EasyRSA 安装工具仍不可用: ${tool}" >&2
-            return 1
-        }
-    done
-}
-
-ensure_easyrsa_tools
+# EasyRSA 解压、安装所需命令通过共享函数批量检查；缺失时只调用一次包管理器。
+nicevpn_ensure_commands \
+    curl curl \
+    tar tar \
+    gzip gzip \
+    openssl openssl \
+    find findutils \
+    cp coreutils \
+    ln coreutils \
+    mktemp coreutils \
+    mkdir coreutils \
+    rm coreutils \
+    mv coreutils \
+    head coreutils
 INSTALL_EASYRSA=1
 export INSTALL_EASYRSA
 easyrsa_download_and_install
