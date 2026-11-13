@@ -242,7 +242,7 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
         "EASYRSA_INSTALL_DIR": str(install_root),
     })
     result = subprocess.run(
-        ["bash", str(_INSTALL_SCRIPTS_DIR / "easyrsa-install.sh")],
+        ["/bin/bash", str(_INSTALL_SCRIPTS_DIR / "easyrsa-install.sh")],
         env=env,
         capture_output=True,
         text=True,
@@ -480,20 +480,24 @@ def test_dco_development_packages_are_best_effort() -> None:
 
 def test_easyrsa_installer_reuses_shared_dependency_helper() -> None:
     script = _read_install_script_text("easyrsa-install.sh")
+    helper = (_INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert "nicevpn_ensure_commands" in script
-    assert "ensure_easyrsa_tools()" not in script
+    assert "nicevpn_ensure_easyrsa_runtime_dependencies" in script
+    assert "nicevpn_ensure_easyrsa_install_dependencies" in script
+    assert "easyrsa_reuse_existing" in script
     assert "apt-get update" not in script
     assert "nicevpn_package_manager" not in script
-    assert "find findutils" in script
-    assert "cp coreutils" in script
+    assert "find findutils" in helper
+    assert "cp coreutils" in helper
 
 
 
 def test_easyrsa_install_shell_syntax() -> None:
     script = _INSTALL_SCRIPTS_DIR / "easyrsa-install.sh"
     result = subprocess.run(
-        ["bash", "-n", str(script)],
+        ["/bin/bash", "-n", str(script)],
         capture_output=True,
         text=True,
         check=False,
