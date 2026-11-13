@@ -15,6 +15,7 @@ from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
+_LINUX_PACKAGE_HELPERS = _INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh"
 
 _OPENVPN_SOURCE_ROOT = Path("/tmp/ovpn-mgmt-openvpn-src")
 
@@ -394,11 +395,12 @@ def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
 
+    linux_text = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
     common_text = _read_install_script_text("openvpn-install-common.sh")
     entry_text = _strip_entry_script_wrapper(
         _read_install_script_text(f"openvpn-install-{distro}.sh")
     )
-    return "\n".join(lines) + "\n" + common_text + "\n" + entry_text
+    return "\n".join(lines) + "\n" + linux_text + "\n" + common_text + "\n" + entry_text
 
 
 def _read_install_script_text(name: str) -> str:
@@ -423,7 +425,9 @@ def _strip_entry_script_wrapper(text: str) -> str:
             continue
         if stripped.startswith("SCRIPT_DIR="):
             continue
-        if "source " in stripped and "openvpn-install-common.sh" in stripped:
+        if "source " in stripped and (
+            "openvpn-install-common.sh" in stripped or "linux-packages.sh" in stripped
+        ):
             continue
         if stripped.startswith("# shellcheck"):
             continue
