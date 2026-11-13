@@ -42,6 +42,9 @@ install_source_dependencies() {
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         packages+=(logrotate)
     fi
+    if [ "${INSTALL_EASYRSA}" = "1" ]; then
+        packages+=(openssl findutils coreutils)
+    fi
     # 基础依赖一次性安装；DCO 开发包可选，单独尝试且失败不阻断编译。
     ${PM} install -y "${packages[@]}"
     install_optional_dco_dependencies
@@ -66,6 +69,9 @@ if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION
     packages=(openvpn conntrack-tools iptables ipset)
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         packages+=(logrotate)
+    fi
+    if [ "${INSTALL_EASYRSA}" = "1" ]; then
+        packages+=(curl tar gzip openssl findutils coreutils)
     fi
     ${PM} install -y "${packages[@]}"
     openvpn_install_server_systemd_override
