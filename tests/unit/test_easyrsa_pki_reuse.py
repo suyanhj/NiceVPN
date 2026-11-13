@@ -14,6 +14,7 @@ from app.services.easyrsa.wrapper import (
     find_existing_easyrsa_pki,
     inspect_easyrsa_pki,
 )
+from app.services.openvpn.detector import find_easyrsa
 
 
 def _write_ready_pki(pki: Path) -> None:
@@ -44,6 +45,29 @@ def test_inspect_easyrsa_pki_distinguishes_states(tmp_path: Path) -> None:
     (pki / "index.txt").write_text("", encoding="utf-8")
     (pki / "serial").write_text("01\n", encoding="utf-8")
     assert inspect_easyrsa_pki(str(pki))["state"] == "ready"
+
+
+def test_find_easyrsa_requires_an_executable_script(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "easy-rsa" / "easyrsa"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.openvpn.detector.EASYRSA_SEARCH_PATHS",
+        [str(candidate)],
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.detector.subprocess.run",
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+            args=["which", "easyrsa"], returncode=1, stdout="", stderr=""
+        ),
+    )
+
+    assert find_easyrsa() is None
+    candidate.chmod(0o755)
+    assert find_easyrsa() == str(candidate.resolve())
 
 
 def test_find_existing_easyrsa_pki_supports_common_openvpn_layout(
