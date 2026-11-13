@@ -310,6 +310,71 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
     assert "OPENVPN_TAG" not in calls[0][1]
 
 
+def test_install_easyrsa_reuses_existing_binary_without_release_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.services.openvpn import installer as installer_mod
+
+    existing = tmp_path / "usr" / "share" / "easy-rsa" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+
+    runtime_checks: list[object] = []
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: str(existing))
+    monkeypatch.setattr(
+        installer_mod,
+        "ensure_easyrsa_runtime_dependencies",
+        lambda on_output=None: runtime_checks.append(on_output),
+    )
+    monkeypatch.setattr(
+        installer_mod,
+        "_build_easyrsa_install_env",
+        lambda *_args, **_kwargs: pytest.fail("已有 EasyRSA 不应查询 release"),
+    )
+    monkeypatch.setattr(
+        installer_mod,
+        "_run_command",
+        lambda *_args, **_kwargs: pytest.fail("已有 EasyRSA 不应重新安装"),
+    )
+
+    assert installer_mod.install_easyrsa() == str(existing)
+    assert runtime_checks == [None]
+
+
+def test_openvpn_install_does_not_reinstall_existing_easyrsa(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.services.openvpn import installer as installer_mod
+
+    existing = tmp_path / "easyrsa"
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+    script = tmp_path / "openvpn-install-debian.sh"
+    script.write_text("#!/bin/bash\\nexit 0\\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: str(existing))
+    monkeypatch.setattr(
+        installer_mod,
+        "_build_install_env",
+        lambda _distro, _version, **kwargs: captured.update(kwargs) or {"INSTALL_EASYRSA": "0"},
+    )
+    monkeypatch.setattr(installer_mod, "_install_script_path", lambda _distro: script)
+    monkeypatch.setattr(
+        installer_mod,
+        "_run_command",
+        lambda command, *_args, **_kwargs: calls.append(command),
+    )
+
+    assert installer_mod.install_openvpn("debian", "12") is True
+    assert captured["install_easyrsa"] is False
+    assert calls[0] == ["bash", str(script)]
+
+
 def test_standalone_easyrsa_shell_entry_does_not_install_openvpn() -> None:
     from app.services.openvpn.installer import _read_install_script_text
 
