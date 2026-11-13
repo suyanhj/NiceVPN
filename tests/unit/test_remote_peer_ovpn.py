@@ -272,7 +272,7 @@ def test_fetch_openvpn_client_service_status_ignores_server_only_units() -> None
         [
             ("openvpn-server@.service enabled enabled\n", "", 0),
             ("openvpn-server@server.service loaded active running OpenVPN server\n", "", 0),
-            ("", "", 0),  # default config does not exist
+            ("", "", 1),  # default config does not exist
         ]
     )
     with patch(
@@ -284,7 +284,7 @@ def test_fetch_openvpn_client_service_status_ignores_server_only_units() -> None
     assert ret["exists"] is False
     assert ret["service_file_exists"] is False
     assert ret["service"] == ""
-    assert ret["config_exists"] is True is False
+    assert ret["config_exists"] is False
     assert client.closed is True
 
 
