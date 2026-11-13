@@ -52,22 +52,49 @@ nicevpn_install_packages() {
     esac
 }
 
-nicevpn_ensure_command() {
-    local binary="${1:?必须指定待检查命令}"
-    shift
-    command -v "${binary}" >/dev/null 2>&1 && return 0
+nicevpn_ensure_commands() {
+    # 参数按「命令 包名」成对传入。任一命令缺失时，一次安装整组包。
+    if (( $# < 2 || $# % 2 != 0 )); then
+        echo "[linux-packages] 用法: nicevpn_ensure_commands command package [command package ...]" >&2
+        return 2
+    fi
+
+    local -a commands=() packages=()
+    local missing=0 binary package
+    while (( $# )); do
+        binary="$1"
+        package="$2"
+        shift 2
+        commands+=("${binary}")
+        packages+=("${package}")
+        if ! command -v "${binary}" >/dev/null 2>&1; then
+            missing=1
+        fi
+    done
+
+    # 全部命令已存在时不调用包管理器；有缺项时一次补齐整组依赖。
+    (( missing == 1 )) || return 0
 
     local manager
     manager="$(nicevpn_package_manager)" || {
-        echo "[linux-packages] 不支持的发行版或找不到包管理器，无法安装 ${binary}" >&2
+        echo "[linux-packages] 不支持的发行版或找不到包管理器，缺少命令: ${commands[*]}" >&2
         return 1
     }
     if [[ "${manager}" == "apt-get" ]]; then
         apt-get update -qq
     fi
-    nicevpn_install_packages "${manager}" "$@" || return 1
-    if ! command -v "${binary}" >/dev/null 2>&1; then
-        echo "[linux-packages] 安装后仍找不到 ${binary}" >&2
-        return 1
-    fi
+    nicevpn_install_packages "${manager}" "${packages[@]}" || return 1
+
+    for binary in "${commands[@]}"; do
+        if ! command -v "${binary}" >/dev/null 2>&1; then
+            echo "[linux-packages] 安装后仍找不到 ${binary}" >&2
+            return 1
+        fi
+    done
+}
+
+nicevpn_ensure_command() {
+    local binary="${1:?必须指定待检查命令}"
+    local package="${2:?必须指定对应软件包}"
+    nicevpn_ensure_commands "${binary}" "${package}"
 }
