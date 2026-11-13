@@ -33,13 +33,16 @@ install_optional_dco_dependencies() {
 
 install_source_dependencies() {
     local -a packages=(
-        build-essential curl ca-certificates pkg-config autoconf automake libtool
+        build-essential curl tar gzip ca-certificates pkg-config autoconf automake libtool
         libssl-dev libpam0g-dev libcap-ng-dev
         liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev
         conntrack iptables ipset
     )
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         packages+=(logrotate)
+    fi
+    if [ "${INSTALL_EASYRSA}" = "1" ]; then
+        packages+=(openssl findutils coreutils)
     fi
     # 基础依赖一次性安装；DCO 开发包可选，单独尝试且失败不阻断编译。
     apt install -y "${packages[@]}"
