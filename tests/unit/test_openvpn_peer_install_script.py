@@ -382,3 +382,15 @@ def test_easyrsa_installer_reuses_shared_dependency_helper() -> None:
     assert "nicevpn_package_manager" not in script
     assert "find findutils" in script
     assert "cp coreutils" in script
+
+
+
+def test_easyrsa_install_shell_syntax() -> None:
+    script = _INSTALL_SCRIPTS_DIR / "easyrsa-install.sh"
+    result = subprocess.run(
+        ["bash", "-n", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
