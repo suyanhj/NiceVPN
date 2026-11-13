@@ -345,8 +345,8 @@ def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     debian = _read_install_script_text("openvpn-install-debian.sh")
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
 
-    debian_source = debian.split("install_source_dependencies() {", 1)[1].split("\\n}", 1)[0]
-    rhel_source = rhel.split("install_source_dependencies() {", 1)[1].split("\\n}", 1)[0]
+    debian_source = debian.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
+    rhel_source = rhel.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
 
     assert "conntrack iptables ipset" in debian_source
     assert "conntrack-tools" in rhel_source
