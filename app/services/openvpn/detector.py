@@ -2,8 +2,10 @@
 """OpenVPN 安装检测服务"""
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Iterable
 
 from packaging.version import Version
 
@@ -114,26 +116,7 @@ def find_easyrsa(openvpn_bin: str | None = None) -> str | None:
             if extra_str not in search_paths:
                 search_paths.insert(0, extra_str)
 
-    for candidate in search_paths:
-        path = Path(candidate)
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path.resolve())
-
-    try:
-        proc = subprocess.run(
-            ["which", "easyrsa"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if proc.returncode == 0:
-            found = proc.stdout.strip()
-            if found and Path(found).is_file() and os.access(found, os.X_OK):
-                return str(Path(found).resolve())
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-
-    return None
+    return _find_installed_executable(search_paths, "easyrsa")
 
 
 def validate_custom_path(path: str) -> dict:
@@ -159,30 +142,27 @@ def validate_custom_path(path: str) -> dict:
     return result
 
 
-def _find_openvpn_binary() -> str | None:
-    """搜索 OpenVPN 可执行文件。"""
-    for candidate in OPENVPN_SEARCH_PATHS:
+def _find_installed_executable(
+    search_paths: Iterable[str],
+    command: str,
+) -> str | None:
+    """优先复用预设路径，最后由标准库从 PATH 查找，避免调用 which/bash。"""
+    for candidate in search_paths:
         path = Path(candidate)
-        if path.is_file():
+        if path.is_file() and os.access(path, os.X_OK):
             return str(path.resolve())
 
-    for cmd in (["which", "openvpn"], ["bash", "-lc", "command -v openvpn"]):
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                path = proc.stdout.strip()
-                if path:
-                    return str(Path(path).resolve())
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            continue
-
+    found = shutil.which(command)
+    if found:
+        path = Path(found)
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path.resolve())
     return None
 
+
+def _find_openvpn_binary() -> str | None:
+    """搜索 OpenVPN 可执行文件。"""
+    return _find_installed_executable(OPENVPN_SEARCH_PATHS, "openvpn")
 
 def _extract_version(bin_path: str) -> str | None:
     """执行 openvpn --version 并提取版本号。"""
