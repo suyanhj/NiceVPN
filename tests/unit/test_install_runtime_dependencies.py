@@ -123,6 +123,22 @@ def test_existing_openvpn_runtime_tools_skip_package_manager(tmp_path: Path):
     assert calls == []
 
 
+def test_existing_openvpn_with_all_tools_reuses_unknown_distro_without_package_manager(
+    tmp_path: Path,
+):
+    commands = (
+        "iptables", "iptables-save", "iptables-restore", "ipset",
+        "conntrack", "sysctl", "logrotate",
+    )
+    result, calls = _run_profile(
+        tmp_path, "ID=arch\\n", "openvpn-runtime",
+        installed_commands=commands,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls == []
+
+
 def test_existing_openvpn_repairs_all_missing_runtime_tools_in_one_debian_transaction(
     tmp_path: Path,
 ):
