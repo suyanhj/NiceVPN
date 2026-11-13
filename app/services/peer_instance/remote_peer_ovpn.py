@@ -238,7 +238,7 @@ def _extract_openvpn_config_path(exec_start: str, service: str) -> str | None:
     """从 systemd ExecStart 中解析 --config/-c 与 --cd，兼容模板实例 %i。"""
     command = str(exec_start or "")
     config_match = re.search(
-        r"(?:--config|-c)(?:=|\\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\\s;}}\\]]+))",
+        r"(?:--config|-c)(?:=|\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\s;}\]]+))",
         command,
     )
     if not config_match:
@@ -254,7 +254,7 @@ def _extract_openvpn_config_path(exec_start: str, service: str) -> str | None:
         config_path = config_path.replace("%i", instance).replace("%I", instance)
 
     cd_match = re.search(
-        r"--cd(?:=|\\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\\s;}}\\]]+))",
+        r"--cd(?:=|\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\s;}\]]+))",
         command,
     )
     cd_path = next((part for part in cd_match.groups() if part), "").strip() if cd_match else ""
