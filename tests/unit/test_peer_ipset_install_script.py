@@ -185,6 +185,7 @@ def test_installer_rejects_missing_command_after_package_install(tmp_path: Path)
 
 
 def test_shared_helper_deduplicates_packages_for_multiple_commands(tmp_path: Path):
+    # cp 和 ln 都映射到 coreutils，包名应只传给包管理器一次。
     bin_dir = tmp_path / "mock-bin"
     bin_dir.mkdir()
     os_release = tmp_path / "os-release"
