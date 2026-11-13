@@ -47,6 +47,8 @@ http://<主机>:8880/
 
 初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA。同时检查 systemd 中是否已有 OpenVPN server 服务单元；没有时，复用项目原有的 OpenVPN 源码模板生成脚本补齐服务文件，不重新编译 OpenVPN。
 
+复用已有 OpenVPN 或手动指定 OpenVPN 路径时，初始化会通过共享依赖脚本检查 `iptables`、`ipset`、`conntrack`、`sysctl`、`logrotate` 等运行工具；缺少时按 Debian/RHEL 发行版映射一次补齐，不会重新安装 OpenVPN。已有 EasyRSA 默认复用，只补查 OpenSSL；只有确实缺少 EasyRSA 时才安装下载/解压工具。需要显式强制重装 EasyRSA 时，可在运行安装入口前设置 `EASYRSA_FORCE_INSTALL=1`。
+
 正式 Vue 运行产物已经提交在 `app/ui/vue/dist/`，普通生产启动**不需要 Node/npm，也不需要 Docker 来构建前端**。
 
 首次安装需要源码编译 OpenVPN 时，安装器会将 DCO（数据通道卸载）作为可选优化：先尝试安装对应开发包，再检查 `libnl-genl-3.0` 是否达到 `3.4.0`。缺失或版本过低时会自动使用 `--disable-dco` 编译，继续提供常规 VPN 功能，不会因为 DCO 依赖不满足而中断安装。DCO 是否实际启用还取决于运行内核是否提供兼容的 `ovpn-dco` 模块。
