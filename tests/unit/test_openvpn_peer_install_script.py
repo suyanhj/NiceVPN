@@ -41,6 +41,26 @@ def test_install_script_files_exist() -> None:
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
 
 
+def test_remote_install_script_inlines_shared_package_helpers() -> None:
+    """对端 SSH 执行时不依赖 NiceVPN 脚本已存在于远端文件系统。"""
+    script = build_peer_openvpn_install_script("rhel", "9")
+
+    assert "nicevpn_linux_family() {" in script
+    assert "nicevpn_package_manager() {" in script
+    assert 'PM="$(nicevpn_package_manager)"' in script
+    assert 'source "${SCRIPT_DIR}/../common/linux-packages.sh"' not in script
+    assert 'source "${SCRIPT_DIR}/openvpn-install-common.sh"' not in script
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_build_peer_script_debian_ubuntu() -> None:
     s = build_peer_openvpn_install_script("debian", "22.04")
     assert "export DEBIAN_CODENAME=jammy" in s
