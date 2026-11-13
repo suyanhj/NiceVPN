@@ -198,7 +198,7 @@ def test_shared_helper_deduplicates_packages_for_multiple_commands(tmp_path: Pat
         '  shift 2\n'
         '  for package in "$@"; do\n'
         '    if [[ "$package" == "coreutils" ]]; then\n'
-        '      for command in cp ln; do printf "#!/bin/bash\nexit 0\n" > "$NICEVPN_TEST_PATH/$command"; chmod +x "$NICEVPN_TEST_PATH/$command"; done\n'
+        '      for command in cp ln; do printf "#!/bin/bash\nexit 0\n" > "$NICEVPN_TEST_PATH/$command"; /bin/chmod +x "$NICEVPN_TEST_PATH/$command"; done\n'
         '    fi\n'
         '  done\n'
         'fi\n',
