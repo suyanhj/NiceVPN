@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 logger = logging.getLogger("peer.remote.ipset")
-_PEER_IPSET_INSTALL_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "peer" / "ensure-ipset.sh"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+_PEER_IPSET_INSTALL_SCRIPT = _SCRIPTS_DIR / "peer" / "ensure-ipset.sh"
+_LINUX_PACKAGE_HELPERS = _SCRIPTS_DIR / "common" / "linux-packages.sh"
 
 _STABLE_PREFIX = "nvpnpt_"
 _STAGE_PREFIX = "nvpnps_"
@@ -106,12 +108,13 @@ def _ensure_ipset_installed(
 ) -> None:
     """通过 SSH 执行独立 shell 安装器，Python 不再处理发行版和包管理命令。"""
     try:
+        # SSH 不需要部署脚本到对端：共享函数和入口脚本一起内联执行。
+        common = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
         script = _PEER_IPSET_INSTALL_SCRIPT.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RuntimeError(f"对端 ipset 安装脚本无法读取: {_PEER_IPSET_INSTALL_SCRIPT}") from exc
+        raise RuntimeError(f"无法读取对端 ipset 安装脚本或共享函数: {exc}") from exc
 
-    # 脚本内置检测，已安装时不做任何系统修改；无需上传/持久化到对端磁盘。
-    command = f"{sudo_prefix}bash -lc {shlex.quote(script)}"
+    command = f"{sudo_prefix}bash -lc {shlex.quote(common + chr(10) + script)}"
     out, err, code = _run(exec_ssh, client, command, max(timeout, 300))
     if code != 0:
         raise RuntimeError(
@@ -119,6 +122,7 @@ def _ensure_ipset_installed(
             f"{(err or out or '').strip()[-1500:]}"
         )
     logger.info("已确认对端 ipset 可用（peer SSH）")
+
 
 def _list_names(client, sudo_prefix: str, exec_ssh: Callable, timeout: int) -> set[str]:
     out, err, code = _run(
