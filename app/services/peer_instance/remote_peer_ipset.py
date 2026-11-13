@@ -17,10 +17,6 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 logger = logging.getLogger("peer.remote.ipset")
-_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-_PEER_IPSET_INSTALL_SCRIPT = _SCRIPTS_DIR / "peer" / "ensure-ipset.sh"
-_LINUX_PACKAGE_HELPERS = _SCRIPTS_DIR / "common" / "linux-packages.sh"
-
 _STABLE_PREFIX = "nvpnpt_"
 _STAGE_PREFIX = "nvpnps_"
 _MAX_NAME_LENGTH = 31
@@ -99,32 +95,6 @@ def _run(exec_ssh: Callable, client, command: str, timeout: int) -> tuple[str, s
     return exec_ssh(client, command, timeout=timeout)
 
 
-def _ensure_ipset_installed(
-    client,
-    sudo_prefix: str,
-    exec_ssh: Callable,
-    *,
-    timeout: int,
-) -> None:
-    """通过 SSH 执行独立 shell 安装器，Python 不再处理发行版和包管理命令。"""
-    try:
-        # SSH 不需要部署脚本到对端：共享函数和入口脚本一起内联执行。
-        common = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
-        script = _PEER_IPSET_INSTALL_SCRIPT.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeError(f"无法读取对端 ipset 安装脚本或共享函数: {exc}") from exc
-
-    payload = common + "\n" + script
-    command = f"{sudo_prefix}bash -lc {shlex.quote(payload)}"
-    out, err, code = _run(exec_ssh, client, command, max(timeout, 300))
-    if code != 0:
-        raise RuntimeError(
-            "对端 ipset 检测/自动安装失败，请检查软件源和 sudo 权限："
-            f"{(err or out or '').strip()[-1500:]}"
-        )
-    logger.info("已确认对端 ipset 可用（peer SSH）")
-
-
 def _list_names(client, sudo_prefix: str, exec_ssh: Callable, timeout: int) -> set[str]:
     out, err, code = _run(
         exec_ssh, client, f"{sudo_prefix}ipset list -n", timeout,
@@ -181,7 +151,7 @@ def reconcile_remote_peer_tag_ipsets(
     if not desired:
         return set()
 
-    _ensure_ipset_installed(client, sudo_prefix, exec_ssh, timeout=timeout)
+    # 依赖由 remote_peer_iptables 的 SSH 写入入口统一预检并批量安装。
     existing = _list_names(client, sudo_prefix, exec_ssh, timeout)
     newly_created: set[str] = set()
     stage_names: set[str] = set()
