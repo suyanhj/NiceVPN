@@ -21,7 +21,7 @@ FORWARD 默认策略常为 DROP 时，必须在 FORWARD 中跳转至 VPN_FORWARD
 - INPUT：仅当 filter INPUT 默认策略为 DROP（或非 ACCEPT）时，追加从 tun+ 进入且源为 global_subnet
   的放行（访问本机 eth0 等走 INPUT）；若 INPUT 已为 ACCEPT，则不追加（默认已允许全部入站）
 - VPN_FORWARD：界面启用规则与对端内网放行合并写入（注释 ``ovpn-mgmt-center-peer peer=…``）；中心规则仅当填写「规则描述」时附加 ``--comment``
-- net.ipv4.ip_forward=1（可写时写入）
+- net.ipv4.ip_forward=1（通过 sysctl -w 设置运行时值；持久化由 sysctl.d 模板管理）
 - nat POSTROUTING：对 **源为 global_subnet** 的流量做 **MASQUERADE**，
   **不依赖出网网卡名**；便于多网卡环境。旧版 ``-o`` MASQUERADE 或固定 SNAT 由重建前清理逻辑删除。
 """
@@ -930,22 +930,35 @@ class IptablesManager:
 
     @staticmethod
     def _ensure_ipv4_forward_enabled() -> None:
-        """开启 IPv4 转发；无权限或非 Linux 时仅打日志。"""
+        """通过 sysctl 开启 IPv4 转发；持久化值由 sysctl.d drop-in 管理。"""
         if os.name == "nt":
             return
-        proc = "/proc/sys/net/ipv4/ip_forward"
         try:
-            with open(proc, "r", encoding="ascii") as f:
-                if f.read().strip() == "1":
-                    return
-            with open(proc, "w", encoding="ascii") as f:
-                f.write("1")
-            logger.info("已启用 net.ipv4.ip_forward=1（运行时）")
-        except OSError as e:
-            logger.error(
-                "无法启用 ip_forward（VPN 转发依赖此项）: %s；请手动: sysctl -w net.ipv4.ip_forward=1",
-                e,
+            result = subprocess.run(
+                ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.error(
+                "无法启用 ip_forward（VPN 转发依赖此项）: %s；"
+                "请检查 sysctl 命令和 root 权限",
+                exc,
+            )
+            return
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            logger.error(
+                "无法启用 ip_forward（VPN 转发依赖此项）: %s；"
+                "请检查 sysctl 命令和 root 权限",
+                detail or f"sysctl 退出码 {result.returncode}",
+            )
+            return
+
+        logger.info("已启用 net.ipv4.ip_forward=1（sysctl 运行时）")
 
     def _ensure_vpn_nat_masquerade(self) -> None:
         """为全局 VPN 源地址做 MASQUERADE。
