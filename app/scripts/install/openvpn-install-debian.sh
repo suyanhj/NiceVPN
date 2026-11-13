@@ -70,12 +70,12 @@ PKG_VERSION="$(apt-cache policy openvpn 2>/dev/null \
 if [ -n "${PKG_VERSION}" ] && [ "${PKG_VERSION}" != "(none)" ] \
     && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION}"; then
     _log "仓库 openvpn ${PKG_VERSION} 满足 ${OPENVPN_MIN_VERSION}+，使用 apt 安装"
-    pkgs=(openvpn conntrack)
+    pkgs=(openvpn conntrack iptables ipset)
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         pkgs+=(logrotate)
     fi
     if [ "${INSTALL_EASYRSA}" = "1" ]; then
-        pkgs=(openvpn easy-rsa conntrack)
+        pkgs+=(easy-rsa)
     fi
     apt install -y "${pkgs[@]}"
     openvpn_install_server_systemd_override
