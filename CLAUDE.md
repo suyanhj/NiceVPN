@@ -1,6 +1,6 @@
 # NiceVPN 开发指南
 
-面向 AI / 开发者的当前架构、边界与常用命令速查。**最后更新：2026-11-09**。
+面向 AI / 开发者的当前架构、边界与常用命令速查。**最后更新：2026-11-13**。
 
 > 文档、注释和对用户说明使用中文；代码标识符使用英文。
 
@@ -156,6 +156,13 @@ openspec/changes/
 - `start.sh daemon` 必须保持幂等。
 - Python 选择顺序必须优先项目 `.venv/bin/python`，且不得 realpath 到 uv 的基础解释器。
 - systemd unit 中应固定实际项目目录和选定 Python 解释器路径。
+
+### OpenVPN 源码安装与可选功能
+
+- 本机安装、对端安装和升级 staging 共用 `app/scripts/install/openvpn-install-common.sh` 与 Debian/RHEL 入口；不要在 Python 升级代码中重复实现发行版依赖安装。
+- DCO 是可选优化，不是 OpenVPN 基础安装条件。安装脚本可以 best-effort 安装 `libnl-genl` 开发包；编译前必须通过 `pkg-config --modversion libnl-genl-3.0` 检查版本至少为 3.4.0，否则明确传入 `--disable-dco`。
+- 若依赖预检通过但 configure 仍报出明确的 libnl-genl/DCO 依赖错误，只允许针对该错误回退为 `--disable-dco` 重试；其他 configure、make、链接错误必须原样失败，不能吞掉。
+- 新增可选编译特性时，先识别依赖与 configure 禁用参数，采用“依赖 best-effort 安装 → 编译前能力探测 → 缺失时关闭单项功能”的方式；NiceVPN 必需的 async-push、systemd、OpenSSL、libcap-ng 等基础能力不能随意降级。
 
 ### OpenVPN / EasyRSA 初始化
 
