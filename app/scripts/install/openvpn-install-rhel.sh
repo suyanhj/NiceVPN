@@ -11,13 +11,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
+# shellcheck source=../common/linux-packages.sh
+source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
-if command -v dnf >/dev/null 2>&1; then
-    PM=dnf
-elif command -v yum >/dev/null 2>&1; then
-    PM=yum
-else
-    echo "未找到 dnf/yum" >&2
+PM="$(nicevpn_package_manager)" || {
+    echo "无法识别 RHEL 包管理器（需要 dnf/yum）" >&2
+    exit 1
+}
+if [[ "${PM}" != "dnf" && "${PM}" != "yum" ]]; then
+    echo "RHEL 安装入口需要 dnf/yum，实际检测到 ${PM}" >&2
     exit 1
 fi
 
