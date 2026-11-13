@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """OpenVPN 安装检测服务"""
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -115,7 +116,7 @@ def find_easyrsa(openvpn_bin: str | None = None) -> str | None:
 
     for candidate in search_paths:
         path = Path(candidate)
-        if path.is_file():
+        if path.is_file() and os.access(path, os.X_OK):
             return str(path.resolve())
 
     try:
@@ -127,7 +128,7 @@ def find_easyrsa(openvpn_bin: str | None = None) -> str | None:
         )
         if proc.returncode == 0:
             found = proc.stdout.strip()
-            if found and Path(found).is_file():
+            if found and Path(found).is_file() and os.access(found, os.X_OK):
                 return str(Path(found).resolve())
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
