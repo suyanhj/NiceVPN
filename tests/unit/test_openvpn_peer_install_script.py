@@ -393,6 +393,22 @@ def test_configure_does_not_hide_non_dco_errors(tmp_path) -> None:
 
 
 
+def test_runtime_dependency_profiles_are_defined_in_shared_helper() -> None:
+    helper = (_INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh").read_text(
+        encoding="utf-8"
+    )
+    runtime = _read_install_script_text("ensure-runtime-dependencies.sh")
+
+    assert "nicevpn_ensure_openvpn_runtime_dependencies()" in helper
+    assert "nicevpn_ensure_easyrsa_runtime_dependencies()" in helper
+    assert "nicevpn_ensure_easyrsa_install_dependencies()" in helper
+    assert 'openvpn-runtime)' in runtime
+    assert 'easyrsa-runtime)' in runtime
+    assert 'easyrsa-install)' in runtime
+    assert "conntrack_package=\"conntrack-tools\"" in helper
+    assert "sysctl_package=\"procps-ng\"" in helper
+
+
 def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     debian = _read_install_script_text("openvpn-install-debian.sh")
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
@@ -406,7 +422,7 @@ def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     assert "packages+=(openssl findutils coreutils)" in debian_source
     assert "packages+=(openssl findutils coreutils)" in rhel_source
     assert debian_source.count("nicevpn_install_packages apt-get") == 1
-    assert rhel_source.count("${PM} install -y") == 1
+    assert rhel_source.count('nicevpn_install_packages "${PM}"') == 1
 
     # 系统包安装路径也一次性带上防火墙工具；EasyRSA 追加而不是覆盖已有依赖。
     assert "pkgs=(openvpn conntrack iptables ipset procps)" in debian
@@ -420,7 +436,7 @@ def test_dco_development_packages_are_best_effort() -> None:
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
 
     assert "if nicevpn_install_packages apt-get libnl-3-dev libnl-genl-3-dev; then" in debian
-    assert "if ${PM} install -y libnl3-devel; then" in rhel
+    assert 'if nicevpn_install_packages "${PM}" libnl3-devel; then' in rhel
     for source in (debian, rhel):
         required = source.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
         assert "libnl-genl-3-dev" not in required
