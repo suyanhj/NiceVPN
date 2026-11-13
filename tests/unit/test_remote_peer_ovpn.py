@@ -10,6 +10,9 @@ from app.services.peer_instance.remote_peer_ovpn import (
     _PEER_SCRIPTS_DIR,
     _bundle_peer_script,
     _put_local_ovpn_to_remote,
+    _extract_openvpn_config_path,
+    _parse_systemctl_list_unit_files,
+    _parse_systemctl_list_units,
     _render_fallback_unit_template,
     control_openvpn_client_service_via_ssh,
     deploy_openvpn_client_systemd_via_ssh,
@@ -160,13 +163,60 @@ def test_deploy_openvpn_client_systemd_generates_fallback_without_official_templ
     assert client.closed is True
 
 
-def test_fetch_openvpn_client_service_status_uses_official_service() -> None:
+def test_parse_systemctl_openvpn_service_lists() -> None:
+    files = _parse_systemctl_list_unit_files(
+        "openvpn-client@.service enabled enabled\n"
+        "openvpn-server@.service disabled enabled\n"
+        "ssh.service enabled enabled\n"
+    )
+    units = _parse_systemctl_list_units(
+        "openvpn-client@client.service loaded active running OpenVPN client\n"
+        "openvpn-server@server.service loaded active running OpenVPN server\n"
+    )
+
+    assert files == {
+        "openvpn-client@.service": "enabled",
+        "openvpn-server@.service": "disabled",
+    }
+    assert units["openvpn-client@client.service"]["active_state"] == "active"
+    assert "ssh.service" not in units
+
+
+def test_extract_openvpn_config_path_from_systemd_execstart() -> None:
+    exec_start = (
+        "{ path=/usr/sbin/openvpn ; argv[]=/usr/sbin/openvpn "
+        "--cd /etc/openvpn/client --config %i.conf ; ignore_errors=no }"
+    )
+
+    assert _extract_openvpn_config_path(
+        exec_start, "openvpn-client@client.service"
+    ) == "/etc/openvpn/client/client.conf"
+
+
+def test_fetch_openvpn_client_service_status_uses_enumerated_official_service() -> None:
     client = _FakeClient(
         [
-            ("", "", 0),  # systemctl cat openvpn-client@.service
-            ("LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n", "", 0),
-            ("active\n", "", 0),
-            ("enabled\n", "", 0),
+            (
+                "openvpn-client@.service enabled enabled\n"
+                "openvpn-server@.service disabled enabled\n",
+                "",
+                0,
+            ),  # systemctl list-unit-files
+            (
+                "openvpn-client@client.service loaded active running OpenVPN client\n"
+                "openvpn-server@server.service loaded active running OpenVPN server\n",
+                "",
+                0,
+            ),  # systemctl list-units
+            (
+                "LoadState=loaded\nActiveState=active\nSubState=running\n"
+                "UnitFileState=enabled\n"
+                "FragmentPath=/lib/systemd/system/openvpn-client@.service\n"
+                "ExecStart={ path=/usr/sbin/openvpn ; argv[]=/usr/sbin/openvpn "
+                "--cd /etc/openvpn/client --config client.conf ; ignore_errors=no }\n",
+                "",
+                0,
+            ),  # systemctl show
             ("", "", 0),  # config exists
         ]
     )
@@ -177,17 +227,79 @@ def test_fetch_openvpn_client_service_status_uses_official_service() -> None:
         ret = fetch_openvpn_client_service_status_via_ssh({"id": "p1"})
 
     assert ret["exists"] is True
+    assert ret["service_file_exists"] is True
     assert ret["service"] == "openvpn-client@client.service"
     assert ret["active_state"] == "active"
     assert ret["unit_file_state"] == "enabled"
+    assert ret["config_path"] == "/etc/openvpn/client/client.conf"
     assert ret["config_exists"] is True
+    assert client.closed is True
+
+
+def test_fetch_openvpn_client_service_status_reports_inactive_and_custom_config() -> None:
+    client = _FakeClient(
+        [
+            ("openvpn-client.service enabled enabled\n", "", 0),
+            ("openvpn-client.service loaded inactive dead OpenVPN client\n", "", 0),
+            (
+                "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"
+                "UnitFileState=enabled\n"
+                "FragmentPath=/etc/systemd/system/openvpn-client.service\n"
+                "ExecStart={ path=/usr/sbin/openvpn ; argv[]=/usr/sbin/openvpn "
+                "--config /etc/openvpn/custom/peer.ovpn ; ignore_errors=no }\n",
+                "",
+                0,
+            ),
+            ("", "", 0),
+        ]
+    )
+    with patch(
+        "app.services.peer_instance.remote_peer_ovpn.connect_peer_ssh_client_from_row",
+        return_value=client,
+    ):
+        ret = fetch_openvpn_client_service_status_via_ssh({"id": "p1"})
+
+    assert ret["exists"] is True
+    assert ret["service"] == "openvpn-client.service"
+    assert ret["active_state"] == "inactive"
+    assert ret["config_path"] == "/etc/openvpn/custom/peer.ovpn"
+    assert ret["config_exists"] is True
+    assert client.closed is True
+
+
+def test_fetch_openvpn_client_service_status_ignores_server_only_units() -> None:
+    client = _FakeClient(
+        [
+            ("openvpn-server@.service enabled enabled\n", "", 0),
+            ("openvpn-server@server.service loaded active running OpenVPN server\n", "", 0),
+            ("", "", 0),  # default config does not exist
+        ]
+    )
+    with patch(
+        "app.services.peer_instance.remote_peer_ovpn.connect_peer_ssh_client_from_row",
+        return_value=client,
+    ):
+        ret = fetch_openvpn_client_service_status_via_ssh({"id": "p1"})
+
+    assert ret["exists"] is False
+    assert ret["service_file_exists"] is False
+    assert ret["service"] == ""
+    assert ret["config_exists"] is True is False
     assert client.closed is True
 
 
 def test_control_openvpn_client_service_restart() -> None:
     client = _FakeClient(
         [
-            ("", "", 0),  # systemctl cat openvpn-client@.service
+            ("openvpn-client@.service enabled enabled\n", "", 0),
+            ("", "", 0),
+            (
+                "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"
+                "UnitFileState=enabled\n"
+                "FragmentPath=/lib/systemd/system/openvpn-client@.service\n",
+                "",
+                0,
+            ),
             ("", "", 0),  # sudo -n
             ("", "", 0),  # systemctl restart
         ]
@@ -207,7 +319,15 @@ def test_control_openvpn_client_service_restart() -> None:
 def test_fetch_openvpn_client_service_logs() -> None:
     client = _FakeClient(
         [
-            ("", "", 0),  # systemctl cat openvpn-client@.service
+            ("openvpn-client@.service enabled enabled\n", "", 0),
+            ("openvpn-client@client.service loaded active running OpenVPN client\n", "", 0),
+            (
+                "LoadState=loaded\nActiveState=active\nSubState=running\n"
+                "UnitFileState=enabled\n"
+                "FragmentPath=/lib/systemd/system/openvpn-client@.service\n",
+                "",
+                0,
+            ),
             ("line1\nline2\n", "", 0),  # tail log file
         ]
     )
