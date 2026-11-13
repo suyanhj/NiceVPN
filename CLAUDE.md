@@ -59,7 +59,7 @@ data/nicevpn.db
 - 对端站点基础防火墙重下发只能更新 FORWARD 跳转、POSTROUTING SNAT 和用户链中的 `role=fwd-global` 基础放行规则；不得 flush/delete 整条 `VPN_PEER_*` 用户链，否则会误删远端防火墙规则与标签 ipset matcher。
 - 标签成员变化通过后台 SSH 重建集合并刷新规则，失败持久化 `pending_sync`；首次使用时 Debian/RHEL 对端可自动安装 ipset。
 - 对端防火墙写入前仅经 SSH 执行 `app/scripts/peer/ensure-firewall-tools.sh` 预检依赖：iptables 始终必需，使用标签集合时同时检查 ipset；任一缺失则由共享函数一次安装整组软件包。Python 不拼接 apt/dnf/yum 命令。`remote_peer_ipset.py` 只保留集合 reconcile、staging/swap、rollback 与 GC 等业务逻辑。
-- Linux 发行版与包管理器公共函数统一放在 `app/scripts/common/linux-packages.sh`，由 EasyRSA、RHEL OpenVPN 安装及对端 ipset 复用；经 SSH 执行的脚本必须内联该公共函数，不依赖对端预先部署文件。不要在各安装脚本重复实现 apt-get/dnf/yum 判定。
+- Linux 发行版与包管理器公共函数统一放在 `app/scripts/common/linux-packages.sh`，提供 `nicevpn_linux_family`、`nicevpn_package_manager`、`nicevpn_install_packages`、`nicevpn_ensure_command` 和 `nicevpn_ensure_commands`；由 EasyRSA、OpenVPN 安装及对端防火墙复用。`nicevpn_ensure_commands` 按命令/包名成对传参，任一命令缺失时一次安装整组包。OpenVPN Debian/RHEL 安装的源码和系统包路径均安装 `iptables`、`ipset`；经 SSH 执行的脚本必须内联公共函数，不依赖对端预先部署文件。不要在各安装脚本重复实现 apt-get/dnf/yum 判定。
 - 标签删除必须同时检查用户/组成员、中心规则、Mesh 路由和远端防火墙引用；服务层与 SQLite repository 都要防止绕过 UI 直接删除。
 - 组删除必须检查组内用户、group_tags 标签关联、owner_type=group 的中心防火墙规则，以及 peers.payload 中的 mesh_route_visible_group_ids；UI 当前页批量加载删除原因并禁用删除按钮，GroupService 与 SQLite repository 写事务重复校验，禁止级联删除仍在使用的 group_tags。
 - 其它 schema migration 管理的结构化数据
