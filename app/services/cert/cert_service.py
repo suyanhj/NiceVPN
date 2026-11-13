@@ -1,8 +1,6 @@
 """证书生命周期管理服务 — 解析、过滤、吊销、续签、告警更新"""
 import json
 import logging
-import signal
-import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -327,32 +325,29 @@ class CertService:
     # ---- 私有方法 ----
 
     def _reload_openvpn_instances(self):
-        """向所有运行中的 OpenVPN 实例发送 SIGHUP 信号以重载 CRL。
+        """仅通知 NiceVPN 管理且正在运行的服务端实例重载 CRL。"""
+        from app.services.openvpn.instance import (
+            iter_all_openvpn_instance_names,
+            reload_instance_crl,
+        )
 
-        通过 systemctl reload 或直接查找 openvpn 进程并发送信号。
-        """
         try:
-            # 使用 pgrep 查找所有 openvpn 进程 PID
-            result = subprocess.run(
-                ["pgrep", "-x", "openvpn"],
-                capture_output=True, text=True,
-            )
-            if result.returncode != 0:
-                logger.debug("未发现运行中的 OpenVPN 进程")
-                return
+            instance_names = iter_all_openvpn_instance_names()
+        except Exception as exc:
+            logger.warning("获取 OpenVPN 实例列表失败，CRL 已生成但未能通知实例重载: %s", exc)
+            return
 
-            pids = result.stdout.strip().splitlines()
-            for pid_str in pids:
-                pid = int(pid_str.strip())
-                try:
-                    # 发送 SIGHUP 让 OpenVPN 重载 CRL
-                    subprocess.run(
-                        ["kill", "-HUP", str(pid)],
-                        check=True, capture_output=True, text=True,
-                    )
-                    logger.debug("已向 OpenVPN 进程 %d 发送 SIGHUP", pid)
-                except subprocess.CalledProcessError:
-                    logger.warning("向 OpenVPN 进程 %d 发送 SIGHUP 失败", pid)
+        if not instance_names:
+            logger.debug("未发现 NiceVPN 管理的 OpenVPN 服务端实例")
+            return
 
-        except (OSError, ValueError) as e:
-            logger.warning("重载 OpenVPN 实例失败: %s", e)
+        reloaded = 0
+        for name in instance_names:
+            if reload_instance_crl(name):
+                reloaded += 1
+
+        logger.info(
+            "CRL 重载通知完成：成功 %d/%d 个 NiceVPN 服务端实例",
+            reloaded,
+            len(instance_names),
+        )
