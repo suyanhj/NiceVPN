@@ -351,6 +351,8 @@ def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     assert "conntrack iptables ipset" in debian_source
     assert "conntrack-tools" in rhel_source
     assert "iptables ipset" in rhel_source
+    assert "packages+=(openssl findutils coreutils)" in debian_source
+    assert "packages+=(openssl findutils coreutils)" in rhel_source
     assert debian_source.count("apt install -y") == 1
     assert rhel_source.count("${PM} install -y") == 1
 
@@ -358,6 +360,7 @@ def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     assert "pkgs=(openvpn conntrack iptables ipset)" in debian
     assert 'pkgs+=(easy-rsa)' in debian
     assert "packages=(openvpn conntrack-tools iptables ipset)" in rhel
+    assert "packages+=(curl tar gzip openssl findutils coreutils)" in rhel
 
 
 def test_dco_development_packages_are_best_effort() -> None:
