@@ -98,3 +98,35 @@ def test_detect_openvpn_stops_when_server_unit_cannot_be_installed(
     assert "服务文件检查/安装失败" in result.message
     assert "权限不足" in result.message
     assert wizard.config.get("openvpn_bin") is None
+
+
+def test_detect_openvpn_stops_when_runtime_dependencies_cannot_be_repaired(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_module,
+        "detect_openvpn",
+        lambda: {
+            "installed": True,
+            "path": "/usr/sbin/openvpn",
+            "version": "2.7.8",
+            "meets_requirement": True,
+            "distro": {},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_openvpn_runtime_dependencies",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("apt repository unavailable")),
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_openvpn_server_systemd_unit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("运行依赖补装失败时不应继续配置 systemd")
+        ),
+    )
+
+    result = _wizard()._detect_openvpn({})
+
+    assert result.success is False
+    assert "运行依赖检查/补装失败" in result.message
+    assert "apt repository unavailable" in result.message
