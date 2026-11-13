@@ -3,6 +3,7 @@
 
 import os
 import shlex
+import shutil
 import subprocess
 
 import pytest
@@ -232,6 +233,9 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
     existing.chmod(0o755)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    dirname_bin = shutil.which("dirname")
+    if dirname_bin:
+        (bin_dir / "dirname").symlink_to(dirname_bin)
     openssl = bin_dir / "openssl"
     openssl.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
     openssl.chmod(0o755)
