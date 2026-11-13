@@ -60,13 +60,20 @@ nicevpn_ensure_commands() {
     fi
 
     local -a commands=() packages=()
+    local -A seen_commands=() seen_packages=()
     local missing=0 binary package
     while (( $# )); do
         binary="$1"
         package="$2"
         shift 2
-        commands+=("${binary}")
-        packages+=("${package}")
+        if [[ -z "${seen_commands[${binary}]:-}" ]]; then
+            commands+=("${binary}")
+            seen_commands["${binary}"]=1
+        fi
+        if [[ -z "${seen_packages[${package}]:-}" ]]; then
+            packages+=("${package}")
+            seen_packages["${package}"]=1
+        fi
         if ! command -v "${binary}" >/dev/null 2>&1; then
             missing=1
         fi
