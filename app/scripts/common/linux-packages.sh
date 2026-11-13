@@ -105,3 +105,57 @@ nicevpn_ensure_command() {
     local package="${2:?必须指定对应软件包}"
     nicevpn_ensure_commands "${binary}" "${package}"
 }
+
+# NiceVPN 本机服务端运行依赖。包名按发行版映射，缺失任一命令时一次安装整组。
+nicevpn_ensure_openvpn_runtime_dependencies() {
+    local family conntrack_package sysctl_package
+    family="$(nicevpn_linux_family)" || {
+        echo "[linux-packages] 无法识别发行版，不能补齐 OpenVPN 运行依赖" >&2
+        return 1
+    }
+    case "${family}" in
+        debian)
+            conntrack_package="conntrack"
+            sysctl_package="procps"
+            ;;
+        rhel)
+            conntrack_package="conntrack-tools"
+            sysctl_package="procps-ng"
+            ;;
+        *)
+            echo "[linux-packages] 不支持的发行版族: ${family}" >&2
+            return 1
+            ;;
+    esac
+
+    nicevpn_ensure_commands \
+        iptables iptables \
+        iptables-save iptables \
+        iptables-restore iptables \
+        ipset ipset \
+        conntrack "${conntrack_package}" \
+        sysctl "${sysctl_package}" \
+        logrotate logrotate
+}
+
+# EasyRSA 已存在时只保证其运行时的 OpenSSL 命令可用。
+nicevpn_ensure_easyrsa_runtime_dependencies() {
+    nicevpn_ensure_commands openssl openssl
+}
+
+# EasyRSA 缺失、需要下载解压时，一次准备全部安装工具。
+nicevpn_ensure_easyrsa_install_dependencies() {
+    nicevpn_ensure_commands \
+        curl curl \
+        tar tar \
+        gzip gzip \
+        openssl openssl \
+        find findutils \
+        cp coreutils \
+        ln coreutils \
+        mktemp coreutils \
+        mkdir coreutils \
+        rm coreutils \
+        mv coreutils \
+        head coreutils
+}
