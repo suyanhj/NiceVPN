@@ -169,6 +169,57 @@ def test_systemd_install_entry_reuses_common_helpers() -> None:
     assert "openvpn_install_server_systemd_override" in script
 
 
+def test_easyrsa_download_reuses_existing_binary_without_download(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "easy-rsa"
+    existing = install_root / "current" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+
+    result = _run_common_shell(
+        tmp_path,
+        "INSTALL_EASYRSA=1; easyrsa_download_and_install",
+        extra_env={"EASYRSA_INSTALL_DIR": str(install_root)},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "跳过下载、安装和覆盖" in result.stdout
+
+
+def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "easy-rsa"
+    existing = install_root / "current" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    openssl = bin_dir / "openssl"
+    openssl.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    openssl.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update({
+        "PATH": str(bin_dir),
+        "EASYRSA_INSTALL_DIR": str(install_root),
+    })
+    result = subprocess.run(
+        ["bash", str(_INSTALL_SCRIPTS_DIR / "easyrsa-install.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EasyRSA 已存在，复用" in result.stdout
+    assert "必须设置 EASYRSA_DOWNLOAD_URLS" not in result.stderr
+
+
 def test_common_script_has_shared_helpers() -> None:
     common = _read_install_script_text("openvpn-install-common.sh")
     assert "openvpn_download_source()" in common
