@@ -13,11 +13,11 @@ import re
 import shlex
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable
 
-from app.services.openvpn.detector import detect_distro_family, parse_os_release_text
-
 logger = logging.getLogger("peer.remote.ipset")
+_PEER_IPSET_INSTALL_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "peer" / "ensure-ipset.sh"
 
 _STABLE_PREFIX = "nvpnpt_"
 _STAGE_PREFIX = "nvpnps_"
@@ -104,52 +104,21 @@ def _ensure_ipset_installed(
     *,
     timeout: int,
 ) -> None:
-    check_command = "sh -c " + shlex.quote("command -v ipset >/dev/null 2>&1")
-    _, _, code = _run(
-        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
-    )
-    if code == 0:
-        return
+    """通过 SSH 执行独立 shell 安装器，Python 不再处理发行版和包管理命令。"""
+    try:
+        script = _PEER_IPSET_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"对端 ipset 安装脚本无法读取: {_PEER_IPSET_INSTALL_SCRIPT}") from exc
 
-    release, err, release_code = _run(
-        exec_ssh, client, "cat /etc/os-release 2>/dev/null || true", timeout,
-    )
-    if release_code != 0 or not release.strip():
+    # 脚本内置检测，已安装时不做任何系统修改；无需上传/持久化到对端磁盘。
+    command = f"{sudo_prefix}bash -lc {shlex.quote(script)}"
+    out, err, code = _run(exec_ssh, client, command, max(timeout, 300))
+    if code != 0:
         raise RuntimeError(
-            f"对端缺少 ipset，且无法读取发行版信息: {(err or '').strip()}"
+            "对端 ipset 检测/自动安装失败，请检查软件源和 sudo 权限："
+            f"{(err or out or '').strip()[-1500:]}"
         )
-    info = parse_os_release_text(release)
-    family = detect_distro_family(info)
-    if family == "debian":
-        install = "apt-get update -qq && apt-get install -y ipset"
-    elif family == "rhel":
-        install = "dnf install -y ipset || yum install -y ipset"
-    else:
-        raise RuntimeError(
-            "对端未安装 ipset，自动安装暂不支持该发行版；"
-            f"请手动安装 ipset（id={info.get('id')!r}）"
-        )
-    install_command = (
-        f"{sudo_prefix}sh -c {shlex.quote(install)}"
-        if sudo_prefix else install
-    )
-    out, install_err, install_code = _run(
-        exec_ssh, client, install_command, timeout=max(timeout, 300),
-    )
-    if install_code != 0:
-        raise RuntimeError(
-            "对端 ipset 自动安装失败，请检查软件源和 sudo 权限："
-            f"{(install_err or out or '').strip()[-1500:]}"
-        )
-    _, check_err, check_code = _run(
-        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
-    )
-    if check_code != 0:
-        raise RuntimeError(
-            f"对端 ipset 安装后仍不可用: {(check_err or '').strip()}"
-        )
-    logger.info("已在对端自动安装 ipset（peer SSH）")
-
+    logger.info("已确认对端 ipset 可用（peer SSH）")
 
 def _list_names(client, sudo_prefix: str, exec_ssh: Callable, timeout: int) -> set[str]:
     out, err, code = _run(
