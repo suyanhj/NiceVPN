@@ -3,7 +3,18 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from app.services.peer_instance.remote_peer_iptables import apply_peer_site_iptables_via_ssh
+
+
+@pytest.fixture(autouse=True)
+def _skip_package_preflight_in_rule_behavior_tests(monkeypatch):
+    """规则事务测试不重复测试依赖安装；安装脚本由独立单测覆盖。"""
+    monkeypatch.setattr(
+        "app.services.peer_instance.remote_peer_iptables.ensure_remote_firewall_tools",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 class _FakeClient:
