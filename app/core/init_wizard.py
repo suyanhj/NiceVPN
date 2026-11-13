@@ -80,8 +80,16 @@ class InitWizard:
         openvpn_version: str | None = None,
     ):
         """缺少 OpenVPN server unit 时复用原安装逻辑补齐。"""
-        from app.services.openvpn.installer import ensure_openvpn_server_systemd_unit
+        from app.services.openvpn.installer import (
+            ensure_openvpn_runtime_dependencies,
+            ensure_openvpn_server_systemd_unit,
+        )
 
+        # 无论 OpenVPN 是新装、系统已有还是手动指定路径，都先补齐 NiceVPN 运行依赖。
+        try:
+            ensure_openvpn_runtime_dependencies(on_output=data.get("on_output"))
+        except Exception as exc:
+            raise RuntimeError(f"OpenVPN 运行依赖检查/补装失败: {exc}") from exc
         return ensure_openvpn_server_systemd_unit(
             openvpn_bin,
             openvpn_version=openvpn_version,
@@ -307,14 +315,23 @@ class InitWizard:
             reused_pki = pki_state["state"] == "ready"
             generated: list[str] = []
 
-            if pki_state["state"] == "ready":
-                emit("[复用] 已检测到完整 CA/PKI，跳过 init-pki 与 build-ca")
-            elif pki_state["state"] == "partial":
+            if pki_state["state"] == "partial":
                 missing = ", ".join(pki_state["missing"])
                 raise EasyRSAError(
                     f"检测到不完整的 EasyRSA PKI，拒绝自动覆盖。"
                     f"目录: {pki_dir}; 缺失: {missing}"
                 )
+
+            # PKI 状态先检查，残缺 CA 不触发任何依赖补装或覆盖操作。
+            try:
+                from app.services.openvpn.installer import ensure_easyrsa_runtime_dependencies
+
+                ensure_easyrsa_runtime_dependencies(on_output=emit)
+            except Exception as exc:
+                raise EasyRSAError(f"EasyRSA 运行依赖检查/补装失败: {exc}") from exc
+
+            if pki_state["state"] == "ready":
+                emit("[复用] 已检测到完整 CA/PKI，跳过 init-pki 与 build-ca")
             else:
                 if pki_state["state"] == "missing":
                     emit("[阶段] 正在创建 PKI 目录结构")

@@ -31,6 +31,7 @@ from app.services.peer_instance.remote_peer_ipset import (
     reconcile_remote_peer_tag_ipsets,
     referenced_peer_tag_ipsets,
 )
+from app.services.peer_instance.remote_peer_tools import ensure_remote_firewall_tools
 
 logger = logging.getLogger("peer.remote")
 
@@ -215,6 +216,9 @@ def apply_peer_site_iptables_via_ssh(
                 warnings.append(msg)
 
             sp = _detect_sudo_prefix(client, timeout=15)
+            ensure_remote_firewall_tools(
+                client, sp, _exec_ssh, timeout=exec_timeout,
+            )
             chain = IptablesManager.peer_chain_name_for_id(peer_id)
             want_masquerade = bool(row.get("masquerade_on_peer"))
             if not force and _peer_site_rules_already_current(
@@ -485,6 +489,11 @@ def replace_peer_filter_chain_plan_via_ssh(
         client = connect_peer_ssh_client_from_row(row, connect_timeout=25)
         try:
             sp = _detect_sudo_prefix(client, timeout=15)
+            ensure_remote_firewall_tools(
+                client, sp, _exec_ssh,
+                include_ipset=bool(ipsets),
+                timeout=exec_timeout,
+            )
             chq = shlex.quote(expect)
             pout, perr, pcode = _exec_ssh(
                 client, f"{sp}iptables -S {chq}", timeout=exec_timeout,

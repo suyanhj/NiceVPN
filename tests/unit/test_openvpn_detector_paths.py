@@ -85,3 +85,21 @@ def test_nonexistent_path_lookup_does_not_return_invalid_executable(
 
     assert detector._find_openvpn_binary() is None
     assert detector.find_easyrsa() is None
+
+
+def test_preferred_paths_require_executable_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    openvpn = tmp_path / "openvpn"
+    easyrsa = tmp_path / "easyrsa"
+    openvpn.write_text("#!/bin/sh\n", encoding="utf-8")
+    easyrsa.write_text("#!/bin/sh\n", encoding="utf-8")
+    openvpn.chmod(0o644)
+    easyrsa.chmod(0o644)
+
+    monkeypatch.setattr(detector, "OPENVPN_SEARCH_PATHS", (str(openvpn),))
+    monkeypatch.setattr(detector, "EASYRSA_SEARCH_PATHS", (str(easyrsa),))
+    monkeypatch.setattr(detector.shutil, "which", lambda _cmd: None)
+
+    assert detector._find_openvpn_binary() is None
+    assert detector.find_easyrsa() is None

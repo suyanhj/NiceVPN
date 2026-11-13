@@ -3,7 +3,18 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from app.services.peer_instance.remote_peer_iptables import apply_peer_site_iptables_via_ssh
+
+
+@pytest.fixture(autouse=True)
+def _skip_package_preflight_in_rule_behavior_tests(monkeypatch):
+    """规则事务测试不重复测试依赖安装；安装脚本由独立单测覆盖。"""
+    monkeypatch.setattr(
+        "app.services.peer_instance.remote_peer_iptables.ensure_remote_firewall_tools",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 class _FakeClient:
@@ -64,8 +75,11 @@ def test_remote_tag_ipset_is_prepared_before_atomic_iptables_restore():
     with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
         with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=_remote_tag_plan_exec(state)):
             with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
-                replace_peer_filter_chain_plan_via_ssh(row, [rest], [spec])
+                with patch("app.services.peer_instance.remote_peer_iptables.ensure_remote_firewall_tools") as ensure:
+                    replace_peer_filter_chain_plan_via_ssh(row, [rest], [spec])
 
+    ensure.assert_called_once()
+    assert ensure.call_args.kwargs["include_ipset"] is True
     commands = state["commands"]
     create_index = next(i for i, command in enumerate(commands) if "ipset create " in command and spec.name not in command.split())
     restore_index = next(i for i, command in enumerate(commands) if "iptables-restore" in command)
@@ -292,4 +306,34 @@ def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> Non
     assert not any(f"iptables -I {chain} 1 -s 10.8.0.0/16" in cmd for cmd in client.commands)
     assert not any(f"iptables -D {chain} " in cmd and "nvpnpt_" in cmd for cmd in client.commands)
     assert not any(f"iptables -F {chain}" in cmd or f"iptables -X {chain}" in cmd for cmd in client.commands)
+    assert client.closed is True
+
+
+def test_peer_site_firewall_preflights_iptables_before_current_state_check():
+    client = _FakeClient()
+    preflights = []
+    row = {
+        "id": "peer-preflight",
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+        "lan_cidrs": [],
+        "masquerade_on_peer": False,
+    }
+
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", return_value=("", "", 1)):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                with patch(
+                    "app.services.peer_instance.remote_peer_iptables.ensure_remote_firewall_tools",
+                    side_effect=lambda *args, **kwargs: preflights.append(kwargs),
+                ):
+                    with patch(
+                        "app.services.peer_instance.remote_peer_iptables._peer_site_rules_already_current",
+                        return_value=True,
+                    ):
+                        result = apply_peer_site_iptables_via_ssh(row, "10.8.0.0/16")
+
+    assert result["already_current"] is True
+    assert preflights == [{"timeout": 120}]
     assert client.closed is True

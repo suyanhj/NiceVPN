@@ -21,6 +21,7 @@
 : "${OPENVPN_CREATE_SYMLINK:=1}"
 : "${OPENVPN_FORCE_SOURCE:=0}"
 : "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
+: "${EASYRSA_FORCE_INSTALL:=0}"
 
 : "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"
 
@@ -31,6 +32,46 @@ version_ge() {
 
 _log() {
     echo "[openvpn-install] $*"
+}
+
+# 返回系统中已有且可执行的 EasyRSA，不限定 NiceVPN 自己的安装目录。
+easyrsa_find_existing_binary() {
+    local candidate
+    local -a candidates=(
+        "${EASYRSA_INSTALL_DIR}/current/easyrsa"
+        "${EASYRSA_INSTALL_DIR}/easyrsa"
+        "${OPENVPN_PREFIX}/share/easy-rsa/easyrsa"
+        "${OPENVPN_PREFIX}/share/easy-rsa/3/easyrsa"
+        "/usr/share/easy-rsa/easyrsa"
+        "/usr/share/easy-rsa/3/easyrsa"
+        "/usr/share/easy-rsa/3.0/easyrsa"
+        "/usr/local/share/easy-rsa/easyrsa"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}" && -x "${candidate}" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    candidate="$(command -v easyrsa 2>/dev/null || true)"
+    if [[ -n "${candidate}" && -f "${candidate}" && -x "${candidate}" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+    fi
+    return 1
+}
+
+# 已有 EasyRSA 默认复用；只有显式 EASYRSA_FORCE_INSTALL=1 才允许覆盖当前安装入口。
+easyrsa_reuse_existing() {
+    [[ "${INSTALL_EASYRSA}" == "1" ]] || return 0
+    [[ "${EASYRSA_FORCE_INSTALL}" == "1" ]] && return 0
+
+    local existing_bin
+    if existing_bin="$(easyrsa_find_existing_binary)"; then
+        _log "检测到已有 EasyRSA: ${existing_bin}，跳过下载、安装和覆盖"
+        INSTALL_EASYRSA=0
+    fi
 }
 
 # DCO 是可选性能优化：libnl-genl 不满足要求时，不应阻断 OpenVPN 基础安装。
@@ -205,6 +246,7 @@ EOF
 }
 
 easyrsa_download_and_install() {
+    easyrsa_reuse_existing
     [ "${INSTALL_EASYRSA}" = "1" ] || return 0
     if [ ! -s "${EASYRSA_CACHE}" ]; then
         local ok=0 url

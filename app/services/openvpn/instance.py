@@ -322,12 +322,51 @@ def restart_instance(name: str) -> bool:
 
 
 def is_instance_active(name: str) -> bool:
-    """检测实例是否正在运行"""
-    result = subprocess.run(
-        ["systemctl", "is-active", f"openvpn-server@{name}"],
-        capture_output=True, text=True
-    )
-    return result.stdout.strip() == "active"
+    """检测实例是否正在运行。systemctl 不可用或超时时按未运行处理。"""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", f"openvpn-server@{name}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("检查 OpenVPN 实例状态失败: name=%s error=%s", name, exc)
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "active"
+
+
+def reload_instance_crl(name: str) -> bool:
+    """仅向指定且正在运行的 systemd 服务端实例主进程发送 SIGHUP，以重载 CRL。"""
+    if not is_instance_active(name):
+        logger.debug("OpenVPN 实例未运行，跳过 CRL 重载: %s", name)
+        return False
+
+    unit = f"openvpn-server@{name}"
+    try:
+        subprocess.run(
+            [
+                "systemctl",
+                "kill",
+                "--signal=HUP",
+                "--kill-whom=main",
+                unit,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        logger.warning("向 OpenVPN 实例发送 CRL 重载信号失败: name=%s error=%s", name, detail)
+        return False
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("向 OpenVPN 实例发送 CRL 重载信号失败: name=%s error=%s", name, exc)
+        return False
+
+    logger.debug("已向 OpenVPN 实例主进程发送 SIGHUP: %s", name)
+    return True
 
 
 def iter_all_openvpn_instance_names() -> list[str]:

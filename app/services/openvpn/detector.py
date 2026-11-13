@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """OpenVPN 安装检测服务"""
+import os
 import re
 import shutil
 import subprocess
@@ -148,13 +149,13 @@ def _find_installed_executable(
     """优先复用预设路径，最后由标准库从 PATH 查找，避免调用 which/bash。"""
     for candidate in search_paths:
         path = Path(candidate)
-        if path.is_file():
+        if path.is_file() and os.access(path, os.X_OK):
             return str(path.resolve())
 
     found = shutil.which(command)
     if found:
         path = Path(found)
-        if path.is_file():
+        if path.is_file() and os.access(path, os.X_OK):
             return str(path.resolve())
     return None
 
@@ -162,7 +163,6 @@ def _find_installed_executable(
 def _find_openvpn_binary() -> str | None:
     """搜索 OpenVPN 可执行文件。"""
     return _find_installed_executable(OPENVPN_SEARCH_PATHS, "openvpn")
-
 
 def _extract_version(bin_path: str) -> str | None:
     """执行 openvpn --version 并提取版本号。"""

@@ -15,10 +15,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
-from app.services.openvpn.detector import detect_distro_family, parse_os_release_text
-
 logger = logging.getLogger("peer.remote.ipset")
-
 _STABLE_PREFIX = "nvpnpt_"
 _STAGE_PREFIX = "nvpnps_"
 _MAX_NAME_LENGTH = 31
@@ -97,60 +94,6 @@ def _run(exec_ssh: Callable, client, command: str, timeout: int) -> tuple[str, s
     return exec_ssh(client, command, timeout=timeout)
 
 
-def _ensure_ipset_installed(
-    client,
-    sudo_prefix: str,
-    exec_ssh: Callable,
-    *,
-    timeout: int,
-) -> None:
-    check_command = "sh -c " + shlex.quote("command -v ipset >/dev/null 2>&1")
-    _, _, code = _run(
-        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
-    )
-    if code == 0:
-        return
-
-    release, err, release_code = _run(
-        exec_ssh, client, "cat /etc/os-release 2>/dev/null || true", timeout,
-    )
-    if release_code != 0 or not release.strip():
-        raise RuntimeError(
-            f"对端缺少 ipset，且无法读取发行版信息: {(err or '').strip()}"
-        )
-    info = parse_os_release_text(release)
-    family = detect_distro_family(info)
-    if family == "debian":
-        install = "apt-get update -qq && apt-get install -y ipset"
-    elif family == "rhel":
-        install = "dnf install -y ipset || yum install -y ipset"
-    else:
-        raise RuntimeError(
-            "对端未安装 ipset，自动安装暂不支持该发行版；"
-            f"请手动安装 ipset（id={info.get('id')!r}）"
-        )
-    install_command = (
-        f"{sudo_prefix}sh -c {shlex.quote(install)}"
-        if sudo_prefix else install
-    )
-    out, install_err, install_code = _run(
-        exec_ssh, client, install_command, timeout=max(timeout, 300),
-    )
-    if install_code != 0:
-        raise RuntimeError(
-            "对端 ipset 自动安装失败，请检查软件源和 sudo 权限："
-            f"{(install_err or out or '').strip()[-1500:]}"
-        )
-    _, check_err, check_code = _run(
-        exec_ssh, client, f"{sudo_prefix}{check_command}", timeout,
-    )
-    if check_code != 0:
-        raise RuntimeError(
-            f"对端 ipset 安装后仍不可用: {(check_err or '').strip()}"
-        )
-    logger.info("已在对端自动安装 ipset（peer SSH）")
-
-
 def _list_names(client, sudo_prefix: str, exec_ssh: Callable, timeout: int) -> set[str]:
     out, err, code = _run(
         exec_ssh, client, f"{sudo_prefix}ipset list -n", timeout,
@@ -207,7 +150,7 @@ def reconcile_remote_peer_tag_ipsets(
     if not desired:
         return set()
 
-    _ensure_ipset_installed(client, sudo_prefix, exec_ssh, timeout=timeout)
+    # 依赖由 remote_peer_iptables 的 SSH 写入入口统一预检并批量安装。
     existing = _list_names(client, sudo_prefix, exec_ssh, timeout)
     newly_created: set[str] = set()
     stage_names: set[str] = set()
