@@ -339,6 +339,27 @@ def test_configure_does_not_hide_non_dco_errors(tmp_path) -> None:
     assert len(args_log.read_text(encoding="utf-8").splitlines()) == 1
 
 
+
+
+def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
+    debian = _read_install_script_text("openvpn-install-debian.sh")
+    rhel = _read_install_script_text("openvpn-install-rhel.sh")
+
+    debian_source = debian.split("install_source_dependencies() {", 1)[1].split("\\n}", 1)[0]
+    rhel_source = rhel.split("install_source_dependencies() {", 1)[1].split("\\n}", 1)[0]
+
+    assert "conntrack iptables ipset" in debian_source
+    assert "conntrack-tools" in rhel_source
+    assert "iptables ipset" in rhel_source
+    assert debian_source.count("apt install -y") == 1
+    assert rhel_source.count("${PM} install -y") == 1
+
+    # 系统包安装路径也一次性带上防火墙工具；EasyRSA 追加而不是覆盖已有依赖。
+    assert "pkgs=(openvpn conntrack iptables ipset)" in debian
+    assert 'pkgs+=(easy-rsa)' in debian
+    assert "packages=(openvpn conntrack-tools iptables ipset)" in rhel
+
+
 def test_dco_development_packages_are_best_effort() -> None:
     debian = _read_install_script_text("openvpn-install-debian.sh")
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
