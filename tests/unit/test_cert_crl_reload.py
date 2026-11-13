@@ -107,11 +107,11 @@ def test_cert_service_reloads_only_discovered_managed_instances(
         "iter_all_openvpn_instance_names",
         lambda: ["server", "edge"],
     )
-    monkeypatch.setattr(
-        instance,
-        "reload_instance_crl",
-        lambda name: calls.append(name) is None and name == "server",
-    )
+    def fake_reload(name: str) -> bool:
+        calls.append(name)
+        return name == "server"
+
+    monkeypatch.setattr(instance, "reload_instance_crl", fake_reload)
 
     service = object.__new__(CertService)
     service._reload_openvpn_instances()
