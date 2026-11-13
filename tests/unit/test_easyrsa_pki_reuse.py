@@ -293,9 +293,9 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
         calls.append((cmd, dict(env or {})))
         current = install_root / "current"
         current.mkdir(parents=True)
-        (current / "easyrsa").write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
-        (current / "easyrsa").chmod(0o755)
-        (current / "easyrsa").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        easyrsa = current / "easyrsa"
+        easyrsa.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+        easyrsa.chmod(0o755)
 
     monkeypatch.setattr(installer_mod, "_run_command", fake_run)
 
