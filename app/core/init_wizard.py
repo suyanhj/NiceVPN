@@ -86,7 +86,10 @@ class InitWizard:
         )
 
         # 无论 OpenVPN 是新装、系统已有还是手动指定路径，都先补齐 NiceVPN 运行依赖。
-        ensure_openvpn_runtime_dependencies(on_output=data.get("on_output"))
+        try:
+            ensure_openvpn_runtime_dependencies(on_output=data.get("on_output"))
+        except Exception as exc:
+            raise RuntimeError(f"OpenVPN 运行依赖检查/补装失败: {exc}") from exc
         return ensure_openvpn_server_systemd_unit(
             openvpn_bin,
             openvpn_version=openvpn_version,
