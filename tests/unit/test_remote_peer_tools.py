@@ -22,7 +22,7 @@ def test_remote_firewall_preflight_batches_iptables_and_ipset():
     actual_client, command, timeout = calls[0]
     assert actual_client is client
     assert command.startswith("sudo -n bash -lc ")
-    assert "nicevpn_ensure_commands iptables iptables ipset ipset" in command
+    assert "nicevpn_ensure_commands iptables iptables iptables-save iptables iptables-restore iptables ipset ipset" in command
     assert "apt-get install -y" in command
     assert "dnf|yum" in command
     assert timeout == 300
@@ -41,8 +41,8 @@ def test_remote_firewall_preflight_installs_only_iptables_without_tag_sets():
 
     assert len(calls) == 1
     assert "export NICEVPN_INCLUDE_IPSET=0" in calls[0]
-    assert "nicevpn_ensure_commands iptables iptables" in calls[0]
-    assert "nicevpn_ensure_commands iptables iptables ipset ipset" in calls[0]
+    assert "nicevpn_ensure_commands iptables iptables iptables-save iptables iptables-restore iptables" in calls[0]
+    assert "nicevpn_ensure_commands iptables iptables iptables-save iptables iptables-restore iptables ipset ipset" in calls[0]
 
 
 def test_remote_firewall_preflight_reports_install_failure():
