@@ -36,9 +36,9 @@ def ensure_remote_firewall_tools(
     include_ipset_env = "1" if include_ipset else "0"
     payload = (
         common
-        + "\\nexport NICEVPN_INCLUDE_IPSET="
+        + "\nexport NICEVPN_INCLUDE_IPSET="
         + include_ipset_env
-        + "\\n"
+        + "\n"
         + script
     )
     command = f"{sudo_prefix}bash -lc {shlex.quote(payload)}"
