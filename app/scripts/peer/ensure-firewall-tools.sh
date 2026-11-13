@@ -12,7 +12,7 @@ fi
 
 if [[ "${NICEVPN_INCLUDE_IPSET:-0}" == "1" ]]; then
     # 缺少任一命令时，一次性安装整组依赖；apt/dnf/yum 均可安全重复执行。
-    nicevpn_ensure_commands iptables iptables ipset ipset
+    nicevpn_ensure_commands iptables iptables iptables-save iptables iptables-restore iptables iptables-save iptables iptables-restore iptables ipset ipset
 else
     nicevpn_ensure_commands iptables iptables
 fi
