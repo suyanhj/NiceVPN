@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import shlex
 import uuid
 from pathlib import Path, PurePosixPath
@@ -192,44 +193,191 @@ def _install_fallback_client_systemd_unit(
     )
 
 
-def _resolve_openvpn_client_service_remote(client, *, timeout: int = 30) -> dict[str, str | bool]:
-    """解析对端 OpenVPN client systemd 服务名，优先官方模板。"""
-    _, _, official = _exec_ssh(
-        client,
-        f"systemctl cat {OFFICIAL_OPENVPN_CLIENT_TEMPLATE} >/dev/null 2>&1",
-        timeout=timeout,
-    )
-    if official == 0:
-        return {
-            "exists": True,
-            "unit_source": "official",
-            "service": OFFICIAL_OPENVPN_CLIENT_SERVICE,
-            "template": OFFICIAL_OPENVPN_CLIENT_TEMPLATE,
-            "config_path": OFFICIAL_OPENVPN_CLIENT_CONFIG_PATH,
-            "log_path": PEER_REMOTE_CLIENT_LOG_PATH,
-            "status_path": PEER_REMOTE_CLIENT_STATUS_PATH,
+def _parse_systemctl_list_unit_files(text: str) -> dict[str, str]:
+    """解析 ``systemctl list-unit-files`` 中的 OpenVPN service 文件。"""
+    result: dict[str, str] = {}
+    for raw in str(text or "").splitlines():
+        fields = raw.split()
+        if len(fields) < 1:
+            continue
+        unit = fields[0].strip()
+        if unit.lower().startswith("openvpn") and unit.endswith(".service"):
+            result[unit] = fields[1].strip() if len(fields) > 1 else ""
+    return result
+
+
+def _parse_systemctl_list_units(text: str) -> dict[str, dict[str, str]]:
+    """解析 ``systemctl list-units --all`` 中的 OpenVPN service 运行状态。"""
+    result: dict[str, dict[str, str]] = {}
+    for raw in str(text or "").splitlines():
+        fields = raw.split(None, 4)
+        if len(fields) < 4:
+            continue
+        unit = fields[0].strip()
+        if not unit.lower().startswith("openvpn") or not unit.endswith(".service"):
+            continue
+        result[unit] = {
+            "load_state": fields[1].strip(),
+            "active_state": fields[2].strip(),
+            "sub_state": fields[3].strip(),
         }
-    _, _, fallback = _exec_ssh(
+    return result
+
+
+def _systemd_template_for_service(service: str) -> str:
+    """返回实例服务对应的模板文件名。"""
+    name = str(service or "").strip()
+    if name.startswith("openvpn-client@") and not name.endswith("@.service"):
+        return OFFICIAL_OPENVPN_CLIENT_TEMPLATE
+    if name.startswith("openvpn@") and not name.endswith("@.service"):
+        return "openvpn@.service"
+    return ""
+
+
+def _extract_openvpn_config_path(exec_start: str, service: str) -> str | None:
+    """从 systemd ExecStart 中解析 --config/-c 与 --cd，兼容模板实例 %i。"""
+    command = str(exec_start or "")
+    config_match = re.search(
+        r"(?:--config|-c)(?:=|\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\s;}\]]+))",
+        command,
+    )
+    if not config_match:
+        return None
+    config_path = next((part for part in config_match.groups() if part), "").strip()
+    if not config_path:
+        return None
+
+    instance = ""
+    if "@" in service:
+        instance = service.split("@", 1)[1].split(".service", 1)[0]
+    if instance:
+        config_path = config_path.replace("%i", instance).replace("%I", instance)
+
+    cd_match = re.search(
+        r"--cd(?:=|\s+)(?:\"([^\"]+)\"|'([^']+)'|([^\s;}\]]+))",
+        command,
+    )
+    cd_path = next((part for part in cd_match.groups() if part), "").strip() if cd_match else ""
+    if not config_path.startswith("/") and cd_path:
+        config_path = str(PurePosixPath(cd_path) / config_path)
+    return config_path
+
+
+def _resolve_openvpn_client_service_remote(client, *, timeout: int = 30) -> dict[str, str | bool]:
+    """通过 systemctl 枚举远端 OpenVPN 服务文件及运行实例，不假定服务名固定。"""
+    files_out, _, _ = _exec_ssh(
         client,
-        f"systemctl cat {FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT} >/dev/null 2>&1",
+        "systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null || true",
         timeout=timeout,
     )
-    if fallback == 0:
+    units_out, _, _ = _exec_ssh(
+        client,
+        "systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null || true",
+        timeout=timeout,
+    )
+    unit_files = _parse_systemctl_list_unit_files(files_out)
+    running_units = _parse_systemctl_list_units(units_out)
+
+    candidates: list[str] = []
+    for unit in sorted(set(unit_files) | set(running_units)):
+        lower = unit.lower()
+        if lower == OFFICIAL_OPENVPN_CLIENT_TEMPLATE or lower == "openvpn@.service":
+            continue
+        if lower == FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT:
+            candidates.append(unit)
+        elif lower.startswith("openvpn-client@") and not lower.endswith("@.service"):
+            candidates.append(unit)
+        elif lower.startswith("openvpn-client") and lower.endswith(".service"):
+            candidates.append(unit)
+        elif lower.startswith("openvpn@") and not lower.endswith("@.service"):
+            instance = lower.split("@", 1)[1].split(".service", 1)[0]
+            if instance == "client" or "client" in instance:
+                candidates.append(unit)
+
+    # 有官方模板但尚未启动实例时，仍检查默认实例是否可加载；不会在此处启动它。
+    if OFFICIAL_OPENVPN_CLIENT_TEMPLATE in unit_files:
+        candidates.append(OFFICIAL_OPENVPN_CLIENT_SERVICE)
+
+    candidates = list(dict.fromkeys(candidates))
+    if not candidates:
         return {
-            "exists": True,
-            "unit_source": "generated",
-            "service": FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT,
+            "exists": False,
+            "service_file_exists": False,
+            "unit_source": "",
+            "service": "",
+            "template": "",
             "config_path": REMOTE_CLIENT_OVPN_PATH,
             "log_path": PEER_REMOTE_CLIENT_LOG_PATH,
             "status_path": PEER_REMOTE_CLIENT_STATUS_PATH,
+            "active_state": "not-found",
+            "sub_state": "not-found",
         }
+
+    def _candidate_rank(service: str) -> tuple[int, int, str]:
+        active = running_units.get(service, {}).get("active_state") == "active"
+        if service == OFFICIAL_OPENVPN_CLIENT_SERVICE or service.startswith("openvpn-client@"):
+            rank = 0
+        elif service == FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT:
+            rank = 1
+        elif service.startswith("openvpn-client"):
+            rank = 2
+        else:
+            rank = 3
+        return (0 if active else 1, rank, service)
+
+    service = sorted(candidates, key=_candidate_rank)[0]
+    template = _systemd_template_for_service(service)
+    if service == OFFICIAL_OPENVPN_CLIENT_SERVICE:
+        template = OFFICIAL_OPENVPN_CLIENT_TEMPLATE
+    unit_source = (
+        "official"
+        if template == OFFICIAL_OPENVPN_CLIENT_TEMPLATE
+        else "generated"
+        if service == FALLBACK_OPENVPN_CLIENT_SYSTEMD_UNIT
+        else "discovered"
+    )
+
+    out, _, code = _exec_ssh(
+        client,
+        f"systemctl show {shlex.quote(service)} "
+        "--property=LoadState,ActiveState,SubState,UnitFileState,FragmentPath,ExecStart --no-page",
+        timeout=timeout,
+    )
+    props = _parse_systemctl_show(out) if code == 0 else {}
+    listed = running_units.get(service, {})
+    load_state = props.get("LoadState") or listed.get("load_state", "")
+    active_state = props.get("ActiveState") or listed.get("active_state", "inactive")
+    sub_state = props.get("SubState") or listed.get("sub_state", "")
+    unit_file_state = (
+        props.get("UnitFileState")
+        or unit_files.get(service)
+        or unit_files.get(template)
+        or ""
+    )
+    fragment_path = props.get("FragmentPath", "")
+    service_file_exists = bool(
+        unit_files.get(service)
+        or (template and unit_files.get(template))
+        or (load_state == "loaded" and fragment_path and fragment_path != "/dev/null")
+    )
+    config_path = _extract_openvpn_config_path(props.get("ExecStart", ""), service)
+    if not config_path:
+        config_path = REMOTE_CLIENT_OVPN_PATH
+
     return {
-        "exists": False,
-        "unit_source": "",
-        "service": "",
-        "config_path": REMOTE_CLIENT_OVPN_PATH,
+        "exists": service_file_exists,
+        "service_file_exists": service_file_exists,
+        "unit_source": unit_source,
+        "service": service,
+        "template": template,
+        "config_path": config_path,
         "log_path": PEER_REMOTE_CLIENT_LOG_PATH,
         "status_path": PEER_REMOTE_CLIENT_STATUS_PATH,
+        "load_state": load_state,
+        "active_state": active_state,
+        "sub_state": sub_state,
+        "unit_file_state": unit_file_state,
+        "fragment_path": fragment_path,
     }
 
 
@@ -250,39 +398,32 @@ def fetch_openvpn_client_service_status_via_ssh(
     connect_timeout: int = 25,
     exec_timeout: int = 60,
 ) -> dict[str, str | bool]:
-    """查询对端 OpenVPN client systemd 服务状态。"""
+    """查询对端 OpenVPN client service、配置文件和运行状态。"""
     client = connect_peer_ssh_client_from_row(row, connect_timeout=connect_timeout)
     try:
         resolved = _resolve_openvpn_client_service_remote(client, timeout=exec_timeout)
-        if not resolved.get("exists"):
-            return {"ok": True, **resolved, "active_state": "not-found", "sub_state": "not-found"}
-        service = str(resolved["service"])
-        out, err, code = _exec_ssh(
+        config_path = str(resolved.get("config_path") or REMOTE_CLIENT_OVPN_PATH)
+        _, _, config_code = _exec_ssh(
             client,
-            f"systemctl show {shlex.quote(service)} "
-            "--property=LoadState,ActiveState,SubState,UnitFileState --no-page",
-            timeout=exec_timeout,
-        )
-        if code != 0:
-            raise RuntimeError(f"查询对端 OpenVPN client 服务状态失败: {err.strip()}")
-        props = _parse_systemctl_show(out)
-        active, _, _ = _exec_ssh(client, f"systemctl is-active {shlex.quote(service)} 2>/dev/null || true", timeout=15)
-        enabled, _, _ = _exec_ssh(client, f"systemctl is-enabled {shlex.quote(service)} 2>/dev/null || true", timeout=15)
-        _, _, config_exists = _exec_ssh(
-            client,
-            f"test -f {shlex.quote(str(resolved.get('config_path') or REMOTE_CLIENT_OVPN_PATH))}",
+            f"test -f {shlex.quote(config_path)}",
             timeout=15,
         )
+        config_exists = config_code == 0
+        if not resolved.get("service"):
+            return {
+                "ok": True,
+                **resolved,
+                "config_exists": config_exists,
+                "is_active": str(resolved.get("active_state") or "not-found"),
+                "is_enabled": "",
+            }
+
         return {
             "ok": True,
             **resolved,
-            "load_state": props.get("LoadState", ""),
-            "active_state": props.get("ActiveState", active.strip()),
-            "sub_state": props.get("SubState", ""),
-            "unit_file_state": props.get("UnitFileState", enabled.strip()),
-            "is_active": active.strip(),
-            "is_enabled": enabled.strip(),
-            "config_exists": config_exists == 0,
+            "config_exists": config_exists,
+            "is_active": str(resolved.get("active_state") or ""),
+            "is_enabled": str(resolved.get("unit_file_state") or ""),
         }
     finally:
         client.close()

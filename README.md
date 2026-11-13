@@ -45,6 +45,8 @@ http://<主机>:8880/
 
 未完成初始化时会进入 First Run Setup。
 
+初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA。同时检查 systemd 中是否已有 OpenVPN server 服务单元；没有时，复用项目原有的 OpenVPN 源码模板生成脚本补齐服务文件，不重新编译 OpenVPN。
+
 正式 Vue 运行产物已经提交在 `app/ui/vue/dist/`，普通生产启动**不需要 Node/npm，也不需要 Docker 来构建前端**。
 
 首次安装需要源码编译 OpenVPN 时，安装器会将 DCO（数据通道卸载）作为可选优化：先尝试安装对应开发包，再检查 `libnl-genl-3.0` 是否达到 `3.4.0`。缺失或版本过低时会自动使用 `--disable-dco` 编译，继续提供常规 VPN 功能，不会因为 DCO 依赖不满足而中断安装。DCO 是否实际启用还取决于运行内核是否提供兼容的 `ovpn-dco` 模块。
@@ -67,6 +69,8 @@ PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
 ```
 
 项目存在 `.venv` 时会保留 `.venv/bin/python` 路径，不解析到 uv 的基础 Python，以确保 systemd 继续使用该虚拟环境的依赖。
+
+OpenVPN 的 `client-connect` / `client-disconnect` 钩子不继承 NiceVPN 主进程的虚拟环境。NiceVPN 同步 `/etc/openvpn/scripts/` 时会自动把当前运行的 Python（通常为项目 `.venv/bin/python`）写入钩子脚本；不修改系统 `/usr/bin/python3`。旧版已部署脚本升级后可通过重启 NiceVPN（或触发服务配置重新生成）同步，OpenVPN 会在下次连接/断开时执行新脚本。需要临时指定其他解释器时，可在 OpenVPN server.conf 使用 `setenv PY3_BIND /绝对路径/python` 与 `setenv PY3_AUDIT /绝对路径/python`，要求 Python 3.10+。修改 server.conf 后需重启对应 OpenVPN 实例才会生效。
 
 ## 生产部署
 

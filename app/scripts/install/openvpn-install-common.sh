@@ -6,6 +6,8 @@
 : "${OPENVPN_TAG:=v2.7.0}"
 : "${OPENVPN_ASSET:=openvpn-2.7.0.tar.gz}"
 : "${OPENVPN_PREFIX:=/opt/openvpn}"
+: "${OPENVPN_SBIN_DIR:=${OPENVPN_PREFIX}/sbin}"
+: "${OPENVPN_BIN:=${OPENVPN_SBIN_DIR}/openvpn}"
 : "${OPENVPN_CACHE:=/tmp/${OPENVPN_ASSET}}"
 : "${OPENVPN_SRC_ROOT:=/tmp/ovpn-mgmt-openvpn-src}"
 : "${EASYRSA_INSTALL_DIR:=/opt/easy-rsa}"
@@ -20,7 +22,7 @@
 : "${OPENVPN_FORCE_SOURCE:=0}"
 : "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
 
-OPENVPN_SRC_DIR="${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}"
+: "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"
 
 version_ge() {
     # 用法: version_ge <ver> <min>
@@ -176,10 +178,10 @@ openvpn_install_server_systemd_from_src() {
     major="${parts%% *}"
     minor="${parts#* }"
     unit_path="/etc/systemd/system/openvpn-server@.service"
-    exec_old="ExecStart=${OPENVPN_PREFIX}/sbin/openvpn --status %t/openvpn-server/status-%i.log --status-version 2 --suppress-timestamps --config %i.conf"
-    exec_new="ExecStart=${OPENVPN_PREFIX}/sbin/openvpn --suppress-timestamps --config %i.conf"
+    exec_old="ExecStart=${OPENVPN_SBIN_DIR}/openvpn --status %t/openvpn-server/status-%i.log --status-version 2 --suppress-timestamps --config %i.conf"
+    exec_new="ExecStart=${OPENVPN_BIN} --suppress-timestamps --config %i.conf"
     sed \
-        -e "s#@sbindir@#${OPENVPN_PREFIX}/sbin#g" \
+        -e "s#@sbindir@#${OPENVPN_SBIN_DIR}#g" \
         -e "s#@OPENVPN_VERSION_MAJOR@#${major}#g" \
         -e "s#@OPENVPN_VERSION_MINOR@#${minor}#g" \
         "${template}" \

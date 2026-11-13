@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
-from app.core.constants import OPENVPN_MIN_VERSION
+from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
+
+_OPENVPN_SOURCE_ROOT = Path("/tmp/ovpn-mgmt-openvpn-src")
 
 _APT_KEY_URL = "https://swupdate.openvpn.net/repos/repo-public.gpg"
 _GITHUB_API_LATEST = "https://api.github.com/repos/{repo}/releases/latest"
@@ -144,20 +146,125 @@ def install_openvpn_server_systemd_from_staged_source(
     *,
     source_dir: Path,
     tag: str,
+    openvpn_bin: str | Path | None = None,
     on_output: Callable[[str], None] | None = None,
 ) -> None:
-    """用独立 shell 入口安装已构建候选版本的 server systemd unit/override。"""
+    """复用 OpenVPN 源码安装时的既有逻辑生成 server systemd unit/override。"""
 
     script_path = _INSTALL_SCRIPTS_DIR / "openvpn-install-systemd.sh"
     if not script_path.is_file():
         raise FileNotFoundError(f"OpenVPN systemd 安装脚本不存在: {script_path}")
-    env = _subprocess_env(
-        {
-            "OPENVPN_SRC_DIR": str(source_dir),
-            "OPENVPN_TAG": str(tag),
-        }
+
+    env_values = {
+        "OPENVPN_SRC_DIR": str(source_dir),
+        "OPENVPN_TAG": str(tag),
+    }
+    if openvpn_bin:
+        binary = Path(openvpn_bin).expanduser().resolve()
+        env_values["OPENVPN_BIN"] = str(binary)
+        env_values["OPENVPN_SBIN_DIR"] = str(binary.parent)
+
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env(env_values),
     )
-    _run_command(["bash", str(script_path)], on_output, env=env)
+
+
+def ensure_openvpn_server_systemd_unit(
+    openvpn_bin: str | Path,
+    openvpn_version: str | None = None,
+    on_output: Callable[[str], None] | None = None,
+) -> str:
+    """已有 OpenVPN server unit 就复用；没有则走原来的生成脚本。"""
+
+    binary = Path(openvpn_bin).expanduser()
+    if not binary.is_file():
+        raise FileNotFoundError(f"OpenVPN 二进制不存在: {binary}")
+    binary = binary.resolve()
+
+    try:
+        proc = subprocess.run(
+            [
+                "systemctl",
+                "list-unit-files",
+                "--type=service",
+                "--no-legend",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        raise RuntimeError(f"检查 OpenVPN systemd 服务单元失败: {exc}") from exc
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"systemctl list-unit-files 执行失败: {detail or proc.returncode}")
+
+    for line in proc.stdout.splitlines():
+        fields = line.split()
+        if fields and "openvpn-server@" in fields[0].lower():
+            _emit(on_output, f"[检查] 已存在 OpenVPN 服务单元，跳过安装: {fields[0]}")
+            return fields[0]
+
+    if not openvpn_version:
+        from app.services.openvpn.detector import _extract_version
+
+        openvpn_version = _extract_version(str(binary))
+    if not openvpn_version:
+        raise RuntimeError(f"无法识别 OpenVPN 版本，不能生成服务单元: {binary}")
+
+    source_root = Path(os.environ.get("OPENVPN_SRC_ROOT") or _OPENVPN_SOURCE_ROOT)
+    source_dir = Path(
+        os.environ.get("OPENVPN_SRC_DIR")
+        or source_root / f"openvpn-{openvpn_version.lstrip('v')}"
+    )
+    if not (source_dir / "distro/systemd/openvpn-server@.service.in").is_file():
+        raise FileNotFoundError(
+            "未找到 OpenVPN 源码中的 systemd 模板: "
+            f"{source_dir / 'distro/systemd/openvpn-server@.service.in'}"
+        )
+
+    tag = openvpn_version if openvpn_version.startswith("v") else f"v{openvpn_version}"
+    _emit(on_output, "[检查] 未找到 OpenVPN server 服务单元，复用原安装脚本补齐")
+    install_openvpn_server_systemd_from_staged_source(
+        source_dir=source_dir,
+        tag=tag,
+        openvpn_bin=binary,
+        on_output=on_output,
+    )
+    _emit(on_output, "[完成] OpenVPN 服务单元已就绪: openvpn-server@.service")
+    return "openvpn-server@.service"
+
+
+
+def install_easyrsa(
+    on_output: Callable[[str], None] | None = None,
+) -> str:
+    """仅安装 EasyRSA，不触碰已存在的 OpenVPN 包、二进制或服务。"""
+
+    env = _build_easyrsa_install_env(on_output)
+    env["EASYRSA_INSTALL_DIR"] = str(EASYRSA_INSTALL_DIR)
+    script_path = _INSTALL_SCRIPTS_DIR / "easyrsa-install.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"EasyRSA 安装脚本不存在: {script_path}")
+
+    _emit(on_output, f"[信息] OpenVPN 已就绪，单独安装 EasyRSA（{script_path.name}）...")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env(env),
+    )
+
+    installed_bin = Path(EASYRSA_INSTALL_DIR) / "current" / "easyrsa"
+    if not installed_bin.is_file():
+        raise RuntimeError(f"EasyRSA 安装命令完成，但脚本不存在: {installed_bin}")
+
+    _emit(on_output, f"[完成] EasyRSA 安装成功: {installed_bin}")
+    return str(installed_bin)
 
 
 def install_openvpn(
@@ -250,24 +357,35 @@ def _build_install_env(
         "APT_KEY_URL": _APT_KEY_URL,
     }
     if install_easyrsa:
-        easyrsa_release = _resolve_latest_release_asset(
-            repo="OpenVPN/easy-rsa",
-            asset_prefix="EasyRSA-",
-            asset_suffixes=(".tar.gz", ".tgz"),
-            fallback_tag=_EASYRSA_FALLBACK_TAG,
-            fallback_asset=_EASYRSA_FALLBACK_ASSET,
-            on_output=on_output,
-        )
-        env["EASYRSA_TAG"] = easyrsa_release["tag_name"]
-        env["EASYRSA_ASSET"] = easyrsa_release["asset_name"]
-        env["EASYRSA_DOWNLOAD_URLS"] = "\n".join(
-            _build_github_candidate_urls(easyrsa_release["download_url"])
-        )
+        env.update(_build_easyrsa_install_env(on_output))
     if distro == "debian":
         env["DEBIAN_CODENAME"] = _get_codename(version_id)
     elif distro != "rhel":
         raise ValueError(f"不支持的发行版族: {distro}")
     return env
+
+
+def _build_easyrsa_install_env(
+    on_output: Callable[[str], None] | None,
+) -> dict[str, str]:
+    """独立解析 EasyRSA release，避免为了补装 EasyRSA 再请求 OpenVPN release。"""
+
+    release = _resolve_latest_release_asset(
+        repo="OpenVPN/easy-rsa",
+        asset_prefix="EasyRSA-",
+        asset_suffixes=(".tar.gz", ".tgz"),
+        fallback_tag=_EASYRSA_FALLBACK_TAG,
+        fallback_asset=_EASYRSA_FALLBACK_ASSET,
+        on_output=on_output,
+    )
+    return {
+        "INSTALL_EASYRSA": "1",
+        "EASYRSA_TAG": release["tag_name"],
+        "EASYRSA_ASSET": release["asset_name"],
+        "EASYRSA_DOWNLOAD_URLS": "\n".join(
+            _build_github_candidate_urls(release["download_url"])
+        ),
+    }
 
 
 def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
