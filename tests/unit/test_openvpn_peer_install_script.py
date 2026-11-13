@@ -370,3 +370,15 @@ def test_dco_development_packages_are_best_effort() -> None:
         required = source.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
         assert "libnl-genl-3-dev" not in required
         assert "libnl3-devel" not in required
+
+
+
+def test_easyrsa_installer_reuses_shared_dependency_helper() -> None:
+    script = _read_install_script_text("easyrsa-install.sh")
+
+    assert "nicevpn_ensure_commands" in script
+    assert "ensure_easyrsa_tools()" not in script
+    assert "apt-get update" not in script
+    assert "nicevpn_package_manager" not in script
+    assert "find findutils" in script
+    assert "cp coreutils" in script
