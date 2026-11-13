@@ -8,29 +8,30 @@ source "${SCRIPT_DIR}/openvpn-install-common.sh"
 # shellcheck source=../common/linux-packages.sh
 source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
-: "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
-
-# EasyRSA 解压、安装所需命令通过共享函数批量检查；缺失时只调用一次包管理器。
-nicevpn_ensure_commands \
-    curl curl \
-    tar tar \
-    gzip gzip \
-    openssl openssl \
-    find findutils \
-    cp coreutils \
-    ln coreutils \
-    mktemp coreutils \
-    mkdir coreutils \
-    rm coreutils \
-    mv coreutils \
-    head coreutils
 INSTALL_EASYRSA=1
 export INSTALL_EASYRSA
+easyrsa_reuse_existing
+
+if [[ "${INSTALL_EASYRSA}" != "1" ]]; then
+    # 已有 EasyRSA 只检查其运行时 OpenSSL，不重新下载、不覆盖版本目录。
+    nicevpn_ensure_easyrsa_runtime_dependencies
+    existing_bin="$(easyrsa_find_existing_binary)"
+    _log "EasyRSA 已存在，复用: ${existing_bin}"
+    exit 0
+fi
+
+# 仅在确实缺少 EasyRSA 或显式要求强制重装时，准备下载/解压工具。
+nicevpn_ensure_easyrsa_install_dependencies
+: "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
+
 easyrsa_download_and_install
 
-installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
-[ -f "${installed_bin}" ] || {
-    echo "EasyRSA 安装后未找到脚本: ${installed_bin}" >&2
+installed_bin="$(easyrsa_find_existing_binary || true)"
+if [[ -z "${installed_bin}" ]]; then
+    installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
+fi
+[[ -f "${installed_bin}" && -x "${installed_bin}" ]] || {
+    echo "EasyRSA 安装后未找到可执行脚本: ${installed_bin}" >&2
     exit 1
 }
 _log "EasyRSA 已就绪: ${installed_bin}"
