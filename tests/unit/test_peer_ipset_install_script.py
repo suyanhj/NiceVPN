@@ -12,6 +12,7 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "app" / "scripts" / "peer" / "ensure-ipset.sh"
+COMMON = SCRIPT.parents[1] / "common" / "linux-packages.sh"
 pytestmark = pytest.mark.skipif(
     os.name == "nt" or shutil.which("bash") is None,
     reason="requires Linux shell",
@@ -33,11 +34,10 @@ def _run_installer(
     if os_release is not None:
         os_release_path.write_text(os_release, encoding="utf-8")
 
-    script = SCRIPT.read_text(encoding="utf-8")
+    script = COMMON.read_text(encoding="utf-8") + "\n" + SCRIPT.read_text(encoding="utf-8")
     original_path = 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"'
     assert original_path in script
     script = script.replace(original_path, 'export PATH="$NICEVPN_TEST_PATH"')
-    script = script.replace("/etc/os-release", str(os_release_path))
 
     calls_path = tmp_path / "package-calls.txt"
     package_stub = """#!/bin/bash
@@ -60,6 +60,7 @@ fi
     env.update(
         {
             "NICEVPN_TEST_PATH": str(bin_dir),
+            "NICEVPN_OS_RELEASE_FILE": str(os_release_path),
             "NICEVPN_TEST_COMMANDS": str(calls_path),
             "NICEVPN_TEST_CREATE_IPSET": "1" if creates_ipset else "0",
         }
@@ -77,13 +78,14 @@ fi
 
 
 def test_installer_shell_syntax():
-    result = subprocess.run(
-        [shutil.which("bash") or "/bin/bash", "-n", str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
+    for path in (COMMON, SCRIPT):
+        result = subprocess.run(
+            [shutil.which("bash") or "/bin/bash", "-n", str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 def test_installer_reuses_existing_ipset_without_package_changes(tmp_path: Path):
@@ -127,7 +129,7 @@ def test_installer_rejects_missing_os_release(tmp_path: Path):
     result, calls = _run_installer(tmp_path, None)
 
     assert result.returncode != 0
-    assert "无法自动安装 ipset" in result.stderr
+    assert "不支持的发行版或找不到包管理器" in result.stderr
     assert calls == []
 
 
@@ -137,5 +139,5 @@ def test_installer_rejects_success_without_ipset(tmp_path: Path):
     )
 
     assert result.returncode != 0
-    assert "ipset 不在 PATH 中" in result.stderr
+    assert "安装后仍找不到 ipset" in result.stderr
     assert calls == ["apt-get update -qq", "apt-get install -y ipset"]
