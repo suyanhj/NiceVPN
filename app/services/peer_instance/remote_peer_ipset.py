@@ -13,7 +13,6 @@ import re
 import shlex
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Iterable
 
 logger = logging.getLogger("peer.remote.ipset")
