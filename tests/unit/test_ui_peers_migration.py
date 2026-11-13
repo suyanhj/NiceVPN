@@ -266,7 +266,7 @@ def test_peer_remote_dialogs_validate_credentials_and_build_when_available(
             await user.should_see("对端已安装 OpenVPN")
             await user.should_see("推送客户端配置")
             await user.should_see("推送并启用 systemd")
-            await user.should_see("推送 iptables")
+            await user.should_see("推送对端站点防火墙")
             await user.should_see("开始推送")
 
     asyncio.run(verify_push())
