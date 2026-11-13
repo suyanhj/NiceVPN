@@ -32,13 +32,17 @@ install_optional_dco_dependencies() {
 }
 
 install_source_dependencies() {
-    apt install -y \
-        build-essential curl ca-certificates pkg-config autoconf automake libtool \
-        libssl-dev libpam0g-dev libcap-ng-dev \
-        liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev conntrack
+    local -a packages=(
+        build-essential curl ca-certificates pkg-config autoconf automake libtool
+        libssl-dev libpam0g-dev libcap-ng-dev
+        liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev
+        conntrack iptables ipset
+    )
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
-        apt install -y logrotate
+        packages+=(logrotate)
     fi
+    # 基础依赖一次性安装；DCO 开发包可选，单独尝试且失败不阻断编译。
+    apt install -y "${packages[@]}"
     install_optional_dco_dependencies
 }
 
