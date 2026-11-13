@@ -37,6 +37,7 @@ def test_install_script_files_exist() -> None:
         "openvpn-install-debian.sh",
         "openvpn-install-rhel.sh",
         "openvpn-install-systemd.sh",
+        "ensure-runtime-dependencies.sh",
     ):
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
 
@@ -66,7 +67,7 @@ def test_build_peer_script_debian_ubuntu() -> None:
     assert "export DEBIAN_CODENAME=jammy" in s
     assert "export OPENVPN_MIN_VERSION=2.7.0" in s
     assert "version_ge()" in s
-    assert "apt install -y" in s and "openvpn" in s
+    assert "nicevpn_install_packages apt-get" in s and "openvpn" in s
     assert "openvpn_compile_install" in s
     assert "build.openvpn.net/debian" in s
     assert "export INSTALL_EASYRSA=0" in s
@@ -353,13 +354,13 @@ def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
     assert "iptables ipset" in rhel_source
     assert "packages+=(openssl findutils coreutils)" in debian_source
     assert "packages+=(openssl findutils coreutils)" in rhel_source
-    assert debian_source.count("apt install -y") == 1
+    assert debian_source.count("nicevpn_install_packages apt-get") == 1
     assert rhel_source.count("${PM} install -y") == 1
 
     # 系统包安装路径也一次性带上防火墙工具；EasyRSA 追加而不是覆盖已有依赖。
-    assert "pkgs=(openvpn conntrack iptables ipset)" in debian
-    assert 'pkgs+=(easy-rsa)' in debian
-    assert "packages=(openvpn conntrack-tools iptables ipset)" in rhel
+    assert "pkgs=(openvpn conntrack iptables ipset procps)" in debian
+    assert 'pkgs+=(easy-rsa openssl)' in debian
+    assert "packages=(openvpn conntrack-tools iptables ipset procps-ng)" in rhel
     assert "packages+=(curl tar gzip openssl findutils coreutils)" in rhel
 
 
@@ -367,7 +368,7 @@ def test_dco_development_packages_are_best_effort() -> None:
     debian = _read_install_script_text("openvpn-install-debian.sh")
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
 
-    assert "if apt install -y libnl-3-dev libnl-genl-3-dev; then" in debian
+    assert "if nicevpn_install_packages apt-get libnl-3-dev libnl-genl-3-dev; then" in debian
     assert "if ${PM} install -y libnl3-devel; then" in rhel
     for source in (debian, rhel):
         required = source.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
