@@ -282,16 +282,6 @@ class InitWizard:
                 )
                 return StepResult(False, f"EasyRSA 自动安装失败: {exc}")
 
-        # 已有 EasyRSA 与自动安装后的 EasyRSA 使用同一套运行时依赖预检。
-        try:
-            from app.services.openvpn.installer import ensure_easyrsa_runtime_dependencies
-
-            ensure_easyrsa_runtime_dependencies(on_output=emit)
-        except Exception as exc:
-            logger.exception("EasyRSA 运行依赖检查/补装失败")
-            emit(f"[错误] EasyRSA 运行依赖检查/补装失败: {exc}")
-            return StepResult(False, f"EasyRSA 运行依赖检查/补装失败: {exc}")
-
         self.config.easyrsa_dir = easyrsa_dir
 
         requested_pki = str(data.get("pki_dir") or "").strip()
@@ -322,14 +312,23 @@ class InitWizard:
             reused_pki = pki_state["state"] == "ready"
             generated: list[str] = []
 
-            if pki_state["state"] == "ready":
-                emit("[复用] 已检测到完整 CA/PKI，跳过 init-pki 与 build-ca")
-            elif pki_state["state"] == "partial":
+            if pki_state["state"] == "partial":
                 missing = ", ".join(pki_state["missing"])
                 raise EasyRSAError(
                     f"检测到不完整的 EasyRSA PKI，拒绝自动覆盖。"
                     f"目录: {pki_dir}; 缺失: {missing}"
                 )
+
+            # PKI 状态先检查，残缺 CA 不触发任何依赖补装或覆盖操作。
+            try:
+                from app.services.openvpn.installer import ensure_easyrsa_runtime_dependencies
+
+                ensure_easyrsa_runtime_dependencies(on_output=emit)
+            except Exception as exc:
+                raise EasyRSAError(f"EasyRSA 运行依赖检查/补装失败: {exc}") from exc
+
+            if pki_state["state"] == "ready":
+                emit("[复用] 已检测到完整 CA/PKI，跳过 init-pki 与 build-ca")
             else:
                 if pki_state["state"] == "missing":
                     emit("[阶段] 正在创建 PKI 目录结构")
