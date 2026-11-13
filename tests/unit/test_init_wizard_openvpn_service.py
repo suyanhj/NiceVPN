@@ -48,6 +48,11 @@ def test_detect_openvpn_ensures_server_unit_before_continuing(
 
     monkeypatch.setattr(
         installer_module,
+        "ensure_openvpn_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        installer_module,
         "ensure_openvpn_server_systemd_unit",
         lambda path, openvpn_version=None, on_output=None: calls.append((path, openvpn_version, on_output)) or "openvpn-server@.service",
     )
@@ -77,6 +82,10 @@ def test_detect_openvpn_stops_when_server_unit_cannot_be_installed(
         },
     )
     monkeypatch.setattr(wizard_module, "find_easyrsa", lambda _path: None)
+    monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_openvpn_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
     monkeypatch.setattr(
         "app.services.openvpn.installer.ensure_openvpn_server_systemd_unit",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("权限不足")),
