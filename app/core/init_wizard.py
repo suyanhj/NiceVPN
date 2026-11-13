@@ -80,8 +80,13 @@ class InitWizard:
         openvpn_version: str | None = None,
     ):
         """缺少 OpenVPN server unit 时复用原安装逻辑补齐。"""
-        from app.services.openvpn.installer import ensure_openvpn_server_systemd_unit
+        from app.services.openvpn.installer import (
+            ensure_openvpn_runtime_dependencies,
+            ensure_openvpn_server_systemd_unit,
+        )
 
+        # 无论 OpenVPN 是新装、系统已有还是手动指定路径，都先补齐 NiceVPN 运行依赖。
+        ensure_openvpn_runtime_dependencies(on_output=data.get("on_output"))
         return ensure_openvpn_server_systemd_unit(
             openvpn_bin,
             openvpn_version=openvpn_version,
@@ -276,6 +281,16 @@ class InitWizard:
                     "failure",
                 )
                 return StepResult(False, f"EasyRSA 自动安装失败: {exc}")
+
+        # 已有 EasyRSA 与自动安装后的 EasyRSA 使用同一套运行时依赖预检。
+        try:
+            from app.services.openvpn.installer import ensure_easyrsa_runtime_dependencies
+
+            ensure_easyrsa_runtime_dependencies(on_output=emit)
+        except Exception as exc:
+            logger.exception("EasyRSA 运行依赖检查/补装失败")
+            emit(f"[错误] EasyRSA 运行依赖检查/补装失败: {exc}")
+            return StepResult(False, f"EasyRSA 运行依赖检查/补装失败: {exc}")
 
         self.config.easyrsa_dir = easyrsa_dir
 
