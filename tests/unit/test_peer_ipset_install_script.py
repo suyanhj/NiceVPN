@@ -47,9 +47,15 @@ if [[ "$1" == "install" && "$NICEVPN_TEST_CREATE_COMMANDS" == "1" ]]; then
     shift 2
     for package in "$@"; do
         case "$package" in
-            iptables|ipset)
-                printf '#!/bin/bash\nexit 0\n' > "$NICEVPN_TEST_PATH/$package"
-                /bin/chmod +x "$NICEVPN_TEST_PATH/$package"
+            iptables)
+                for command in iptables iptables-save iptables-restore; do
+                    printf '#!/bin/bash\\nexit 0\\n' > "$NICEVPN_TEST_PATH/$command"
+                    /bin/chmod +x "$NICEVPN_TEST_PATH/$command"
+                done
+                ;;
+            ipset)
+                printf '#!/bin/bash\\nexit 0\\n' > "$NICEVPN_TEST_PATH/ipset"
+                /bin/chmod +x "$NICEVPN_TEST_PATH/ipset"
                 ;;
         esac
     done
@@ -100,7 +106,7 @@ def test_installer_shell_syntax():
 def test_existing_iptables_and_ipset_skip_package_manager(tmp_path: Path):
     result, calls = _run_installer(
         tmp_path, "ID=debian\n",
-        installed_commands=("iptables", "ipset"),
+        installed_commands=("iptables", "iptables-save", "iptables-restore", "ipset"),
     )
 
     assert result.returncode == 0, result.stderr
