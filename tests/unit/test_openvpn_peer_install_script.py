@@ -42,6 +42,40 @@ def test_install_script_files_exist() -> None:
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
 
 
+def test_openvpn_runtime_dependency_entry_uses_shared_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    installer_mod.ensure_openvpn_runtime_dependencies()
+
+    assert len(calls) == 1
+    assert calls[0]["command"] == [
+        "bash",
+        str(_INSTALL_SCRIPTS_DIR / "ensure-runtime-dependencies.sh"),
+    ]
+    assert calls[0]["env"]["NICEVPN_DEPENDENCY_PROFILE"] == "openvpn-runtime"
+
+
+def test_easyrsa_runtime_dependency_entry_uses_shared_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    installer_mod.ensure_easyrsa_runtime_dependencies()
+
+    assert len(calls) == 1
+    assert calls[0]["env"]["NICEVPN_DEPENDENCY_PROFILE"] == "easyrsa-runtime"
+
+
 def test_remote_install_script_inlines_shared_package_helpers() -> None:
     """对端 SSH 执行时不依赖 NiceVPN 脚本已存在于远端文件系统。"""
     script = build_peer_openvpn_install_script("rhel", "9")
