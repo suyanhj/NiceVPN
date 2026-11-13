@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -14,6 +15,7 @@ from app.services.easyrsa.wrapper import (
     find_existing_easyrsa_pki,
     inspect_easyrsa_pki,
 )
+from app.services.openvpn.detector import find_easyrsa
 
 
 def _write_ready_pki(pki: Path) -> None:
@@ -44,6 +46,29 @@ def test_inspect_easyrsa_pki_distinguishes_states(tmp_path: Path) -> None:
     (pki / "index.txt").write_text("", encoding="utf-8")
     (pki / "serial").write_text("01\n", encoding="utf-8")
     assert inspect_easyrsa_pki(str(pki))["state"] == "ready"
+
+
+def test_find_easyrsa_requires_an_executable_script(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "easy-rsa" / "easyrsa"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.openvpn.detector.EASYRSA_SEARCH_PATHS",
+        [str(candidate)],
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.detector.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["which", "easyrsa"], returncode=1, stdout="", stderr=""
+        ),
+    )
+
+    assert find_easyrsa() is None
+    candidate.chmod(0o755)
+    assert find_easyrsa() == str(candidate.resolve())
 
 
 def test_find_existing_easyrsa_pki_supports_common_openvpn_layout(
@@ -110,6 +135,10 @@ def test_core_wizard_reuses_complete_pki_without_easyrsa_commands(
     )
     wizard.audit = Audit()
 
+    monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_easyrsa_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
     monkeypatch.setattr(
         "app.core.init_wizard.save_config",
         lambda _config: None,
@@ -196,6 +225,10 @@ def test_core_wizard_auto_installs_missing_easyrsa_then_reuses_pki(
         fake_install,
     )
     monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_easyrsa_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "app.core.init_wizard.save_config",
         lambda _config: None,
     )
@@ -263,6 +296,7 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
 
     install_root = tmp_path / "easy-rsa"
     monkeypatch.setattr(installer_mod, "EASYRSA_INSTALL_DIR", str(install_root))
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: None)
     monkeypatch.setattr(
         installer_mod,
         "_resolve_latest_release_asset",
@@ -284,7 +318,9 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
         calls.append((cmd, dict(env or {})))
         current = install_root / "current"
         current.mkdir(parents=True)
-        (current / "easyrsa").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        easyrsa = current / "easyrsa"
+        easyrsa.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+        easyrsa.chmod(0o755)
 
     monkeypatch.setattr(installer_mod, "_run_command", fake_run)
 
@@ -297,6 +333,71 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
     assert calls[0][1]["INSTALL_EASYRSA"] == "1"
     assert calls[0][1]["EASYRSA_TAG"] == "v3.2.4"
     assert "OPENVPN_TAG" not in calls[0][1]
+
+
+def test_install_easyrsa_reuses_existing_binary_without_release_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.services.openvpn import installer as installer_mod
+
+    existing = tmp_path / "usr" / "share" / "easy-rsa" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+
+    runtime_checks: list[object] = []
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: str(existing))
+    monkeypatch.setattr(
+        installer_mod,
+        "ensure_easyrsa_runtime_dependencies",
+        lambda on_output=None: runtime_checks.append(on_output),
+    )
+    monkeypatch.setattr(
+        installer_mod,
+        "_build_easyrsa_install_env",
+        lambda *_args, **_kwargs: pytest.fail("已有 EasyRSA 不应查询 release"),
+    )
+    monkeypatch.setattr(
+        installer_mod,
+        "_run_command",
+        lambda *_args, **_kwargs: pytest.fail("已有 EasyRSA 不应重新安装"),
+    )
+
+    assert installer_mod.install_easyrsa() == str(existing)
+    assert runtime_checks == [None]
+
+
+def test_openvpn_install_does_not_reinstall_existing_easyrsa(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.services.openvpn import installer as installer_mod
+
+    existing = tmp_path / "easyrsa"
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+    script = tmp_path / "openvpn-install-debian.sh"
+    script.write_text("#!/bin/bash\\nexit 0\\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: str(existing))
+    monkeypatch.setattr(
+        installer_mod,
+        "_build_install_env",
+        lambda _distro, _version, **kwargs: captured.update(kwargs) or {"INSTALL_EASYRSA": "0"},
+    )
+    monkeypatch.setattr(installer_mod, "_install_script_path", lambda _distro: script)
+    monkeypatch.setattr(
+        installer_mod,
+        "_run_command",
+        lambda command, *_args, **_kwargs: calls.append(command),
+    )
+
+    assert installer_mod.install_openvpn("debian", "12") is True
+    assert captured["install_easyrsa"] is False
+    assert calls[0] == ["bash", str(script)]
 
 
 def test_standalone_easyrsa_shell_entry_does_not_install_openvpn() -> None:

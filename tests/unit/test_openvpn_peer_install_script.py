@@ -3,6 +3,7 @@
 
 import os
 import shlex
+import shutil
 import subprocess
 
 import pytest
@@ -37,8 +38,63 @@ def test_install_script_files_exist() -> None:
         "openvpn-install-debian.sh",
         "openvpn-install-rhel.sh",
         "openvpn-install-systemd.sh",
+        "ensure-runtime-dependencies.sh",
     ):
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
+
+
+def test_openvpn_runtime_dependency_entry_uses_shared_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    installer_mod.ensure_openvpn_runtime_dependencies()
+
+    assert len(calls) == 1
+    assert calls[0]["command"] == [
+        "bash",
+        str(_INSTALL_SCRIPTS_DIR / "ensure-runtime-dependencies.sh"),
+    ]
+    assert calls[0]["env"]["NICEVPN_DEPENDENCY_PROFILE"] == "openvpn-runtime"
+
+
+def test_easyrsa_runtime_dependency_entry_uses_shared_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    installer_mod.ensure_easyrsa_runtime_dependencies()
+
+    assert len(calls) == 1
+    assert calls[0]["env"]["NICEVPN_DEPENDENCY_PROFILE"] == "easyrsa-runtime"
+
+
+def test_remote_install_script_inlines_shared_package_helpers() -> None:
+    """对端 SSH 执行时不依赖 NiceVPN 脚本已存在于远端文件系统。"""
+    script = build_peer_openvpn_install_script("rhel", "9")
+
+    assert "nicevpn_linux_family() {" in script
+    assert "nicevpn_package_manager() {" in script
+    assert 'PM="$(nicevpn_package_manager)"' in script
+    assert 'source "${SCRIPT_DIR}/../common/linux-packages.sh"' not in script
+    assert 'source "${SCRIPT_DIR}/openvpn-install-common.sh"' not in script
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_build_peer_script_debian_ubuntu() -> None:
@@ -46,7 +102,7 @@ def test_build_peer_script_debian_ubuntu() -> None:
     assert "export DEBIAN_CODENAME=jammy" in s
     assert "export OPENVPN_MIN_VERSION=2.7.0" in s
     assert "version_ge()" in s
-    assert "apt install -y" in s and "openvpn" in s
+    assert "nicevpn_install_packages apt-get" in s and "openvpn" in s
     assert "openvpn_compile_install" in s
     assert "build.openvpn.net/debian" in s
     assert "export INSTALL_EASYRSA=0" in s
@@ -146,6 +202,60 @@ def test_systemd_install_entry_reuses_common_helpers() -> None:
     assert "source " in script and "openvpn-install-common.sh" in script
     assert "openvpn_install_server_systemd_from_src" in script
     assert "openvpn_install_server_systemd_override" in script
+
+
+def test_easyrsa_download_reuses_existing_binary_without_download(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "easy-rsa"
+    existing = install_root / "current" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+
+    result = _run_common_shell(
+        tmp_path,
+        "INSTALL_EASYRSA=1; easyrsa_download_and_install",
+        extra_env={"EASYRSA_INSTALL_DIR": str(install_root)},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "跳过下载、安装和覆盖" in result.stdout
+
+
+def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "easy-rsa"
+    existing = install_root / "current" / "easyrsa"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dirname_bin = shutil.which("dirname")
+    if dirname_bin:
+        (bin_dir / "dirname").symlink_to(dirname_bin)
+    openssl = bin_dir / "openssl"
+    openssl.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    openssl.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update({
+        "PATH": str(bin_dir),
+        "EASYRSA_INSTALL_DIR": str(install_root),
+    })
+    result = subprocess.run(
+        ["/bin/bash", str(_INSTALL_SCRIPTS_DIR / "easyrsa-install.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EasyRSA 已存在，复用" in result.stdout
+    assert "必须设置 EASYRSA_DOWNLOAD_URLS" not in result.stderr
 
 
 def test_common_script_has_shared_helpers() -> None:
@@ -319,13 +429,81 @@ def test_configure_does_not_hide_non_dco_errors(tmp_path) -> None:
     assert len(args_log.read_text(encoding="utf-8").splitlines()) == 1
 
 
+
+
+def test_runtime_dependency_profiles_are_defined_in_shared_helper() -> None:
+    helper = (_INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh").read_text(
+        encoding="utf-8"
+    )
+    runtime = _read_install_script_text("ensure-runtime-dependencies.sh")
+
+    assert "nicevpn_ensure_openvpn_runtime_dependencies()" in helper
+    assert "nicevpn_ensure_easyrsa_runtime_dependencies()" in helper
+    assert "nicevpn_ensure_easyrsa_install_dependencies()" in helper
+    assert 'openvpn-runtime)' in runtime
+    assert 'easyrsa-runtime)' in runtime
+    assert 'easyrsa-install)' in runtime
+    assert "conntrack_package=\"conntrack-tools\"" in helper
+    assert "sysctl_package=\"procps-ng\"" in helper
+
+
+def test_openvpn_install_batches_iptables_and_ipset_dependencies() -> None:
+    debian = _read_install_script_text("openvpn-install-debian.sh")
+    rhel = _read_install_script_text("openvpn-install-rhel.sh")
+
+    debian_source = debian.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
+    rhel_source = rhel.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
+
+    assert "conntrack iptables ipset" in debian_source
+    assert "conntrack-tools" in rhel_source
+    assert "iptables ipset" in rhel_source
+    assert "packages+=(openssl findutils coreutils)" in debian_source
+    assert "packages+=(openssl findutils coreutils)" in rhel_source
+    assert debian_source.count("nicevpn_install_packages apt-get") == 1
+    assert rhel_source.count('nicevpn_install_packages "${PM}"') == 1
+
+    # 系统包安装路径也一次性带上防火墙工具；EasyRSA 追加而不是覆盖已有依赖。
+    assert "pkgs=(openvpn conntrack iptables ipset procps)" in debian
+    assert 'pkgs+=(easy-rsa openssl)' in debian
+    assert "packages=(openvpn conntrack-tools iptables ipset procps-ng)" in rhel
+    assert "packages+=(curl tar gzip openssl findutils coreutils)" in rhel
+
+
 def test_dco_development_packages_are_best_effort() -> None:
     debian = _read_install_script_text("openvpn-install-debian.sh")
     rhel = _read_install_script_text("openvpn-install-rhel.sh")
 
-    assert "if apt install -y libnl-3-dev libnl-genl-3-dev; then" in debian
-    assert "if ${PM} install -y libnl3-devel; then" in rhel
+    assert "if nicevpn_install_packages apt-get libnl-3-dev libnl-genl-3-dev; then" in debian
+    assert 'if nicevpn_install_packages "${PM}" libnl3-devel; then' in rhel
     for source in (debian, rhel):
         required = source.split("install_source_dependencies() {", 1)[1].split("\n}", 1)[0]
         assert "libnl-genl-3-dev" not in required
         assert "libnl3-devel" not in required
+
+
+
+def test_easyrsa_installer_reuses_shared_dependency_helper() -> None:
+    script = _read_install_script_text("easyrsa-install.sh")
+    helper = (_INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "nicevpn_ensure_easyrsa_runtime_dependencies" in script
+    assert "nicevpn_ensure_easyrsa_install_dependencies" in script
+    assert "easyrsa_reuse_existing" in script
+    assert "apt-get update" not in script
+    assert "nicevpn_package_manager" not in script
+    assert "find findutils" in helper
+    assert "cp coreutils" in helper
+
+
+
+def test_easyrsa_install_shell_syntax() -> None:
+    script = _INSTALL_SCRIPTS_DIR / "easyrsa-install.sh"
+    result = subprocess.run(
+        ["/bin/bash", "-n", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

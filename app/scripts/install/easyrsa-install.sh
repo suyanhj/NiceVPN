@@ -5,49 +5,33 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
+# shellcheck source=../common/linux-packages.sh
+source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
-: "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
-
-ensure_easyrsa_tools() {
-    local missing=()
-    local tool
-    for tool in curl tar gzip openssl find cp ln mktemp; do
-        if ! command -v "${tool}" >/dev/null 2>&1; then
-            missing+=("${tool}")
-        fi
-    done
-
-    [ "${#missing[@]}" -gt 0 ] || return 0
-
-    _log "缺少 EasyRSA 安装工具: ${missing[*]}，尝试通过系统包管理器补齐"
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update
-        apt-get install -y curl tar gzip openssl findutils coreutils
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl tar gzip openssl findutils coreutils
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl tar gzip openssl findutils coreutils
-    else
-        echo "无法自动补齐 EasyRSA 安装工具：未找到 apt-get/dnf/yum" >&2
-        return 1
-    fi
-
-    for tool in "${missing[@]}"; do
-        command -v "${tool}" >/dev/null 2>&1 || {
-            echo "EasyRSA 安装工具仍不可用: ${tool}" >&2
-            return 1
-        }
-    done
-}
-
-ensure_easyrsa_tools
 INSTALL_EASYRSA=1
 export INSTALL_EASYRSA
+easyrsa_reuse_existing
+
+if [[ "${INSTALL_EASYRSA}" != "1" ]]; then
+    # 已有 EasyRSA 只检查其运行时 OpenSSL，不重新下载、不覆盖版本目录。
+    nicevpn_ensure_easyrsa_runtime_dependencies
+    existing_bin="$(easyrsa_find_existing_binary)"
+    _log "EasyRSA 已存在，复用: ${existing_bin}"
+    exit 0
+fi
+
+# 仅在确实缺少 EasyRSA 或显式要求强制重装时，准备下载/解压工具。
+nicevpn_ensure_easyrsa_install_dependencies
+: "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
+
 easyrsa_download_and_install
 
-installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
-[ -f "${installed_bin}" ] || {
-    echo "EasyRSA 安装后未找到脚本: ${installed_bin}" >&2
+installed_bin="$(easyrsa_find_existing_binary || true)"
+if [[ -z "${installed_bin}" ]]; then
+    installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
+fi
+[[ -f "${installed_bin}" && -x "${installed_bin}" ]] || {
+    echo "EasyRSA 安装后未找到可执行脚本: ${installed_bin}" >&2
     exit 1
 }
 _log "EasyRSA 已就绪: ${installed_bin}"

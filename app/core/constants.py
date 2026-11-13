@@ -85,6 +85,7 @@ EASYRSA_SEARCH_PATHS = [
     "/opt/easy-rsa/current/easyrsa",
     "/opt/easy-rsa/easyrsa",
     "/opt/openvpn/share/easy-rsa/easyrsa",
+    "/opt/openvpn/share/easy-rsa/3/easyrsa",
     "/usr/share/easy-rsa/easyrsa",
     "/usr/share/easy-rsa/3/easyrsa",
     "/usr/share/easy-rsa/3.0/easyrsa",

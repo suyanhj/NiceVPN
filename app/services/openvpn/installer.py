@@ -11,10 +11,13 @@ from typing import Callable
 
 from app.core.config import load_config
 from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
+from app.services.openvpn.detector import find_easyrsa
 
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
+_LINUX_PACKAGE_HELPERS = _INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh"
+_RUNTIME_DEPENDENCY_SCRIPT = _INSTALL_SCRIPTS_DIR / "ensure-runtime-dependencies.sh"
 
 _OPENVPN_SOURCE_ROOT = Path("/tmp/ovpn-mgmt-openvpn-src")
 
@@ -241,10 +244,48 @@ def ensure_openvpn_server_systemd_unit(
 
 
 
+def _ensure_dependency_profile(
+    profile: str,
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """通过共享 Shell 入口补齐一个依赖组，不在 Python 中识别发行版或包名。"""
+    if not _RUNTIME_DEPENDENCY_SCRIPT.is_file():
+        raise FileNotFoundError(
+            f"运行时依赖检查脚本不存在: {_RUNTIME_DEPENDENCY_SCRIPT}"
+        )
+    _emit(on_output, f"[依赖检查] 检查系统依赖组: {profile}")
+    _run_command(
+        ["bash", str(_RUNTIME_DEPENDENCY_SCRIPT)],
+        on_output,
+        env=_subprocess_env({"NICEVPN_DEPENDENCY_PROFILE": profile}),
+    )
+
+
+def ensure_openvpn_runtime_dependencies(
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """确保本机 OpenVPN/NiceVPN 运行所需防火墙、连接审计、sysctl 和日志工具可用。"""
+    _ensure_dependency_profile("openvpn-runtime", on_output)
+
+
+def ensure_easyrsa_runtime_dependencies(
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """已有 EasyRSA 只需确保 OpenSSL 运行命令存在。"""
+    _ensure_dependency_profile("easyrsa-runtime", on_output)
+
+
 def install_easyrsa(
     on_output: Callable[[str], None] | None = None,
 ) -> str:
-    """仅安装 EasyRSA，不触碰已存在的 OpenVPN 包、二进制或服务。"""
+    """仅安装 EasyRSA；已有版本默认复用，显式 EASYRSA_FORCE_INSTALL=1 才重装。"""
+
+    force_install = os.environ.get("EASYRSA_FORCE_INSTALL", "0") == "1"
+    existing_bin = find_easyrsa()
+    if existing_bin and not force_install:
+        _emit(on_output, f"[检查] 已存在 EasyRSA，跳过下载和覆盖: {existing_bin}")
+        ensure_easyrsa_runtime_dependencies(on_output)
+        return existing_bin
 
     env = _build_easyrsa_install_env(on_output)
     env["EASYRSA_INSTALL_DIR"] = str(EASYRSA_INSTALL_DIR)
@@ -252,18 +293,18 @@ def install_easyrsa(
     if not script_path.is_file():
         raise FileNotFoundError(f"EasyRSA 安装脚本不存在: {script_path}")
 
-    _emit(on_output, f"[信息] OpenVPN 已就绪，单独安装 EasyRSA（{script_path.name}）...")
+    _emit(on_output, f"[信息] 单独安装 EasyRSA（{script_path.name}）...")
     _run_command(
         ["bash", str(script_path)],
         on_output,
         env=_subprocess_env(env),
     )
 
-    installed_bin = Path(EASYRSA_INSTALL_DIR) / "current" / "easyrsa"
-    if not installed_bin.is_file():
-        raise RuntimeError(f"EasyRSA 安装命令完成，但脚本不存在: {installed_bin}")
+    installed_bin = find_easyrsa() or str(Path(EASYRSA_INSTALL_DIR) / "current" / "easyrsa")
+    if not Path(installed_bin).is_file() or not os.access(installed_bin, os.X_OK):
+        raise RuntimeError(f"EasyRSA 安装命令完成，但未找到可执行脚本: {installed_bin}")
 
-    _emit(on_output, f"[完成] EasyRSA 安装成功: {installed_bin}")
+    _emit(on_output, f"[完成] EasyRSA 已就绪: {installed_bin}")
     return str(installed_bin)
 
 
@@ -276,10 +317,16 @@ def install_openvpn(
     distro = distro.lower().strip()
 
     try:
+        existing_easyrsa = find_easyrsa()
+        force_easyrsa_install = os.environ.get("EASYRSA_FORCE_INSTALL", "0") == "1"
+        install_easyrsa_flag = not bool(existing_easyrsa) or force_easyrsa_install
+        if existing_easyrsa and not force_easyrsa_install:
+            _emit(on_output, f"[检查] 复用已有 EasyRSA: {existing_easyrsa}")
+
         env = _build_install_env(
             distro,
             version_id,
-            install_easyrsa=True,
+            install_easyrsa=install_easyrsa_flag,
             install_server_systemd=True,
             install_client_systemd=False,
             install_server_override=True,
@@ -394,11 +441,12 @@ def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
 
+    linux_text = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
     common_text = _read_install_script_text("openvpn-install-common.sh")
     entry_text = _strip_entry_script_wrapper(
         _read_install_script_text(f"openvpn-install-{distro}.sh")
     )
-    return "\n".join(lines) + "\n" + common_text + "\n" + entry_text
+    return "\n".join(lines) + "\n" + linux_text + "\n" + common_text + "\n" + entry_text
 
 
 def _read_install_script_text(name: str) -> str:
@@ -423,7 +471,9 @@ def _strip_entry_script_wrapper(text: str) -> str:
             continue
         if stripped.startswith("SCRIPT_DIR="):
             continue
-        if "source " in stripped and "openvpn-install-common.sh" in stripped:
+        if "source " in stripped and (
+            "openvpn-install-common.sh" in stripped or "linux-packages.sh" in stripped
+        ):
             continue
         if stripped.startswith("# shellcheck"):
             continue

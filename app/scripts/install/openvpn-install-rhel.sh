@@ -11,19 +11,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
+# shellcheck source=../common/linux-packages.sh
+source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
-if command -v dnf >/dev/null 2>&1; then
-    PM=dnf
-elif command -v yum >/dev/null 2>&1; then
-    PM=yum
-else
-    echo "未找到 dnf/yum" >&2
+easyrsa_reuse_existing
+
+PM="$(nicevpn_package_manager)" || {
+    echo "无法识别 RHEL 包管理器（需要 dnf/yum）" >&2
+    exit 1
+}
+if [[ "${PM}" != "dnf" && "${PM}" != "yum" ]]; then
+    echo "RHEL 安装入口需要 dnf/yum，实际检测到 ${PM}" >&2
     exit 1
 fi
 
 install_optional_dco_dependencies() {
     # RHEL 系 libnl3-devel 提供 libnl-genl；旧仓库可能只有低版本，失败不能阻断安装。
-    if ${PM} install -y libnl3-devel; then
+    if nicevpn_install_packages "${PM}" libnl3-devel; then
         _log "已安装可选 DCO 开发依赖"
     else
         _log "警告：无法安装可选 libnl3-devel，继续安装；编译前将检测并按需禁用 DCO"
@@ -31,13 +35,20 @@ install_optional_dco_dependencies() {
 }
 
 install_source_dependencies() {
-    ${PM} install -y \
-        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool \
-        openssl-devel pam-devel libcap-ng-devel lzo-devel lz4-devel \
-        pkcs11-helper-devel systemd-devel which conntrack-tools
+    local -a packages=(
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig autoconf automake libtool
+        openssl-devel pam-devel libcap-ng-devel lzo-devel lz4-devel
+        pkcs11-helper-devel systemd-devel which conntrack-tools procps-ng
+        iptables ipset
+    )
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
-        ${PM} install -y logrotate
+        packages+=(logrotate)
     fi
+    if [ "${INSTALL_EASYRSA}" = "1" ]; then
+        packages+=(openssl findutils coreutils)
+    fi
+    # 基础依赖一次性安装；DCO 开发包可选，单独尝试且失败不阻断编译。
+    nicevpn_install_packages "${PM}" "${packages[@]}"
     install_optional_dco_dependencies
 }
 
@@ -57,11 +68,14 @@ PKG_VERSION="$(${PM} -q info openvpn 2>/dev/null \
 
 if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION}"; then
     _log "仓库 openvpn ${PKG_VERSION} 满足 ${OPENVPN_MIN_VERSION}+，使用系统包安装"
-    packages=(openvpn conntrack-tools)
+    packages=(openvpn conntrack-tools iptables ipset procps-ng)
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         packages+=(logrotate)
     fi
-    ${PM} install -y "${packages[@]}"
+    if [ "${INSTALL_EASYRSA}" = "1" ]; then
+        packages+=(curl tar gzip openssl findutils coreutils)
+    fi
+    nicevpn_install_packages "${PM}" "${packages[@]}"
     openvpn_install_server_systemd_override
     if [ "${INSTALL_EASYRSA}" = "1" ]; then
         easyrsa_download_and_install
