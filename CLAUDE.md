@@ -58,6 +58,7 @@ data/nicevpn.db
 - 对端站点链 `VPN_PEER_<hash>` 同时承载站点组网放行与远端用户策略；`role=fwd-global` 的 global_subnet ACCEPT 是兜底规则，必须位于用户/标签规则之后。拉取工作副本时过滤该系统规则，原子写回时从远端链读取并保留在末尾；站点规则刷新只能替换该兜底规则，禁止 flush 用户策略。
 - 对端站点基础防火墙重下发只能更新 FORWARD 跳转、POSTROUTING SNAT 和用户链中的 `role=fwd-global` 基础放行规则；不得 flush/delete 整条 `VPN_PEER_*` 用户链，否则会误删远端防火墙规则与标签 ipset matcher。
 - 标签成员变化通过后台 SSH 重建集合并刷新规则，失败持久化 `pending_sync`；首次使用时 Debian/RHEL 对端可自动安装 ipset。
+- 对端 ipset 缺失时仅经 SSH 执行 `app/scripts/peer/ensure-ipset.sh` 处理检测和发行版包管理器安装，不在 Python 中拼接 apt/dnf/yum 命令；已有 ipset 必须跳过安装。`remote_peer_ipset.py` 保留集合 reconcile、staging/swap、rollback 与 GC 等业务逻辑。
 - 标签删除必须同时检查用户/组成员、中心规则、Mesh 路由和远端防火墙引用；服务层与 SQLite repository 都要防止绕过 UI 直接删除。
 - 组删除必须检查组内用户、group_tags 标签关联、owner_type=group 的中心防火墙规则，以及 peers.payload 中的 mesh_route_visible_group_ids；UI 当前页批量加载删除原因并禁用删除按钮，GroupService 与 SQLite repository 写事务重复校验，禁止级联删除仍在使用的 group_tags。
 - 其它 schema migration 管理的结构化数据
