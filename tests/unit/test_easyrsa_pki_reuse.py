@@ -111,6 +111,10 @@ def test_core_wizard_reuses_complete_pki_without_easyrsa_commands(
     wizard.audit = Audit()
 
     monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_easyrsa_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "app.core.init_wizard.save_config",
         lambda _config: None,
     )
@@ -196,6 +200,10 @@ def test_core_wizard_auto_installs_missing_easyrsa_then_reuses_pki(
         fake_install,
     )
     monkeypatch.setattr(
+        "app.services.openvpn.installer.ensure_easyrsa_runtime_dependencies",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "app.core.init_wizard.save_config",
         lambda _config: None,
     )
@@ -263,6 +271,7 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
 
     install_root = tmp_path / "easy-rsa"
     monkeypatch.setattr(installer_mod, "EASYRSA_INSTALL_DIR", str(install_root))
+    monkeypatch.setattr(installer_mod, "find_easyrsa", lambda: None)
     monkeypatch.setattr(
         installer_mod,
         "_resolve_latest_release_asset",
@@ -284,6 +293,8 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
         calls.append((cmd, dict(env or {})))
         current = install_root / "current"
         current.mkdir(parents=True)
+        (current / "easyrsa").write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+        (current / "easyrsa").chmod(0o755)
         (current / "easyrsa").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
 
     monkeypatch.setattr(installer_mod, "_run_command", fake_run)
