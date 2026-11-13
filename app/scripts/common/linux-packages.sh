@@ -108,6 +108,16 @@ nicevpn_ensure_command() {
 
 # NiceVPN 本机服务端运行依赖。包名按发行版映射，缺失任一命令时一次安装整组。
 nicevpn_ensure_openvpn_runtime_dependencies() {
+    local binary all_present=1
+    for binary in iptables iptables-save iptables-restore ipset conntrack sysctl logrotate; do
+        if ! command -v "${binary}" >/dev/null 2>&1; then
+            all_present=0
+            break
+        fi
+    done
+    # 所需命令已齐全时不依赖发行版识别，也不启动包管理器。
+    (( all_present == 1 )) && return 0
+
     local family conntrack_package sysctl_package
     family="$(nicevpn_linux_family)" || {
         echo "[linux-packages] 无法识别发行版，不能补齐 OpenVPN 运行依赖" >&2
