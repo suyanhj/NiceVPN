@@ -3,7 +3,6 @@
 
 import logging
 import os
-import sys
 import threading
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from app.core.scheduler import start_scheduler
 from app.api.server import PublicApiListener
 from app.services.auth.sso_runtime import SsoRuntime, set_sso_runtime
 from app.utils.public_domains import resolve_sso_origin
-from app.cli.entry import main as cli_main
 from app.services.audit.conntrack_audit import stop_conntrack_audit_listener
 from app.ui.auth import register_admin_auth
 from app.ui.components.app_shell import render_app_shell
@@ -249,6 +247,4 @@ def run_web() -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        raise SystemExit(cli_main(sys.argv[2:]))
     run_web()
