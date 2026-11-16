@@ -10,7 +10,7 @@ data/nicevpn.db
 
 SQLite 保存用户、组、对端、标签和防火墙等管理数据。系统配置、PKI/CRL、CCD、OVPN、下载文件和运行日志仍使用文件。
 
-旧版本的 `data/users`、`data/groups`、`data/peers`、`data/firewall` JSON 仅用于启动时的一次性迁移，不是当前运行时主存储。
+旧版本的 `data/users`、`data/groups`、`data/peers`、`data/firewall` JSON 仅用于启动时的一次性迁移，不是当前运行时主存储。迁移完成后，旧数据归档在 `backups/storage-migration-<UTC>/`。
 
 ## Schema 迁移规则
 
@@ -20,8 +20,8 @@ SQLite 保存用户、组、对端、标签和防火墙等管理数据。系统�
 - 程序遇到高于自身支持版本的数据库时应拒绝启动，不自动降级。
 - SQL 放在 storage / repository 层，不在普通业务 CRUD 中改表。
 
-## 备份
+## 备份与降级
 
-备份时停止或使用项目支持的备份流程，确保数据库与关联文件一致。启用 SSO 时，`data/sso_provider_master.key` 必须与数据库一起备份；丢失密钥将无法解密已保存的身份提供商凭据。
+备份时停止服务或使用项目支持的备份流程，确保数据库与关联文件一致。启用 SSO 时，`data/sso_provider_master.key` 必须与数据库一起备份；丢失密钥将无法解密已保存的身份提供商凭据。
 
-降级到不支持 SQLite 的旧版本前，必须按对应版本的迁移备份恢复 JSON 数据；旧程序不会读取当前 SQLite 数据库。
+降级到不支持 SQLite 的旧版本前，必须按对应版本从迁移归档恢复 JSON 数据；旧程序不会读取当前 SQLite 数据库。
