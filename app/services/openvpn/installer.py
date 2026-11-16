@@ -456,7 +456,7 @@ def _build_easyrsa_install_env(
 
 def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
     """将对端安装脚本打包为单段 bash（export 环境变量 + 内联 common + 入口逻辑）。"""
-    lines = ["set -eux"]
+    lines = ["set -euxo pipefail"]
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
 
