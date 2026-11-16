@@ -26,9 +26,10 @@
 需要 Python 3.10+。Linux 主机上的 OpenVPN、PKI 和防火墙依赖可通过初始化向导安装或复用。
 
 ```bash
-python3 -m venv .venv
+# 使用系统中已安装的 Python 3.10+，例如 3.11
+python3.11 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ./start.sh
 ```
 
