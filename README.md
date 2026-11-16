@@ -78,7 +78,7 @@ Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提�
 | [docs/logging.md](docs/logging.md) | 日志与审计 |
 | [api.md](api.md) | 公网 API |
 | [cli.md](cli.md) | CLI |
-| [CLAUDE.md](CLAUDE.md) | AI / 开发约束 |
+| [agent.md](agent.md) | AI / 开发约束 |
 | `openspec/changes/` | 变更设计与历史记录 |
 
 ## 开发
