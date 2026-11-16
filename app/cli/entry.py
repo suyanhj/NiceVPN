@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""命令行子命令：添加组 / 用户 / 从 iptables 文本导入防火墙规则。"""
+"""NiceVPN CLI 命令实现与参数解析。"""
 from __future__ import annotations
 
 import argparse
@@ -795,7 +795,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cli.py",
         description=(
-            "NiceVPN 命令行管理工具；亦可用: python main.py cli …\n\n"
+            "NiceVPN 命令行管理工具；入口：python cli.py …\n\n"
             "推荐使用分层命令：group / user / add-firewall。"
             "旧命令 add-group / add-user 继续兼容。\n"
             "试运行：在命令行任意位置加入 --dry-run。"
