@@ -1,70 +1,73 @@
 #!/usr/bin/env bash
-# OpenVPN 管理端 CLI — bash Tab 补全（argcomplete）
-#
-# 【本脚本】在系统路径创建指向本项目 cli.py 的固定命令（默认 /usr/local/bin/ovpn-cli），
-# 并提示将 register-python-argcomplete 写入 ~/.bashrc。
-#
-# 用法（Linux）：
-#   cd NiceVPN/deploy/shell && bash install-ovpn-cli-symlink.sh
-#   bash /path/to/install-ovpn-cli-symlink.sh ["$HOME/.local/bin/ovpn-cli"]   # 可选自定义链接路径
-#
-# 依赖：pip install argcomplete（requirements.txt 已列出）
-#
-# 手工临时启用（当前 shell、不建软链时）：
-#   eval "$(register-python-argcomplete /你的项目根/cli.py)"
-#
-# 补全行为示例（固定命令或上述 eval 指向的脚本一致时）：
-#   ovpn-cli <TAB><TAB>              → group user add-firewall hash-admin-password 等
-#   ovpn-cli group <TAB><TAB>        → list show add update enable disable delete
-#   ovpn-cli user <TAB><TAB>         → list show add move device ovpn 等
-#   ovpn-cli add-firewall --iptables-file <TAB>   → 路径补全（FilesCompleter）
-#
-# 将 eval 行写入 ~/.bashrc 后 source ~/.bashrc 可长期生效。
-# zsh 需 bashcompinit 或改用 bash 子 shell，以 argcomplete 文档为准。
-#
-# 说明：「python main.py cli …」不宜直接注册 argcomplete（前缀词过多），请用本脚本或
-# 手工 ln -sf 项目根/cli.py 到 PATH 内固定名后再 register-python-argcomplete。
-#
-# cli.py 会自动定位项目根目录；运行 ovpn-cli 时仍须使用安装了项目依赖和 argcomplete 的 Python 环境。
+# 安装 ovpn-cli 命令并配置 argcomplete 的 Bash 补全提示。
 
-set -euo pipefail
+set -Eeuo pipefail
 
-# 本脚本所在目录 → 项目根（NiceVPN）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VPN_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLI_PY="${VPN_ROOT}/cli.py"
 LINK_NAME="${1:-/usr/local/bin/ovpn-cli}"
 LINK_DIR="$(dirname "${LINK_NAME}")"
+PYTHON_BIN="${PYTHON_BIN:-}"
 
 if [[ ! -f "${CLI_PY}" ]]; then
-  echo "错误：找不到 cli.py：${CLI_PY}" >&2
-  exit 1
+    echo "错误：找不到 cli.py：${CLI_PY}" >&2
+    exit 1
 fi
 
-if [[ ! -x "$(command -v python3 2>/dev/null)" ]]; then
-  echo "错误：需要 PATH 中的 python3 以执行 ${LINK_NAME}" >&2
-  exit 1
+# 与 start.sh 一致：优先项目虚拟环境，再使用当前环境或系统 Python。
+if [[ -z "${PYTHON_BIN}" ]]; then
+    if [[ -x "${VPN_ROOT}/.venv/bin/python" ]]; then
+        PYTHON_BIN="${VPN_ROOT}/.venv/bin/python"
+    elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+        PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
+    elif [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+        PYTHON_BIN="${CONDA_PREFIX}/bin/python"
+    else
+        PYTHON_BIN="$(command -v python3 || true)"
+    fi
+fi
+
+if [[ -z "${PYTHON_BIN}" || ! -x "${PYTHON_BIN}" ]]; then
+    echo "错误：找不到可用 Python；可通过 PYTHON_BIN=/path/to/python 指定。" >&2
+    exit 1
+fi
+
+"${PYTHON_BIN}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' || {
+    echo "错误：NiceVPN CLI 要求 Python >= 3.10。" >&2
+    exit 1
+}
+
+"${PYTHON_BIN}" -c 'import argcomplete' 2>/dev/null || {
+    echo "错误：当前 Python 未安装 argcomplete，请执行：${PYTHON_BIN} -m pip install -r ${VPN_ROOT}/requirements.txt" >&2
+    exit 1
+}
+
+REGISTER_BIN="$("${PYTHON_BIN}" -c 'import sysconfig; from pathlib import Path; print(Path(sysconfig.get_path("scripts")) / "register-python-argcomplete")')"
+if [[ ! -x "${REGISTER_BIN}" ]]; then
+    echo "错误：找不到 register-python-argcomplete：${REGISTER_BIN}" >&2
+    exit 1
 fi
 
 chmod +x "${CLI_PY}" 2>/dev/null || true
 
-_mklink() {
-  ln -sf "${CLI_PY}" "${LINK_NAME}"
-}
-
-if [[ -w "${LINK_DIR}" ]] || [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  mkdir -p "${LINK_DIR}"
-  _mklink
+if [[ -w "${LINK_DIR}" || "${EUID:-$(id -u)}" -eq 0 ]]; then
+    mkdir -p "${LINK_DIR}"
+    ln -sf "${CLI_PY}" "${LINK_NAME}"
 else
-  echo "目录 ${LINK_DIR} 无写权限，尝试使用 sudo …" >&2
-  sudo mkdir -p "${LINK_DIR}"
-  sudo ln -sf "${CLI_PY}" "${LINK_NAME}"
+    echo "目录 ${LINK_DIR} 无写权限，尝试使用 sudo …" >&2
+    sudo mkdir -p "${LINK_DIR}"
+    sudo ln -sf "${CLI_PY}" "${LINK_NAME}"
 fi
 
+# 转成绝对路径，确保 .bashrc 在任意工作目录都能注册补全。
+LINK_NAME="$(cd "${LINK_DIR}" && pwd)/$(basename "${LINK_NAME}")"
+PYTHON_BIN_DIR="$("${PYTHON_BIN}" -c 'import os, sys; print(os.path.dirname(sys.executable))')"
+
 echo "已创建：${LINK_NAME} -> ${CLI_PY}"
-echo ""
-echo "请将以下行写入 ~/.bashrc（或按需粘贴到当前 shell），然后 source ~/.bashrc："
-echo "  eval \"\$(register-python-argcomplete '${LINK_NAME}')\""
-echo ""
-echo "说明：须已 pip install argcomplete，且 register-python-argcomplete 与运行 ovpn-cli 时使用同一 Python 环境。"
-echo "cli.py 会自动定位项目根目录；请确保运行 ovpn-cli 的 Python 环境已安装项目依赖和 argcomplete。"
+echo
+echo "将以下两行加入 ~/.bashrc，然后执行 source ~/.bashrc："
+printf '  export PATH=%q:"$PATH"\n' "${PYTHON_BIN_DIR}"
+printf '  eval "$(%q %q)"\n' "${REGISTER_BIN}" "${LINK_NAME}"
+echo
+echo "使用：ovpn-cli <TAB><TAB>"
