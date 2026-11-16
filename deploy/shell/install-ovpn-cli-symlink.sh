@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 安装 ovpn-cli 命令并配置 argcomplete 的 Bash 补全提示。
+# 安装 ovpn-cli 启动包装器并配置 argcomplete Bash 补全。
+# 文件名保留 symlink 旧名称，兼容既有部署命令。
 
 set -Eeuo pipefail
 
@@ -10,36 +11,20 @@ LINK_NAME="${1:-/usr/local/bin/ovpn-cli}"
 LINK_DIR="$(dirname "${LINK_NAME}")"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
+source "${VPN_ROOT}/deploy/shell/python-runtime.sh"
+
 if [[ ! -f "${CLI_PY}" ]]; then
     echo "错误：找不到 cli.py：${CLI_PY}" >&2
     exit 1
 fi
 
-# 与 start.sh 一致：优先项目虚拟环境，再使用当前环境或系统 Python。
-if [[ -z "${PYTHON_BIN}" ]]; then
-    if [[ -x "${VPN_ROOT}/.venv/bin/python" ]]; then
-        PYTHON_BIN="${VPN_ROOT}/.venv/bin/python"
-    elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
-        PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
-    elif [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
-        PYTHON_BIN="${CONDA_PREFIX}/bin/python"
-    else
-        PYTHON_BIN="$(command -v python3 || true)"
-    fi
-fi
-
-if [[ -z "${PYTHON_BIN}" || ! -x "${PYTHON_BIN}" ]]; then
-    echo "错误：找不到可用 Python；可通过 PYTHON_BIN=/path/to/python 指定。" >&2
-    exit 1
-fi
-
-"${PYTHON_BIN}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' || {
-    echo "错误：NiceVPN CLI 要求 Python >= 3.10。" >&2
-    exit 1
-}
+# 与 start.sh 共用解释器识别逻辑；自动跳过低于 Python 3.10 的候选项。
+nicevpn_select_python "${VPN_ROOT}" || exit 1
+printf '[NiceVPN] 使用 Python %s：%s\n' "$(nicevpn_python_version "${PYTHON_BIN}")" "${PYTHON_BIN}"
 
 "${PYTHON_BIN}" -c 'import argcomplete' 2>/dev/null || {
-    echo "错误：当前 Python 未安装 argcomplete，请执行：${PYTHON_BIN} -m pip install -r ${VPN_ROOT}/requirements.txt" >&2
+    echo "错误：当前 Python 未安装 argcomplete。" >&2
+    echo "请执行：${PYTHON_BIN} -m pip install argcomplete" >&2
     exit 1
 }
 
@@ -49,27 +34,36 @@ if [[ ! -x "${REGISTER_BIN}" ]]; then
     exit 1
 fi
 
-chmod +x "${CLI_PY}" 2>/dev/null || true
-
+# 先创建命令目录，再将路径规范化为绝对路径。
 if [[ -w "${LINK_DIR}" || "${EUID:-$(id -u)}" -eq 0 ]]; then
     mkdir -p "${LINK_DIR}"
-    ln -sf "${CLI_PY}" "${LINK_NAME}"
 else
     echo "目录 ${LINK_DIR} 无写权限，尝试使用 sudo …" >&2
     sudo mkdir -p "${LINK_DIR}"
-    sudo ln -sf "${CLI_PY}" "${LINK_NAME}"
+fi
+LINK_DIR="$(cd "${LINK_DIR}" && pwd)"
+LINK_NAME="${LINK_DIR}/$(basename "${LINK_NAME}")"
+CLI_NAME="$(basename "${LINK_NAME}")"
+
+# 使用固定解释器生成包装器，避免 /usr/bin/env python3 又命中旧版系统 Python。
+WRAPPER_TMP="$(mktemp "${TMPDIR:-/tmp}/nicevpn-cli.XXXXXX")"
+trap 'rm -f "${WRAPPER_TMP:-}"' EXIT
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'exec %q %q "$@"\n' "${PYTHON_BIN}" "${CLI_PY}"
+} > "${WRAPPER_TMP}"
+
+if [[ -w "${LINK_DIR}" || "${EUID:-$(id -u)}" -eq 0 ]]; then
+    install -m 0755 "${WRAPPER_TMP}" "${LINK_NAME}"
+else
+    sudo install -m 0755 "${WRAPPER_TMP}" "${LINK_NAME}"
 fi
 
-# 转成绝对路径，确保 .bashrc 在任意工作目录都能注册补全。
-LINK_NAME="$(cd "${LINK_DIR}" && pwd)/$(basename "${LINK_NAME}")"
-LINK_DIR="$(dirname "${LINK_NAME}")"
-CLI_NAME="$(basename "${LINK_NAME}")"
-PYTHON_BIN_DIR="$("${PYTHON_BIN}" -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"
-
-echo "已创建：${LINK_NAME} -> ${CLI_PY}"
+echo "已安装：${LINK_NAME}"
+echo "固定 Python：${PYTHON_BIN}"
 echo
 echo "将以下两行加入 ~/.bashrc，然后执行 source ~/.bashrc："
-printf '  export PATH=%q:%q:"$PATH"\n' "${PYTHON_BIN_DIR}" "${LINK_DIR}"
+printf '  export PATH=%q:"$PATH"\n' "${LINK_DIR}"
 printf '  eval "$(%q %q)"\n' "${REGISTER_BIN}" "${CLI_NAME}"
 echo
-echo "使用：ovpn-cli <TAB><TAB>"
+echo "使用：${CLI_NAME} <TAB><TAB>"
