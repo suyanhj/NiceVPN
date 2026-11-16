@@ -2,8 +2,12 @@
 """对端站点实例：持久化、CCD iroute、中心侧 VPN_FORWARD / SSH 对端 VPN_PEER_* iptables 同步"""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import functools
 import logging
 import os
+import tempfile
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +26,95 @@ from app.utils.posix_data_perms import fix_path_for_openvpn_shared_data
 
 logger = logging.getLogger(__name__)
 peer_remote_log = logging.getLogger("peer.remote")
+
+_PEER_LIFECYCLE_LOCK = threading.RLock()
+
+
+@contextmanager
+def peer_lifecycle_lock():
+    """跨 Peer 与中心防火墙写操作共享的进程内串行锁。"""
+    with _PEER_LIFECYCLE_LOCK:
+        yield
+
+
+def _serialize_peer_lifecycle(method):
+    """串行化同进程 Peer CRUD，避免并发 CCD 快照互相覆盖。"""
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with peer_lifecycle_lock():
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
+def _write_ccd_bytes_atomic(path: Path, content: bytes, mode: int) -> None:
+    """同目录临时文件 + replace，避免 OpenVPN 读到半写入的 CCD。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.nicevpn-",
+        dir=str(path.parent),
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_path, mode)
+        fix_path_for_openvpn_shared_data(temp_path)
+        os.replace(temp_path, path)
+        try:
+            dir_fd = os.open(str(path.parent), getattr(os, "O_DIRECTORY", 0) | os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("清理 CCD 临时文件失败: %s", temp_path, exc_info=True)
+
+
+def _write_ccd_text_atomic(path: Path, content: str) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"CCD 文件为符号链接，拒绝原子替换: {path}")
+    mode = path.stat().st_mode & 0o7777
+    _write_ccd_bytes_atomic(path, content.encode("utf-8"), mode)
+
+
+def _snapshot_ccd_files() -> dict[Path, tuple[bytes, int]]:
+    """快照全部用户 CCD；Peer mesh 同步可能更新多个用户文件。"""
+    if not CCD_DIR.is_dir():
+        return {}
+    snapshot: dict[Path, tuple[bytes, int]] = {}
+    for path in sorted(CCD_DIR.iterdir()):
+        if path.is_symlink():
+            raise RuntimeError(f"CCD 目录包含符号链接，拒绝执行可回滚操作: {path}")
+        if not path.is_file():
+            continue
+        info = path.stat()
+        snapshot[path] = (path.read_bytes(), info.st_mode & 0o7777)
+    return snapshot
+
+
+def _restore_ccd_files(snapshot: dict[Path, tuple[bytes, int]]) -> None:
+    """尽力恢复所有 CCD 快照；全部尝试后汇总失败，供上层记录严重错误。"""
+    failures: list[tuple[Path, Exception]] = []
+    for path, (content, mode) in snapshot.items():
+        try:
+            if path.is_file() and path.read_bytes() == content:
+                continue
+            _write_ccd_bytes_atomic(path, content, mode)
+        except Exception as exc:
+            failures.append((path, exc))
+            logger.critical("恢复 CCD 快照失败 path=%s: %s", path, exc, exc_info=True)
+    if failures:
+        path, error = failures[0]
+        raise RuntimeError(
+            f"CCD 快照恢复不完整，失败文件数={len(failures)}，首个={path}"
+        ) from error
 
 
 def _vpn_forward_wire_snapshot(row: dict) -> tuple:
@@ -564,17 +657,86 @@ class PeerService:
                 f"用户「{u}」已被其它对端实例绑定，一个用户只能绑定一个对端实例"
             )
 
+    @_serialize_peer_lifecycle
     def create(self, data: dict) -> dict:
-        if "id" not in data or not str(data.get("id", "")).strip():
-            data["id"] = str(uuid.uuid4())
-        peer = PeerInstance(**data)
+        payload = dict(data or {})
+        if "id" not in payload or not str(payload.get("id", "")).strip():
+            payload["id"] = str(uuid.uuid4())
+        peer = PeerInstance(**payload)
+        if self.get(peer.id):
+            raise ValueError(f"对端实例 ID 已存在: {peer.id}")
         self._ensure_bound_username_unique(peer.bound_username, exclude_peer_id=None)
-        self.store.upsert_peer(peer.model_dump())
-        self._apply_ccd_and_vpn_forward(peer)
-        self.sync_all_mesh_push_routes_in_ccd()
-        logger.info("已创建对端实例 %s 绑定用户 %s", peer.id, peer.bound_username)
-        return peer.model_dump()
 
+        # mesh push 可能修改多个用户 CCD，必须在任何写入前保存完整快照。
+        ccd_snapshot = _snapshot_ccd_files()
+        peer_data = peer.model_dump()
+        try:
+            self.store.upsert_peer(peer_data)
+            self._apply_ccd_and_vpn_forward(peer)
+            self.sync_all_mesh_push_routes_in_ccd()
+        except Exception as exc:
+            rollback_errors = self._rollback_peer_lifecycle(
+                peer.id,
+                None,
+                ccd_snapshot,
+                reason="创建对端失败",
+            )
+            if rollback_errors:
+                raise RuntimeError(
+                    "创建对端失败，且补偿回滚不完整: " + "；".join(rollback_errors)
+                ) from exc
+            raise
+
+        logger.info("已创建对端实例 %s 绑定用户 %s", peer.id, peer.bound_username)
+        return peer_data
+
+    def _rollback_peer_lifecycle(
+        self,
+        peer_id: str,
+        peer_snapshot: dict | None,
+        ccd_snapshot: dict[Path, tuple[bytes, int]],
+        *,
+        reason: str,
+    ) -> list[str]:
+        """恢复 Peer SQLite、CCD、中心 VPN_FORWARD 与 mesh 派生状态。"""
+        failures: list[str] = []
+        try:
+            if peer_snapshot is None:
+                self.store.delete_peer(peer_id)
+            else:
+                self.store.upsert_peer(peer_snapshot)
+        except Exception as exc:
+            failures.append(f"SQLite: {exc}")
+            logger.critical("%s：恢复 Peer SQLite 失败 peer=%s", reason, peer_id, exc_info=True)
+
+        try:
+            _restore_ccd_files(ccd_snapshot)
+        except Exception as exc:
+            failures.append(f"CCD: {exc}")
+            logger.critical("%s：恢复 CCD 快照失败 peer=%s", reason, peer_id, exc_info=True)
+
+        if os.name != "nt":
+            try:
+                from app.services.firewall.rule_service import FirewallRuleService
+
+                FirewallRuleService().refresh_vpn_forward_only()
+            except Exception as exc:
+                failures.append(f"中心 VPN_FORWARD: {exc}")
+                logger.critical(
+                    "%s：恢复中心 VPN_FORWARD 失败 peer=%s",
+                    reason,
+                    peer_id,
+                    exc_info=True,
+                )
+
+        try:
+            self.sync_all_mesh_push_routes_in_ccd()
+        except Exception as exc:
+            failures.append(f"mesh CCD: {exc}")
+            logger.critical("%s：恢复 mesh CCD 失败 peer=%s", reason, peer_id, exc_info=True)
+        return failures
+
+    @_serialize_peer_lifecycle
     def patch_center_forward_priority(self, peer_id: str, priority: int) -> None:
         """仅更新 ``center_forward_priority``，不触发 CCD/SSH；由防火墙全局排序批量调用。"""
         cur = self.get(peer_id)
@@ -588,8 +750,9 @@ class PeerService:
         peer = PeerInstance(**merged)
         self.store.upsert_peer(peer.model_dump())
 
+    @_serialize_peer_lifecycle
     def patch_center_forward_enabled(self, peer_id: str, enabled: bool) -> None:
-        """仅更新 ``center_forward_enabled`` 并刷新中心 ``VPN_FORWARD``；不改 CCD/对端 SSH。"""
+        """仅更新 center_forward_enabled；内核刷新失败时恢复 Peer 原始快照。"""
         cur = self.get(peer_id)
         if not cur:
             raise ValueError(f"对端实例不存在: {peer_id}")
@@ -603,8 +766,21 @@ class PeerService:
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
 
-            FirewallRuleService().refresh_vpn_forward_only()
+            try:
+                FirewallRuleService().refresh_vpn_forward_only()
+            except Exception:
+                try:
+                    self.store.upsert_peer(cur)
+                except Exception as rollback_exc:
+                    logger.critical(
+                        "中心对端放行状态刷新失败，且 Peer SQLite 回滚失败 peer=%s: %s",
+                        peer_id,
+                        rollback_exc,
+                        exc_info=True,
+                    )
+                raise
 
+    @_serialize_peer_lifecycle
     def update(self, peer_id: str, data: dict, *, refresh_center_iptables: bool = True) -> dict:
         cur = self.get(peer_id)
         if not cur:
@@ -616,72 +792,174 @@ class PeerService:
         need_fw = _vpn_forward_wire_snapshot(cur) != _vpn_forward_wire_snapshot(dumped)
         need_mesh = _mesh_push_wire_snapshot(cur) != _mesh_push_wire_snapshot(dumped)
         need_ccd = _ccd_iroute_wire_snapshot(cur) != _ccd_iroute_wire_snapshot(dumped)
+        ccd_snapshot = _snapshot_ccd_files() if (need_ccd or need_mesh) else {}
 
         self.store.upsert_peer(dumped)
+        try:
+            if os.name != "nt":
+                from app.services.firewall.rule_service import FirewallRuleService
 
-        if os.name != "nt":
-            from app.services.firewall.rule_service import FirewallRuleService
-
-            if refresh_center_iptables:
-                if need_fw:
+                if refresh_center_iptables and need_fw:
                     FirewallRuleService().refresh_vpn_forward_only()
+                elif not refresh_center_iptables:
+                    logger.info(
+                        "已跳过中心 VPN_FORWARD 刷新，调用方将统一刷新 peer=%s",
+                        peer.id[:8],
+                    )
                 else:
-                    logger.info("对端保存无 VPN_FORWARD（中心对端策略）字段变更，跳过 iptables peer=%s", peer.id[:8])
+                    logger.info(
+                        "对端保存无 VPN_FORWARD 字段变更，跳过 iptables peer=%s",
+                        peer.id[:8],
+                    )
             else:
-                logger.info("已跳过中心 VPN_FORWARD 刷新，调用方将统一刷新 peer=%s", peer.id[:8])
-        else:
-            logger.info("Windows 下跳过本机 iptables 重建，对端已写盘 peer=%s", peer.id[:8])
+                logger.info("Windows 下跳过本机 iptables 重建，对端已写盘 peer=%s", peer.id[:8])
 
-        if need_ccd:
-            self._merge_ccd(peer.bound_username, peer.id, peer.lan_cidrs)
-        else:
-            logger.info("对端保存无绑定用户/CIDR(iroute)变更，跳过 CCD peer 块 peer=%s", peer.id[:8])
+            if need_ccd:
+                old_username = str(cur.get("bound_username") or "").strip()
+                new_username = str(peer.bound_username or "").strip()
+                if old_username and old_username != new_username:
+                    self._strip_ccd(old_username, peer.id)
+                self._merge_ccd(new_username, peer.id, peer.lan_cidrs)
+            else:
+                logger.info(
+                    "对端保存无绑定用户/CIDR(iroute)变更，跳过 CCD peer 块 peer=%s",
+                    peer.id[:8],
+                )
 
-        if need_mesh:
-            self.sync_all_mesh_push_routes_in_ccd()
-        else:
-            logger.info(
-                "对端保存无 LAN / mesh 可见组或标签 变更，跳过全量 mesh CCD peer=%s",
-                peer.id[:8],
-            )
+            if need_mesh:
+                self.sync_all_mesh_push_routes_in_ccd()
+            else:
+                logger.info(
+                    "对端保存无 LAN / mesh 可见组或标签变更，跳过全量 mesh CCD peer=%s",
+                    peer.id[:8],
+                )
+        except Exception as exc:
+            logger.exception("对端实例更新失败，开始恢复 SQLite 与派生状态 peer=%s", peer.id)
+            rollback_errors: list[str] = []
+            try:
+                self.store.upsert_peer(cur)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"SQLite: {rollback_exc}")
+                logger.critical(
+                    "对端更新失败，恢复 Peer SQLite 快照失败 peer=%s: %s",
+                    peer.id,
+                    rollback_exc,
+                    exc_info=True,
+                )
+
+            if ccd_snapshot:
+                try:
+                    _restore_ccd_files(ccd_snapshot)
+                except Exception as rollback_exc:
+                    rollback_errors.append(f"CCD: {rollback_exc}")
+                    logger.critical(
+                        "对端更新失败，恢复 CCD 快照失败 peer=%s",
+                        peer.id,
+                        exc_info=True,
+                    )
+
+            if os.name != "nt" and refresh_center_iptables and need_fw:
+                try:
+                    from app.services.firewall.rule_service import FirewallRuleService
+
+                    FirewallRuleService().refresh_vpn_forward_only()
+                except Exception as rollback_exc:
+                    rollback_errors.append(f"中心 VPN_FORWARD: {rollback_exc}")
+                    logger.critical(
+                        "对端更新失败，恢复中心 VPN_FORWARD 失败 peer=%s",
+                        peer.id,
+                        exc_info=True,
+                    )
+
+            if rollback_errors:
+                logger.critical(
+                    "对端更新失败且补偿不完整 peer=%s errors=%s",
+                    peer.id,
+                    "；".join(rollback_errors),
+                )
+                raise RuntimeError(
+                    "对端更新失败，且补偿回滚不完整: " + "；".join(rollback_errors)
+                ) from exc
+            raise
+
         logger.debug("已保存对端实例元数据 peer=%s", peer.id)
         return dumped
 
-
+    @_serialize_peer_lifecycle
     def delete(self, peer_id: str) -> None:
         cur = self.get(peer_id)
         if not cur:
             raise ValueError(f"对端实例不存在: {peer_id}")
-        username = str(cur.get("bound_username") or "")
-        self._strip_ccd(username, peer_id)
-        if (
-            str(cur.get("ssh_host") or "").strip()
-            and str(cur.get("ssh_username") or "").strip()
-            and (
-                str(cur.get("ssh_password") or "").strip()
-                or str(cur.get("ssh_private_key") or "").strip()
-            )
-        ):
+
+        from app.services.peer_instance import remote_chain_cache
+
+        remote_cache = remote_chain_cache.read_remote_chain_cache(peer_id)
+        ssh_host = str(cur.get("ssh_host") or "").strip()
+        ssh_username = str(cur.get("ssh_username") or "").strip()
+        has_remote_state = bool(ssh_host or remote_cache)
+        has_remote_auth = False
+        if ssh_host and ssh_username:
             try:
+                from app.core.config import load_config
+                from app.services.peer_instance.peer_ssh_connect import (
+                    effective_ssh_private_key_for_peer,
+                )
+
+                private_key, _ = effective_ssh_private_key_for_peer(cur, load_config())
+                has_remote_auth = bool(
+                    str(cur.get("ssh_password") or "").strip()
+                    or str(private_key or "").strip()
+                )
+            except Exception:
+                logger.exception("检查对端 SSH 凭据失败 peer=%s", peer_id)
+
+        if has_remote_state and not (ssh_host and ssh_username and has_remote_auth):
+            raise ValueError(
+                "该对端配置过远端主机或存在远端防火墙缓存，但 SSH 主机/用户名/认证凭据不完整。"
+                "为避免删除本地记录后遗留无法清理的远端规则，请先补齐 SSH 配置，或先手动清理远端规则。"
+            )
+
+        username = str(cur.get("bound_username") or "")
+        ccd_snapshot = _snapshot_ccd_files()
+        remote_cleanup_attempted = False
+        try:
+            # 本地所有可回滚步骤先完成；远端清理放在最后，避免远端已删除后本地回滚无法复原用户链。
+            self._strip_ccd(username, peer_id)
+            self.store.delete_peer(peer_id)
+
+            if os.name != "nt":
+                from app.services.firewall.rule_service import FirewallRuleService
+
+                FirewallRuleService().refresh_vpn_forward_only()
+            self.sync_all_mesh_push_routes_in_ccd()
+
+            if has_remote_state:
                 from app.services.peer_instance.remote_peer_iptables import (
                     remove_peer_site_iptables_via_ssh,
                 )
 
-                remove_peer_site_iptables_via_ssh(cur)
-            except Exception as exc:
-                logger.warning(
-                    "删除对端时远端 iptables 清理失败（可 SSH 手工按注释 peer=%s 清理）: %s",
-                    peer_id,
-                    exc,
-                )
-        self.store.delete_peer(peer_id)
-        from app.services.peer_instance import remote_chain_cache
-        remote_chain_cache.delete_remote_chain_cache(peer_id)
-        if os.name != "nt":
-            from app.services.firewall.rule_service import FirewallRuleService
+                remote_cleanup_attempted = True
+                result = remove_peer_site_iptables_via_ssh(cur)
+                if not isinstance(result, dict) or not result.get("ok"):
+                    raise RuntimeError("远端 iptables 清理未返回成功状态")
 
-            FirewallRuleService().refresh_vpn_forward_only()
-        self.sync_all_mesh_push_routes_in_ccd()
+        except Exception as exc:
+            rollback_errors = self._rollback_peer_lifecycle(
+                peer_id,
+                cur,
+                ccd_snapshot,
+                reason="删除对端失败",
+            )
+            detail = "本地 Peer、CCD 与中心规则已恢复"
+            if remote_cleanup_attempted:
+                detail += "；远端清理可能已部分执行，请检查远端防火墙后重试删除或重新下发规则"
+            if rollback_errors:
+                detail += "；本地补偿仍有失败: " + "；".join(rollback_errors)
+                logger.critical("删除对端失败且补偿不完整 peer=%s", peer_id)
+            raise RuntimeError(f"删除对端失败：{exc}。{detail}") from exc
+
+        # 远端已确认清理成功后，才删除管理端工作副本；失败时保留缓存供人工恢复。
+        remote_chain_cache.delete_remote_chain_cache(peer_id)
         logger.info("已删除对端实例 %s", peer_id)
 
     def sync_all_center_iptables(self) -> None:
@@ -763,8 +1041,7 @@ class PeerService:
                 if new_text == text:
                     st["unchanged"] += 1
                     continue
-                path.write_text(new_text, encoding="utf-8")
-                fix_path_for_openvpn_shared_data(path)
+                _write_ccd_text_atomic(path, new_text)
                 st["updated"] += 1
             except OSError as exc:
                 logger.error("mesh push 读写 CCD 失败 user=%s: %s", uname, exc)
@@ -804,13 +1081,14 @@ class PeerService:
             raise ValueError(f"用户 {username} 的 CCD 不存在，请先创建用户并分配固定 IP")
         text = ccd_file.read_text(encoding="utf-8")
         new_text = merge_peer_block_into_ccd(text, peer_id, lan_cidrs)
-        ccd_file.write_text(new_text, encoding="utf-8")
-        fix_path_for_openvpn_shared_data(ccd_file)
+        _write_ccd_text_atomic(ccd_file, new_text)
 
     def _strip_ccd(self, username: str, peer_id: str) -> None:
         ccd_file = CCD_DIR / username
         if not ccd_file.is_file():
             return
         text = ccd_file.read_text(encoding="utf-8")
-        ccd_file.write_text(strip_peer_block_from_ccd(text, peer_id), encoding="utf-8")
-        fix_path_for_openvpn_shared_data(ccd_file)
+        _write_ccd_text_atomic(
+            ccd_file,
+            strip_peer_block_from_ccd(text, peer_id),
+        )

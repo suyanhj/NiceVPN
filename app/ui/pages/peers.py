@@ -1656,8 +1656,8 @@ class PeersPage:
         def do_delete() -> None:
             try:
                 self.peer_service.delete(pid)
-            except ValueError as exc:
-                logger.error("删除对端失败: %s", exc)
+            except Exception as exc:
+                logger.error("删除对端失败: %s", exc, exc_info=True)
                 safe_notify(str(exc), type="negative")
                 return
             safe_notify("已删除对端实例", type="positive")
@@ -1666,7 +1666,7 @@ class PeersPage:
         confirm_dialog.show(
             title="删除对端",
             message=f"确定删除对端「{name}」？",
-            impact="会清理 CCD 中该对端块、中心 VPN_PEER 转发关系，并尝试清理远端 iptables；操作后不可自动恢复。",
+            impact="会清理 CCD、中心转发关系及远端 iptables。远端 SSH 清理失败或本地同步失败时会中止删除，并尽力恢复本地配置。",
             object_count=1,
             danger_level="danger",
             on_confirm=do_delete,

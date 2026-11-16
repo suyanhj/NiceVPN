@@ -79,6 +79,7 @@ class IpsetReconcileTransaction:
     swaps: list[IpsetSwap] = field(default_factory=list)
     committed: bool = False
     rolled_back: bool = False
+    rollback_failed: bool = False
     # 锁覆盖 reconcile -> iptables 更新 -> commit/rollback 整个事务。
     lock_fd: int | None = field(default=None, repr=False)
 
@@ -310,6 +311,9 @@ class IpsetManager:
         if txn.rolled_back:
             logger.error("不能 commit 已 rollback 的 ipset 事务")
             return False
+        if txn.rollback_failed:
+            logger.critical("不能 commit 回滚不完整的 ipset 事务")
+            return False
 
         try:
             ok = True
@@ -329,6 +333,9 @@ class IpsetManager:
         """逆序 swap 回旧内容，并恢复 reconcile 前 stable 集合是否存在的状态。"""
         if txn.rolled_back:
             return True
+        if txn.rollback_failed:
+            logger.critical("该 ipset 事务此前回滚不完整，保留现场，拒绝重复 swap")
+            return False
         if txn.committed:
             logger.error("不能 rollback 已 commit 的 ipset 事务")
             return False
@@ -358,7 +365,12 @@ class IpsetManager:
                 if not self._destroy_best_effort(swap.stage_name):
                     ok = False
 
-            txn.rolled_back = True
+            # 只有所有 swap 与清理都成功，才能声明事务已回滚。
+            # 部分失败时标记为终态，避免再次调用把已恢复的集合反向 swap。
+            txn.rolled_back = ok
+            txn.rollback_failed = not ok
+            if not ok:
+                logger.critical("ipset 事务回滚不完整，已保留失败现场供人工检查")
             return ok
         finally:
             self._release_transaction_lock(txn)
