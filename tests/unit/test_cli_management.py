@@ -60,6 +60,7 @@ def test_user_management_commands_are_exposed_without_duplicate_ovpn_action() ->
 def test_tag_crud_and_policy_flags_are_exposed() -> None:
     cases = {
         ("tag", "list"): "cmd_tag_list",
+        ("tag", "list", "--json"): "cmd_tag_list",
         ("tag", "show", "员工"): "cmd_tag_show",
         ("tag", "add", "--name", "员工"): "cmd_tag_add",
         ("tag", "update", "员工", "--sso-required"): "cmd_tag_update",
