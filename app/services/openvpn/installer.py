@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """OpenVPN 自动安装服务 — 本机与对端 SSH 共用 ``app/scripts/install/`` 下 shell 脚本。"""
-import fcntl
 import json
 import logging
 import os
 import shlex
 import subprocess
 import urllib.request
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
 from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 from app.services.openvpn.detector import find_easyrsa
+from app.services.openvpn.install_lock import openvpn_install_lock
 
 log = logging.getLogger(__name__)
 
@@ -32,27 +31,6 @@ _OPENVPN_FALLBACK_TAG = "v2.7.0"
 _OPENVPN_FALLBACK_ASSET = "openvpn-2.7.0.tar.gz"
 _EASYRSA_FALLBACK_TAG = "v3.2.4"
 _EASYRSA_FALLBACK_ASSET = "EasyRSA-3.2.4.tgz"
-
-
-@contextmanager
-def _openvpn_install_lock():
-    """与 Shell 安装入口、upgrade.py 共用同一把跨进程 flock。"""
-    lock_path = Path("/run/lock/nicevpn-install.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock_file = lock_path.open("a+")
-    except OSError as exc:
-        raise RuntimeError(f"无法打开 OpenVPN 安装锁 {lock_path}: {exc}") from exc
-
-    with lock_file:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("OpenVPN 安装/升级正在执行，请稍后重试") from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def resolve_latest_openvpn_release(
@@ -360,7 +338,7 @@ def install_openvpn(
         script_path = _install_script_path(distro)
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
         # Python 持锁覆盖 Shell 安装、运行时版本检测和日志初始化，避免升级在检测窗口切换 prefix。
-        with _openvpn_install_lock():
+        with openvpn_install_lock():
             env["NICEVPN_INSTALL_LOCK_HELD"] = "1"
             _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
