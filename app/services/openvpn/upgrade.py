@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import shutil
@@ -662,21 +661,8 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
         raise RuntimeError("OpenVPN 升级正在执行，请勿重复发起")
     try:
-        lock_path = Path("/run/lock/nicevpn-install.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            lock_file = lock_path.open("a+")
-        except OSError as exc:
-            raise RuntimeError(f"无法打开 OpenVPN 安装锁 {lock_path}: {exc}") from exc
-        with lock_file:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise RuntimeError("OpenVPN 安装/升级正在执行，请稍后重试") from exc
-            try:
-                return _apply_staged_upgrade_locked(stage, on_output)
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with openvpn_install_lock():
+            return _apply_staged_upgrade_locked(stage, on_output)
     finally:
         _OPENVPN_UPGRADE_APPLY_LOCK.release()
 
@@ -737,7 +723,8 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
         _remove_path_strict(cli_link)
         cli_link.symlink_to(prefix / "sbin" / "openvpn")
 
-        from app.services.openvpn.installer import (
+        from app.services.openvpn.install_lock import openvpn_install_lock
+from app.services.openvpn.installer import (
             install_openvpn_server_systemd_from_staged_source,
         )
 
