@@ -13,6 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
 # shellcheck source=../common/linux-packages.sh
@@ -23,6 +25,8 @@ source "${SCRIPT_DIR}/../common/linux-packages.sh"
 : "${DEBIAN_CODENAME:?必须设置 DEBIAN_CODENAME}"
 
 export DEBIAN_FRONTEND=noninteractive
+openvpn_acquire_install_lock
+openvpn_capture_active_instances
 easyrsa_reuse_existing
 
 install_optional_dco_dependencies() {
@@ -60,13 +64,14 @@ if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
     install_source_dependencies
     openvpn_compile_install
     openvpn_post_compile_setup
+    openvpn_post_install_validate
     exit 0
 fi
 
 nicevpn_ensure_commands curl curl gpg gnupg
-curl -fsSL "${APT_KEY_URL}" | gpg --dearmor -o "${APT_KEYRING}"
-echo "deb [signed-by=${APT_KEYRING}] https://build.openvpn.net/debian/openvpn/release/${DEBIAN_CODENAME} ${DEBIAN_CODENAME} main" \
-    > /etc/apt/sources.list.d/openvpn.list
+curl -fsSL "${APT_KEY_URL}" | gpg --dearmor | nicevpn_atomic_write_stdin "${APT_KEYRING}" 0644
+printf '%s\n' "deb [signed-by=${APT_KEYRING}] https://build.openvpn.net/debian/openvpn/release/${DEBIAN_CODENAME} ${DEBIAN_CODENAME} main" \
+    | nicevpn_atomic_write_stdin /etc/apt/sources.list.d/openvpn.list 0644
 apt-get update -qq
 
 PKG_VERSION="$(apt-cache policy openvpn 2>/dev/null \
@@ -86,6 +91,7 @@ if [ -n "${PKG_VERSION}" ] && [ "${PKG_VERSION}" != "(none)" ] \
     fi
     nicevpn_install_packages apt-get "${pkgs[@]}"
     openvpn_install_server_systemd_override
+    openvpn_post_install_validate
     exit 0
 fi
 
@@ -94,3 +100,4 @@ install_source_dependencies
 
 openvpn_compile_install
 openvpn_post_compile_setup
+openvpn_post_install_validate
