@@ -52,11 +52,13 @@ python cli.py --help        # 唯一 Python CLI 入口
 
 ```bash
 bash deploy/shell/install-ovpn-cli-symlink.sh
-# 指定 Python 时：
-PYTHON_BIN=/path/to/python bash deploy/shell/install-ovpn-cli-symlink.sh
+# 明确使用系统 Python 3.11
+PYTHON_BIN=python3.11 bash deploy/shell/install-ovpn-cli-symlink.sh
 ```
 
-脚本优先使用项目 `.venv`，然后检测当前虚拟环境或系统 Python；会输出两行配置，加入 `~/.bashrc` 后执行 `source ~/.bashrc`。两行分别设置 Python/命令 PATH 和注册补全。
+解释器识别规则与 `start.sh` 共用 `deploy/shell/python-runtime.sh`：优先项目虚拟环境和已激活环境，再按版本号优先检测系统 Python（3.15、3.14……3.10），最后才检查通用的 `python3`、`python`。低于 3.10 的候选项会跳过，不会因为系统 `python3` 指向旧版本而提前退出。
+
+安装器会生成固定使用所选解释器的 `ovpn-cli` 启动包装器，不依赖 `#!/usr/bin/env python3` 再次选择解释器。脚本会输出两行配置，加入 `~/.bashrc` 后执行 `source ~/.bashrc`：第一行加入命令目录，第二行注册补全。
 
 ```bash
 ovpn-cli <TAB><TAB>
