@@ -187,16 +187,19 @@ main() {
     select_python
     log "使用 Python $(python_version "${PYTHON_BIN}")：${PYTHON_BIN}"
 
-    # CLI 不渲染 Web UI，不需要构建前端。
-    if [[ "${1:-}" != "cli" ]]; then
-        prepare_ui
-    fi
-
     if [[ "${mode}" == "daemon" ]]; then
         install_daemon
         return 0
     fi
 
+    # CLI 使用独立入口，不加载 Web 管理端，也不构建前端。
+    if [[ "${1:-}" == "cli" ]]; then
+        shift
+        log "运行 NiceVPN CLI..."
+        exec "${PYTHON_BIN}" "${ROOT_DIR}/cli.py" "$@"
+    fi
+
+    prepare_ui
     log "启动 NiceVPN（管理端 + 公网 API 双端口）..."
     exec "${PYTHON_BIN}" "${ROOT_DIR}/main.py" "$@"
 }
