@@ -32,7 +32,7 @@
 
 - [x] `api.md`：§1 / §1b、curl 示例
 - [x] `README.md`：API 指向 `api.md`
-- [x] `CLAUDE.md`：`api/`、`vpn_ops`、公网 API 简述（若与本文档不一致以代码为准）
+- [x] `agent.md`：项目架构与开发约束（若与本文档不一致以代码为准）
 
 ## OpenSpec
 
