@@ -16,7 +16,9 @@ from app.services.openvpn.detector import find_easyrsa
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
-_LINUX_PACKAGE_HELPERS = _INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh"
+_COMMON_SCRIPTS_DIR = _INSTALL_SCRIPTS_DIR.parent / "common"
+_LINUX_PACKAGE_HELPERS = _COMMON_SCRIPTS_DIR / "linux-packages.sh"
+_ATOMIC_FILE_HELPERS = _COMMON_SCRIPTS_DIR / "atomic-files.sh"
 _RUNTIME_DEPENDENCY_SCRIPT = _INSTALL_SCRIPTS_DIR / "ensure-runtime-dependencies.sh"
 
 _OPENVPN_SOURCE_ROOT = Path("/tmp/ovpn-mgmt-openvpn-src")
@@ -336,6 +338,23 @@ def install_openvpn(
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
         _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
+        # Shell 已校验安装阶段；Python 再按运行时相同的搜索优先级确认实际可用版本。
+        from app.services.openvpn.detector import detect_openvpn
+
+        installed = detect_openvpn()
+        if not installed.get("installed") or not installed.get("path"):
+            raise RuntimeError("安装脚本结束后仍未检测到可执行的 OpenVPN")
+        if not installed.get("meets_requirement"):
+            raise RuntimeError(
+                "安装脚本结束后检测到的 OpenVPN 版本不满足要求: "
+                f"{installed.get('version') or 'unknown'} < {OPENVPN_MIN_VERSION} "
+                f"(binary={installed.get('path')})"
+            )
+        _emit(
+            on_output,
+            f"[校验] OpenVPN binary={installed['path']} version={installed['version']}",
+        )
+
         # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
         # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
         logrotate_installer = (
@@ -442,11 +461,12 @@ def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
         lines.append(f"export {key}={shlex.quote(value)}")
 
     linux_text = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
+    atomic_text = _ATOMIC_FILE_HELPERS.read_text(encoding="utf-8")
     common_text = _read_install_script_text("openvpn-install-common.sh")
     entry_text = _strip_entry_script_wrapper(
         _read_install_script_text(f"openvpn-install-{distro}.sh")
     )
-    return "\n".join(lines) + "\n" + linux_text + "\n" + common_text + "\n" + entry_text
+    return "\n".join(lines) + "\n" + linux_text + "\n" + atomic_text + "\n" + common_text + "\n" + entry_text
 
 
 def _read_install_script_text(name: str) -> str:
@@ -472,7 +492,9 @@ def _strip_entry_script_wrapper(text: str) -> str:
         if stripped.startswith("SCRIPT_DIR="):
             continue
         if "source " in stripped and (
-            "openvpn-install-common.sh" in stripped or "linux-packages.sh" in stripped
+            "openvpn-install-common.sh" in stripped
+            or "linux-packages.sh" in stripped
+            or "atomic-files.sh" in stripped
         ):
             continue
         if stripped.startswith("# shellcheck"):
