@@ -28,14 +28,14 @@ python cli.py --help
 | 命令 | 用途 |
 |---|---|
 | `group list [--json]` | 列出用户组 |
-| `group show --group-name NAME` / `--group-id ID` | 查看用户组 |
+| `group show (--group-name NAME | --group-id ID)` | 查看用户组 |
 | `group add --name NAME --subnet CIDR` | 创建用户组 |
-| `group update [组选择器] [--name NAME] [--subnet CIDR]` | 修改名称或子网 |
-| `group enable/disable/delete [组选择器]` | 启用、停用或删除用户组 |
+| `group update (--group-name NAME | --group-id ID) [--name NAME] [--subnet CIDR]` | 修改名称或子网 |
+| `group enable/disable/delete (--group-name NAME | --group-id ID)` | 启用、停用或删除用户组 |
 | `user list [筛选项] [--json]` | 列出用户 |
 | `user show USER` | 查看用户 |
-| `user add --username USER [组选择器] [--password PASS]` | 创建用户 |
-| `user move USER [组选择器]` | 切换用户组 |
+| `user add --username USER (--group-name NAME | --group-id ID) [--password PASS]` | 创建用户 |
+| `user move USER (--group-name NAME | --group-id ID)` | 切换用户组 |
 | `user enable/disable/delete/kick USER` | 启用、停用、删除或踢下线 |
 | `user device show/reset USER` | 查看或重置设备绑定 |
 | `user ovpn show USER` | 查看 OVPN 文件状态 |
