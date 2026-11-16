@@ -102,5 +102,8 @@ _log "仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_VERSION
 install_source_dependencies
 
 openvpn_compile_install
-openvpn_post_compile_setup
+if ! openvpn_post_compile_setup; then
+    openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
+    exit 1
+fi
 openvpn_post_install_validate
