@@ -151,7 +151,7 @@ def _validate_group_create(gs: GroupService, name: str, subnet: str) -> None:
         raise ValueError("子网冲突: " + "; ".join(conflicts))
 
 
-def cmd_add_group(args: argparse.Namespace) -> int:
+def cmd_group_add(args: argparse.Namespace) -> int:
     gs = GroupService()
     name = args.name.strip()
     subnet = args.subnet.strip()
@@ -169,7 +169,7 @@ def cmd_add_group(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "dry_run": True,
-                    "action": "add-group",
+                    "action": "group.add",
                     "name": name,
                     "subnet": subnet,
                     "note": "校验已通过；未写入 SQLite，未生成 UUID",
@@ -190,7 +190,7 @@ def cmd_add_group(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_add_user(args: argparse.Namespace) -> int:
+def cmd_user_add(args: argparse.Namespace) -> int:
     # ---------- 与是否试运行无关：环境与参数校验 ----------
     _require_initialized()
     gs = GroupService()
@@ -210,7 +210,7 @@ def cmd_add_user(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "dry_run": True,
-                    "action": "add-user",
+                    "action": "user.add",
                     "username": username,
                     "group_id": gid,
                     "password_enabled": pwd_en,
@@ -241,7 +241,7 @@ def cmd_add_user(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_add_firewall(args: argparse.Namespace) -> int:
+def cmd_firewall_rule_add(args: argparse.Namespace) -> int:
     # ---------- 与是否试运行无关：解析 iptables、组装规则、模型与 priority 校验 ----------
     gs = GroupService()
     fw = FirewallRuleService()
@@ -336,7 +336,7 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
     return 0 if created_rows else 1
 
 
-def cmd_hash_admin_password(args: argparse.Namespace) -> int:
+def cmd_admin_password_hash(args: argparse.Namespace) -> int:
     """交互读取管理员密码并只输出 Argon2id 哈希。"""
 
     del args
@@ -435,10 +435,6 @@ def cmd_group_show(args: argparse.Namespace) -> int:
     )
     _print_json(group)
     return 0
-
-
-def cmd_group_add(args: argparse.Namespace) -> int:
-    return cmd_add_group(args)
 
 
 def cmd_group_update(args: argparse.Namespace) -> int:
@@ -559,10 +555,6 @@ def cmd_user_show(args: argparse.Namespace) -> int:
     user["virtual_ip"] = us.list_ccd_virtual_ipv4_by_username().get(args.username, "")
     _print_json(user)
     return 0
-
-
-def cmd_user_add(args: argparse.Namespace) -> int:
-    return cmd_add_user(args)
 
 
 def cmd_user_delete(args: argparse.Namespace) -> int:
@@ -1244,7 +1236,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fra.add_argument("--iptables-line", default=None, help="单条 iptables 命令")
     _add_dry_run(fra)
-    fra.set_defaults(func=cmd_add_firewall)
+    fra.set_defaults(func=cmd_firewall_rule_add)
     if FilesCompleter is not None:
         iptables_file.completer = FilesCompleter()
     for action, help_text, func in (
@@ -1262,7 +1254,7 @@ def build_parser() -> argparse.ArgumentParser:
     password = admin_sub.add_parser("password", help="管理员密码管理")
     password_sub = password.add_subparsers(dest="admin_password_command", required=True)
     password_hash = password_sub.add_parser("hash", help="交互生成 Argon2id 密码哈希")
-    password_hash.set_defaults(func=cmd_hash_admin_password, dry_run=False)
+    password_hash.set_defaults(func=cmd_admin_password_hash, dry_run=False)
     return p
 
 
