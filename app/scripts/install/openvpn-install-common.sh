@@ -130,6 +130,10 @@ openvpn_configure_with_optional_features() {
 
 openvpn_download_source() {
     # 需要 OPENVPN_DOWNLOAD_URLS（换行分隔的候选 URL 列表）
+    if [ -s "${OPENVPN_CACHE}" ] && ! tar -tzf "${OPENVPN_CACHE}" >/dev/null 2>&1; then
+        _log "OpenVPN 源码缓存校验失败，删除后重新下载: ${OPENVPN_CACHE}"
+        rm -f -- "${OPENVPN_CACHE}"
+    fi
     if [ ! -s "${OPENVPN_CACHE}" ]; then
         local ok=0 url
         while IFS= read -r url; do
@@ -169,7 +173,9 @@ openvpn_compile_install() {
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
     make install
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
-        ln -sfn "${OPENVPN_PREFIX}/sbin/openvpn" /usr/local/sbin/openvpn
+        if ! nicevpn_atomic_symlink "${OPENVPN_BIN}" /usr/local/sbin/openvpn; then
+            _log "警告：无法安全更新 /usr/local/sbin/openvpn（可能存在非符号链接文件），保留现状"
+        fi
     fi
     _log "OpenVPN 已编译安装到 ${OPENVPN_PREFIX}"
 }
@@ -189,22 +195,23 @@ _parse_openvpn_version_parts() {
 
 openvpn_install_client_systemd_from_src() {
     [ "${INSTALL_CLIENT_SYSTEMD}" = "1" ] || return 0
-    local parts major minor
-    if [ ! -f "${OPENVPN_SRC_DIR}/distro/systemd/openvpn-client@.service.in" ]; then
+    local parts major minor template unit_path
+    template="${OPENVPN_SRC_DIR}/distro/systemd/openvpn-client@.service.in"
+    if [ ! -f "${template}" ]; then
         _log "源码无 client systemd 模板，跳过"
         return 0
     fi
     parts="$(_parse_openvpn_version_parts "${OPENVPN_TAG}")"
     major="${parts%% *}"
     minor="${parts#* }"
-    sed \
-        -e "s#@sbindir@#${OPENVPN_PREFIX}/sbin#g" \
+    unit_path="/etc/systemd/system/openvpn-client@.service"
+    nicevpn_atomic_write_command "${unit_path}" 0644 sed \
+        -e "s#@sbindir@#${OPENVPN_SBIN_DIR}#g" \
         -e "s#@OPENVPN_VERSION_MAJOR@#${major}#g" \
         -e "s#@OPENVPN_VERSION_MINOR@#${minor}#g" \
-        "${OPENVPN_SRC_DIR}/distro/systemd/openvpn-client@.service.in" \
-        > /etc/systemd/system/openvpn-client@.service
+        "${template}"
     systemctl daemon-reload
-    _log "已安装 openvpn-client@.service"
+    _log "已原子安装 openvpn-client@.service"
 }
 
 openvpn_install_server_systemd_from_src() {
@@ -221,77 +228,257 @@ openvpn_install_server_systemd_from_src() {
     unit_path="/etc/systemd/system/openvpn-server@.service"
     exec_old="ExecStart=${OPENVPN_SBIN_DIR}/openvpn --status %t/openvpn-server/status-%i.log --status-version 2 --suppress-timestamps --config %i.conf"
     exec_new="ExecStart=${OPENVPN_BIN} --suppress-timestamps --config %i.conf"
-    sed \
+    nicevpn_atomic_write_command "${unit_path}" 0644 sed \
         -e "s#@sbindir@#${OPENVPN_SBIN_DIR}#g" \
         -e "s#@OPENVPN_VERSION_MAJOR@#${major}#g" \
         -e "s#@OPENVPN_VERSION_MINOR@#${minor}#g" \
-        "${template}" \
-        | sed "s#${exec_old}#${exec_new}#" \
-        | sed 's/ProtectSystem=true/ProtectSystem=true\nReadWritePaths=\/etc\/openvpn/' \
-        > "${unit_path}"
+        -e "s#${exec_old}#${exec_new}#" \
+        -e 's/ProtectSystem=true/ProtectSystem=true\nReadWritePaths=\/etc\/openvpn/' \
+        "${template}"
     systemctl daemon-reload
-    _log "已安装 openvpn-server@.service"
+    _log "已原子安装 openvpn-server@.service"
 }
 
 openvpn_install_server_systemd_override() {
     [ "${INSTALL_SERVER_OVERRIDE}" = "1" ] || return 0
     local override_dir="/etc/systemd/system/openvpn-server@.service.d"
-    mkdir -p "${override_dir}"
-    cat > "${override_dir}/10-ovpn-mgmt.conf" <<'EOF'
+    nicevpn_atomic_write_stdin "${override_dir}/10-ovpn-mgmt.conf" 0644 <<'EOF'
 [Service]
 ReadWritePaths=/etc/openvpn
 EOF
     systemctl daemon-reload
-    _log "已安装 openvpn-server systemd override"
+    _log "已原子安装 openvpn-server systemd override"
 }
 
-easyrsa_download_and_install() {
+easyrsa_binary_version() {
+    local binary="${1:?必须指定 EasyRSA 可执行脚本}"
+    local output
+    output="$("${binary}" --version 2>&1)" || return 1
+    printf '%s\n' "${output}" | grep -Eo '[0-9]+(\.[0-9]+){1,2}' | head -n 1
+}
+
+easyrsa_validate_binary() {
+    local binary="${1:?必须指定 EasyRSA 可执行脚本}"
+    local expected_version="${2:-}"
+    local actual_version
+    [ -f "${binary}" ] && [ -x "${binary}" ] || {
+        echo "EasyRSA 脚本不存在或不可执行: ${binary}" >&2
+        return 1
+    }
+    actual_version="$(easyrsa_binary_version "${binary}" || true)"
+    [ -n "${actual_version}" ] || {
+        echo "无法读取 EasyRSA 版本: ${binary}" >&2
+        return 1
+    }
+    if [ -n "${expected_version}" ] && [ "${actual_version}" != "${expected_version}" ]; then
+        echo "EasyRSA 版本不匹配：期望 ${expected_version}，实际 ${actual_version}" >&2
+        return 1
+    fi
+    printf '%s\n' "${actual_version}"
+}
+
+# 使用不可变版本目录；先完整解压、校验，再原子切换 current。
+# 旧版本不覆盖、不提前删除，更新中断时 current 始终指向原版本。
+easyrsa_download_and_install() (
     easyrsa_reuse_existing
-    [ "${INSTALL_EASYRSA}" = "1" ] || return 0
+    [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
+
+    nicevpn_ensure_commands flock util-linux
+    mkdir -p "${EASYRSA_INSTALL_DIR}/releases"
+    exec 9>"${EASYRSA_INSTALL_DIR}/.install.lock"
+    if ! flock -n 9; then
+        echo "已有 EasyRSA 安装/升级任务正在执行，请稍后重试" >&2
+        exit 1
+    fi
+
+    # 上次被 SIGKILL 中断时只可能留下未发布的临时目录；current 不受影响。
+    find "${EASYRSA_INSTALL_DIR}/releases" -mindepth 1 -maxdepth 1 \
+        -type d -name '.*.stage.*' -exec rm -rf -- {} + 2>/dev/null || true
+    find "${EASYRSA_INSTALL_DIR}" -mindepth 1 -maxdepth 1 \
+        -type d -name '.extract.*' -exec rm -rf -- {} + 2>/dev/null || true
+
+    if [ -s "${EASYRSA_CACHE}" ] && ! tar -tzf "${EASYRSA_CACHE}" >/dev/null 2>&1; then
+        _log "EasyRSA 下载缓存校验失败，删除后重新下载: ${EASYRSA_CACHE}"
+        rm -f -- "${EASYRSA_CACHE}"
+    fi
+
     if [ ! -s "${EASYRSA_CACHE}" ]; then
         local ok=0 url
+        rm -f -- "${EASYRSA_CACHE}.part"
         while IFS= read -r url; do
             [ -n "${url}" ] || continue
             _log "下载 Easy-RSA: ${url}"
             if curl -fL --retry 3 --retry-delay 2 "${url}" -o "${EASYRSA_CACHE}.part" \
                 && tar -tzf "${EASYRSA_CACHE}.part" >/dev/null; then
-                mv -f "${EASYRSA_CACHE}.part" "${EASYRSA_CACHE}"
-                ok=1
-                break
+                if mv -f -- "${EASYRSA_CACHE}.part" "${EASYRSA_CACHE}"; then
+                    ok=1
+                    break
+                fi
             fi
-            rm -f "${EASYRSA_CACHE}.part"
+            rm -f -- "${EASYRSA_CACHE}.part"
         done <<EOF
 ${EASYRSA_DOWNLOAD_URLS}
 EOF
         [ "${ok}" = "1" ] || { echo "下载 Easy-RSA 失败" >&2; exit 1; }
     else
-        _log "复用 Easy-RSA 缓存: ${EASYRSA_CACHE}"
-        tar -tzf "${EASYRSA_CACHE}" >/dev/null
+        _log "复用已校验的 Easy-RSA 缓存: ${EASYRSA_CACHE}"
     fi
 
-    local tmp_dir version_name source_dir install_dir current_link
-    tmp_dir="$(mktemp -d /tmp/easyrsa-install.XXXXXX)"
+    local tmp_dir stage_dir source_dir expected_version actual_version archive_hash
+    local release_id install_dir current_link old_current
+    tmp_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/.extract.XXXXXX")"
+    stage_dir=""
+    cleanup_easyrsa_install() {
+        rm -rf -- "${tmp_dir}"
+        if [ -n "${stage_dir}" ]; then
+            rm -rf -- "${stage_dir}"
+        fi
+    }
+    trap cleanup_easyrsa_install EXIT
+
     tar -xzf "${EASYRSA_CACHE}" -C "${tmp_dir}"
     source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 2 -type d -name easyrsa3 | head -n 1)"
     if [ -z "${source_dir}" ]; then
         source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
     fi
-    version_name="${EASYRSA_TAG#v}"
-    [ -n "${version_name}" ] || version_name="latest"
-    install_dir="${EASYRSA_INSTALL_DIR}/releases/${version_name}"
-    current_link="${EASYRSA_INSTALL_DIR}/current"
-    mkdir -p "${EASYRSA_INSTALL_DIR}/releases"
-    rm -rf "${install_dir}"
-    cp -a "${source_dir}/." "${install_dir}/"
-    rm -rf "${tmp_dir}"
-    ln -sfn "${install_dir}" "${current_link}"
-    ln -sfn "${install_dir}/easyrsa" /usr/local/bin/easyrsa
-    _log "Easy-RSA 已安装到 ${install_dir}"
-}
+    [ -n "${source_dir}" ] && [ -f "${source_dir}/easyrsa" ] || {
+        echo "无法识别 EasyRSA 解压目录或缺少 easyrsa 脚本: ${tmp_dir}" >&2
+        exit 1
+    }
 
+    expected_version="${EASYRSA_TAG#v}"
+    actual_version="$(easyrsa_validate_binary "${source_dir}/easyrsa" "${expected_version}")"
+    archive_hash="$(sha256sum "${EASYRSA_CACHE}" | awk '{print $1}')"
+    release_id="${actual_version}-${archive_hash:0:12}"
+    install_dir="${EASYRSA_INSTALL_DIR}/releases/${release_id}"
+    current_link="${EASYRSA_INSTALL_DIR}/current"
+
+    if [ -e "${install_dir}" ] || [ -L "${install_dir}" ]; then
+        [ -d "${install_dir}" ] && [ ! -L "${install_dir}" ] || {
+            echo "EasyRSA 版本目录不是普通目录，拒绝覆盖: ${install_dir}" >&2
+            exit 1
+        }
+        local existing_version
+        existing_version="$(easyrsa_validate_binary "${install_dir}/easyrsa" "${expected_version}")"
+        _log "复用已校验的不可变 EasyRSA 版本目录: ${install_dir} (${existing_version})"
+    else
+        stage_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/releases/.${release_id}.stage.XXXXXX")"
+        cp -a "${source_dir}/." "${stage_dir}/"
+        chmod +x "${stage_dir}/easyrsa"
+        easyrsa_validate_binary "${stage_dir}/easyrsa" "${expected_version}" >/dev/null
+        # stage 与 releases 位于同一文件系统，rename 后目录一次性可见。
+        mv -T -- "${stage_dir}" "${install_dir}"
+        stage_dir=""
+    fi
+
+    old_current="$(readlink "${current_link}" 2>/dev/null || true)"
+    nicevpn_atomic_symlink "${install_dir}" "${current_link}"
+    if ! nicevpn_atomic_symlink "${current_link}/easyrsa" /usr/local/bin/easyrsa; then
+        _log "警告：无法更新 /usr/local/bin/easyrsa；NiceVPN 将优先使用 ${current_link}/easyrsa"
+    fi
+
+    _log "EasyRSA 已原子切换到 ${install_dir}，版本=${actual_version}，旧 current=${old_current:-无}"
+)
 openvpn_post_compile_setup() {
     openvpn_install_server_systemd_from_src
     openvpn_install_client_systemd_from_src
     easyrsa_download_and_install
     openvpn_install_server_systemd_override
+}
+
+OPENVPN_ACTIVE_INSTANCES=()
+
+openvpn_capture_active_instances() {
+    OPENVPN_ACTIVE_INSTANCES=()
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    local output unit
+    output="$(systemctl list-units --type=service --state=active --no-legend --no-pager 2>/dev/null || true)"
+    while IFS= read -r unit; do
+        case "${unit}" in
+            openvpn-server@*.service|openvpn-client@*.service|openvpn@*.service|openvpn-client.service)
+                OPENVPN_ACTIVE_INSTANCES+=("${unit}")
+                ;;
+        esac
+    done < <(awk 'NF {print $1}' <<< "${output}")
+}
+
+openvpn_validate_systemd_unit() {
+    local unit="${1:?必须指定 systemd unit}"
+    local output load_state
+    command -v systemctl >/dev/null 2>&1 || {
+        echo "未找到 systemctl，无法验证服务单元: ${unit}" >&2
+        return 1
+    }
+    output="$(systemctl show "${unit}" --property=LoadState --no-page 2>/dev/null || true)"
+    load_state="$(printf '%s\n' "${output}" | sed -n 's/^LoadState=//p' | head -n 1)"
+    if [ "${load_state}" != "loaded" ]; then
+        echo "systemd 服务单元未加载: ${unit} LoadState=${load_state:-unknown}" >&2
+        return 1
+    fi
+}
+
+openvpn_post_install_validate() {
+    local candidate="" binary="" version_output="" version="" expected_version="" unit state
+    for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
+        /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
+        if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+            binary="${candidate}"
+            break
+        fi
+    done
+    if [ -z "${binary}" ]; then
+        candidate="$(command -v openvpn 2>/dev/null || true)"
+        if [ -n "${candidate}" ] && [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+            binary="${candidate}"
+        fi
+    fi
+    [ -n "${binary}" ] || {
+        echo "OpenVPN 安装后未找到可执行二进制" >&2
+        return 1
+    }
+
+    version_output="$("${binary}" --version 2>&1)" || {
+        echo "OpenVPN 二进制无法执行 --version: ${binary}" >&2
+        return 1
+    }
+    version="$(printf '%s\n' "${version_output}" | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+    [ -n "${version}" ] || {
+        echo "无法识别 OpenVPN 二进制版本: ${binary}" >&2
+        return 1
+    }
+    version_ge "${version}" "${OPENVPN_MIN_VERSION}" || {
+        echo "OpenVPN 安装后版本不满足要求：${version} < ${OPENVPN_MIN_VERSION}，binary=${binary}" >&2
+        return 1
+    }
+    if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
+        expected_version="${OPENVPN_TAG#v}"
+        [ "${version}" = "${expected_version}" ] || {
+            echo "OpenVPN 源码安装版本不匹配：期望 ${expected_version}，实际 ${version}" >&2
+            return 1
+        }
+    fi
+
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
+        openvpn_validate_systemd_unit "openvpn-server@.service" || return 1
+    fi
+    if [ "${INSTALL_CLIENT_SYSTEMD}" = "1" ]; then
+        openvpn_validate_systemd_unit "openvpn-client@.service" || return 1
+    fi
+    if [ "${INSTALL_SERVER_OVERRIDE}" = "1" ] && \
+        [ ! -f "/etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf" ]; then
+        echo "OpenVPN server systemd override 安装后不存在" >&2
+        return 1
+    fi
+
+    for unit in "${OPENVPN_ACTIVE_INSTANCES[@]}"; do
+        state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+        if [ "${state}" != "active" ]; then
+            echo "安装后原运行中的 OpenVPN 服务未保持 active: ${unit} state=${state:-unknown}" >&2
+            return 1
+        fi
+    done
+
+    _log "安装后校验通过: binary=${binary} version=${version} active_instances=${#OPENVPN_ACTIVE_INSTANCES[@]}"
 }
