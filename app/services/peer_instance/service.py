@@ -589,7 +589,7 @@ class PeerService:
         self.store.upsert_peer(peer.model_dump())
 
     def patch_center_forward_enabled(self, peer_id: str, enabled: bool) -> None:
-        """仅更新 ``center_forward_enabled`` 并刷新中心 ``VPN_FORWARD``；不改 CCD/对端 SSH。"""
+        """仅更新 center_forward_enabled；内核刷新失败时恢复 Peer 原始快照。"""
         cur = self.get(peer_id)
         if not cur:
             raise ValueError(f"对端实例不存在: {peer_id}")
@@ -603,7 +603,19 @@ class PeerService:
         if os.name != "nt":
             from app.services.firewall.rule_service import FirewallRuleService
 
-            FirewallRuleService().refresh_vpn_forward_only()
+            try:
+                FirewallRuleService().refresh_vpn_forward_only()
+            except Exception:
+                try:
+                    self.store.upsert_peer(cur)
+                except Exception as rollback_exc:
+                    logger.critical(
+                        "中心对端放行状态刷新失败，且 Peer SQLite 回滚失败 peer=%s: %s",
+                        peer_id,
+                        rollback_exc,
+                        exc_info=True,
+                    )
+                raise
 
     def update(self, peer_id: str, data: dict, *, refresh_center_iptables: bool = True) -> dict:
         cur = self.get(peer_id)
