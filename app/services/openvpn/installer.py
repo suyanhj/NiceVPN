@@ -364,23 +364,7 @@ def install_openvpn(
             env["NICEVPN_INSTALL_LOCK_HELD"] = "1"
             _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
-            # Shell 已校验安装阶段；Python 再按运行时相同的搜索优先级确认实际可用版本。
-            from app.services.openvpn.detector import detect_openvpn
-
-            installed = detect_openvpn()
-            if not installed.get("installed") or not installed.get("path"):
-                raise RuntimeError("安装脚本结束后仍未检测到可执行的 OpenVPN")
-            if not installed.get("meets_requirement"):
-                raise RuntimeError(
-                    "安装脚本结束后检测到的 OpenVPN 版本不满足要求: "
-                    f"{installed.get('version') or 'unknown'} < {OPENVPN_MIN_VERSION} "
-                    f"(binary={installed.get('path')})"
-                )
-            _emit(
-                on_output,
-                f"[校验] OpenVPN binary={installed['path']} version={installed['version']}",
-            )
-
+            # 安装脚本已完成二进制、版本、systemd unit 与原运行实例校验。
             # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
             # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
             logrotate_installer = (
