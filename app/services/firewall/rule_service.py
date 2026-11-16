@@ -539,18 +539,7 @@ class FirewallRuleService:
 
             peer_id = rid[len(CE_PEER_RULE_PREFIX):]
             peer_service = PeerService()
-            snapshot = peer_service.get(peer_id)
-            if not snapshot:
-                raise ValueError(f"对端实例不存在: {peer_id}")
-            try:
-                peer_service.patch_center_forward_enabled(peer_id, enabled)
-            except Exception:
-                self._restore_peer_snapshots(
-                    peer_service,
-                    {peer_id: dict(snapshot)},
-                    reason=f"切换中心对端放行状态失败 peer={peer_id}",
-                )
-                raise
+            peer_service.patch_center_forward_enabled(peer_id, enabled)
 
             status_text = "启用" if enabled else "停用"
             self.audit.log(
