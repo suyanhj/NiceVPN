@@ -119,6 +119,7 @@ def test_admin_password_tool_is_nested() -> None:
 def test_dry_run_is_available_on_mutating_commands() -> None:
     assert _parse("group", "delete", "--group-name", "开发组", "--dry-run").dry_run is True
     assert _parse("user", "move", "alice", "--group-name", "运维组", "--dry-run").dry_run is True
+    assert _parse("tag", "add", "--name", "员工", "--dry-run").dry_run is True
     assert _parse("tag", "delete", "员工", "--dry-run").dry_run is True
     assert _parse("tag", "member", "add", "员工", "--user", "alice", "--dry-run").dry_run is True
     assert _parse("firewall", "rule", "delete", "rule-id", "--dry-run").dry_run is True
