@@ -62,7 +62,10 @@ if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
     _log "强制源码构建模式：跳过 OpenVPN 系统包安装"
     install_source_dependencies
     openvpn_compile_install
-    openvpn_post_compile_setup
+    if ! openvpn_post_compile_setup; then
+        openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
+        exit 1
+    fi
     openvpn_post_install_validate
     exit 0
 fi
