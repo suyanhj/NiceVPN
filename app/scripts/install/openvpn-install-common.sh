@@ -254,7 +254,7 @@ easyrsa_binary_version() {
     local binary="${1:?必须指定 EasyRSA 可执行脚本}"
     local output
     output="$("${binary}" --version 2>&1)" || return 1
-    printf '%s\n' "${output}" | grep -Eo '[0-9]+(\.[0-9]+){1,2}' | head -n 1
+    printf '%s\n' "${output}" | grep -Eo '[0-9]+(\.[0-9]+){1,2}' | sed -n '1p'
 }
 
 easyrsa_validate_binary() {
@@ -347,6 +347,7 @@ EOF
     }
 
     expected_version="${EASYRSA_TAG#v}"
+    chmod +x "${source_dir}/easyrsa"
     actual_version="$(easyrsa_validate_binary "${source_dir}/easyrsa" "${expected_version}")"
     archive_hash="$(sha256sum "${EASYRSA_CACHE}" | awk '{print $1}')"
     release_id="${actual_version}-${archive_hash:0:12}"
@@ -435,6 +436,7 @@ openvpn_validate_systemd_unit() {
         echo "systemd 服务单元不存在或已屏蔽: ${unit} state=${unit_state:-not-found}" >&2
         return 1
     fi
+    return 0
 }
 
 openvpn_post_install_validate() {
@@ -484,10 +486,12 @@ openvpn_post_install_validate() {
     if [ "${INSTALL_CLIENT_SYSTEMD}" = "1" ]; then
         openvpn_validate_systemd_unit "openvpn-client@.service" || return 1
     fi
-    if [ "${INSTALL_SERVER_OVERRIDE}" = "1" ] && \
-        [ ! -f "/etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf" ]; then
-        echo "OpenVPN server systemd override 安装后不存在" >&2
-        return 1
+    if [ "${INSTALL_SERVER_OVERRIDE}" = "1" ]; then
+        local override_file="/etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf"
+        if [ ! -f "${override_file}" ] || ! grep -Fq 'ReadWritePaths=/etc/openvpn' "${override_file}"; then
+            echo "OpenVPN server systemd override 安装后不存在或内容不完整" >&2
+            return 1
+        fi
     fi
 
     for unit in "${OPENVPN_ACTIVE_INSTANCES[@]}"; do
