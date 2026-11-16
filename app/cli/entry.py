@@ -833,6 +833,9 @@ def cmd_tag_show(args: argparse.Namespace) -> int:
 def cmd_tag_add(args: argparse.Namespace) -> int:
     ts = TagService()
     name = str(args.name or "").strip()
+    if not name:
+        print("标签名称不能为空。", file=sys.stderr)
+        return 1
     if any(str(tag.get("name") or "") == name for tag in ts.list_all()):
         print(f"标签名称已存在: {name}", file=sys.stderr)
         return 1
@@ -865,6 +868,22 @@ def cmd_tag_update(args: argparse.Namespace) -> int:
     description = str(
         args.description if args.description is not None else current.get("description") or ""
     )
+    if not name:
+        print("标签名称不能为空。", file=sys.stderr)
+        return 1
+    if any(
+        str(tag.get("id") or "") != str(current["id"])
+        and str(tag.get("name") or "") == name
+        for tag in ts.list_all()
+    ):
+        print(f"标签名称已存在: {name}", file=sys.stderr)
+        return 1
+    if (
+        args.name is None and args.description is None
+        and args.device_binding_exempt is None and args.sso_required is None
+    ):
+        print("请至少指定一个需要修改的标签属性。", file=sys.stderr)
+        return 2
     if args.dry_run:
         return _dry_run_result(
             "tag.update", tag_id=current["id"],
