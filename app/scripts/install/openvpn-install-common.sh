@@ -2,6 +2,13 @@
 # OpenVPN 安装公共函数（由 debian/rhel 入口脚本 source）
 # 环境变量见各入口脚本头部说明；未设置时使用下列默认值。
 
+# 直接 source 本文件的调用方也自动获得原子写入 helper；远端内联时已预加载则跳过。
+if ! declare -F nicevpn_atomic_write_stdin >/dev/null 2>&1; then
+    _OPENVPN_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../common" && pwd)"
+    # shellcheck source=../common/atomic-files.sh
+    source "${_OPENVPN_COMMON_DIR}/atomic-files.sh"
+fi
+
 : "${OPENVPN_MIN_VERSION:=2.7.0}"
 : "${OPENVPN_TAG:=v2.7.0}"
 : "${OPENVPN_ASSET:=openvpn-2.7.0.tar.gz}"
