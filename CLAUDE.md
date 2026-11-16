@@ -5,7 +5,7 @@
 ## 架构
 
 - Python 3.10+；依赖版本以 `requirements.txt` 为准。
-- `main.py` 启动一个 Python 进程：NiceGUI 管理端默认 8880，FastAPI 公网 API 默认 8881。
+- `main.py` 仅启动 Web 管理端和公网 API；`cli.py` 是唯一 Python CLI 入口，`./start.sh cli` 转发到它。
 - systemd 只使用 `openvpn-mgmt.service`；不要拆出第二个 API 服务。
 - API 端口只挂载业务 API、一次性下载和 SSO OAuth 流程；不得挂载管理页面或管理路由。
 
