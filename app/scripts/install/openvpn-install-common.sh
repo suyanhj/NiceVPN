@@ -653,6 +653,14 @@ _openvpn_post_install_validate_impl() {
         }
     fi
 
+    if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ] || \
+        [ "${INSTALL_CLIENT_SYSTEMD}" = "1" ] || \
+        [ "${INSTALL_SERVER_OVERRIDE}" = "1" ]; then
+        systemctl daemon-reload || {
+            echo "systemd daemon-reload 失败，OpenVPN 安装后校验中止" >&2
+            return 1
+        }
+    fi
     if [ "${INSTALL_SERVER_SYSTEMD}" = "1" ]; then
         openvpn_validate_systemd_unit "openvpn-server@.service" || return 1
     fi
