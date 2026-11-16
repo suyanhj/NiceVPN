@@ -281,7 +281,8 @@ class FirewallRuleService:
             for r in all_rules
             if str(r.get("id")) != rid
         }
-        if rule.priority in all_priorities:
+        current_priority = int(rules[idx].get("priority", 0) or 0)
+        if rule.priority != current_priority and rule.priority in all_priorities:
             raise ValueError(
                 f"优先级 {rule.priority} 已被占用，"
                 f"请选择其他优先级值（已用: {sorted(all_priorities)}）"
