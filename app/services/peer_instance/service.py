@@ -630,35 +630,96 @@ class PeerService:
         need_ccd = _ccd_iroute_wire_snapshot(cur) != _ccd_iroute_wire_snapshot(dumped)
 
         self.store.upsert_peer(dumped)
+        try:
+            if os.name != "nt":
+                from app.services.firewall.rule_service import FirewallRuleService
 
-        if os.name != "nt":
-            from app.services.firewall.rule_service import FirewallRuleService
-
-            if refresh_center_iptables:
-                if need_fw:
-                    FirewallRuleService().refresh_vpn_forward_only()
+                if refresh_center_iptables:
+                    if need_fw:
+                        FirewallRuleService().refresh_vpn_forward_only()
+                    else:
+                        logger.info(
+                            "对端保存无 VPN_FORWARD（中心对端策略）字段变更，跳过 iptables peer=%s",
+                            peer.id[:8],
+                        )
                 else:
-                    logger.info("对端保存无 VPN_FORWARD（中心对端策略）字段变更，跳过 iptables peer=%s", peer.id[:8])
+                    logger.info(
+                        "已跳过中心 VPN_FORWARD 刷新，调用方将统一刷新 peer=%s",
+                        peer.id[:8],
+                    )
             else:
-                logger.info("已跳过中心 VPN_FORWARD 刷新，调用方将统一刷新 peer=%s", peer.id[:8])
-        else:
-            logger.info("Windows 下跳过本机 iptables 重建，对端已写盘 peer=%s", peer.id[:8])
+                logger.info("Windows 下跳过本机 iptables 重建，对端已写盘 peer=%s", peer.id[:8])
 
-        if need_ccd:
-            self._merge_ccd(peer.bound_username, peer.id, peer.lan_cidrs)
-        else:
-            logger.info("对端保存无绑定用户/CIDR(iroute)变更，跳过 CCD peer 块 peer=%s", peer.id[:8])
+            if need_ccd:
+                self._merge_ccd(peer.bound_username, peer.id, peer.lan_cidrs)
+            else:
+                logger.info(
+                    "对端保存无绑定用户/CIDR(iroute)变更，跳过 CCD peer 块 peer=%s",
+                    peer.id[:8],
+                )
 
-        if need_mesh:
-            self.sync_all_mesh_push_routes_in_ccd()
-        else:
-            logger.info(
-                "对端保存无 LAN / mesh 可见组或标签 变更，跳过全量 mesh CCD peer=%s",
-                peer.id[:8],
-            )
+            if need_mesh:
+                self.sync_all_mesh_push_routes_in_ccd()
+            else:
+                logger.info(
+                    "对端保存无 LAN / mesh 可见组或标签变更，跳过全量 mesh CCD peer=%s",
+                    peer.id[:8],
+                )
+        except Exception:
+            logger.exception("对端实例更新失败，开始恢复 SQLite 与派生状态 peer=%s", peer.id)
+            try:
+                self.store.upsert_peer(cur)
+            except Exception as rollback_exc:
+                logger.critical(
+                    "对端更新失败，恢复 Peer SQLite 快照失败 peer=%s: %s",
+                    peer.id,
+                    rollback_exc,
+                    exc_info=True,
+                )
+
+            # 即使本次刷新自身返回失败，也再按旧 Peer 状态收敛一次，修复可能不完整的内核回滚。
+            if os.name != "nt" and refresh_center_iptables and need_fw:
+                try:
+                    from app.services.firewall.rule_service import FirewallRuleService
+
+                    FirewallRuleService().refresh_vpn_forward_only()
+                except Exception as rollback_exc:
+                    logger.critical(
+                        "对端更新失败，恢复中心 VPN_FORWARD 失败 peer=%s: %s",
+                        peer.id,
+                        rollback_exc,
+                        exc_info=True,
+                    )
+
+            if need_ccd:
+                try:
+                    self._merge_ccd(
+                        str(cur.get("bound_username") or ""),
+                        peer_id,
+                        list(cur.get("lan_cidrs") or []),
+                    )
+                except Exception as rollback_exc:
+                    logger.critical(
+                        "对端更新失败，恢复 CCD iroute 失败 peer=%s: %s",
+                        peer.id,
+                        rollback_exc,
+                        exc_info=True,
+                    )
+
+            if need_mesh:
+                try:
+                    self.sync_all_mesh_push_routes_in_ccd()
+                except Exception as rollback_exc:
+                    logger.critical(
+                        "对端更新失败，恢复 mesh CCD 路由失败 peer=%s: %s",
+                        peer.id,
+                        rollback_exc,
+                        exc_info=True,
+                    )
+            raise
+
         logger.debug("已保存对端实例元数据 peer=%s", peer.id)
         return dumped
-
 
     def delete(self, peer_id: str) -> None:
         cur = self.get(peer_id)
