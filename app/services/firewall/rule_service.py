@@ -9,6 +9,7 @@
 的写回前快照语义对齐。
 """
 
+import functools
 import json
 import logging
 import os
@@ -26,6 +27,17 @@ from app.storage.sqlite_store import SqliteStore, get_default_store
 logger = logging.getLogger(__name__)
 
 CE_PEER_RULE_PREFIX = "ce-peer-"
+
+
+def _serialize_firewall_peer_mutation(method):
+    """与 Peer CRUD 共用锁，保证全局 priority 和跨资源写入不发生并发交叉。"""
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        from app.services.peer_instance.service import peer_lifecycle_lock
+
+        with peer_lifecycle_lock():
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class FirewallRuleService:
@@ -140,6 +152,7 @@ class FirewallRuleService:
                 if value:
                     validate_iptables_addr_or_cidr(value)
 
+    @_serialize_firewall_peer_mutation
     def create(self, rule_data: dict, *, refresh_kernel: bool = True) -> dict:
         """创建防火墙规则，校验优先级后持久化并可选刷新 VPN_FORWARD。"""
         payload = dict(rule_data)
@@ -195,6 +208,7 @@ class FirewallRuleService:
         logger.info("防火墙规则 %s 创建成功", rule.id)
         return rule_dict
 
+    @_serialize_firewall_peer_mutation
     def create_many(self, rule_payloads: list[dict]) -> list[dict]:
         """批量创建同一 owner 下的防火墙规则，仅刷新一次 ``VPN_FORWARD``。
 
@@ -267,6 +281,7 @@ class FirewallRuleService:
         logger.info("已批量创建防火墙规则 owner=%s count=%s", owner_id, len(rules_to_add))
         return rules_to_add
 
+    @_serialize_firewall_peer_mutation
     def update_by_id(self, rule_id: str, rule_data: dict) -> dict:
         """原地更新一条规则并仅刷新 ``VPN_FORWARD``；校验同 :meth:`create`，但优先级允许与**自身**相同。
 
@@ -331,6 +346,7 @@ class FirewallRuleService:
         logger.info("防火墙规则 %s 已更新", rid)
         return out
 
+    @_serialize_firewall_peer_mutation
     def reorder(self, owner_id: str, new_id_order: list[str]) -> bool:
         """重排指定 Owner 的规则，同时保留全局规则顺序与 priority 唯一性。"""
         if not (owner_id or "").strip():
@@ -485,6 +501,7 @@ class FirewallRuleService:
         logger.info("全局防火墙规则已重新排序（含对端，仅刷新 VPN_FORWARD）")
         return True
 
+    @_serialize_firewall_peer_mutation
     def delete(self, rule_id: str) -> bool:
         """删除指定规则；Peer 虚拟规则失败时恢复 Peer 与派生配置。"""
         rid = str(rule_id)
@@ -548,6 +565,7 @@ class FirewallRuleService:
         logger.info("防火墙规则 %s 已删除", rid)
         return True
 
+    @_serialize_firewall_peer_mutation
     def set_enabled(self, rule_id: str, enabled: bool) -> bool:
         """设置规则启停状态；Peer 虚拟规则刷新失败时恢复其原始状态。"""
         rid = str(rule_id)
@@ -655,6 +673,7 @@ class FirewallRuleService:
 
         return json.dumps(backup_data, ensure_ascii=False, indent=2)
 
+    @_serialize_firewall_peer_mutation
     def restore(self, json_str: str) -> bool:
         """从 JSON 恢复规则集；任何写入或内核刷新失败均补偿恢复 SQLite 与 Peer。"""
         try:
