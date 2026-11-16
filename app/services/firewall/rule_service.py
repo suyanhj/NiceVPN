@@ -66,6 +66,46 @@ class FirewallRuleService:
             self._rollback_center_json_after_rebuild_fail(oid, had_main.get(oid, False))
 
     @staticmethod
+    def _restore_peer_snapshots(
+        self,
+        peer_service,
+        snapshots: dict[str, dict],
+        *,
+        reason: str,
+    ) -> bool:
+        """补偿恢复已修改的 Peer 元数据，并同步其本地 CCD/mesh 派生状态。"""
+        ok = True
+        for peer_id, snapshot in reversed(list(snapshots.items())):
+            try:
+                # update(refresh=False) 负责恢复 LAN/CCD/mesh 等派生状态，
+                # 最后直接写回原始快照，保留原 updated_at 与完整 payload。
+                peer_service.update(
+                    peer_id,
+                    snapshot,
+                    refresh_center_iptables=False,
+                )
+                peer_service.store.upsert_peer(snapshot)
+            except Exception as exc:
+                ok = False
+                logger.critical(
+                    "%s：恢复 Peer 快照失败 peer=%s: %s",
+                    reason,
+                    peer_id,
+                    exc,
+                    exc_info=True,
+                )
+                try:
+                    peer_service.store.upsert_peer(snapshot)
+                except Exception as store_exc:
+                    logger.critical(
+                        "%s：恢复 Peer SQLite 快照也失败 peer=%s: %s",
+                        reason,
+                        peer_id,
+                        store_exc,
+                        exc_info=True,
+                    )
+        return ok
+
     def _validate_json_rule_addr_fields(rule: FirewallRule) -> None:
         """落库前校验目标/源 IP 字串，与对端链地址语义保持一致。"""
         dest = (rule.dest_ip or "").strip()
@@ -81,58 +121,40 @@ class FirewallRuleService:
                     validate_iptables_addr_or_cidr(value)
 
     def create(self, rule_data: dict, *, refresh_kernel: bool = True) -> dict:
-        """创建防火墙规则，执行三重校验后持久化并可选刷新 ``VPN_FORWARD``。
-
-        三重校验：
-        1. 端口格式校验（由 Pydantic 模型 field_validator 完成）
-        2. 源子网 CIDR 格式校验；目标/源 IP 字串（与对端链同语义，见 :meth:`_validate_json_rule_addr_fields`）
-        3. 同一 owner 下优先级唯一性校验
-
-        参数:
-            rule_data: 规则数据字典，字段参见 FirewallRule 模型
-            refresh_kernel: 为 False 时只落库 SQLite，不写内核（初始化向导在随后 ``rebuild_iptables`` 时使用）
-
-        返回:
-            创建成功的规则字典
-
-        异常:
-            ValueError: 校验失败时抛出
-        """
-        # CIDR 格式校验
-        source_subnet = rule_data.get("source_subnet")
+        """创建防火墙规则，校验优先级后持久化并可选刷新 VPN_FORWARD。"""
+        payload = dict(rule_data)
+        source_subnet = payload.get("source_subnet")
         if source_subnet and not validate_cidr(source_subnet):
             raise ValueError(f"无效的源子网 CIDR 格式: {source_subnet}")
 
-        # 生成唯一 ID
-        if "id" not in rule_data:
-            rule_data["id"] = str(uuid.uuid4())
+        if "id" not in payload:
+            payload["id"] = str(uuid.uuid4())
 
-        # 通过 Pydantic 模型校验（端口格式等）
-        rule = FirewallRule(**rule_data)
+        rule = FirewallRule(**payload)
         self._validate_json_rule_addr_fields(rule)
 
-        # 读取该 owner 的现有规则
         owner_id = rule.owner_id
         existing_rules = self._load_rules(owner_id)
         had_main = self.store.firewall_owner_exists(owner_id)
-        if had_main:
-            self._backup_center_rules_before_mutation(owner_id)
 
-        # 全局优先级唯一性校验（跨所有 owner）
-        all_rules = self.list_all_flat()
-        all_priorities = {r.get("priority", 0) for r in all_rules}
+        # 中心规则与 Peer 虚拟规则共享同一 priority 空间。
+        all_priorities = {
+            int(row.get("priority", 0) or 0)
+            for row in self.list_unified_flat()
+        }
         if rule.priority in all_priorities:
             raise ValueError(
                 f"优先级 {rule.priority} 已被占用，"
                 f"请选择其他优先级值（已用: {sorted(all_priorities)}）"
             )
 
-        # 持久化
+        if refresh_kernel and had_main:
+            self._backup_center_rules_before_mutation(owner_id)
+
         rule_dict = rule.model_dump()
         existing_rules.append(rule_dict)
         self._save_rules(owner_id, existing_rules)
 
-        # 规则管理页只允许修改 VPN_FORWARD，项目级 INPUT/MASQUERADE 等由启动/停止流程维护
         if refresh_kernel:
             try:
                 self._refresh_vpn_forward_only()
@@ -142,7 +164,6 @@ class FirewallRuleService:
             if had_main:
                 self._clear_center_prepush_backup(owner_id)
 
-        # 审计日志
         self.audit.log(
             action="create_firewall_rule",
             target_type="firewall_rule",
@@ -151,7 +172,6 @@ class FirewallRuleService:
                    f"{rule.dest_ip or '*'}:{rule.dest_port or '*'}",
             result="success",
         )
-
         logger.info("防火墙规则 %s 创建成功", rule.id)
         return rule_dict
 
@@ -199,7 +219,7 @@ class FirewallRuleService:
         if existing_ids & incoming_ids:
             raise ValueError("批量数据中存在已落库的规则 ID")
 
-        all_rules = self.list_all_flat()
+        all_rules = self.list_unified_flat()
         all_priorities = {int(r.get("priority", 0) or 0) for r in all_rules}
         duplicated = sorted(incoming_priorities & all_priorities)
         if duplicated:
@@ -255,8 +275,12 @@ class FirewallRuleService:
             raise ValueError(f"无效的源子网 CIDR 格式: {source_subnet}")
         rule = FirewallRule(**merged)
         self._validate_json_rule_addr_fields(rule)
-        all_rules = self.list_all_flat()
-        all_priorities = {r.get("priority", 0) for r in all_rules if str(r.get("id")) != rid}
+        all_rules = self.list_unified_flat()
+        all_priorities = {
+            int(r.get("priority", 0) or 0)
+            for r in all_rules
+            if str(r.get("id")) != rid
+        }
         if rule.priority in all_priorities:
             raise ValueError(
                 f"优先级 {rule.priority} 已被占用，"
@@ -287,42 +311,38 @@ class FirewallRuleService:
         return out
 
     def reorder(self, owner_id: str, new_id_order: list[str]) -> bool:
-        """拖拽排序后重新计算 priority，并且只刷新 ``VPN_FORWARD`` 链。
-
-        按传入的 ID 顺序重新分配优先级值，步长为 10（方便后续插入）。
-        如果 owner_id 为空，则进行全局重排。
-
-        参数:
-            owner_id:     规则归属对象 ID，为空时全局排序
-            new_id_order: 拖拽排序后的规则 ID 列表（按新顺序排列）
-
-        返回:
-            操作是否成功
-        """
+        """按传入顺序重排规则；未传入的规则稳定追加到末尾并重新分配优先级。"""
         if not (owner_id or "").strip():
             return self._reorder_unified_global(new_id_order)
 
         rules = self._load_rules(owner_id)
-
-        # 构建 ID -> 规则字典 的映射
-        rule_map = {r["id"]: r for r in rules}
-
-        # 按新顺序重新分配优先级
-        reordered: list[dict] = []
-        for idx, rule_id in enumerate(new_id_order):
+        rule_map = {str(row.get("id") or ""): row for row in rules}
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for raw_id in new_id_order:
+            rule_id = str(raw_id or "")
             if rule_id not in rule_map:
                 logger.warning("排序时发现未知规则 ID: %s，跳过", rule_id)
                 continue
-            rule = rule_map[rule_id]
-            rule["priority"] = (idx + 1) * 10
-            rule["updated_at"] = datetime.now().isoformat()
-            reordered.append(rule)
+            if rule_id in seen:
+                logger.warning("排序时发现重复规则 ID: %s，跳过", rule_id)
+                continue
+            seen.add(rule_id)
+            ordered_ids.append(rule_id)
 
-        # 保留不在排序列表中的规则（追加到末尾）
-        reordered_ids = set(new_id_order)
-        for rule in rules:
-            if rule["id"] not in reordered_ids:
-                reordered.append(rule)
+        for row in rules:
+            rule_id = str(row.get("id") or "")
+            if rule_id and rule_id not in seen:
+                seen.add(rule_id)
+                ordered_ids.append(rule_id)
+
+        now = datetime.now().isoformat()
+        reordered: list[dict] = []
+        for idx, rule_id in enumerate(ordered_ids):
+            row = dict(rule_map[rule_id])
+            row["priority"] = (idx + 1) * 10
+            row["updated_at"] = now
+            reordered.append(row)
 
         had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
@@ -340,115 +360,155 @@ class FirewallRuleService:
             action="reorder_firewall_rules",
             target_type="firewall_rule",
             target_id=owner_id,
-            detail=f"规则重新排序，新顺序: {new_id_order}",
+            detail=f"规则重新排序，新顺序: {ordered_ids}",
             result="success",
         )
-
         logger.info("owner %s 的防火墙规则已重新排序", owner_id)
         return True
 
     def _reorder_unified_global(self, new_id_order: list[str]) -> bool:
-        """全局排序：中心规则与对端 ``center_forward_priority`` 同步为 (n*10)，仅刷新 ``VPN_FORWARD``。"""
+        """全局排序：中心规则与 Peer 中心放行统一编号，失败时同时恢复两侧元数据。"""
         from app.services.peer_instance.service import PeerService
 
         unified = self.list_unified_flat()
-        rule_map = {r["id"]: r for r in unified}
-        pris = {rid: (i + 1) * 10 for i, rid in enumerate(new_id_order) if rid in rule_map}
-        ps = PeerService()
-        for rid, pri in pris.items():
-            row = rule_map[rid]
-            if row.get("_row_kind") == "center_peer":
-                ps.patch_center_forward_priority(str(row["_peer_id"]), pri)
-
-        reordered_ids = set(new_id_order)
-        reordered_by_owner: dict[str, list[dict]] = defaultdict(list)
-        for rid in new_id_order:
-            row = rule_map.get(rid)
-            if not row or row.get("_row_kind") != "json":
+        rule_map = {str(row.get("id") or ""): row for row in unified}
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for raw_id in new_id_order:
+            rule_id = str(raw_id or "")
+            if rule_id not in rule_map:
+                logger.warning("全局排序时发现未知规则 ID: %s，跳过", rule_id)
                 continue
-            r = dict(row)
-            r["priority"] = pris[rid]
-            r["updated_at"] = datetime.now().isoformat()
-            r.pop("_row_kind", None)
-            r.pop("_peer_id", None)
-            oid = r.pop("_owner_id", "")
-            reordered_by_owner[oid].append(r)
-
+            if rule_id in seen:
+                logger.warning("全局排序时发现重复规则 ID: %s，跳过", rule_id)
+                continue
+            seen.add(rule_id)
+            ordered_ids.append(rule_id)
         for row in unified:
-            rid = row["id"]
-            if rid in reordered_ids:
+            rule_id = str(row.get("id") or "")
+            if rule_id and rule_id not in seen:
+                seen.add(rule_id)
+                ordered_ids.append(rule_id)
+
+        if not ordered_ids:
+            return True
+
+        priorities = {
+            rule_id: (index + 1) * 10
+            for index, rule_id in enumerate(ordered_ids)
+        }
+        peer_service = PeerService()
+        peer_snapshots: dict[str, dict] = {}
+        peer_priority_by_id: dict[str, int] = {}
+        reordered_by_owner: dict[str, list[dict]] = defaultdict(list)
+        now = datetime.now().isoformat()
+
+        for rule_id in ordered_ids:
+            row = rule_map[rule_id]
+            if row.get("_row_kind") != "center_peer":
                 continue
+            peer_id = str(row.get("_peer_id") or "")
+            snapshot = peer_service.get(peer_id)
+            if not snapshot:
+                raise ValueError(f"全局排序失败：对端实例不存在 {peer_id}")
+            peer_snapshots.setdefault(peer_id, dict(snapshot))
+            peer_priority_by_id[peer_id] = priorities[rule_id]
+
+        for rule_id in ordered_ids:
+            row = rule_map[rule_id]
             if row.get("_row_kind") == "center_peer":
                 continue
-            r = dict(row)
-            r.pop("_row_kind", None)
-            r.pop("_peer_id", None)
-            oid = r.pop("_owner_id", "")
-            reordered_by_owner[oid].append(r)
+            rule = dict(row)
+            rule["priority"] = priorities[rule_id]
+            rule["updated_at"] = now
+            rule.pop("_row_kind", None)
+            rule.pop("_peer_id", None)
+            owner_id = str(rule.pop("_owner_id", "") or "")
+            if owner_id:
+                reordered_by_owner[owner_id].append(rule)
 
-        oids = list(dict.fromkeys(oid for oid in reordered_by_owner if oid))
-        had_main = {oid: self.store.firewall_owner_exists(oid) for oid in oids}
-        for oid in oids:
-            if had_main[oid]:
-                self._backup_center_rules_before_mutation(oid)
-        for oid, rules in reordered_by_owner.items():
-            if oid:
-                self._save_rules(oid, rules)
+        owner_ids = list(reordered_by_owner)
+        had_main = {
+            owner_id: self.store.firewall_owner_exists(owner_id)
+            for owner_id in owner_ids
+        }
+        for owner_id in owner_ids:
+            if had_main[owner_id]:
+                self._backup_center_rules_before_mutation(owner_id)
 
         try:
+            for peer_id, priority in peer_priority_by_id.items():
+                peer_service.patch_center_forward_priority(peer_id, priority)
+            for owner_id, rules in reordered_by_owner.items():
+                self._save_rules(owner_id, rules)
             self._refresh_vpn_forward_only()
         except Exception:
-            self._rollback_center_json_owners_after_rebuild_fail(oids, had_main)
+            try:
+                self._rollback_center_json_owners_after_rebuild_fail(owner_ids, had_main)
+            except Exception:
+                logger.critical("全局排序失败：中心规则 SQLite 回滚不完整", exc_info=True)
+            if peer_snapshots:
+                self._restore_peer_snapshots(
+                    peer_service,
+                    peer_snapshots,
+                    reason="全局防火墙排序失败",
+                )
             raise
-        for oid in oids:
-            if had_main[oid]:
-                self._clear_center_prepush_backup(oid)
+
+        for owner_id in owner_ids:
+            if had_main[owner_id]:
+                self._clear_center_prepush_backup(owner_id)
         self.audit.log(
             action="reorder_firewall_rules",
             target_type="firewall_rule",
             target_id="global",
-            detail=f"全局规则重新排序（含对端中心放行），新顺序: {new_id_order}",
+            detail=f"全局规则重新排序（含对端中心放行），新顺序: {ordered_ids}",
             result="success",
         )
         logger.info("全局防火墙规则已重新排序（含对端，仅刷新 VPN_FORWARD）")
         return True
 
     def delete(self, rule_id: str) -> bool:
-        """删除指定规则并重建 iptables。
-
-        参数:
-            rule_id: 要删除的规则 ID
-
-        返回:
-            是否成功删除
-
-        异常:
-            ValueError: 规则不存在时抛出
-        """
+        """删除指定规则；Peer 虚拟规则失败时恢复 Peer 与派生配置。"""
         rid = str(rule_id)
         if rid.startswith(CE_PEER_RULE_PREFIX):
             from app.services.peer_instance.service import PeerService
 
-            pid = rid[len(CE_PEER_RULE_PREFIX) :]
-            PeerService().update(pid, {"lan_cidrs": []}, refresh_center_iptables=False)
-            self._refresh_vpn_forward_only()
+            peer_id = rid[len(CE_PEER_RULE_PREFIX):]
+            peer_service = PeerService()
+            snapshot = peer_service.get(peer_id)
+            if not snapshot:
+                raise ValueError(f"对端实例不存在: {peer_id}")
+            try:
+                peer_service.update(
+                    peer_id,
+                    {"lan_cidrs": []},
+                    refresh_center_iptables=False,
+                )
+                self._refresh_vpn_forward_only()
+            except Exception:
+                self._restore_peer_snapshots(
+                    peer_service,
+                    {peer_id: dict(snapshot)},
+                    reason=f"删除中心对端放行失败 peer={peer_id}",
+                )
+                raise
+
             self.audit.log(
                 action="delete_firewall_rule",
                 target_type="firewall_rule",
                 target_id=rid,
-                detail=f"清空对端 LAN 以移除中心放行（对端实例 {pid}）",
+                detail=f"清空对端 LAN 以移除中心放行（对端实例 {peer_id}）",
                 result="success",
             )
-            logger.info("已通过对端 %s 清空 LAN 删除防火墙列表项", pid)
+            logger.info("已通过对端 %s 清空 LAN 删除防火墙列表项", peer_id)
             return True
 
-        # 遍历所有 owner 文件查找目标规则
-        owner_id, rules = self._find_rule_owner(rule_id)
+        owner_id, rules = self._find_rule_owner(rid)
         if owner_id is None:
-            raise ValueError(f"规则 {rule_id} 不存在")
+            raise ValueError(f"规则 {rid} 不存在")
 
-        # 移除目标规则
-        updated_rules = [r for r in rules if r["id"] != rule_id]
+        updated_rules = [row for row in rules if str(row.get("id")) != rid]
         had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
             self._backup_center_rules_before_mutation(owner_id)
@@ -464,41 +524,53 @@ class FirewallRuleService:
         self.audit.log(
             action="delete_firewall_rule",
             target_type="firewall_rule",
-            target_id=rule_id,
-            detail=f"删除防火墙规则 {rule_id}",
+            target_id=rid,
+            detail=f"删除防火墙规则 {rid}",
             result="success",
         )
-
-        logger.info("防火墙规则 %s 已删除", rule_id)
+        logger.info("防火墙规则 %s 已删除", rid)
         return True
 
     def set_enabled(self, rule_id: str, enabled: bool) -> bool:
-        """设置规则启用/停用状态并仅刷新 ``VPN_FORWARD``。"""
+        """设置规则启停状态；Peer 虚拟规则刷新失败时恢复其原始状态。"""
         rid = str(rule_id)
         if rid.startswith(CE_PEER_RULE_PREFIX):
             from app.services.peer_instance.service import PeerService
 
-            pid = rid[len(CE_PEER_RULE_PREFIX) :]
-            PeerService().patch_center_forward_enabled(pid, enabled)
+            peer_id = rid[len(CE_PEER_RULE_PREFIX):]
+            peer_service = PeerService()
+            snapshot = peer_service.get(peer_id)
+            if not snapshot:
+                raise ValueError(f"对端实例不存在: {peer_id}")
+            try:
+                peer_service.patch_center_forward_enabled(peer_id, enabled)
+            except Exception:
+                self._restore_peer_snapshots(
+                    peer_service,
+                    {peer_id: dict(snapshot)},
+                    reason=f"切换中心对端放行状态失败 peer={peer_id}",
+                )
+                raise
+
             status_text = "启用" if enabled else "停用"
             self.audit.log(
                 action="toggle_firewall_rule",
                 target_type="firewall_rule",
                 target_id=rid,
-                detail=f"中心侧对端 LAN 放行已{status_text}（对端 {pid}）",
+                detail=f"中心侧对端 LAN 放行已{status_text}（对端 {peer_id}）",
                 result="success",
             )
-            logger.info("中心侧对端 LAN 放行已%s peer=%s", status_text, pid[:8] if len(pid) > 8 else pid)
+            logger.info("中心侧对端 LAN 放行已%s peer=%s", status_text, peer_id[:8] if len(peer_id) > 8 else peer_id)
             return True
 
-        owner_id, rules = self._find_rule_owner(rule_id)
+        owner_id, rules = self._find_rule_owner(rid)
         if owner_id is None:
-            raise ValueError(f"规则 {rule_id} 不存在")
+            raise ValueError(f"规则 {rid} 不存在")
 
-        for r in rules:
-            if r["id"] == rule_id:
-                r["enabled"] = enabled
-                r["updated_at"] = datetime.now().isoformat()
+        for row in rules:
+            if str(row.get("id")) == rid:
+                row["enabled"] = bool(enabled)
+                row["updated_at"] = datetime.now().isoformat()
                 break
         had_main = self.store.firewall_owner_exists(owner_id)
         if had_main:
@@ -516,11 +588,11 @@ class FirewallRuleService:
         self.audit.log(
             action="toggle_firewall_rule",
             target_type="firewall_rule",
-            target_id=rule_id,
-            detail=f"防火墙规则 {rule_id} 已{status_text}",
+            target_id=rid,
+            detail=f"防火墙规则 {rid} 已{status_text}",
             result="success",
         )
-        logger.info("防火墙规则 %s 已%s", rule_id, status_text)
+        logger.info("防火墙规则 %s 已%s", rid, status_text)
         return True
 
     def backup(self) -> str:
@@ -578,129 +650,144 @@ class FirewallRuleService:
         return json.dumps(backup_data, ensure_ascii=False, indent=2)
 
     def restore(self, json_str: str) -> bool:
-        """从 JSON 恢复规则集（覆盖现有规则）。
-
-        参数:
-            json_str: backup() 导出的 JSON 字符串
-
-        返回:
-            操作是否成功
-        """
+        """从 JSON 恢复规则集；任何写入或内核刷新失败均补偿恢复 SQLite 与 Peer。"""
         try:
             data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error("恢复规则 JSON 解析失败: %s", e)
+        except json.JSONDecodeError as exc:
+            logger.error("恢复规则 JSON 解析失败: %s", exc)
             return False
 
-        if "rules_by_owner" not in data:
+        if not isinstance(data, dict) or "rules_by_owner" not in data:
             logger.error("恢复数据中缺少 rules_by_owner 键")
             return False
-        rules_by_owner: dict = data.get("rules_by_owner") or {}
+        rules_by_owner = data.get("rules_by_owner") or {}
         peers_cf = data.get("peers_center_forward")
-        if not rules_by_owner and not (isinstance(peers_cf, list) and len(peers_cf) > 0):
+        if not isinstance(rules_by_owner, dict):
+            logger.error("恢复数据 rules_by_owner 必须为对象")
+            return False
+        if not rules_by_owner and not (isinstance(peers_cf, list) and peers_cf):
             logger.error("恢复数据为空：rules_by_owner 无内容且未包含对端中心策略")
             return False
 
-        oids = list(
+        owner_ids = list(
             dict.fromkeys(
-                str(oid) for oid, rlist in rules_by_owner.items() if isinstance(rlist, list)
+                str(owner_id)
+                for owner_id, rows in rules_by_owner.items()
+                if isinstance(rows, list)
             )
         )
-        had_main = {oid: self.store.firewall_owner_exists(oid) for oid in oids}
-        for oid in oids:
-            if had_main[oid]:
-                self._backup_center_rules_before_mutation(oid)
+        had_main = {
+            owner_id: self.store.firewall_owner_exists(owner_id)
+            for owner_id in owner_ids
+        }
+        for owner_id in owner_ids:
+            if had_main[owner_id]:
+                self._backup_center_rules_before_mutation(owner_id)
 
-        # 逐 owner 写入
-        for owner_id, rules in rules_by_owner.items():
-            if not isinstance(rules, list):
-                logger.warning("owner %s 的 rules 非列表，已跳过", owner_id)
-                continue
-            validated_rules: list[dict] = []
-            for r in rules:
-                if not isinstance(r, dict):
-                    continue
-                try:
-                    rule = FirewallRule(**r)
-                    validated_rules.append(rule.model_dump())
-                except Exception as e:
-                    logger.warning("跳过无效规则: %s, 原因: %s", r.get("id", "?"), e)
-                    continue
-
-            self._save_rules(owner_id, validated_rules)
-
-        if isinstance(peers_cf, list) and peers_cf:
-            from app.services.peer_instance.service import PeerService
-
-            ps = PeerService()
-            for item in peers_cf:
-                if not isinstance(item, dict):
-                    continue
-                pid = str(item.get("id") or "").strip()
-                if not pid:
-                    continue
-                cur = ps.get(pid)
-                if not cur:
-                    logger.warning("备份中 peers_center_forward 对端已不存在，跳过: %s", pid)
-                    continue
-                patch: dict = {
-                    "lan_cidrs": [
-                        str(c).strip() for c in (item.get("lan_cidrs") or []) if str(c).strip()
-                    ],
-                    "center_forward_priority": int(
-                        item.get("center_forward_priority")
-                        or cur.get("center_forward_priority")
-                        or 500_000
-                    ),
-                    "center_forward_enabled": bool(
-                        item.get("center_forward_enabled")
-                        if "center_forward_enabled" in item
-                        else cur.get("center_forward_enabled", True)
-                    ),
-                }
-                for k in (
-                    "center_forward_dest_ip",
-                    "center_forward_dest_port",
-                    "center_forward_protocol",
-                    "center_forward_rule_description",
-                ):
-                    if k in item and item.get(k) is not None:
-                        patch[k] = str(item.get(k) or "").strip()
-                if "center_forward_protocol" in patch and not patch.get("center_forward_protocol"):
-                    patch["center_forward_protocol"] = "all"
-                nm = str(item.get("name") or "").strip()
-                if nm:
-                    patch["name"] = nm
-                try:
-                    ps.update(pid, patch, refresh_center_iptables=False)
-                except Exception as exc:
-                    logger.error("从备份恢复对端 %s 中心策略失败: %s", pid, exc)
-                    return False
+        from app.services.peer_instance.service import PeerService
+        peer_service = PeerService()
+        peer_snapshots: dict[str, dict] = {}
 
         try:
+            for owner_id, rows in rules_by_owner.items():
+                if not isinstance(rows, list):
+                    logger.warning("owner %s 的 rules 非列表，已跳过", owner_id)
+                    continue
+                validated_rules: list[dict] = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        rule = FirewallRule(**row)
+                        self._validate_json_rule_addr_fields(rule)
+                        validated_rules.append(rule.model_dump())
+                    except Exception as exc:
+                        logger.warning(
+                            "跳过无效规则: %s, 原因: %s",
+                            row.get("id", "?"),
+                            exc,
+                        )
+                        continue
+                self._save_rules(str(owner_id), validated_rules)
+
+            if isinstance(peers_cf, list) and peers_cf:
+                for item in peers_cf:
+                    if not isinstance(item, dict):
+                        continue
+                    peer_id = str(item.get("id") or "").strip()
+                    if not peer_id:
+                        continue
+                    current = peer_service.get(peer_id)
+                    if not current:
+                        logger.warning(
+                            "备份中 peers_center_forward 对端已不存在，跳过: %s",
+                            peer_id,
+                        )
+                        continue
+                    peer_snapshots.setdefault(peer_id, dict(current))
+                    patch: dict = {
+                        "lan_cidrs": [
+                            str(c).strip()
+                            for c in (item.get("lan_cidrs") or [])
+                            if str(c).strip()
+                        ],
+                        "center_forward_priority": int(
+                            item.get("center_forward_priority")
+                            or current.get("center_forward_priority")
+                            or 500_000
+                        ),
+                        "center_forward_enabled": bool(
+                            item.get("center_forward_enabled")
+                            if "center_forward_enabled" in item
+                            else current.get("center_forward_enabled", True)
+                        ),
+                    }
+                    for key in (
+                        "center_forward_dest_ip",
+                        "center_forward_dest_port",
+                        "center_forward_protocol",
+                        "center_forward_rule_description",
+                    ):
+                        if key in item and item.get(key) is not None:
+                            patch[key] = str(item.get(key) or "").strip()
+                    if "center_forward_protocol" in patch and not patch.get("center_forward_protocol"):
+                        patch["center_forward_protocol"] = "all"
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        patch["name"] = name
+                    peer_service.update(
+                        peer_id,
+                        patch,
+                        refresh_center_iptables=False,
+                    )
+
             self._refresh_vpn_forward_only()
         except Exception as exc:
-            logger.error("从备份恢复规则后刷新 VPN_FORWARD 失败: %s", exc)
-            self._rollback_center_json_owners_after_rebuild_fail(oids, had_main)
-            if isinstance(peers_cf, list) and peers_cf:
-                logger.warning(
-                    "从备份恢复时 iptables 重建失败，已回滚中心规则 SQLite 快照；对端中心策略的 Peer 已写入，未自动回滚"
+            logger.error("防火墙规则恢复失败，开始补偿回滚: %s", exc, exc_info=True)
+            try:
+                self._rollback_center_json_owners_after_rebuild_fail(owner_ids, had_main)
+            except Exception:
+                logger.critical("防火墙恢复失败：中心规则 SQLite 回滚不完整", exc_info=True)
+            if peer_snapshots:
+                self._restore_peer_snapshots(
+                    peer_service,
+                    peer_snapshots,
+                    reason="防火墙备份恢复失败",
                 )
             return False
 
-        for oid in oids:
-            if had_main[oid]:
-                self._clear_center_prepush_backup(oid)
+        for owner_id in owner_ids:
+            if had_main[owner_id]:
+                self._clear_center_prepush_backup(owner_id)
 
-        n_peers = len(peers_cf) if isinstance(peers_cf, list) else 0
+        peer_count = len(peers_cf) if isinstance(peers_cf, list) else 0
         self.audit.log(
             action="restore_firewall_rules",
             target_type="firewall",
             target_id="all",
-            detail=f"从备份恢复：{len(rules_by_owner)} 个 owner，对端中心策略 {n_peers} 条",
+            detail=f"从备份恢复：{len(rules_by_owner)} 个 owner，对端中心策略 {peer_count} 条",
             result="success",
         )
-
         logger.info("防火墙规则已从备份恢复")
         return True
 
