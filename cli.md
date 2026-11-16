@@ -67,6 +67,7 @@ ovpn-cli user ovpn regenerate alice
 ```bash
 # 标签 CRUD
 ovpn-cli tag list
+ovpn-cli tag list --json
 ovpn-cli tag add --name "研发人员" --description "研发部门设备"
 ovpn-cli tag add --name "免设备绑定" --device-binding-exempt
 ovpn-cli tag add --name "企业认证" --sso-required
