@@ -18,7 +18,7 @@
 
 ## Linux 与 OpenVPN
 
-- 安装、依赖、systemd、权限和文件部署优先使用 `app/scripts/`；Python 负责业务编排，不重复实现发行版包管理逻辑。
+- Linux 安装、依赖、systemd、权限和文件部署优先复用 `app/scripts/`、`deploy/shell/` 与 `deploy/systemd/`；Python 负责业务编排，不重复实现发行版包管理逻辑。
 - Debian/RHEL 共用函数位于 `app/scripts/common/linux-packages.sh`。新增安装流程应复用它。
 - 已安装的 OpenVPN、EasyRSA 和完整 PKI 应优先识别、复用；补装 EasyRSA 不得重装 OpenVPN，也不得覆盖已有 CA。
 - DCO 是可选优化。依赖不满足时关闭 DCO，不得因此阻断常规 OpenVPN 安装。
