@@ -69,7 +69,17 @@ nicevpn_select_python "${PROJECT}"
     exit 1
 }
 
+# Keep a compatible generic python3 as the system default when it already meets requirements.
+make_fake_python "${FAKE_BIN}/python3" "3.10.1"
+PYTHON_BIN=""
+nicevpn_select_python "${PROJECT}"
+[[ "${PYTHON_BIN}" == "${FAKE_BIN}/python3" ]] || {
+    echo "FAIL: compatible system python3 was not preferred: ${PYTHON_BIN}" >&2
+    exit 1
+}
+
 # An explicitly requested incompatible interpreter must fail instead of silently switching.
+make_fake_python "${FAKE_BIN}/python3" "3.6.8"
 PYTHON_BIN="${FAKE_BIN}/python3"
 if nicevpn_select_python "${PROJECT}" >/dev/null 2>&1; then
     echo "FAIL: explicit Python 3.6 should have been rejected" >&2
@@ -84,4 +94,4 @@ nicevpn_select_python "${PROJECT}"
     exit 1
 }
 
-echo "PASS: Python runtime discovery selects the newest compatible interpreter."
+echo "PASS: Python runtime discovery selects a compatible interpreter and skips old versions."
