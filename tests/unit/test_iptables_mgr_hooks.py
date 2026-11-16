@@ -231,7 +231,7 @@ def test_nat_masquerade_is_added_for_global_subnet_without_egress_interface(monk
     def run(command, **_kwargs):
         commands.append(list(command))
         return subprocess.CompletedProcess(
-            command, 1 if command[4] == "-C" else 0, stdout="", stderr=""
+            command, 1 if command[3] == "-C" else 0, stdout="", stderr=""
         )
 
     monkeypatch.setattr(iptables_module.subprocess, "run", run)
