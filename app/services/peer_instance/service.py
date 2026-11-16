@@ -2,12 +2,12 @@
 """对端站点实例：持久化、CCD iroute、中心侧 VPN_FORWARD / SSH 对端 VPN_PEER_* iptables 同步"""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import functools
 import logging
 import os
 import tempfile
 import threading
-from contextlib import contextmanager
 import uuid
 from datetime import datetime
 from pathlib import Path
