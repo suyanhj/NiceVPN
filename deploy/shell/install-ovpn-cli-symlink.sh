@@ -64,7 +64,7 @@ fi
 LINK_NAME="$(cd "${LINK_DIR}" && pwd)/$(basename "${LINK_NAME}")"
 LINK_DIR="$(dirname "${LINK_NAME}")"
 CLI_NAME="$(basename "${LINK_NAME}")"
-PYTHON_BIN_DIR="$("${PYTHON_BIN}" -c 'import os, sys; print(os.path.dirname(sys.executable))')"
+PYTHON_BIN_DIR="$("${PYTHON_BIN}" -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"
 
 echo "已创建：${LINK_NAME} -> ${CLI_PY}"
 echo
