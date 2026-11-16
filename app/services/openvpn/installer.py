@@ -12,7 +12,6 @@ from typing import Callable
 from app.core.config import load_config
 from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
 from app.services.openvpn.detector import find_easyrsa
-from app.services.openvpn.install_lock import openvpn_install_lock
 
 log = logging.getLogger(__name__)
 
@@ -337,28 +336,26 @@ def install_openvpn(
         )
         script_path = _install_script_path(distro)
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
-        # Python 持锁覆盖 Shell 安装后置校验和日志初始化，避免升级在检测窗口切换 prefix。
-        with openvpn_install_lock():
-            env["NICEVPN_INSTALL_LOCK_HELD"] = "1"
-            _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
+        _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
-            # 安装脚本已完成二进制、版本、systemd unit 与原运行实例校验。
-            # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
-            # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
-            logrotate_installer = (
-                _INSTALL_SCRIPTS_DIR.parents[2]
-                / "deploy"
-                / "shell"
-                / "install-nicevpn-logrotate.sh"
-            )
-            if logrotate_installer.is_file() and os.name == "posix":
-                try:
-                    _run_command(
-                        ["bash", str(logrotate_installer)], on_output, env=_subprocess_env(env)
-                    )
-                except Exception as rotate_exc:
-                    _emit(on_output, f"[警告] OpenVPN 已安装，但日志轮转初始化未完成：{rotate_exc}")
-                    log.warning("OpenVPN 已安装，日志轮转初始化失败: %s", rotate_exc)
+        # 安装脚本已完成二进制、版本、systemd unit 与原运行实例校验。
+        # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
+        # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
+        logrotate_installer = (
+            _INSTALL_SCRIPTS_DIR.parents[2]
+            / "deploy"
+            / "shell"
+            / "install-nicevpn-logrotate.sh"
+        )
+        if logrotate_installer.is_file() and os.name == "posix":
+            try:
+                _run_command(
+                    ["bash", str(logrotate_installer)], on_output, env=_subprocess_env(env)
+                )
+            except Exception as rotate_exc:
+                _emit(on_output, f"[警告] OpenVPN 已安装，但日志轮转初始化未完成：{rotate_exc}")
+                log.warning("OpenVPN 已安装，日志轮转初始化失败: %s", rotate_exc)
+
     except Exception as exc:
         _emit(on_output, f"[错误] 安装 OpenVPN 失败: {exc}")
         log.exception("安装 OpenVPN 失败")
