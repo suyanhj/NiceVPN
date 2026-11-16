@@ -569,7 +569,7 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
         for candidate in parent.glob(f"{prefix.name}.nicevpn-old-*"):
             if candidate.is_dir() or candidate.is_symlink():
                 try:
-                    candidates.append((candidate.stat().st_mtime_ns, candidate, None))
+                    candidates.append((candidate.lstat().st_mtime_ns, candidate, None))
                 except OSError:
                     continue
 
@@ -578,7 +578,7 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
             candidate = backup_root / prefix.name
             if candidate.is_dir() and not candidate.is_symlink():
                 try:
-                    candidates.append((candidate.stat().st_mtime_ns, candidate, backup_root))
+                    candidates.append((candidate.lstat().st_mtime_ns, candidate, backup_root))
                 except OSError:
                     continue
 
