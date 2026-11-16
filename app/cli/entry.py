@@ -795,7 +795,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).name,
         description=(
-            "NiceVPN 命令行管理工具；入口：python cli.py …\n\n"
+            "NiceVPN 命令行管理工具；入口：./start.sh cli …（或 Python 3.10+ cli.py）\n\n"
             "推荐使用分层命令：group / user / add-firewall。"
             "旧命令 add-group / add-user 继续兼容。\n"
             "试运行：在命令行任意位置加入 --dry-run。"
