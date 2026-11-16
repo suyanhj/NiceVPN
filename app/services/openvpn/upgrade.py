@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 _OUTPUT = Callable[[str], None]
 _PREFLIGHT_SECONDS = 3.0
+
+_OPENVPN_UPGRADE_APPLY_LOCK = threading.Lock()
 
 _SERVER_SIDE_EFFECT_DIRECTIVES = {
     "auth-user-pass-verify",
@@ -602,6 +605,16 @@ def _restore_path(record: dict) -> None:
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
+    """串行执行 OpenVPN 切换，拒绝同一进程内并发升级。"""
+    if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
+        raise RuntimeError("OpenVPN 升级正在执行，请勿重复发起")
+    try:
+        return _apply_staged_upgrade_locked(stage, on_output)
+    finally:
+        _OPENVPN_UPGRADE_APPLY_LOCK.release()
+
+
+def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     """切换候选 OpenVPN；失败时尽最大努力恢复 binary/systemd 和原运行实例。
 
     如果任一回滚步骤失败，会保留 old binary 与 rollback snapshot，绝不在 finally 中删除
