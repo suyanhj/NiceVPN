@@ -41,6 +41,10 @@ EOF
     chmod +x "${path}"
 }
 
+# Shadow newer host interpreters so the test is deterministic on any CI runner.
+for version in 3.15 3.14 3.13 3.12 3.10; do
+    make_fake_python "${FAKE_BIN}/python${version}" "3.6.8"
+done
 make_fake_python "${FAKE_BIN}/python3" "3.6.8"
 make_fake_python "${FAKE_BIN}/python3.11" "3.11.9"
 PATH="${FAKE_BIN}:/usr/bin:/bin"
