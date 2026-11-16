@@ -13,6 +13,7 @@ from pathlib import Path
 from app.cli.iptables_parse import iter_iptables_file, parse_iptables_line
 from app.core.config import load_config
 from app.services.firewall.rule_service import FirewallRuleService
+from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
 from app.services.user.crud import UserService
 from app.services.user.device_bind import DeviceBindingService
@@ -78,33 +79,43 @@ def _resolve_group_id(
     raise SystemExit("请指定 --group-id 或 --group-name。")
 
 
+def _resolve_group_ref(gs: GroupService, group_ref: str) -> str:
+    ref = str(group_ref or "").strip()
+    for group in gs.list_all():
+        if str(group.get("id") or "") == ref or str(group.get("name") or "") == ref:
+            return str(group["id"])
+    raise SystemExit(f"用户组不存在: {ref}")
+
+
+def _resolve_tag_ref(ts: TagService, tag_ref: str) -> dict:
+    ref = str(tag_ref or "").strip()
+    for tag in ts.list_all():
+        if str(tag.get("id") or "") == ref or str(tag.get("name") or "") == ref:
+            return tag
+    raise SystemExit(f"标签不存在: {ref}")
+
+
 def _resolve_firewall_owner(
     gs: GroupService,
+    ts: TagService,
     *,
     owner_type: str,
-    owner_id: str | None,
-    group_name: str | None,
-    username: str | None,
+    owner: str,
 ) -> str:
-    ot = owner_type.strip().lower()
+    ot = str(owner_type or "").strip().lower()
+    value = str(owner or "").strip()
+    if not value:
+        raise SystemExit("请指定规则归属对象 --owner。")
     if ot == "group":
-        if owner_id and owner_id.strip():
-            oid = owner_id.strip()
-            for g in gs.list_all():
-                if g.get("id") == oid:
-                    return oid
-            raise SystemExit(f"组 ID 不存在: {oid}")
-        if group_name and group_name.strip():
-            for g in gs.list_all():
-                if g.get("name") == group_name.strip():
-                    return str(g["id"])
-            raise SystemExit(f"组名不存在: {group_name}")
-        raise SystemExit("组类型规则请指定 --owner-id 或 --group-name。")
+        return _resolve_group_ref(gs, value)
     if ot == "user":
-        if not (username and username.strip()):
-            raise SystemExit("用户类型规则请指定 --username。")
-        return username.strip()
-    raise SystemExit("owner-type 须为 group 或 user。")
+        user = UserService().get(value)
+        if not user or user.get("status") == "deleted":
+            raise SystemExit(f"用户不存在或已删除: {value}")
+        return value
+    if ot == "tag":
+        return str(_resolve_tag_ref(ts, value)["id"])
+    raise SystemExit("owner-type 须为 group、user 或 tag。")
 
 
 def _next_priority(fw: FirewallRuleService) -> int:
@@ -234,12 +245,9 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
     # ---------- 与是否试运行无关：解析 iptables、组装规则、模型与 priority 校验 ----------
     gs = GroupService()
     fw = FirewallRuleService()
+    ts = TagService()
     owner_id = _resolve_firewall_owner(
-        gs,
-        owner_type=args.owner_type,
-        owner_id=args.owner_id,
-        group_name=args.group_name,
-        username=args.username,
+        gs, ts, owner_type=args.owner_type, owner=args.owner,
     )
 
     specs: list[dict] = []
@@ -305,7 +313,7 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "dry_run": True,
-                    "action": "add-firewall",
+                    "action": "firewall.rule.add",
                     "rules": payload_rows,
                     "note": "校验已通过；未写入 SQLite，未执行 iptables 重建",
                 },
@@ -316,19 +324,16 @@ def cmd_add_firewall(args: argparse.Namespace) -> int:
         logger.info("试运行预览防火墙规则 %d 条 owner=%s", len(payload_rows), owner_id)
         return 0
 
-    created = 0
-    for rule_data in payload_rows:
-        try:
-            rid = fw.create(rule_data)
-            print(rid["id"])
-            created += 1
-        except ValueError as e:
-            logger.error("创建规则失败: %s", e)
-            print(str(e), file=sys.stderr)
-            return 1
-
-    logger.info("防火墙规则已导入 %d 条 owner=%s", created, owner_id)
-    return 0 if created else 1
+    try:
+        created_rows = fw.create_many(payload_rows)
+    except (ValueError, RuntimeError) as exc:
+        logger.error("创建防火墙规则失败: %s", exc)
+        print(str(exc), file=sys.stderr)
+        return 1
+    for row in created_rows:
+        print(row["id"])
+    logger.info("防火墙规则已导入 %d 条 owner=%s", len(created_rows), owner_id)
+    return 0 if created_rows else 1
 
 
 def cmd_hash_admin_password(args: argparse.Namespace) -> int:
@@ -781,6 +786,258 @@ def _add_group_selector(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--group-name", default=None, help="组名称（与 --group-id 二选一）")
 
 
+# -------------------- tag --------------------
+
+def _resolve_tag(ts: TagService, tag_ref: str) -> dict:
+    return _resolve_tag_ref(ts, tag_ref)
+
+
+def _tag_member_payload(ts: TagService, tag: dict) -> dict:
+    tag_id = str(tag["id"])
+    members = ts.store.get_tag_members(tag_id)
+    groups_by_id = {str(row["id"]): row for row in GroupService().list_all()}
+    return {
+        "tag": tag,
+        "users": members.get("usernames") or [],
+        "groups": [
+            {"id": gid, "name": str(groups_by_id.get(gid, {}).get("name") or "")}
+            for gid in (members.get("group_ids") or [])
+        ],
+        "center_firewall_rule_count": ts.rule_count(tag_id),
+        "peer_references": ts.list_peer_tag_references(tag_id),
+    }
+
+
+def cmd_tag_list(args: argparse.Namespace) -> int:
+    del args
+    ts = TagService()
+    counts = ts.store.list_tag_counts()
+    rows = []
+    for tag in ts.list_all():
+        count = counts.get(str(tag["id"]), {})
+        rows.append({
+            **tag,
+            "user_count": int(count.get("users", 0)),
+            "group_count": int(count.get("groups", 0)),
+            "rule_count": int(count.get("rules", 0)),
+        })
+    _print_rows(rows, [
+        ("name", "标签"), ("id", "ID"), ("description", "说明"),
+        ("user_count", "用户"), ("group_count", "用户组"),
+        ("rule_count", "中心规则"), ("device_binding_exempt", "设备豁免"),
+        ("sso_required", "SSO"),
+    ])
+    return 0
+
+
+def cmd_tag_show(args: argparse.Namespace) -> int:
+    ts = TagService()
+    _print_json(_tag_member_payload(ts, _resolve_tag(ts, args.tag_ref)))
+    return 0
+
+
+def cmd_tag_add(args: argparse.Namespace) -> int:
+    try:
+        tag = TagService().create(
+            args.name, description=args.description or "",
+            device_binding_exempt=args.device_binding_exempt,
+            sso_required=args.sso_required,
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(tag)
+    return 0
+
+
+def cmd_tag_update(args: argparse.Namespace) -> int:
+    ts = TagService()
+    current = _resolve_tag(ts, args.tag_ref)
+    name = str(args.name if args.name is not None else current.get("name") or "").strip()
+    description = str(
+        args.description if args.description is not None else current.get("description") or ""
+    )
+    if args.dry_run:
+        return _dry_run_result(
+            "tag.update", tag_id=current["id"],
+            current={
+                "name": current.get("name"), "description": current.get("description"),
+                "device_binding_exempt": current.get("device_binding_exempt", False),
+                "sso_required": current.get("sso_required", False),
+            },
+            requested={
+                "name": name, "description": description,
+                "device_binding_exempt": args.device_binding_exempt,
+                "sso_required": args.sso_required,
+            },
+        )
+    try:
+        updated = ts.update(
+            str(current["id"]), name=name, description=description,
+            device_binding_exempt=args.device_binding_exempt,
+            sso_required=args.sso_required,
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(updated)
+    return 0
+
+
+def cmd_tag_delete(args: argparse.Namespace) -> int:
+    ts = TagService()
+    tag = _resolve_tag(ts, args.tag_ref)
+    members = ts.store.get_tag_members(str(tag["id"]))
+    peer_refs = ts.list_peer_tag_references(str(tag["id"]))
+    rule_count = ts.rule_count(str(tag["id"]))
+    blockers = {
+        "users": len(members.get("usernames") or []),
+        "groups": len(members.get("group_ids") or []),
+        "center_firewall_rules": rule_count,
+        "peer_references": peer_refs,
+    }
+    if args.dry_run:
+        return _dry_run_result(
+            "tag.delete", tag_id=tag["id"], name=tag.get("name"),
+            blockers=blockers,
+            deletable=not (
+                blockers["users"] or blockers["groups"]
+                or blockers["center_firewall_rules"] or blockers["peer_references"]
+            ),
+        )
+    try:
+        ts.delete(str(tag["id"]))
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"deleted": True, "id": tag["id"], "name": tag.get("name")})
+    return 0
+
+
+def cmd_tag_member_list(args: argparse.Namespace) -> int:
+    ts = TagService()
+    _print_json(_tag_member_payload(ts, _resolve_tag(ts, args.tag_ref)))
+    return 0
+
+
+def cmd_tag_member_change(args: argparse.Namespace) -> int:
+    ts = TagService()
+    tag = _resolve_tag(ts, args.tag_ref)
+    operation = args.operation
+    current = ts.store.get_tag_members(str(tag["id"]))
+    current_users = set(current.get("usernames") or [])
+    current_groups = set(current.get("group_ids") or [])
+    requested_users = {
+        str(value).strip() for value in (args.usernames or []) if str(value).strip()
+    }
+    gs = GroupService()
+    requested_groups = {_resolve_group_ref(gs, value) for value in (args.groups or [])}
+    if operation != "clear" and not requested_users and not requested_groups:
+        print("请至少指定一个 --user 或 --group；清空关联请使用 tag member clear。", file=sys.stderr)
+        return 2
+    us = UserService()
+    for username in requested_users:
+        user = us.get(username)
+        if not user or user.get("status") == "deleted":
+            print(f"用户不存在或已删除: {username}", file=sys.stderr)
+            return 1
+    if operation == "add":
+        desired_users, desired_groups = current_users | requested_users, current_groups | requested_groups
+    elif operation == "remove":
+        desired_users, desired_groups = current_users - requested_users, current_groups - requested_groups
+    elif operation == "set":
+        desired_users, desired_groups = requested_users, requested_groups
+    elif operation == "clear":
+        desired_users, desired_groups = set(), set()
+    else:
+        raise SystemExit(f"未知标签成员操作: {operation}")
+    before = {"users": sorted(current_users), "groups": sorted(current_groups)}
+    after = {"users": sorted(desired_users), "groups": sorted(desired_groups)}
+    if args.dry_run:
+        return _dry_run_result(
+            f"tag.member.{operation}", tag_id=tag["id"], before=before, after=after,
+            note="未修改 SQLite 标签关联，未刷新中心/对端防火墙和 Mesh 路由",
+        )
+    try:
+        ts.set_members(str(tag["id"]), usernames=after["users"], group_ids=after["groups"])
+    except (ValueError, RuntimeError, OSError) as exc:
+        logger.exception("更新标签成员失败 tag=%s", tag["id"])
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({
+        "tag_id": tag["id"], "tag_name": tag.get("name"),
+        "changed": before != after, "members": after,
+    })
+    return 0
+
+
+# -------------------- firewall rules --------------------
+
+def cmd_firewall_rule_list(args: argparse.Namespace) -> int:
+    rows = FirewallRuleService().list_all_flat()
+    if args.owner_type:
+        rows = [row for row in rows if str(row.get("owner_type") or "") == args.owner_type]
+    if args.owner_id:
+        rows = [row for row in rows if str(row.get("owner_id") or "") == args.owner_id]
+    rows.sort(key=lambda row: (int(row.get("priority") or 0), str(row.get("id") or "")))
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_rows(rows, [
+            ("id", "规则 ID"), ("owner_type", "归属类型"), ("owner_id", "归属 ID"),
+            ("priority", "优先级"), ("action", "动作"), ("source_subnet", "源网段"),
+            ("dest_ip", "目标 IP"), ("dest_port", "目标端口"), ("protocol", "协议"),
+            ("enabled", "启用"), ("description", "说明"),
+        ])
+    return 0
+
+
+def cmd_firewall_rule_delete(args: argparse.Namespace) -> int:
+    fw = FirewallRuleService()
+    rule = next((row for row in fw.list_all_flat() if str(row.get("id")) == args.rule_id), None)
+    if rule is None:
+        print(f"防火墙规则不存在: {args.rule_id}", file=sys.stderr)
+        return 1
+    if args.dry_run:
+        return _dry_run_result("firewall.rule.delete", rule=rule)
+    try:
+        fw.delete(args.rule_id)
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"deleted": True, "id": args.rule_id})
+    return 0
+
+
+def _cmd_firewall_rule_status(args: argparse.Namespace, enabled: bool) -> int:
+    fw = FirewallRuleService()
+    rule = next((row for row in fw.list_all_flat() if str(row.get("id")) == args.rule_id), None)
+    if rule is None:
+        print(f"防火墙规则不存在: {args.rule_id}", file=sys.stderr)
+        return 1
+    if args.dry_run:
+        return _dry_run_result(
+            "firewall.rule.enable" if enabled else "firewall.rule.disable",
+            rule_id=args.rule_id, from_enabled=bool(rule.get("enabled", True)),
+            to_enabled=enabled,
+        )
+    try:
+        fw.set_enabled(args.rule_id, enabled)
+    except (ValueError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json({"id": args.rule_id, "enabled": enabled})
+    return 0
+
+
+def cmd_firewall_rule_enable(args: argparse.Namespace) -> int:
+    return _cmd_firewall_rule_status(args, True)
+
+
+def cmd_firewall_rule_disable(args: argparse.Namespace) -> int:
+    return _cmd_firewall_rule_status(args, False)
+
+
 def _add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dry-run",
@@ -795,10 +1052,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).name,
         description=(
-            "NiceVPN 命令行管理工具；入口：./start.sh cli …（或 Python 3.10+ cli.py）\n\n"
-            "推荐使用分层命令：group / user / add-firewall。"
-            "旧命令 add-group / add-user 继续兼容。\n"
-            "试运行：在命令行任意位置加入 --dry-run。"
+            "NiceVPN 命令行管理工具\n\n"
+            "按资源分组：group / user / tag / firewall / admin。\n"
+            "修改操作可在任意位置加入 --dry-run 预览。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -806,164 +1062,177 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(dry_run_root=False)
     sub = p.add_subparsers(dest="command", required=True)
 
-    # ---------- group ----------
     group = sub.add_parser("group", help="用户组管理")
     group_sub = group.add_subparsers(dest="group_command", required=True)
-
     gl = group_sub.add_parser("list", help="列出用户组")
     gl.add_argument("--json", action="store_true", help="输出 JSON")
     gl.set_defaults(func=cmd_group_list, dry_run=False)
-
     gs = group_sub.add_parser("show", help="查看用户组详情")
     _add_group_selector(gs)
     gs.set_defaults(func=cmd_group_show, dry_run=False)
-
-    ga = group_sub.add_parser("add", help="添加用户组")
+    ga = group_sub.add_parser("add", help="创建用户组")
     ga.add_argument("--name", required=True, help="组名称")
     ga.add_argument("--subnet", required=True, help="子网 CIDR，如 10.8.1.0/24")
     _add_dry_run(ga)
     ga.set_defaults(func=cmd_group_add)
-
     gu = group_sub.add_parser("update", help="修改用户组名称或子网")
     _add_group_selector(gu)
-    gu.add_argument("--name", default=None, help="新组名称；省略则保持不变")
-    gu.add_argument("--subnet", default=None, help="新子网 CIDR；省略则保持不变")
+    gu.add_argument("--name", default=None, help="新组名称")
+    gu.add_argument("--subnet", default=None, help="新子网 CIDR")
     _add_dry_run(gu)
     gu.set_defaults(func=cmd_group_update)
+    for action, help_text, func in (
+        ("delete", "删除用户组", cmd_group_delete),
+        ("enable", "启用用户组", cmd_group_enable),
+        ("disable", "停用用户组", cmd_group_disable),
+    ):
+        gp = group_sub.add_parser(action, help=help_text)
+        _add_group_selector(gp)
+        _add_dry_run(gp)
+        gp.set_defaults(func=func)
 
-    gd = group_sub.add_parser("delete", help="删除用户组")
-    _add_group_selector(gd)
-    _add_dry_run(gd)
-    gd.set_defaults(func=cmd_group_delete)
-
-    ge = group_sub.add_parser("enable", help="启用用户组")
-    _add_group_selector(ge)
-    _add_dry_run(ge)
-    ge.set_defaults(func=cmd_group_enable)
-
-    gx = group_sub.add_parser("disable", help="停用用户组")
-    _add_group_selector(gx)
-    _add_dry_run(gx)
-    gx.set_defaults(func=cmd_group_disable)
-
-    # ---------- user ----------
     user = sub.add_parser("user", help="VPN 用户管理")
     user_sub = user.add_subparsers(dest="user_command", required=True)
-
     ul = user_sub.add_parser("list", help="列出用户")
     _add_group_selector(ul)
     ul.add_argument("--status", choices=("active", "disabled"), default=None, help="按状态筛选")
     ul.add_argument("--json", action="store_true", help="输出 JSON")
     ul.set_defaults(func=cmd_user_list, dry_run=False)
-
     ushow = user_sub.add_parser("show", help="查看用户详情")
     ushow.add_argument("username", help="用户名")
     ushow.set_defaults(func=cmd_user_show, dry_run=False)
-
-    ua = user_sub.add_parser("add", help="添加 VPN 用户（需已初始化 PKI）")
+    ua = user_sub.add_parser("add", help="创建 VPN 用户（需已初始化 PKI）")
     ua.add_argument("--username", required=True, help="用户名")
     _add_group_selector(ua)
     ua.add_argument("--password", default=None, help="客户端私钥加密密码；只传给 EasyRSA，不保存")
     _add_dry_run(ua)
     ua.set_defaults(func=cmd_user_add)
-
-    ud = user_sub.add_parser("delete", help="删除用户并吊销证书")
-    ud.add_argument("username", help="用户名")
-    _add_dry_run(ud)
-    ud.set_defaults(func=cmd_user_delete)
-
-    ue = user_sub.add_parser("enable", help="启用用户")
-    ue.add_argument("username", help="用户名")
-    _add_dry_run(ue)
-    ue.set_defaults(func=cmd_user_enable)
-
-    ux = user_sub.add_parser("disable", help="停用用户并踢下线")
-    ux.add_argument("username", help="用户名")
-    _add_dry_run(ux)
-    ux.set_defaults(func=cmd_user_disable)
-
+    for action, help_text, func in (
+        ("delete", "删除用户并吊销证书", cmd_user_delete),
+        ("enable", "启用用户", cmd_user_enable),
+        ("disable", "停用用户并踢下线", cmd_user_disable),
+        ("kick", "踢掉用户当前在线会话", cmd_user_kick),
+    ):
+        up = user_sub.add_parser(action, help=help_text)
+        up.add_argument("username", help="用户名")
+        _add_dry_run(up)
+        up.set_defaults(func=func)
     um = user_sub.add_parser("move", help="切换用户所属组并重新分配 VPN IP")
     um.add_argument("username", help="用户名")
     _add_group_selector(um)
     _add_dry_run(um)
     um.set_defaults(func=cmd_user_move)
-
-    ur = user_sub.add_parser("regenerate-ovpn", help="按当前 PKI/组配置重建用户 OVPN")
-    ur.add_argument("username", help="用户名")
-    _add_dry_run(ur)
-    ur.set_defaults(func=cmd_user_regenerate_ovpn)
-
-    uk = user_sub.add_parser("kick", help="踢掉用户当前在线会话")
-    uk.add_argument("username", help="用户名")
-    _add_dry_run(uk)
-    uk.set_defaults(func=cmd_user_kick)
-
-
     device = user_sub.add_parser("device", help="用户设备绑定管理")
     device_sub = device.add_subparsers(dest="user_device_command", required=True)
-
     ds = device_sub.add_parser("show", help="查看用户当前设备绑定")
     ds.add_argument("username", help="用户名")
     ds.set_defaults(func=cmd_user_device_show, dry_run=False)
-
     dr = device_sub.add_parser("reset", help="重置用户设备绑定")
     dr.add_argument("username", help="用户名")
     _add_dry_run(dr)
     dr.set_defaults(func=cmd_user_device_reset)
-
-    ovpn = user_sub.add_parser("ovpn", help="用户 OVPN 配置管理")
+    ovpn = user_sub.add_parser("ovpn", help="用户客户端配置管理")
     ovpn_sub = ovpn.add_subparsers(dest="user_ovpn_command", required=True)
-
     os = ovpn_sub.add_parser("show", help="查看 OVPN 文件路径和状态")
     os.add_argument("username", help="用户名")
     os.set_defaults(func=cmd_user_ovpn_show, dry_run=False)
-
     oe = ovpn_sub.add_parser("export", help="导出 OVPN 到本机指定路径")
     oe.add_argument("username", help="用户名")
     oe.add_argument("--output", "-o", required=True, help="目标文件或目录")
     _add_dry_run(oe)
     oe.set_defaults(func=cmd_user_ovpn_export)
-
-    org = ovpn_sub.add_parser("regenerate", help="按当前 PKI/组配置重建 OVPN")
+    org = ovpn_sub.add_parser("regenerate", help="按当前 PKI/组配置重建用户 OVPN")
     org.add_argument("username", help="用户名")
     _add_dry_run(org)
     org.set_defaults(func=cmd_user_ovpn_regenerate)
 
-    # ---------- backward-compatible flat commands ----------
-    g = sub.add_parser("add-group", help="兼容旧命令：添加用户组")
-    g.add_argument("--name", required=True, help="组名称")
-    g.add_argument("--subnet", required=True, help="子网 CIDR，如 10.8.1.0/24")
-    _add_dry_run(g)
-    g.set_defaults(func=cmd_add_group)
+    tag = sub.add_parser("tag", help="标签管理（含成员关联）")
+    tag_sub = tag.add_subparsers(dest="tag_command", required=True)
+    tl = tag_sub.add_parser("list", help="列出标签及关联数量")
+    tl.set_defaults(func=cmd_tag_list, dry_run=False)
+    tshow = tag_sub.add_parser("show", help="查看标签、成员和引用详情")
+    tshow.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
+    tshow.set_defaults(func=cmd_tag_show, dry_run=False)
+    ta = tag_sub.add_parser("add", help="创建标签")
+    ta.add_argument("--name", required=True, help="标签名称")
+    ta.add_argument("--description", default="", help="标签说明")
+    ta.add_argument("--device-binding-exempt", action="store_true", help="该标签成员豁免设备绑定")
+    ta.add_argument("--sso-required", action="store_true", help="该标签成员必须通过企业 SSO")
+    ta.set_defaults(func=cmd_tag_add, dry_run=False)
+    tu = tag_sub.add_parser("update", help="修改标签属性")
+    tu.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
+    tu.add_argument("--name", default=None, help="新标签名称")
+    tu.add_argument("--description", default=None, help="新标签说明")
+    ex = tu.add_mutually_exclusive_group()
+    ex.add_argument("--device-binding-exempt", dest="device_binding_exempt", action="store_true")
+    ex.add_argument("--no-device-binding-exempt", dest="device_binding_exempt", action="store_false")
+    sso = tu.add_mutually_exclusive_group()
+    sso.add_argument("--sso-required", dest="sso_required", action="store_true")
+    sso.add_argument("--no-sso-required", dest="sso_required", action="store_false")
+    tu.set_defaults(device_binding_exempt=None, sso_required=None)
+    _add_dry_run(tu)
+    tu.set_defaults(func=cmd_tag_update)
+    td = tag_sub.add_parser("delete", help="删除未被使用的标签")
+    td.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
+    _add_dry_run(td)
+    td.set_defaults(func=cmd_tag_delete)
+    member = tag_sub.add_parser("member", help="管理标签关联的用户和用户组")
+    member_sub = member.add_subparsers(dest="tag_member_command", required=True)
+    tml = member_sub.add_parser("list", help="列出标签成员")
+    tml.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
+    tml.set_defaults(func=cmd_tag_member_list, dry_run=False)
+    for action, help_text in (
+        ("add", "向标签添加用户或用户组"),
+        ("remove", "从标签移除用户或用户组"),
+        ("set", "整体替换标签成员"),
+        ("clear", "清空标签的全部成员"),
+    ):
+        tm = member_sub.add_parser(action, help=help_text)
+        tm.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
+        tm.add_argument("--user", dest="usernames", action="append", default=[], help="用户名，可重复指定")
+        tm.add_argument("--group", dest="groups", action="append", default=[], help="用户组名称或 ID，可重复指定")
+        _add_dry_run(tm)
+        tm.set_defaults(func=cmd_tag_member_change, operation=action)
 
-    u = sub.add_parser("add-user", help="兼容旧命令：添加 VPN 用户")
-    u.add_argument("--username", required=True, help="用户名")
-    _add_group_selector(u)
-    u.add_argument("--password", default=None, help="客户端私钥加密密码；仅传给 EasyRSA，不保存")
-    _add_dry_run(u)
-    u.set_defaults(func=cmd_add_user)
-
-    # ---------- firewall (保持原行为) ----------
-    fw = sub.add_parser("add-firewall", help="添加防火墙规则；可从 iptables 命令文本文件导入")
-    fw.add_argument("--owner-type", required=True, choices=("group", "user"), help="规则归属类型")
-    fw.add_argument("--owner-id", default=None, help="组 UUID（owner-type=group 时）")
-    fw.add_argument("--group-name", default=None, help="组名（与 owner-id 二选一）")
-    fw.add_argument("--username", default=None, help="用户名（owner-type=user 时）")
-    iptables_file = fw.add_argument(
-        "--iptables-file",
-        default=None,
-        help="每行一条完整命令，如 iptables -A INPUT -p udp --dport 1194 -j ACCEPT",
+    firewall = sub.add_parser("firewall", help="中心防火墙规则管理")
+    firewall_sub = firewall.add_subparsers(dest="firewall_command", required=True)
+    rule = firewall_sub.add_parser("rule", help="中心防火墙规则")
+    rule_sub = rule.add_subparsers(dest="firewall_rule_command", required=True)
+    frl = rule_sub.add_parser("list", help="列出防火墙规则")
+    frl.add_argument("--owner-type", choices=("group", "user", "tag"), default=None)
+    frl.add_argument("--owner-id", default=None, help="按归属对象 ID 筛选")
+    frl.add_argument("--json", action="store_true", help="输出 JSON")
+    frl.set_defaults(func=cmd_firewall_rule_list, dry_run=False)
+    fra = rule_sub.add_parser("add", help="从 iptables 命令创建中心防火墙规则")
+    fra.add_argument("--owner-type", required=True, choices=("group", "user", "tag"), help="规则归属类型")
+    fra.add_argument("--owner", required=True, help="归属对象名称或 ID")
+    iptables_file = fra.add_argument(
+        "--iptables-file", default=None,
+        help="每行一条完整 iptables 命令，如 iptables -A INPUT -p udp --dport 1194 -j ACCEPT",
     )
-    fw.add_argument("--iptables-line", default=None, help="单条 iptables 命令")
-    _add_dry_run(fw)
-    fw.set_defaults(func=cmd_add_firewall)
+    fra.add_argument("--iptables-line", default=None, help="单条 iptables 命令")
+    _add_dry_run(fra)
+    fra.set_defaults(func=cmd_add_firewall)
     if FilesCompleter is not None:
         iptables_file.completer = FilesCompleter()
+    for action, help_text, func in (
+        ("delete", "删除防火墙规则", cmd_firewall_rule_delete),
+        ("enable", "启用防火墙规则", cmd_firewall_rule_enable),
+        ("disable", "停用防火墙规则", cmd_firewall_rule_disable),
+    ):
+        fp = rule_sub.add_parser(action, help=help_text)
+        fp.add_argument("rule_id", help="规则 ID")
+        _add_dry_run(fp)
+        fp.set_defaults(func=func)
 
-    auth = sub.add_parser("hash-admin-password", help="交互生成管理后台使用的 Argon2id 密码哈希")
-    auth.set_defaults(func=cmd_hash_admin_password, dry_run=False)
-
+    admin = sub.add_parser("admin", help="管理后台工具")
+    admin_sub = admin.add_subparsers(dest="admin_command", required=True)
+    password = admin_sub.add_parser("password", help="管理员密码管理")
+    password_sub = password.add_subparsers(dest="admin_password_command", required=True)
+    password_hash = password_sub.add_parser("hash", help="交互生成 Argon2id 密码哈希")
+    password_hash.set_defaults(func=cmd_hash_admin_password, dry_run=False)
     return p
+
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
