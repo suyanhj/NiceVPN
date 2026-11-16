@@ -184,10 +184,10 @@ openvpn_recover_source_install() {
 
 openvpn_compile_install() {
     openvpn_download_source
-    openvpn_recover_source_install
 
     local prefix_parent prefix_base stage_root staged_prefix staged_bin
     local version_output version expected_version backup_root backup_prefix
+    OPENVPN_PREFIX="${OPENVPN_PREFIX%/}"
     case "${OPENVPN_PREFIX}" in
         /*) ;;
         *)
@@ -206,6 +206,7 @@ openvpn_compile_install() {
             return 1
             ;;
     esac
+    openvpn_recover_source_install
 
     prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
@@ -341,7 +342,7 @@ openvpn_install_server_systemd_from_src() {
     template="${OPENVPN_SRC_DIR}/distro/systemd/openvpn-server@.service.in"
     if [ ! -f "${template}" ]; then
         echo "OpenVPN 源码缺少 server systemd 模板: ${template}" >&2
-        exit 1
+        return 1
     fi
     parts="$(_parse_openvpn_version_parts "${OPENVPN_TAG}")"
     major="${parts%% *}"
