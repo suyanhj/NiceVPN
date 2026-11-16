@@ -159,19 +159,39 @@ EOF
 # 如果上次在 prefix 备份切换后被 SIGKILL，先恢复最近的完整旧版本；
 # 未发布的 stage 目录只会在持有安装锁时清理。
 openvpn_recover_source_install() {
-    local prefix_parent prefix_base backup_root latest_backup="" stage_root
+    local prefix_parent prefix_base backup_root candidate candidate_mtime
+    local latest_backup="" latest_backup_root="" latest_mtime=0 stage_root
     prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
     mkdir -p -- "${prefix_parent}"
 
     if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+        # 兼容 upgrade.py 的 old_tree 和 Shell 安装流程自己的 backup 目录。
+        for backup_root in "${prefix_parent}/${prefix_base}.nicevpn-old-"*; do
+            [ -d "${backup_root}" ] || [ -L "${backup_root}" ] || continue
+            candidate="${backup_root}"
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
+                latest_mtime="${candidate_mtime}"
+                latest_backup="${candidate}"
+                latest_backup_root=""
+            fi
+        done
         for backup_root in "${prefix_parent}/.${prefix_base}.backup."*; do
-            [ -d "${backup_root}/${prefix_base}" ] || continue
-            latest_backup="${backup_root}/${prefix_base}"
+            candidate="${backup_root}/${prefix_base}"
+            [ -d "${candidate}" ] && [ ! -L "${candidate}" ] || continue
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
+                latest_mtime="${candidate_mtime}"
+                latest_backup="${candidate}"
+                latest_backup_root="${backup_root}"
+            fi
         done
         if [ -n "${latest_backup}" ]; then
             mv -T -- "${latest_backup}" "${OPENVPN_PREFIX}"
-            rmdir -- "$(dirname -- "${latest_backup}")" 2>/dev/null || true
+            if [ -n "${latest_backup_root}" ]; then
+                rmdir -- "${latest_backup_root}" 2>/dev/null || true
+            fi
             _log "检测到上次 OpenVPN prefix 切换中断，已恢复旧版本: ${OPENVPN_PREFIX}"
         fi
     fi
