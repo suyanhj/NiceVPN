@@ -20,7 +20,7 @@
 
 1. 在「系统设置 → 企业认证 → 统一认证」选择钉钉或企业微信，并填写对应应用凭证。
 2. 钉钉填写一套应用 Client ID / Secret，并维护允许企业名单；企业微信填写 CorpId、AgentId 和 Secret。
-3. 在身份提供商登记回调地址：`https://<域名>/auth/sso/dingtalk/callback` 或 `https://<域名>/auth/sso/wecom/callback`。HTTP 也可用于可信内网测试。
+3. 在身份提供商登记回调地址：API 基址加 `/auth/sso/dingtalk/callback` 或 `/auth/sso/wecom/callback`，例如 `https://vpn.example.com/auth/sso/dingtalk/callback`；内网直连可用 `http://192.168.1.10:8881/auth/sso/dingtalk/callback`。
 4. 在 NiceVPN 设置「认证地址」；留空时使用「系统设置 → 访问地址」中的首个 `domains` 地址。地址需包含协议和主机，可带端口，不要带路径。
 5. 打开「开启认证」；按需打开「所有人生效」，否则在目标用户组或标签上开启 SSO。
 
