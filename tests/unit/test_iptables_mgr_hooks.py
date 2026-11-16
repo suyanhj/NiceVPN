@@ -308,8 +308,6 @@ def test_export_rules_keeps_only_filter_header_vpn_chain_and_commit(monkeypatch)
         "-A FORWARD -j VPN_FORWARD\n"
         "-A VPN_FORWARD -s 10.8.0.0/24 -j ACCEPT\n"
         "COMMIT\n"
-        "*nat\n"
-        "COMMIT\n"
     )
     monkeypatch.setattr(
         iptables_module.subprocess,
