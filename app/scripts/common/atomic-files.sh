@@ -10,7 +10,7 @@ nicevpn_atomic_write_stdin() (
 
     dir="$(dirname -- "${target}")"
     base="$(basename -- "${target}")"
-    install -d -m 0755 -- "${dir}"
+    mkdir -p -- "${dir}"
 
     if [[ -L "${target}" ]]; then
         echo "[atomic-files] 拒绝覆盖符号链接目标: ${target}" >&2
@@ -43,7 +43,7 @@ nicevpn_atomic_write_command() (
 
     dir="$(dirname -- "${target}")"
     base="$(basename -- "${target}")"
-    install -d -m 0755 -- "${dir}"
+    mkdir -p -- "${dir}"
 
     if [[ -L "${target}" ]]; then
         echo "[atomic-files] 拒绝覆盖符号链接目标: ${target}" >&2
@@ -70,7 +70,7 @@ nicevpn_atomic_symlink() (
 
     dir="$(dirname -- "${link_path}")"
     base="$(basename -- "${link_path}")"
-    install -d -m 0755 -- "${dir}"
+    mkdir -p -- "${dir}"
 
     if [[ -e "${link_path}" && ! -L "${link_path}" ]]; then
         echo "[atomic-files] 拒绝替换非符号链接路径: ${link_path}" >&2
