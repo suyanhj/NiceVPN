@@ -563,6 +563,10 @@ openvpn_rollback_previous_prefix() {
 }
 
 openvpn_acquire_install_lock() {
+    if [ "${NICEVPN_INSTALL_LOCK_HELD:-0}" = "1" ]; then
+        _log "安装锁由上层 Python 进程持有"
+        return 0
+    fi
     nicevpn_ensure_commands flock util-linux
     mkdir -p /run/lock
     exec 9>/run/lock/nicevpn-install.lock
