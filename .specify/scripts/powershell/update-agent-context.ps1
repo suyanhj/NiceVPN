@@ -12,7 +12,7 @@ Mirrors the behavior of scripts/bash/update-agent-context.sh:
  5. Multi-Agent Support (claude, gemini, copilot, cursor-agent, qwen, opencode, codex, windsurf, junie, kilocode, auggie, roo, codebuddy, amp, shai, tabnine, kiro-cli, agy, bob, vibe, qodercli, kimi, trae, pi, iflow, generic)
 
 .PARAMETER AgentType
-Optional agent key to update a single agent. If omitted, updates all existing agent files (creating a default Claude file if none exist).
+Optional agent key to update a single agent. If omitted, updates all existing agent files (creating the shared agent.md if none exist).
 
 .EXAMPLE
 ./update-agent-context.ps1 -AgentType claude
@@ -44,7 +44,7 @@ $IMPL_PLAN     = $envData.IMPL_PLAN
 $NEW_PLAN = $IMPL_PLAN
 
 # Agent file paths
-$CLAUDE_FILE   = Join-Path $REPO_ROOT 'CLAUDE.md'
+$AGENT_FILE   = Join-Path $REPO_ROOT 'agent.md'
 $GEMINI_FILE   = Join-Path $REPO_ROOT 'GEMINI.md'
 $COPILOT_FILE  = Join-Path $REPO_ROOT '.github/agents/copilot-instructions.md'
 $CURSOR_FILE   = Join-Path $REPO_ROOT '.cursor/rules/specify-rules.mdc'
@@ -390,7 +390,7 @@ function Update-SpecificAgent {
         [string]$Type
     )
     switch ($Type) {
-        'claude'   { Update-AgentFile -TargetFile $CLAUDE_FILE   -AgentName 'Claude Code' }
+        'claude'   { Update-AgentFile -TargetFile $AGENT_FILE   -AgentName 'Project Agent Guide' }
         'gemini'   { Update-AgentFile -TargetFile $GEMINI_FILE   -AgentName 'Gemini CLI' }
         'copilot'  { Update-AgentFile -TargetFile $COPILOT_FILE  -AgentName 'GitHub Copilot' }
         'cursor-agent' { Update-AgentFile -TargetFile $CURSOR_FILE   -AgentName 'Cursor IDE' }
@@ -423,7 +423,7 @@ function Update-SpecificAgent {
 function Update-AllExistingAgents {
     $found = $false
     $ok = $true
-    if (Test-Path $CLAUDE_FILE)   { if (-not (Update-AgentFile -TargetFile $CLAUDE_FILE   -AgentName 'Claude Code')) { $ok = $false }; $found = $true }
+    if (Test-Path $AGENT_FILE)   { if (-not (Update-AgentFile -TargetFile $AGENT_FILE   -AgentName 'Project Agent Guide')) { $ok = $false }; $found = $true }
     if (Test-Path $GEMINI_FILE)   { if (-not (Update-AgentFile -TargetFile $GEMINI_FILE   -AgentName 'Gemini CLI')) { $ok = $false }; $found = $true }
     if (Test-Path $COPILOT_FILE)  { if (-not (Update-AgentFile -TargetFile $COPILOT_FILE  -AgentName 'GitHub Copilot')) { $ok = $false }; $found = $true }
     if (Test-Path $CURSOR_FILE)   { if (-not (Update-AgentFile -TargetFile $CURSOR_FILE   -AgentName 'Cursor IDE')) { $ok = $false }; $found = $true }
@@ -446,8 +446,8 @@ function Update-AllExistingAgents {
     if (Test-Path $TRAE_FILE)     { if (-not (Update-AgentFile -TargetFile $TRAE_FILE     -AgentName 'Trae')) { $ok = $false }; $found = $true }
     if (Test-Path $IFLOW_FILE)    { if (-not (Update-AgentFile -TargetFile $IFLOW_FILE    -AgentName 'iFlow CLI')) { $ok = $false }; $found = $true }
     if (-not $found) {
-        Write-Info 'No existing agent files found, creating default Claude file...'
-        if (-not (Update-AgentFile -TargetFile $CLAUDE_FILE -AgentName 'Claude Code')) { $ok = $false }
+        Write-Info 'No existing agent files found, creating shared agent.md...'
+        if (-not (Update-AgentFile -TargetFile $AGENT_FILE -AgentName 'Project Agent Guide')) { $ok = $false }
     }
     return $ok
 }
