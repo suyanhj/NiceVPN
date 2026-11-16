@@ -9,6 +9,8 @@ SERVICE_NAME="openvpn-mgmt"
 BUILD_UI="${NICEVPN_BUILD_UI:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
+source "${ROOT_DIR}/deploy/shell/python-runtime.sh"
+
 log() {
     printf '[NiceVPN] %s\n' "$*"
 }
@@ -18,84 +20,8 @@ fail() {
     exit 1
 }
 
-python_supported() {
-    "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
-}
-
-python_version() {
-    "$1" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))'
-}
-
-python_executable_path() {
-    # 保留 .venv/bin/python 符号链接：realpath 会跳到 uv 的基础 Python，丢失虚拟环境依赖。
-    "$1" -c 'import os, sys; print(os.path.abspath(sys.executable))'
-}
-
-resolve_candidate() {
-    local candidate="$1"
-    if [[ "${candidate}" == */* ]]; then
-        [[ -x "${candidate}" ]] || return 1
-        printf '%s\n' "${candidate}"
-        return 0
-    fi
-    command -v "${candidate}" 2>/dev/null
-}
-
 select_python() {
-    local candidate resolved
-    local -a auto_candidates=()
-
-    # 1. 显式指定具有最高优先级；指定错误时直接失败，避免静默切换解释器。
-    if [[ -n "${PYTHON_BIN}" ]]; then
-        resolved="$(resolve_candidate "${PYTHON_BIN}")" || fail "PYTHON_BIN 不可执行或不存在：${PYTHON_BIN}"
-        python_supported "${resolved}" || fail "PYTHON_BIN 的 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_executable_path "${resolved}")"
-        return 0
-    fi
-
-    # 2. 项目 .venv 优先于外部已激活环境与系统 Python。
-    if [[ -d "${ROOT_DIR}/.venv" ]]; then
-        [[ -x "${ROOT_DIR}/.venv/bin/python" ]] || fail "项目 .venv 存在，但 bin/python 不可执行；请修复 .venv 或显式指定 PYTHON_BIN。"
-        resolved="${ROOT_DIR}/.venv/bin/python"
-        python_supported "${resolved}" || fail "项目 .venv Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_executable_path "${resolved}")"
-        return 0
-    fi
-
-    # 3. 无项目 .venv 时，复用当前激活的虚拟环境 / Conda 环境。
-    if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
-        resolved="${VIRTUAL_ENV}/bin/python"
-        python_supported "${resolved}" || fail "当前虚拟环境 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_executable_path "${resolved}")"
-        return 0
-    fi
-    if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
-        resolved="${CONDA_PREFIX}/bin/python"
-        python_supported "${resolved}" || fail "当前 Conda 环境 Python 版本过低：$(python_version "${resolved}")，要求 Python >= 3.10"
-        PYTHON_BIN="$(python_executable_path "${resolved}")"
-        return 0
-    fi
-
-    # 5. 再从当前 PATH 和常见版本命令中选择第一个满足要求的解释器。
-    auto_candidates=(
-        python
-        python3
-        python3.14
-        python3.13
-        python3.12
-        python3.11
-        python3.10
-    )
-    for candidate in "${auto_candidates[@]}"; do
-        resolved="$(resolve_candidate "${candidate}" || true)"
-        [[ -n "${resolved}" ]] || continue
-        if python_supported "${resolved}"; then
-            PYTHON_BIN="$(python_executable_path "${resolved}")"
-            return 0
-        fi
-    done
-
-    fail "未找到 Python >= 3.10。可通过 PYTHON_BIN=/path/to/python ./start.sh 显式指定。"
+    nicevpn_select_python "${ROOT_DIR}" || exit 1
 }
 
 frontend_assets_ready() {
@@ -185,7 +111,7 @@ main() {
     fi
 
     select_python
-    log "使用 Python $(python_version "${PYTHON_BIN}")：${PYTHON_BIN}"
+    log "使用 Python $(nicevpn_python_version "${PYTHON_BIN}")：${PYTHON_BIN}"
 
     if [[ "${mode}" == "daemon" ]]; then
         install_daemon
