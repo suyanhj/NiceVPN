@@ -332,60 +332,56 @@ class FirewallRuleService:
         return out
 
     def reorder(self, owner_id: str, new_id_order: list[str]) -> bool:
-        """按传入顺序重排规则；未传入的规则稳定追加到末尾并重新分配优先级。"""
+        """重排指定 Owner 的规则，同时保留全局规则顺序与 priority 唯一性。"""
         if not (owner_id or "").strip():
             return self._reorder_unified_global(new_id_order)
 
-        rules = self._load_rules(owner_id)
-        rule_map = {str(row.get("id") or ""): row for row in rules}
-        ordered_ids: list[str] = []
+        owner_rules = self._load_rules(owner_id)
+        owner_rule_ids = {
+            str(row.get("id") or "")
+            for row in owner_rules
+            if str(row.get("id") or "")
+        }
+        if not owner_rule_ids:
+            return True
+
+        ordered_owner_ids: list[str] = []
         seen: set[str] = set()
         for raw_id in new_id_order:
             rule_id = str(raw_id or "")
-            if rule_id not in rule_map:
-                logger.warning("排序时发现未知规则 ID: %s，跳过", rule_id)
+            if rule_id not in owner_rule_ids:
+                logger.warning("Owner 排序时发现未知规则 ID: %s，跳过", rule_id)
                 continue
             if rule_id in seen:
-                logger.warning("排序时发现重复规则 ID: %s，跳过", rule_id)
+                logger.warning("Owner 排序时发现重复规则 ID: %s，跳过", rule_id)
                 continue
             seen.add(rule_id)
-            ordered_ids.append(rule_id)
-
-        for row in rules:
+            ordered_owner_ids.append(rule_id)
+        for row in owner_rules:
             rule_id = str(row.get("id") or "")
             if rule_id and rule_id not in seen:
                 seen.add(rule_id)
-                ordered_ids.append(rule_id)
+                ordered_owner_ids.append(rule_id)
 
-        now = datetime.now().isoformat()
-        reordered: list[dict] = []
-        for idx, rule_id in enumerate(ordered_ids):
-            row = dict(rule_map[rule_id])
-            row["priority"] = (idx + 1) * 10
-            row["updated_at"] = now
-            reordered.append(row)
+        # 仅替换该 Owner 在全局序列中占据的位置，不改变其它 Owner/Peer 的相对位置。
+        unified = self.list_unified_flat()
+        owner_iter = iter(ordered_owner_ids)
+        global_order: list[str] = []
+        inserted: set[str] = set()
+        for row in unified:
+            rule_id = str(row.get("id") or "")
+            if rule_id in owner_rule_ids:
+                next_id = next(owner_iter, None)
+                if next_id:
+                    global_order.append(next_id)
+                    inserted.add(next_id)
+            elif rule_id:
+                global_order.append(rule_id)
+        for rule_id in ordered_owner_ids:
+            if rule_id not in inserted:
+                global_order.append(rule_id)
 
-        had_main = self.store.firewall_owner_exists(owner_id)
-        if had_main:
-            self._backup_center_rules_before_mutation(owner_id)
-        self._save_rules(owner_id, reordered)
-        try:
-            self._refresh_vpn_forward_only()
-        except Exception:
-            self._rollback_center_json_after_rebuild_fail(owner_id, had_main)
-            raise
-        if had_main:
-            self._clear_center_prepush_backup(owner_id)
-
-        self.audit.log(
-            action="reorder_firewall_rules",
-            target_type="firewall_rule",
-            target_id=owner_id,
-            detail=f"规则重新排序，新顺序: {ordered_ids}",
-            result="success",
-        )
-        logger.info("owner %s 的防火墙规则已重新排序", owner_id)
-        return True
+        return self._reorder_unified_global(global_order)
 
     def _reorder_unified_global(self, new_id_order: list[str]) -> bool:
         """全局排序：中心规则与 Peer 中心放行统一编号，失败时同时恢复两侧元数据。"""
