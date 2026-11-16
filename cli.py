@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.cli.entry import main
+from app.cli.entry import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
