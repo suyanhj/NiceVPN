@@ -29,6 +29,7 @@ from app.services.openvpn.instance import (
     iter_all_openvpn_instance_names,
     resolve_server_conf_dir,
 )
+from app.services.openvpn.install_lock import openvpn_install_lock
 from app.services.user.ovpn_gen import generate_ovpn
 
 logger = logging.getLogger(__name__)
@@ -725,8 +726,7 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
         _remove_path_strict(cli_link)
         cli_link.symlink_to(prefix / "sbin" / "openvpn")
 
-        from app.services.openvpn.install_lock import openvpn_install_lock
-from app.services.openvpn.installer import (
+        from app.services.openvpn.installer import (
             install_openvpn_server_systemd_from_staged_source,
         )
 
