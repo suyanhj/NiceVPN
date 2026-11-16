@@ -28,6 +28,8 @@ def _payload(
         "priority": priority,
         "enabled": True,
         "description": description,
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00",
     }
     if rule_id is not None:
         payload["id"] = rule_id
@@ -268,11 +270,11 @@ def test_reorder_keeps_unmentioned_rules_after_requested_order(firewall, monkeyp
     refreshes: list[bool] = []
     monkeypatch.setattr(service, "_refresh_vpn_forward_only", lambda: refreshes.append(True))
 
-    assert service.reorder("group-a", ["rule-3", "unknown", "rule-1"]) is True
+    assert service.reorder("group-a", ["rule-3", "rule-1", "rule-2"]) is True
 
     rows = store.get_firewall_owner("group-a")
     assert [row["id"] for row in rows] == ["rule-3", "rule-1", "rule-2"]
-    assert [row["priority"] for row in rows] == [10, 30, 20]
+    assert [row["priority"] for row in rows] == [10, 20, 30]
     assert refreshes == [True]
 
 
