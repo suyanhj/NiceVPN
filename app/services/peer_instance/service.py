@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -29,11 +30,18 @@ peer_remote_log = logging.getLogger("peer.remote")
 _PEER_LIFECYCLE_LOCK = threading.RLock()
 
 
+@contextmanager
+def peer_lifecycle_lock():
+    """跨 Peer 与中心防火墙写操作共享的进程内串行锁。"""
+    with _PEER_LIFECYCLE_LOCK:
+        yield
+
+
 def _serialize_peer_lifecycle(method):
     """串行化同进程 Peer CRUD，避免并发 CCD 快照互相覆盖。"""
     @functools.wraps(method)
     def wrapped(self, *args, **kwargs):
-        with _PEER_LIFECYCLE_LOCK:
+        with peer_lifecycle_lock():
             return method(self, *args, **kwargs)
     return wrapped
 
