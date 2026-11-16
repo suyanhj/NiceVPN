@@ -183,8 +183,6 @@ openvpn_recover_source_install() {
 }
 
 openvpn_compile_install() {
-    openvpn_download_source
-
     local prefix_parent prefix_base stage_root staged_prefix staged_bin
     local version_output version expected_version backup_root backup_prefix
     OPENVPN_PREFIX="${OPENVPN_PREFIX%/}"
@@ -207,6 +205,8 @@ openvpn_compile_install() {
             ;;
     esac
     openvpn_recover_source_install
+    # 恢复旧 prefix 优先于网络下载，确保中断恢复不依赖下载源可用。
+    openvpn_download_source
 
     prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
