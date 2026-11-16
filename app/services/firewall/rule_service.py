@@ -53,17 +53,37 @@ class FirewallRuleService:
         self, owner_id: str, had_main_before: bool
     ) -> None:
         """恢复 owner 写入前快照；原先不存在时恢复为空规则集。"""
-        snapshot = self._prepush_snapshots.pop(str(owner_id), None)
+        key = str(owner_id)
+        snapshot = self._prepush_snapshots.get(key)
         if snapshot is None:
-            snapshot = [] if not had_main_before else self._load_rules(owner_id)
-        self._save_rules(owner_id, snapshot)
-        logger.warning("中心规则已回滚 SQLite 快照 owner=%s", owner_id)
+            snapshot = [] if not had_main_before else self._load_rules(key)
+        self._save_rules(key, snapshot)
+        self._prepush_snapshots.pop(key, None)
+        logger.warning("中心规则已回滚 SQLite 快照 owner=%s", key)
 
     def _rollback_center_json_owners_after_rebuild_fail(
         self, owner_ids: list[str], had_main: dict[str, bool]
     ) -> None:
-        for oid in owner_ids:
-            self._rollback_center_json_after_rebuild_fail(oid, had_main.get(oid, False))
+        failures: list[tuple[str, Exception]] = []
+        for owner_id in owner_ids:
+            try:
+                self._rollback_center_json_after_rebuild_fail(
+                    owner_id,
+                    had_main.get(owner_id, False),
+                )
+            except Exception as exc:
+                failures.append((owner_id, exc))
+                logger.critical(
+                    "中心规则 SQLite 快照回滚失败 owner=%s: %s",
+                    owner_id,
+                    exc,
+                    exc_info=True,
+                )
+        if failures:
+            first_owner, first_error = failures[0]
+            raise RuntimeError(
+                f"中心规则 SQLite 回滚不完整，失败 owner 数量={len(failures)}，首个={first_owner}"
+            ) from first_error
 
     def _restore_peer_snapshots(
         self,
