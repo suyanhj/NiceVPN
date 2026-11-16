@@ -282,6 +282,7 @@ easyrsa_validate_binary() {
 easyrsa_download_and_install() (
     easyrsa_reuse_existing
     [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
+    : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
 
     nicevpn_ensure_commands flock util-linux
     mkdir -p "${EASYRSA_INSTALL_DIR}/releases"
