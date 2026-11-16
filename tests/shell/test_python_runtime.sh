@@ -28,10 +28,10 @@ case "\$*" in
         exit 1
         ;;
     *"sys.version_info[:3]"*)
-        printf '%s\\n' '${version}'
+        printf '%s\n' '${version}'
         ;;
     *"os.path.abspath(sys.executable)"*)
-        printf '%s\\n' "\$0"
+        printf '%s\n' "\$0"
         ;;
     *)
         exit 0
