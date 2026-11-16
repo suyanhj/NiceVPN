@@ -726,6 +726,7 @@ class PeerService:
             logger.critical("%s：恢复 mesh CCD 失败 peer=%s", reason, peer_id, exc_info=True)
         return failures
 
+    @_serialize_peer_lifecycle
     def patch_center_forward_priority(self, peer_id: str, priority: int) -> None:
         """仅更新 ``center_forward_priority``，不触发 CCD/SSH；由防火墙全局排序批量调用。"""
         cur = self.get(peer_id)
@@ -739,6 +740,7 @@ class PeerService:
         peer = PeerInstance(**merged)
         self.store.upsert_peer(peer.model_dump())
 
+    @_serialize_peer_lifecycle
     def patch_center_forward_enabled(self, peer_id: str, enabled: bool) -> None:
         """仅更新 center_forward_enabled；内核刷新失败时恢复 Peer 原始快照。"""
         cur = self.get(peer_id)
@@ -780,30 +782,34 @@ class PeerService:
         need_fw = _vpn_forward_wire_snapshot(cur) != _vpn_forward_wire_snapshot(dumped)
         need_mesh = _mesh_push_wire_snapshot(cur) != _mesh_push_wire_snapshot(dumped)
         need_ccd = _ccd_iroute_wire_snapshot(cur) != _ccd_iroute_wire_snapshot(dumped)
+        ccd_snapshot = _snapshot_ccd_files() if (need_ccd or need_mesh) else {}
 
         self.store.upsert_peer(dumped)
         try:
             if os.name != "nt":
                 from app.services.firewall.rule_service import FirewallRuleService
 
-                if refresh_center_iptables:
-                    if need_fw:
-                        FirewallRuleService().refresh_vpn_forward_only()
-                    else:
-                        logger.info(
-                            "对端保存无 VPN_FORWARD（中心对端策略）字段变更，跳过 iptables peer=%s",
-                            peer.id[:8],
-                        )
-                else:
+                if refresh_center_iptables and need_fw:
+                    FirewallRuleService().refresh_vpn_forward_only()
+                elif not refresh_center_iptables:
                     logger.info(
                         "已跳过中心 VPN_FORWARD 刷新，调用方将统一刷新 peer=%s",
+                        peer.id[:8],
+                    )
+                else:
+                    logger.info(
+                        "对端保存无 VPN_FORWARD 字段变更，跳过 iptables peer=%s",
                         peer.id[:8],
                     )
             else:
                 logger.info("Windows 下跳过本机 iptables 重建，对端已写盘 peer=%s", peer.id[:8])
 
             if need_ccd:
-                self._merge_ccd(peer.bound_username, peer.id, peer.lan_cidrs)
+                old_username = str(cur.get("bound_username") or "").strip()
+                new_username = str(peer.bound_username or "").strip()
+                if old_username and old_username != new_username:
+                    self._strip_ccd(old_username, peer.id)
+                self._merge_ccd(new_username, peer.id, peer.lan_cidrs)
             else:
                 logger.info(
                     "对端保存无绑定用户/CIDR(iroute)变更，跳过 CCD peer 块 peer=%s",
@@ -817,11 +823,13 @@ class PeerService:
                     "对端保存无 LAN / mesh 可见组或标签变更，跳过全量 mesh CCD peer=%s",
                     peer.id[:8],
                 )
-        except Exception:
+        except Exception as exc:
             logger.exception("对端实例更新失败，开始恢复 SQLite 与派生状态 peer=%s", peer.id)
+            rollback_errors: list[str] = []
             try:
                 self.store.upsert_peer(cur)
             except Exception as rollback_exc:
+                rollback_errors.append(f"SQLite: {rollback_exc}")
                 logger.critical(
                     "对端更新失败，恢复 Peer SQLite 快照失败 peer=%s: %s",
                     peer.id,
@@ -829,45 +837,39 @@ class PeerService:
                     exc_info=True,
                 )
 
-            # 即使本次刷新自身返回失败，也再按旧 Peer 状态收敛一次，修复可能不完整的内核回滚。
+            if ccd_snapshot:
+                try:
+                    _restore_ccd_files(ccd_snapshot)
+                except Exception as rollback_exc:
+                    rollback_errors.append(f"CCD: {rollback_exc}")
+                    logger.critical(
+                        "对端更新失败，恢复 CCD 快照失败 peer=%s",
+                        peer.id,
+                        exc_info=True,
+                    )
+
             if os.name != "nt" and refresh_center_iptables and need_fw:
                 try:
                     from app.services.firewall.rule_service import FirewallRuleService
 
                     FirewallRuleService().refresh_vpn_forward_only()
                 except Exception as rollback_exc:
+                    rollback_errors.append(f"中心 VPN_FORWARD: {rollback_exc}")
                     logger.critical(
-                        "对端更新失败，恢复中心 VPN_FORWARD 失败 peer=%s: %s",
+                        "对端更新失败，恢复中心 VPN_FORWARD 失败 peer=%s",
                         peer.id,
-                        rollback_exc,
                         exc_info=True,
                     )
 
-            if need_ccd:
-                try:
-                    self._merge_ccd(
-                        str(cur.get("bound_username") or ""),
-                        peer_id,
-                        list(cur.get("lan_cidrs") or []),
-                    )
-                except Exception as rollback_exc:
-                    logger.critical(
-                        "对端更新失败，恢复 CCD iroute 失败 peer=%s: %s",
-                        peer.id,
-                        rollback_exc,
-                        exc_info=True,
-                    )
-
-            if need_mesh:
-                try:
-                    self.sync_all_mesh_push_routes_in_ccd()
-                except Exception as rollback_exc:
-                    logger.critical(
-                        "对端更新失败，恢复 mesh CCD 路由失败 peer=%s: %s",
-                        peer.id,
-                        rollback_exc,
-                        exc_info=True,
-                    )
+            if rollback_errors:
+                logger.critical(
+                    "对端更新失败且补偿不完整 peer=%s errors=%s",
+                    peer.id,
+                    "；".join(rollback_errors),
+                )
+                raise RuntimeError(
+                    "对端更新失败，且补偿回滚不完整: " + "；".join(rollback_errors)
+                ) from exc
             raise
 
         logger.debug("已保存对端实例元数据 peer=%s", peer.id)
