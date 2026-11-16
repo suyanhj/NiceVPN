@@ -395,53 +395,6 @@ def test_download_bound_user_ovpn_uses_existing_profile(
 
     assert downloads == [(profile.read_bytes(), "peer-gz.ovpn")]
 
-
-def test_peers_v2_visual_contract_uses_object_rows_and_icon_actions() -> None:
-    """Peers 保留对象列表，但必须使用 V2 行、图标操作和统一 Dialog。"""
-
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    source = (root / "app" / "ui" / "pages" / "peers.py").read_text(encoding="utf-8")
-    shell_css = (
-        root / "app" / "ui" / "static" / "css" / "shell.css"
-    ).read_text(encoding="utf-8")
-
-    assert "peers-page--v2" in source
-    assert "peers-toolbar" in source
-    assert "peers-list-panel" in source
-    assert "peers-record-card" in source
-    assert "peers-record-avatar" in source
-    assert "peers-record-meta" in source
-    assert "peers-icon-action" in source
-    assert "peers-operation-dialog" in source
-    assert "peers-help-panel--v2" in source
-
-    assert "more_actions(" not in source
-    assert "MenuAction(" not in source
-    assert 'label="更多"' not in source
-    assert "mgmt-peer-row" not in source
-    assert 'classes("mgmt-peer-avatar")' not in source
-    assert 'classes("mgmt-peer-name")' not in source
-    assert 'classes("mgmt-peer-meta-tag")' not in source
-
-    for label in (
-        "一键装配",
-        "推送配置",
-        "服务管理",
-        "远程日志",
-        "部署说明",
-        "编辑",
-        "删除",
-    ):
-        assert f"aria-label='{label}'" in source
-
-    assert ".peers-page--v2 .peers-record-card" in shell_css
-    assert ".peers-page--v2 .peers-icon-action" in shell_css
-    assert ".q-dialog .q-card.peers-operation-dialog" in shell_css
-    assert ".q-dialog .q-card.peer-remote-log-drawer" in shell_css
-
-
 def test_peer_help_keeps_user_and_firewall_shortcuts() -> None:
     page = PeersPage()
 

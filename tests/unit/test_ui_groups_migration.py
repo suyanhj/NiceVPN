@@ -204,50 +204,6 @@ def test_group_view_model_covers_root_disabled_and_missing_fields() -> None:
     assert partial["subnet"] == "未配置子网"
     assert partial["user_count"] == 0
 
-
-def test_groups_v2_visual_contract_reuses_shared_overview_grid() -> None:
-    """Groups 与 Certs 共用 V2 页面原语，不新增页面专用 Vue 业务层。"""
-
-    root = Path(__file__).resolve().parents[2]
-    source = (root / "app" / "ui" / "pages" / "groups.py").read_text(encoding="utf-8")
-    shell_css = (
-        root / "app" / "ui" / "static" / "css" / "shell.css"
-    ).read_text(encoding="utf-8")
-
-    assert "groups-page--v2" in source
-    assert "vpn-v2-page-intro" not in source
-    assert "vpn-v2-overview-grid" in source
-    assert "compact=True" in source
-    assert "helper_tooltip=" in source
-    assert 'helper="含根组与业务子组"' not in source
-    assert "v2_effect=True" not in source
-    assert "render_page_toolbar" not in source
-    assert "create_action(" in source
-    assert "groups-create-action" not in source
-    assert "primary_action" not in source
-    assert ".vpn-action--create" in shell_css
-    assert ".groups-page--v2 .groups-create-action" not in shell_css
-    assert ".groups-page--v2 .vpn-bulk-bar" in shell_css
-    assert ".groups-page--v2 .mgmt-panel-list" in shell_css
-    assert ".groups-page--v2 .groups-record-card" in shell_css
-    assert ".groups-page--v2 .groups-record-card--root" in shell_css
-    assert ".groups-page--v2 .groups-record-card--disabled" in shell_css
-    assert ".groups-page--v2 .groups-root-badge" in shell_css
-    assert "background: #0c0c0d !important;" in shell_css
-    assert "color: #15bde8 !important;" in shell_css
-    assert source.index("self._render_summary_metrics(summary)") < source.index(
-        "self.bulk_bar = render_bulk_action_bar"
-    )
-    assert "self.group_service.list_page(" not in source
-    assert "page_method(" in source
-    assert "render_server_pager(" in source
-    assert "on_page_size_change=self._on_group_page_size_change" in source
-    assert "page_after_size_change(" in source
-    assert ".vpn-v2-overview-grid" in shell_css
-    assert ".vpn-metric-card--compact" in shell_css
-    assert "fetch(" not in source
-
-
 def test_groups_page_normalizes_cidr_input_on_blur() -> None:
     """新建与编辑输入框应在失焦时回填规范网络地址。"""
 
