@@ -78,6 +78,8 @@ def _write_ccd_bytes_atomic(path: Path, content: bytes, mode: int) -> None:
 
 
 def _write_ccd_text_atomic(path: Path, content: str) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"CCD 文件为符号链接，拒绝原子替换: {path}")
     mode = path.stat().st_mode & 0o7777
     _write_ccd_bytes_atomic(path, content.encode("utf-8"), mode)
 
