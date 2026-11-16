@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import shutil
@@ -605,11 +606,25 @@ def _restore_path(record: dict) -> None:
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
-    """串行执行 OpenVPN 切换，拒绝同一进程内并发升级。"""
+    """串行执行 OpenVPN 切换，并与 Shell 安装入口共享跨进程锁。"""
     if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
         raise RuntimeError("OpenVPN 升级正在执行，请勿重复发起")
     try:
-        return _apply_staged_upgrade_locked(stage, on_output)
+        lock_path = Path("/run/lock/nicevpn-install.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lock_file = lock_path.open("a+")
+        except OSError as exc:
+            raise RuntimeError(f"无法打开 OpenVPN 安装锁 {lock_path}: {exc}") from exc
+        with lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("OpenVPN 安装/升级正在执行，请稍后重试") from exc
+            try:
+                return _apply_staged_upgrade_locked(stage, on_output)
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     finally:
         _OPENVPN_UPGRADE_APPLY_LOCK.release()
 
