@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 _OUTPUT = Callable[[str], None]
 _PREFLIGHT_SECONDS = 3.0
+
+_OPENVPN_UPGRADE_APPLY_LOCK = threading.Lock()
 
 _SERVER_SIDE_EFFECT_DIRECTIVES = {
     "auth-user-pass-verify",
@@ -579,9 +582,17 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _remove_path_strict(path: Path) -> None:
+    """严格删除路径；升级回滚不能吞掉旧 binary/systemd 的清理错误。"""
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
 def _restore_path(record: dict) -> None:
     path = Path(str(record["path"]))
-    _remove_path(path)
+    _remove_path_strict(path)
     kind = record.get("kind")
     if kind == "symlink":
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -594,7 +605,21 @@ def _restore_path(record: dict) -> None:
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
-    """切换候选 OpenVPN；失败时恢复 binary/systemd 并重启升级前运行实例。"""
+    """串行执行 OpenVPN 切换，拒绝同一进程内并发升级。"""
+    if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
+        raise RuntimeError("OpenVPN 升级正在执行，请勿重复发起")
+    try:
+        return _apply_staged_upgrade_locked(stage, on_output)
+    finally:
+        _OPENVPN_UPGRADE_APPLY_LOCK.release()
+
+
+def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) -> dict:
+    """切换候选 OpenVPN；失败时尽最大努力恢复 binary/systemd 和原运行实例。
+
+    如果任一回滚步骤失败，会保留 old binary 与 rollback snapshot，绝不在 finally 中删除
+    唯一可恢复的备份目录。
+    """
 
     preflight = preflight_upgrade_candidate(stage, on_output)
     if not preflight.get("ok"):
@@ -614,17 +639,23 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     unit = Path("/etc/systemd/system/openvpn-server@.service")
     override_dir = Path("/etc/systemd/system/openvpn-server@.service.d")
     cli_link = Path("/usr/local/sbin/openvpn")
-    snapshots = [
-        _snapshot_path(unit, rollback_root, "openvpn-server.service"),
-        _snapshot_path(override_dir, rollback_root, "openvpn-server.service.d"),
-        _snapshot_path(cli_link, rollback_root, "openvpn-cli-link"),
-    ]
+    try:
+        snapshots = [
+            _snapshot_path(unit, rollback_root, "openvpn-server.service"),
+            _snapshot_path(override_dir, rollback_root, "openvpn-server.service.d"),
+            _snapshot_path(cli_link, rollback_root, "openvpn-cli-link"),
+        ]
+    except Exception:
+        shutil.rmtree(rollback_root, ignore_errors=True)
+        raise
 
     new_tree = prefix.parent / f"{prefix.name}.nicevpn-new-{uuid.uuid4().hex[:8]}"
     old_tree = prefix.parent / f"{prefix.name}.nicevpn-old-{uuid.uuid4().hex[:8]}"
     prefix_existed = prefix.exists() or prefix.is_symlink()
     prefix_moved = False
     candidate_installed = False
+    preserve_rollback_artifacts = False
+
     try:
         _emit(on_output, f"[升级] 安装 OpenVPN {stage['version']} 到 {prefix}")
         shutil.copytree(Path(str(stage["prefix"])), new_tree, symlinks=True)
@@ -635,7 +666,7 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
         candidate_installed = True
 
         cli_link.parent.mkdir(parents=True, exist_ok=True)
-        _remove_path(cli_link)
+        _remove_path_strict(cli_link)
         cli_link.symlink_to(prefix / "sbin" / "openvpn")
 
         from app.services.openvpn.installer import (
@@ -652,7 +683,9 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
             _emit(on_output, f"[升级] 重启实例 {name}")
             proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
             if proc.returncode != 0:
-                raise RuntimeError(f"重启实例 {name} 失败: {(proc.stderr or proc.stdout).strip()}")
+                raise RuntimeError(
+                    f"重启实例 {name} 失败: {(proc.stderr or proc.stdout).strip()}"
+                )
 
         post_stage = dict(stage)
         post_stage["binary"] = str(prefix / "sbin" / "openvpn")
@@ -666,9 +699,17 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
         if failed_instances:
             raise RuntimeError("升级后实例未恢复运行: " + ", ".join(failed_instances))
 
+        # 升级成功后才清理旧 binary 与系统配置快照。
         if old_tree.exists() or old_tree.is_symlink():
-            _remove_path(old_tree)
-        shutil.rmtree(rollback_root, ignore_errors=True)
+            try:
+                _remove_path_strict(old_tree)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "OpenVPN 已升级成功，但旧 binary 备份清理失败，保留路径 %s: %s",
+                    old_tree,
+                    cleanup_exc,
+                    exc_info=True,
+                )
         return {
             "ok": True,
             "version": str(stage["version"]),
@@ -677,26 +718,121 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
             "preflight": preflight,
             "postflight": postflight,
         }
-    except Exception:
+    except Exception as upgrade_exc:
         _emit(on_output, "[回滚] OpenVPN 升级失败，恢复升级前 binary/systemd")
-        _remove_path(new_tree)
-        if candidate_installed:
-            _remove_path(prefix)
-        if prefix_moved and old_tree.exists():
-            os.replace(old_tree, prefix)
-        elif not prefix_existed:
-            _remove_path(prefix)
-        for record in snapshots:
-            _restore_path(record)
-        subprocess.run(["systemctl", "daemon-reload"], check=False)
-        for name in active_instances:
-            subprocess.run(
-                ["systemctl", "restart", f"openvpn-server@{name}"],
-                check=False,
+        rollback_errors: list[str] = []
+
+        def record_rollback_error(step: str, error: Exception) -> None:
+            rollback_errors.append(f"{step}: {error}")
+            logger.critical(
+                "OpenVPN 升级回滚步骤失败 step=%s: %s",
+                step,
+                error,
+                exc_info=True,
             )
+
+        try:
+            _remove_path_strict(new_tree)
+        except Exception as exc:
+            record_rollback_error("清理候选临时目录", exc)
+
+        if candidate_installed:
+            try:
+                _remove_path_strict(prefix)
+            except Exception as exc:
+                record_rollback_error("移除候选 binary", exc)
+
+        if prefix_moved:
+            if old_tree.exists() or old_tree.is_symlink():
+                try:
+                    os.replace(old_tree, prefix)
+                except Exception as exc:
+                    record_rollback_error("恢复旧 OpenVPN binary", exc)
+            elif not prefix.exists() and not prefix.is_symlink():
+                record_rollback_error(
+                    "恢复旧 OpenVPN binary",
+                    RuntimeError(f"旧 binary 备份不存在: {old_tree}"),
+                )
+        elif not prefix_existed:
+            try:
+                _remove_path_strict(prefix)
+            except Exception as exc:
+                record_rollback_error("清理首次安装候选 binary", exc)
+
+        # systemd unit、override、CLI symlink 分开恢复；某一项失败不阻断其它恢复。
+        for record in snapshots:
+            try:
+                _restore_path(record)
+            except Exception as exc:
+                record_rollback_error(f"恢复系统路径 {record.get('path')}", exc)
+
+        try:
+            proc = _run(["systemctl", "daemon-reload"], timeout=30)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or proc.stdout or "daemon-reload 失败").strip())
+        except Exception as exc:
+            record_rollback_error("systemd daemon-reload", exc)
+
+        # 即使前面的某个恢复步骤失败，也继续尝试重启所有升级前运行的实例。
+        for name in active_instances:
+            try:
+                proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
+                if proc.returncode != 0:
+                    raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
+            except Exception as exc:
+                record_rollback_error(f"重启原实例 {name}", exc)
+
+        failed_instances: list[str] = []
+        for name in active_instances:
+            try:
+                if not is_instance_active(name):
+                    failed_instances.append(name)
+            except Exception as exc:
+                record_rollback_error(f"检查原实例 {name} 状态", exc)
+        if failed_instances:
+            record_rollback_error(
+                "验证原实例运行状态",
+                RuntimeError("未恢复运行: " + ", ".join(failed_instances)),
+            )
+
+        if rollback_errors:
+            preserve_rollback_artifacts = True
+            artifact_paths = [str(rollback_root)]
+            if old_tree.exists() or old_tree.is_symlink():
+                artifact_paths.append(str(old_tree))
+            details = "；".join(rollback_errors)
+            _emit(
+                on_output,
+                "[严重] OpenVPN 回滚不完整，已保留恢复材料: "
+                + ", ".join(artifact_paths),
+            )
+            raise RuntimeError(
+                f"OpenVPN 升级失败: {upgrade_exc}；回滚不完整: {details}；"
+                f"恢复材料: {', '.join(artifact_paths)}"
+            ) from upgrade_exc
+
+        _emit(on_output, "[回滚] 升级前 binary、systemd 与运行实例已恢复")
         raise
     finally:
-        _remove_path(new_tree)
-        if old_tree.exists() or old_tree.is_symlink():
-            _remove_path(old_tree)
-        shutil.rmtree(rollback_root, ignore_errors=True)
+        # 只清理候选临时目录。回滚不完整时保留旧 binary 和系统配置快照供人工恢复。
+        try:
+            _remove_path_strict(new_tree)
+        except Exception:
+            logger.warning("清理 OpenVPN 候选临时目录失败: %s", new_tree, exc_info=True)
+        if not preserve_rollback_artifacts:
+            if old_tree.exists() or old_tree.is_symlink():
+                try:
+                    _remove_path_strict(old_tree)
+                except Exception:
+                    logger.warning(
+                        "清理 OpenVPN 旧 binary 备份失败，保留路径: %s",
+                        old_tree,
+                        exc_info=True,
+                    )
+            shutil.rmtree(rollback_root, ignore_errors=True)
+        else:
+            logger.critical(
+                "OpenVPN 回滚不完整，保留 rollback_root=%s old_tree=%s",
+                rollback_root,
+                old_tree if old_tree.exists() or old_tree.is_symlink() else "(already restored)",
+            )
