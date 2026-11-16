@@ -65,7 +65,6 @@ class FirewallRuleService:
         for oid in owner_ids:
             self._rollback_center_json_after_rebuild_fail(oid, had_main.get(oid, False))
 
-    @staticmethod
     def _restore_peer_snapshots(
         self,
         peer_service,
@@ -106,6 +105,7 @@ class FirewallRuleService:
                     )
         return ok
 
+    @staticmethod
     def _validate_json_rule_addr_fields(rule: FirewallRule) -> None:
         """落库前校验目标/源 IP 字串，与对端链地址语义保持一致。"""
         dest = (rule.dest_ip or "").strip()
