@@ -6,7 +6,7 @@ CLI 与 Web 共用 Service 和 SQLite 数据。
 
 ```bash
 ./start.sh cli --help       # 使用项目 Python 环境
-python cli.py --help        # 唯一 Python CLI 入口
+python3.11 cli.py --help    # 直接调用（需 Python >= 3.10）
 ```
 
 `main.py` 仅启动 Web 管理端和公网 API。
