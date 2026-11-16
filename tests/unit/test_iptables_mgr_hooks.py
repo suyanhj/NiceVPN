@@ -57,6 +57,7 @@ def test_forward_hooks_already_correct_do_not_rewrite_rules(monkeypatch):
     monkeypatch.setattr(manager, "_remove_legacy_shared_vpn_peer_jump_and_chain", lambda: calls.append("legacy"))
     monkeypatch.setattr(manager, "_purge_center_vpn_peer_subchains", lambda: calls.append("peer-chains"))
     monkeypatch.setattr(manager, "_forward_hooks_order_ok", lambda: True)
+    monkeypatch.setattr(manager, "_iptables_inst_comment_value", lambda: "vpn-a")
     monkeypatch.setattr(
         manager,
         "_iptables_delete_rule_repeat",
