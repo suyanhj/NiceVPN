@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """OpenVPN 自动安装服务 — 本机与对端 SSH 共用 ``app/scripts/install/`` 下 shell 脚本。"""
+import fcntl
 import json
 import logging
 import os
 import shlex
 import subprocess
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +32,27 @@ _OPENVPN_FALLBACK_TAG = "v2.7.0"
 _OPENVPN_FALLBACK_ASSET = "openvpn-2.7.0.tar.gz"
 _EASYRSA_FALLBACK_TAG = "v3.2.4"
 _EASYRSA_FALLBACK_ASSET = "EasyRSA-3.2.4.tgz"
+
+
+@contextmanager
+def _openvpn_install_lock():
+    """与 Shell 安装入口、upgrade.py 共用同一把跨进程 flock。"""
+    lock_path = Path("/run/lock/nicevpn-install.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_file = lock_path.open("a+")
+    except OSError as exc:
+        raise RuntimeError(f"无法打开 OpenVPN 安装锁 {lock_path}: {exc}") from exc
+
+    with lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("OpenVPN 安装/升级正在执行，请稍后重试") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def resolve_latest_openvpn_release(
@@ -336,41 +359,44 @@ def install_openvpn(
         )
         script_path = _install_script_path(distro)
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
-        _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
+        # Python 持锁覆盖 Shell 安装、运行时版本检测和日志初始化，避免升级在检测窗口切换 prefix。
+        with _openvpn_install_lock():
+            env["NICEVPN_INSTALL_LOCK_HELD"] = "1"
+            _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
-        # Shell 已校验安装阶段；Python 再按运行时相同的搜索优先级确认实际可用版本。
-        from app.services.openvpn.detector import detect_openvpn
+            # Shell 已校验安装阶段；Python 再按运行时相同的搜索优先级确认实际可用版本。
+            from app.services.openvpn.detector import detect_openvpn
 
-        installed = detect_openvpn()
-        if not installed.get("installed") or not installed.get("path"):
-            raise RuntimeError("安装脚本结束后仍未检测到可执行的 OpenVPN")
-        if not installed.get("meets_requirement"):
-            raise RuntimeError(
-                "安装脚本结束后检测到的 OpenVPN 版本不满足要求: "
-                f"{installed.get('version') or 'unknown'} < {OPENVPN_MIN_VERSION} "
-                f"(binary={installed.get('path')})"
-            )
-        _emit(
-            on_output,
-            f"[校验] OpenVPN binary={installed['path']} version={installed['version']}",
-        )
-
-        # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
-        # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
-        logrotate_installer = (
-            _INSTALL_SCRIPTS_DIR.parents[2]
-            / "deploy"
-            / "shell"
-            / "install-nicevpn-logrotate.sh"
-        )
-        if logrotate_installer.is_file() and os.name == "posix":
-            try:
-                _run_command(
-                    ["bash", str(logrotate_installer)], on_output, env=_subprocess_env(env)
+            installed = detect_openvpn()
+            if not installed.get("installed") or not installed.get("path"):
+                raise RuntimeError("安装脚本结束后仍未检测到可执行的 OpenVPN")
+            if not installed.get("meets_requirement"):
+                raise RuntimeError(
+                    "安装脚本结束后检测到的 OpenVPN 版本不满足要求: "
+                    f"{installed.get('version') or 'unknown'} < {OPENVPN_MIN_VERSION} "
+                    f"(binary={installed.get('path')})"
                 )
-            except Exception as rotate_exc:
-                _emit(on_output, f"[警告] OpenVPN 已安装，但日志轮转初始化未完成：{rotate_exc}")
-                log.warning("OpenVPN 已安装，日志轮转初始化失败: %s", rotate_exc)
+            _emit(
+                on_output,
+                f"[校验] OpenVPN binary={installed['path']} version={installed['version']}",
+            )
+
+            # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
+            # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
+            logrotate_installer = (
+                _INSTALL_SCRIPTS_DIR.parents[2]
+                / "deploy"
+                / "shell"
+                / "install-nicevpn-logrotate.sh"
+            )
+            if logrotate_installer.is_file() and os.name == "posix":
+                try:
+                    _run_command(
+                        ["bash", str(logrotate_installer)], on_output, env=_subprocess_env(env)
+                    )
+                except Exception as rotate_exc:
+                    _emit(on_output, f"[警告] OpenVPN 已安装，但日志轮转初始化未完成：{rotate_exc}")
+                    log.warning("OpenVPN 已安装，日志轮转初始化失败: %s", rotate_exc)
     except Exception as exc:
         _emit(on_output, f"[错误] 安装 OpenVPN 失败: {exc}")
         log.exception("安装 OpenVPN 失败")
