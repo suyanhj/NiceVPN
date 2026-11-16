@@ -5,7 +5,7 @@
 # 并提示将 register-python-argcomplete 写入 ~/.bashrc。
 #
 # 用法（Linux）：
-#   cd script/py/vpn/deploy/shell && bash install-ovpn-cli-symlink.sh
+#   cd NiceVPN/deploy/shell && bash install-ovpn-cli-symlink.sh
 #   bash /path/to/install-ovpn-cli-symlink.sh ["$HOME/.local/bin/ovpn-cli"]   # 可选自定义链接路径
 #
 # 依赖：pip install argcomplete（requirements.txt 已列出）
@@ -25,11 +25,11 @@
 # 说明：「python main.py cli …」不宜直接注册 argcomplete（前缀词过多），请用本脚本或
 # 手工 ln -sf 项目根/cli.py 到 PATH 内固定名后再 register-python-argcomplete。
 #
-# 运行 ovpn-cli 时工作目录须在项目根，或已 export PYTHONPATH=项目根（与 register 使用同一 Python 环境）。
+# cli.py 会自动定位项目根目录；运行 ovpn-cli 时仍须使用安装了项目依赖和 argcomplete 的 Python 环境。
 
 set -euo pipefail
 
-# 本脚本所在目录 → 项目根（script/py/vpn）
+# 本脚本所在目录 → 项目根（NiceVPN）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VPN_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLI_PY="${VPN_ROOT}/cli.py"
@@ -67,4 +67,4 @@ echo "请将以下行写入 ~/.bashrc（或按需粘贴到当前 shell），然�
 echo "  eval \"\$(register-python-argcomplete '${LINK_NAME}')\""
 echo ""
 echo "说明：须已 pip install argcomplete，且 register-python-argcomplete 与运行 ovpn-cli 时使用同一 Python 环境。"
-echo "执行 CLI 时请在项目根目录 cd ${VPN_ROOT}，或设置 export PYTHONPATH=${VPN_ROOT}"
+echo "cli.py 会自动定位项目根目录；请确保运行 ovpn-cli 的 Python 环境已安装项目依赖和 argcomplete。"
