@@ -86,14 +86,13 @@ python cli.py user list
 项目已集成 `argcomplete`，无需额外编写补全规则。
 
 ```bash
-# 使用安装 NiceVPN 依赖的 Python 环境
-source .venv/bin/activate
-
-# 创建 ovpn-cli 命令软链接
 bash deploy/shell/install-ovpn-cli-symlink.sh
+
+# 如需指定 Python 环境
+PYTHON_BIN=/path/to/python bash deploy/shell/install-ovpn-cli-symlink.sh
 ```
 
-脚本会检测项目 `.venv`、当前虚拟环境或系统 Python，并输出两行配置。将它们加入 `~/.bashrc`，然后执行 `source ~/.bashrc`：
+脚本优先检测项目 `.venv`，其次使用当前虚拟环境或系统 Python，并检查 `argcomplete` 是否已安装。它会输出两行配置；将它们加入 `~/.bashrc`，然后执行 `source ~/.bashrc`：
 
 - 第一行将正确的 Python 环境加入 PATH。
 - 第二行注册 `ovpn-cli` 的 argcomplete 补全。
