@@ -839,11 +839,25 @@ def cmd_tag_show(args: argparse.Namespace) -> int:
 
 
 def cmd_tag_add(args: argparse.Namespace) -> int:
+    ts = TagService()
+    name = str(args.name or "").strip()
+    if any(str(tag.get("name") or "") == name for tag in ts.list_all()):
+        print(f"标签名称已存在: {name}", file=sys.stderr)
+        return 1
+    payload = {
+        "name": name,
+        "description": args.description or "",
+        "device_binding_exempt": args.device_binding_exempt,
+        "sso_required": args.sso_required,
+    }
+    if args.dry_run:
+        return _dry_run_result("tag.add", **payload)
     try:
-        tag = TagService().create(
-            args.name, description=args.description or "",
-            device_binding_exempt=args.device_binding_exempt,
-            sso_required=args.sso_required,
+        tag = ts.create(
+            name,
+            description=payload["description"],
+            device_binding_exempt=payload["device_binding_exempt"],
+            sso_required=payload["sso_required"],
         )
     except (ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
@@ -1172,7 +1186,8 @@ def build_parser() -> argparse.ArgumentParser:
     ta.add_argument("--description", default="", help="标签说明")
     ta.add_argument("--device-binding-exempt", action="store_true", help="该标签成员豁免设备绑定")
     ta.add_argument("--sso-required", action="store_true", help="该标签成员必须通过企业 SSO")
-    ta.set_defaults(func=cmd_tag_add, dry_run=False)
+    _add_dry_run(ta)
+    ta.set_defaults(func=cmd_tag_add)
     tu = tag_sub.add_parser("update", help="修改标签属性")
     tu.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
     tu.add_argument("--name", default=None, help="新标签名称")
