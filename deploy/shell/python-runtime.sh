@@ -59,15 +59,16 @@ nicevpn_select_python() {
         candidates+=("${CONDA_PREFIX}/bin/python")
     fi
 
-    # Check versioned interpreters first. Generic python3/python may point to an old system runtime.
+    # Keep a compatible system default first (it is usually where dependencies were installed).
+    # If generic python3 is too old, fall back to versioned interpreters from newest to oldest.
     candidates+=(
+        python3
         python3.15
         python3.14
         python3.13
         python3.12
         python3.11
         python3.10
-        python3
         python
     )
 
