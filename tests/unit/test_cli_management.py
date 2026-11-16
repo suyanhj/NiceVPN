@@ -98,7 +98,7 @@ def test_firewall_commands_are_nested_and_support_tag_owner() -> None:
         (
             "firewall", "rule", "add", "--owner-type", "tag", "--owner", "员工",
             "--iptables-line", "iptables -A FORWARD -s 10.8.1.0/24 -j ACCEPT",
-        ): "cmd_add_firewall",
+        ): "cmd_firewall_rule_add",
         ("firewall", "rule", "delete", "rule-id"): "cmd_firewall_rule_delete",
         ("firewall", "rule", "enable", "rule-id"): "cmd_firewall_rule_enable",
         ("firewall", "rule", "disable", "rule-id"): "cmd_firewall_rule_disable",
@@ -111,7 +111,7 @@ def test_firewall_commands_are_nested_and_support_tag_owner() -> None:
 
 
 def test_admin_password_tool_is_nested() -> None:
-    assert _parse("admin", "password", "hash").func.__name__ == "cmd_hash_admin_password"
+    assert _parse("admin", "password", "hash").func.__name__ == "cmd_admin_password_hash"
     with pytest.raises(SystemExit):
         _parse("hash-admin-password")
 
