@@ -170,7 +170,7 @@ openvpn_recover_source_install() {
         for backup_root in "${prefix_parent}/${prefix_base}.nicevpn-old-"*; do
             [ -d "${backup_root}" ] || [ -L "${backup_root}" ] || continue
             candidate="${backup_root}"
-            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
@@ -180,7 +180,7 @@ openvpn_recover_source_install() {
         for backup_root in "${prefix_parent}/.${prefix_base}.backup."*; do
             candidate="${backup_root}/${prefix_base}"
             [ -d "${candidate}" ] && [ ! -L "${candidate}" ] || continue
-            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
