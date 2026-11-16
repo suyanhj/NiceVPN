@@ -60,13 +60,13 @@
 {"group_name": "研发组"}
 ```
 
-按目标组重新分配 CCD 虚拟 IP，并断开当前会话；客户端重连后生效。
+按目标组重新分配 CCD 虚拟 IP，并断开当前会话；客户端重连后生效。返回 `username`、新旧组 ID、新旧虚拟 IP 和 `changed`。
 
 ### 删除用户
 
 `DELETE /api/vpn/users/{username}`
 
-路径参数按前缀匹配：只匹配用户名本身及 `前缀_数字`，例如 `alice`、`alice_1`；不匹配 `alice_backup`。无匹配用户时返回空数组。
+路径参数按前缀匹配：只匹配用户名本身及 `前缀_数字`，例如 `alice`、`alice_1`；不匹配 `alice_backup`。返回 `ok`、`username_prefix`、`deleted`、`message`；无匹配用户时 `deleted` 为空数组。
 
 ### 重置设备绑定
 
