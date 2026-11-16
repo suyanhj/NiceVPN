@@ -421,15 +421,18 @@ openvpn_capture_active_instances() {
 
 openvpn_validate_systemd_unit() {
     local unit="${1:?必须指定 systemd unit}"
-    local output load_state
+    local output unit_state
     command -v systemctl >/dev/null 2>&1 || {
         echo "未找到 systemctl，无法验证服务单元: ${unit}" >&2
         return 1
     }
-    output="$(systemctl show "${unit}" --property=LoadState --no-page 2>/dev/null || true)"
-    load_state="$(printf '%s\n' "${output}" | sed -n 's/^LoadState=//p' | head -n 1)"
-    if [ "${load_state}" != "loaded" ]; then
-        echo "systemd 服务单元未加载: ${unit} LoadState=${load_state:-unknown}" >&2
+    output="$(systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null)" || {
+        echo "systemctl 无法读取服务单元列表: ${unit}" >&2
+        return 1
+    }
+    unit_state="$(awk -v unit="${unit}" '$1 == unit { print $2; exit }' <<< "${output}")"
+    if [ -z "${unit_state}" ] || [ "${unit_state}" = "masked" ]; then
+        echo "systemd 服务单元不存在或已屏蔽: ${unit} state=${unit_state:-not-found}" >&2
         return 1
     fi
 }
