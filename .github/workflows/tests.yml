@@ -290,6 +290,10 @@ jobs:
         run: |
           bash -n build-ui.sh
           bash -n start.sh
+          bash -n deploy/shell/python-runtime.sh
+          bash -n deploy/shell/install-ovpn-cli-symlink.sh
+          bash -n tests/shell/test_python_runtime.sh
+          bash tests/shell/test_python_runtime.sh
           grep -F 'build-ui.sh' start.sh
 
       - name: OpenSpec strict validation
