@@ -79,6 +79,7 @@ def test_forward_hooks_rebuild_in_required_order(monkeypatch):
     monkeypatch.setattr(manager, "_remove_legacy_shared_vpn_peer_jump_and_chain", lambda: None)
     monkeypatch.setattr(manager, "_purge_center_vpn_peer_subchains", lambda: None)
     monkeypatch.setattr(manager, "_forward_hooks_order_ok", lambda: False)
+    monkeypatch.setattr(manager, "_iptables_delete_rule_repeat", lambda _parts: None)
     monkeypatch.setattr(
         manager,
         "_forward_hook_specs_legacy_no_inst",
