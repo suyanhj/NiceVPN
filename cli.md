@@ -93,16 +93,14 @@ source .venv/bin/activate
 bash deploy/shell/install-ovpn-cli-symlink.sh
 ```
 
-脚本会输出一行注册命令，将它加入 `~/.bashrc`，例如：
+脚本会检测项目 `.venv`、当前虚拟环境或系统 Python，并输出两行配置。将它们加入 `~/.bashrc`，然后执行 `source ~/.bashrc`：
+
+- 第一行将正确的 Python 环境加入 PATH。
+- 第二行注册 `ovpn-cli` 的 argcomplete 补全。
+
+测试：
 
 ```bash
-eval "$(register-python-argcomplete /usr/local/bin/ovpn-cli)"
-```
-
-使配置生效：
-
-```bash
-source ~/.bashrc
 ovpn-cli <TAB><TAB>
 ovpn-cli group <TAB><TAB>
 ovpn-cli user <TAB><TAB>
