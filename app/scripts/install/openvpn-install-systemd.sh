@@ -5,6 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
 
@@ -16,3 +18,4 @@ INSTALL_SERVER_OVERRIDE=1
 
 openvpn_install_server_systemd_from_src
 openvpn_install_server_systemd_override
+openvpn_validate_systemd_unit "openvpn-server@.service"
