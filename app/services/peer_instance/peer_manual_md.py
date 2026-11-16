@@ -89,6 +89,24 @@ def build_peer_site_manual_context(
     verify_cmd = _render_manual_template("verify.sh.in", template_values)
     steps: list[dict[str, Any]] = [
         {
+            "title": "可选：安装源码编译依赖",
+            "optional": True,
+            "summary": "只有选择源码编译 OpenVPN 时才执行；脚本按 Debian/Ubuntu 与 RHEL/CentOS 自动选择包管理器，请使用 root 运行。",
+            "command": _render_manual_template("prepare-build-deps.sh.in", template_values),
+        },
+        {
+            "title": "可选：编译安装 OpenSSL 1.1.1k",
+            "optional": True,
+            "summary": "仅当系统 OpenSSL 低于 1.1.1 且无法使用发行版受支持版本时执行。1.1.1k 是历史兼容版本，生产环境优先使用仍受支持的系统 OpenSSL；安装到独立目录，不替换系统 OpenSSL。",
+            "command": _render_manual_template("build-openssl.sh.in", template_values),
+        },
+        {
+            "title": "可选：源码编译安装 OpenVPN 2.7.9",
+            "optional": True,
+            "summary": "发行版软件包版本不满足需求或需要固定版本时执行，安装到 /opt/openvpn，并禁用 DCO；若系统 OpenSSL 已满足 1.1.1+，可跳过上一项。",
+            "command": _render_manual_template("build-openvpn.sh.in", template_values),
+        },
+        {
             "title": "准备客户端配置",
             "summary": f"将绑定用户 {bound_username} 的客户端配置放到固定路径，方便官方 systemd 模板读取。",
             "command": prepare_cmd,
@@ -108,6 +126,7 @@ def build_peer_site_manual_context(
     steps.append(
         {
             "title": "可选 SNAT 转换",
+            "optional": True,
             "summary": "需要访问对端后方网络时，对端局域网内未配置静态路由时，必须配置 SNAT。",
             "command": _render_manual_template(
                 "masquerade.sh.in",
@@ -122,7 +141,11 @@ def build_peer_site_manual_context(
             "command": verify_cmd,
         }
     )
-    commands = [str(step["command"]) for step in steps if step.get("command")]
+    commands = [
+        str(step["command"])
+        for step in steps
+        if step.get("command") and not step.get("optional")
+    ]
     return {
         "overview": {
             "peer_name": peer_label,

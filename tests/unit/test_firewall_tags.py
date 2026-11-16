@@ -60,6 +60,61 @@ def test_tag_summary_and_detail_pages_only_return_requested_slice(store):
     assert store.list_tag_detail_page("tag2", "users") == ([], 0)
 
 
+def test_tag_detail_hides_deleted_users_groups_and_rules(store):
+    store.create_tag("tag-filter", "过滤已删除关联")
+    store.upsert_user(
+        {"username": "gone-user", "group_id": "g1", "status": "deleted"}
+    )
+    store.upsert_group(
+        {
+            "id": "g-deleted",
+            "name": "已删除组",
+            "subnet": "10.8.9.0/24",
+            "status": "deleted",
+        }
+    )
+    store.set_tag_members(
+        "tag-filter",
+        usernames=["alice", "bob", "gone-user"],
+        group_ids=["g1", "g-deleted"],
+    )
+
+    valid_rule = FirewallRule(
+        id="tag-valid-rule",
+        owner_type="tag",
+        owner_id="tag-filter",
+        action="accept",
+        priority=10,
+    ).model_dump()
+    deleted_rule = FirewallRule(
+        id="tag-deleted-rule",
+        owner_type="tag",
+        owner_id="tag-filter",
+        action="drop",
+        priority=20,
+    ).model_dump()
+    deleted_rule["status"] = "deleted"
+    store.replace_firewall_owner("tag-filter", [valid_rule, deleted_rule])
+
+    counts = store.list_tag_counts()["tag-filter"]
+    assert counts == {"users": 2, "groups": 1, "rules": 1}
+
+    users, user_total = store.list_tag_detail_page("tag-filter", "users")
+    assert user_total == 2
+    assert {row["username"] for row in users} == {"alice", "bob"}
+    assert {row["status"] for row in users} == {"active", "disabled"}
+    assert store.list_tag_detail_page("tag-filter", "users", search="gone-user")[1] == 0
+
+    groups, group_total = store.list_tag_detail_page("tag-filter", "groups")
+    assert group_total == 1
+    assert [row["id"] for row in groups] == ["g1"]
+    assert store.list_tag_detail_page("tag-filter", "groups", search="已删除")[1] == 0
+
+    rules, rule_total = store.list_tag_detail_page("tag-filter", "rules")
+    assert rule_total == 1
+    assert [row["id"] for row in rules] == ["tag-valid-rule"]
+
+
 def test_member_candidate_pagination_and_search_escape(store):
     store.upsert_user({"username": "u%literal", "group_id": "g1", "status": "active"})
     store.upsert_user({"username": "x_deleted", "group_id": "g1", "status": "deleted"})

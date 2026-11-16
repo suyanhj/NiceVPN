@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OPENSSL_TAG="OpenSSL_1_1_1k"
+OPENSSL_PREFIX="/usr/local/openssl-1.1.1"
+BUILD_ROOT="/usr/local/src/nicevpn-peer-build"
+
+# 已安装到独立目录时保持幂等。
+if [ -x "${OPENSSL_PREFIX}/bin/openssl" ]; then
+    LD_LIBRARY_PATH="${OPENSSL_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${OPENSSL_PREFIX}/bin/openssl" version
+    exit 0
+fi
+
+# 系统版本已满足 OpenVPN 2.7.9 的 OpenSSL >= 1.1.1 要求时，无需编译旧分支。
+if pkg-config --atleast-version=1.1.1 openssl; then
+    echo "系统 OpenSSL $(pkg-config --modversion openssl) 已满足要求，跳过源码编译。"
+    exit 0
+fi
+
+mkdir -p "${BUILD_ROOT}"
+cd "${BUILD_ROOT}"
+curl -fL --retry 3 \
+    "https://github.com/openssl/openssl/archive/refs/tags/${OPENSSL_TAG}.tar.gz" \
+    -o "${OPENSSL_TAG}.tar.gz"
+tar -xzf "${OPENSSL_TAG}.tar.gz"
+cd "openssl-${OPENSSL_TAG}"
+
+./config \
+    --prefix="${OPENSSL_PREFIX}" \
+    --openssldir="${OPENSSL_PREFIX}" \
+    shared zlib
+make -j"$(nproc)"
+make install
+
+# 不修改 /usr/bin/openssl，也不把自编译库加入全局动态链接器搜索路径。
+LD_LIBRARY_PATH="${OPENSSL_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${OPENSSL_PREFIX}/bin/openssl" version

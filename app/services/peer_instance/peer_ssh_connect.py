@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -119,22 +120,60 @@ def connect_peer_ssh_client(
     return client
 
 
+def _record_peer_ssh_status(row: dict, status: str, error: Exception | str | None = None) -> None:
+    """将 SSH 连接结果写入当前 peer 的运行状态；状态写入失败不能覆盖连接结果。"""
+    peer_id = str(row.get("id") or "").strip()
+    if not peer_id:
+        return
+    try:
+        from app.storage.sqlite_store import get_default_store
+
+        get_default_store().update_peer_remote_status(
+            peer_id,
+            ssh_status=status,
+            ssh_checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            ssh_error=str(error or "").strip()[:500],
+        )
+    except Exception:
+        logger.warning("记录对端 SSH 状态失败 peer_id=%s", peer_id, exc_info=True)
+
+
 def connect_peer_ssh_client_from_row(row: dict, *, connect_timeout: int = 25) -> paramiko.SSHClient:
-    """从对端实例字典与系统配置建立 SSH 连接；私钥对端优先，无则使用全局 `global_ssh_private_key`。"""
+    """从对端实例字典与系统配置建立 SSH 连接，并按 Peer ID 记录连通性。"""
+    peer_id = str(row.get("id") or "").strip()
     host = str(row.get("ssh_host") or "").strip()
     port = int(row.get("ssh_port") or 22)
-    user = str(row.get("ssh_username") or "").strip()
-    if not host or not user:
-        raise ValueError("请先填写 SSH 主机与用户名")
-    cfg = load_config()
-    pw = str(row.get("ssh_password") or "").strip()
-    pem, pp = effective_ssh_private_key_for_peer(row, cfg)
-    return connect_peer_ssh_client(
+    try:
+        user = str(row.get("ssh_username") or "").strip()
+        if not host or not user:
+            raise ValueError("请先填写 SSH 主机与用户名")
+        cfg = load_config()
+        pw = str(row.get("ssh_password") or "").strip()
+        pem, pp = effective_ssh_private_key_for_peer(row, cfg)
+        client = connect_peer_ssh_client(
+            host,
+            port,
+            user,
+            password=pw or None,
+            private_key_text=pem,
+            private_key_passphrase=pp,
+            connect_timeout=connect_timeout,
+        )
+    except Exception as exc:
+        _record_peer_ssh_status(row, "failed", exc)
+        logger.error(
+            "对端 SSH 不可用 peer_id=%s host=%s port=%s error=%s",
+            peer_id or "unknown",
+            host or "未配置",
+            port,
+            exc,
+        )
+        raise
+    _record_peer_ssh_status(row, "connected")
+    logger.info(
+        "对端 SSH 已连通 peer_id=%s host=%s port=%s",
+        peer_id or "unknown",
         host,
         port,
-        user,
-        password=pw or None,
-        private_key_text=pem,
-        private_key_passphrase=pp,
-        connect_timeout=connect_timeout,
     )
+    return client
