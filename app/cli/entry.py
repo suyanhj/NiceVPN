@@ -793,7 +793,7 @@ def _add_dry_run(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="cli.py",
+        prog=Path(sys.argv[0]).name,
         description=(
             "NiceVPN 命令行管理工具；入口：python cli.py …\n\n"
             "推荐使用分层命令：group / user / add-firewall。"
