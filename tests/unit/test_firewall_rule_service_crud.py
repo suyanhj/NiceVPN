@@ -37,10 +37,14 @@ def _payload(
     return payload
 
 
+def _normalized(payload: dict) -> dict:
+    return FirewallRule(**payload).model_dump()
+
+
 def _seed(store: SqliteStore, owner_id: str, *rules: dict) -> None:
     store.replace_firewall_owner(
         owner_id,
-        [FirewallRule(**row).model_dump() for row in rules],
+        [_normalized(row) for row in rules],
     )
 
 
@@ -243,7 +247,9 @@ def test_delete_removes_only_target_rule_and_refreshes_once(firewall, monkeypatc
 
 def test_delete_rolls_back_sqlite_when_kernel_refresh_fails(firewall, monkeypatch):
     store, service, _ = firewall
-    original = _payload(rule_id="rule-1", priority=10, description="keep on failure")
+    original = _normalized(
+        _payload(rule_id="rule-1", priority=10, description="keep on failure")
+    )
     _seed(store, "group-a", original)
 
     def fail_refresh():
@@ -258,7 +264,7 @@ def test_delete_rolls_back_sqlite_when_kernel_refresh_fails(firewall, monkeypatc
     assert service._prepush_snapshots == {}
 
 
-def test_reorder_keeps_unmentioned_rules_after_requested_order(firewall, monkeypatch):
+def test_reorder_applies_requested_order_and_reassigns_priorities(firewall, monkeypatch):
     store, service, _ = firewall
     _seed(
         store,
@@ -281,8 +287,8 @@ def test_reorder_keeps_unmentioned_rules_after_requested_order(firewall, monkeyp
 def test_reorder_rolls_back_owner_snapshot_when_refresh_fails(firewall, monkeypatch):
     store, service, _ = firewall
     original = [
-        _payload(rule_id="rule-1", priority=10),
-        _payload(rule_id="rule-2", priority=20),
+        _normalized(_payload(rule_id="rule-1", priority=10)),
+        _normalized(_payload(rule_id="rule-2", priority=20)),
     ]
     _seed(store, "group-a", *original)
     monkeypatch.setattr(
@@ -373,8 +379,8 @@ def test_restore_skips_invalid_rule_payload_without_losing_valid_rules(firewall,
 
 def test_restore_rolls_back_all_existing_owners_when_refresh_fails(firewall, monkeypatch):
     store, service, _ = firewall
-    original_a = _payload(rule_id="old-a", owner_id="group-a", priority=10)
-    original_b = _payload(rule_id="old-b", owner_id="group-b", priority=20)
+    original_a = _normalized(_payload(rule_id="old-a", owner_id="group-a", priority=10))
+    original_b = _normalized(_payload(rule_id="old-b", owner_id="group-b", priority=20))
     _seed(store, "group-a", original_a)
     _seed(store, "group-b", original_b)
 
