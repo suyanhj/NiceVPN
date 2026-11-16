@@ -337,7 +337,7 @@ def install_openvpn(
         )
         script_path = _install_script_path(distro)
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
-        # Python 持锁覆盖 Shell 安装、运行时版本检测和日志初始化，避免升级在检测窗口切换 prefix。
+        # Python 持锁覆盖 Shell 安装后置校验和日志初始化，避免升级在检测窗口切换 prefix。
         with openvpn_install_lock():
             env["NICEVPN_INSTALL_LOCK_HELD"] = "1"
             _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
