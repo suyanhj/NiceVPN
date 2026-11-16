@@ -107,10 +107,10 @@ def test_cli_rejects_confirmation_mismatch_without_echoing_passwords(
     assert "second-secret" not in captured.err
 
 
-def test_cli_parser_registers_hash_admin_password_command() -> None:
-    """凭据生成命令通过现有 CLI 入口可达。"""
+def test_cli_parser_registers_nested_admin_password_hash_command() -> None:
+    """凭据生成命令通过分层 CLI 入口可达。"""
 
-    args = entry.build_parser().parse_args(["hash-admin-password"])
+    args = entry.build_parser().parse_args(["admin", "password", "hash"])
     assert args.func is entry.cmd_admin_password_hash
 
 
