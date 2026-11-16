@@ -10,18 +10,19 @@ if command -v apt-get >/dev/null 2>&1; then
         libnl-3-dev libnl-genl-3-dev libpam0g-dev libcap-ng-dev \
         liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev conntrack
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y \
-        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig \
-        autoconf automake libtool zlib-devel openssl-devel libnl3-devel \
-        pam-devel libcap-ng-devel lzo-devel lz4-devel \
-        pkcs11-helper-devel systemd-devel which conntrack-tools
+    RHEL_PACKAGE_MANAGER="dnf"
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y \
-        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig \
-        autoconf automake libtool zlib-devel openssl-devel libnl3-devel \
-        pam-devel libcap-ng-devel lzo-devel lz4-devel \
-        pkcs11-helper-devel systemd-devel which conntrack-tools
+    RHEL_PACKAGE_MANAGER="yum"
 else
     echo "不支持的包管理器：请手动安装 OpenSSL/OpenVPN 编译依赖。" >&2
     exit 1
+fi
+
+# dnf 是 yum 的后继实现；同一发行版只会选择其中一个，依赖列表共用一份。
+if [ -n "${RHEL_PACKAGE_MANAGER:-}" ]; then
+    "${RHEL_PACKAGE_MANAGER}" install -y \
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig \
+        autoconf automake libtool zlib-devel openssl-devel libnl3-devel \
+        pam-devel libcap-ng-devel lzo-devel lz4-devel \
+        pkcs11-helper-devel systemd-devel which conntrack-tools
 fi

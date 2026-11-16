@@ -156,6 +156,74 @@ class PeersPage:
         bound = self.peer_service.list_bound_usernames(exclude_peer_id=exclude_peer_id)
         return [u for u in self._active_usernames() if u not in bound]
 
+    @staticmethod
+    def _filter_peer_bind_usernames(
+        usernames: list[str],
+        keyword: str,
+        *,
+        selected: str | None = None,
+    ) -> list[str]:
+        """按用户名关键字过滤；保留当前选择，避免编辑时过滤掉已绑定用户。"""
+        query = str(keyword or "").strip().casefold()
+        matches = [
+            name for name in usernames
+            if query and query in str(name).casefold()
+        ]
+        selected_name = str(selected or "").strip()
+        if selected_name and selected_name in usernames and selected_name not in matches:
+            matches.insert(0, selected_name)
+        return matches
+
+    def _render_peer_user_selector(
+        self,
+        fields: dict[str, Any],
+        usernames: list[str],
+        *,
+        label: str,
+        current_user: str | None = None,
+    ) -> None:
+        """渲染显式搜索框 + 筛选结果下拉，避免一次展开数百个用户。"""
+        selected = str(current_user or "").strip()
+        initial_options = [selected] if selected and selected in usernames else []
+        fields["user_search"] = ui.input(
+            "搜索可用用户",
+            placeholder="输入用户名关键字，例如 zhang",
+        ).props("clearable").classes("w-full")
+        fields["user_search_hint"] = ui.label(
+            f"共 {len(usernames)} 个可用用户；输入关键字后筛选下方列表。"
+        ).classes("section-caption")
+        fields["user"] = ui.select(
+            options=initial_options,
+            label=label,
+            value=selected or None,
+        ).classes("w-full")
+
+        def update_user_options(_event=None) -> None:
+            keyword = str(fields["user_search"].value or "")
+            current = str(fields["user"].value or "").strip()
+            query = keyword.strip()
+            matches = [
+                name for name in usernames
+                if query and query.casefold() in str(name).casefold()
+            ]
+            fields["user"].set_options(
+                self._filter_peer_bind_usernames(
+                    usernames,
+                    keyword,
+                    selected=current,
+                )
+            )
+            if query:
+                fields["user_search_hint"].set_text(
+                    f"找到 {len(matches)} 个匹配用户；当前选择会保留。"
+                )
+            else:
+                fields["user_search_hint"].set_text(
+                    f"共 {len(usernames)} 个可用用户；输入关键字后筛选下方列表。"
+                )
+
+        fields["user_search"].on_value_change(update_user_options)
+
     def _group_id_to_name(self) -> dict[str, str]:
         return {str(g.get("id") or ""): str(g.get("name") or "") for g in self.group_service.list_all() if g.get("id")}
 
@@ -336,25 +404,42 @@ class PeersPage:
             ui.label(str(value or "—")).classes("peer-manual-meta-value")
 
     def _render_manual_step(self, idx: int, step: dict) -> None:
-        """渲染一个部署步骤卡片。"""
+        """渲染部署步骤；可选步骤默认折叠，点击标题后再显示命令。"""
         command = str(step.get("command") or "").strip()
+        title = str(step.get("title") or f"步骤 {idx}")
+        summary = str(step.get("summary") or "")
         with ui.element("article").classes("peer-manual-step-card"):
+            if step.get("optional"):
+                with ui.expansion(
+                    f"{idx}. {title}",
+                    caption=summary,
+                    icon="terminal",
+                    value=False,
+                ).classes("w-full"):
+                    if command:
+                        self._render_manual_command(command)
+                return
+
             with ui.element("div").classes("peer-manual-step-head"):
                 with ui.element("span").classes("peer-manual-step-index"):
                     ui.label(str(idx))
                 with ui.element("div").classes("min-w-0"):
-                    ui.label(str(step.get("title") or f"步骤 {idx}")).classes("peer-manual-step-title")
-                    ui.label(str(step.get("summary") or "")).classes("peer-manual-step-summary")
+                    ui.label(title).classes("peer-manual-step-title")
+                    ui.label(summary).classes("peer-manual-step-summary")
             if command:
-                with ui.element("div").classes("peer-manual-command"):
-                    with ui.element("div").classes("peer-manual-command-head"):
-                        ui.label("bash").classes("peer-manual-command-lang")
-                        ui.button(
-                            "复制",
-                            icon="content_copy",
-                            on_click=lambda t=command: self._copy_manual_text(t, "已复制命令"),
-                        ).props("flat dense no-caps no-ripple").classes("peer-manual-copy-btn")
-                    ui.html(f"<pre><code>{html.escape(command)}</code></pre>").classes("peer-manual-command-code")
+                self._render_manual_command(command)
+
+    def _render_manual_command(self, command: str) -> None:
+        """渲染可复制的 bash 命令块。"""
+        with ui.element("div").classes("peer-manual-command"):
+            with ui.element("div").classes("peer-manual-command-head"):
+                ui.label("bash").classes("peer-manual-command-lang")
+                ui.button(
+                    "复制",
+                    icon="content_copy",
+                    on_click=lambda t=command: self._copy_manual_text(t, "已复制命令"),
+                ).props("flat dense no-caps no-ripple").classes("peer-manual-copy-btn")
+            ui.html(f"<pre><code>{html.escape(command)}</code></pre>").classes("peer-manual-command-code")
 
     @staticmethod
     async def _copy_manual_text(text: str, message: str) -> None:
@@ -1155,12 +1240,11 @@ class PeersPage:
         def body() -> None:
             ui.label("基础信息").classes("section-caption")
             fields["name"] = ui.input("显示名称").classes("w-full")
-            fields["user"] = ui.select(
-                options=usernames,
+            self._render_peer_user_selector(
+                fields,
+                usernames,
                 label="绑定用户（每用户一个对端，须有 CCD）",
-                value=usernames[0],
-                with_input=True,
-            ).classes("w-full")
+            )
             fields["cidrs"] = ui.textarea(
                 label="后方内网 CIDR（多行或逗号分隔）",
                 placeholder="例如 192.168.10.0/24",
@@ -1421,16 +1505,12 @@ class PeersPage:
                 "显示名称",
                 value=row.get("name") or "",
             ).classes("w-full")
-            fields["user"] = ui.select(
-                options=usernames,
+            self._render_peer_user_selector(
+                fields,
+                usernames,
                 label="绑定用户（每用户一个对端）",
-                value=(
-                    current_user
-                    if current_user in usernames
-                    else (usernames[0] if usernames else None)
-                ),
-                with_input=True,
-            ).classes("w-full")
+                current_user=current_user,
+            )
             fields["cidrs"] = ui.textarea(
                 label="后方内网 CIDR",
                 value="\n".join(str(value) for value in (row.get("lan_cidrs") or [])),
