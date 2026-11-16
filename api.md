@@ -50,7 +50,7 @@
 
 请求体为 JSON 数组，数组长度 1–64，各项字段与单次创建相同；所有 `count` 之和不得超过 2000。
 
-每个前缀独立处理：已存在的前缀跳过，其他前缀继续创建。所有本次新建的 OVPN 合并为一个 ZIP。全部跳过时 `download_url` 为 null。
+每个前缀独立处理：已存在的前缀跳过，其他前缀继续创建。所有本次新建的 OVPN 合并为一个 ZIP。全部跳过时 `download_url` 为 null。创建中途发生错误时，已创建的用户不会自动回滚。
 
 ### 切换用户组
 
@@ -72,7 +72,7 @@
 
 `POST /api/vpn/users/{username}/reset-device-binding`
 
-匹配规则与删除接口相同。返回 `username_prefix`、`reset_users` 和 `bindings_cleared`。
+匹配规则与删除接口相同。返回 `username_prefix`、`reset_users` 和 `bindings_cleared`；无匹配用户时返回 404。
 
 ## 一次性下载
 
