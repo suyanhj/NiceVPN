@@ -1,245 +1,91 @@
 # NiceVPN
 
-基于 **NiceGUI + FastAPI + OpenVPN Community** 的可视化 VPN 管理系统，提供用户、用户组、证书、设备绑定、对端站点、Mesh、防火墙、服务管理、CLI 与公网 API。
+基于 NiceGUI、FastAPI 和 OpenVPN Community 的 VPN 管理系统，提供 Web 管理、CLI、公网 API、用户与证书管理、站点组网及防火墙策略。
 
-- **Python**：3.10+；GitHub Actions 当前以 **Python 3.14** 为测试基线。
-- **管理界面**：默认 `0.0.0.0:8880`。
-- **公网 API**：默认 `0.0.0.0:8881`。
-- **进程模型**：一个 NiceVPN Python 进程、一个 systemd 服务、两个 HTTP 监听端口。
-- **结构化存储**：SQLite，默认 `data/nicevpn.db`。
+## 架构
 
+| 项目 | 默认值 |
+|---|---|
+| Python | 3.10+ |
+| 管理界面 | `0.0.0.0:8880` |
+| 公网 API | `0.0.0.0:8881` |
+| 进程 / 服务 | 单 Python 进程、单 `openvpn-mgmt.service` |
+| 数据库 | `data/nicevpn.db` |
 
-> **统一访问地址与企业身份认证（SSO）**：系统设置 → 访问地址支持全局 `domains`；系统设置 → 企业认证通过“开启认证 / 所有人生效”控制范围，并在“统一认证 → 认证方式”选择钉钉或企业微信后配置相应凭证。钉钉使用一套 Client ID / Secret 和可增删的企业名单，每家 CorpId/企业名称至少填一项，两项同填以 CorpId 为准；仅填名称时须有钉钉组织基础信息读取权限，无法获取可信名称则拒绝。不读取员工个人资料。关闭“所有人生效”时仍按组/标签 SSO 策略执行。
+## 功能
 
-> **验收状态**：企业身份 SSO（钉钉/企业微信）已通过 [PR #78](https://github.com/suyanhj/NiceVPN/pull/78) 合并至 `main`，用户已完成真实环境操作验收。功能默认关闭，需完成身份源、企业白名单及全局/组/标签策略配置后主动启用。配置、认证策略与运维说明参见 [企业 SSO 文档](docs/enterprise-sso.md)。
+- OpenVPN / EasyRSA 初始化、证书和客户端配置管理
+- 用户、用户组、标签、设备绑定
+- 对端站点、Mesh 路由与远端防火墙
+- iptables / ipset 规则管理
+- 企业 SSO、审计、备份恢复与日志
+- Web 管理、CLI 和公网 API
 
-## 主要能力
+## 快速启动
 
-- **OpenVPN / PKI**：EasyRSA、CRL、tls-crypt-v2、CCD、固定虚拟 IP、OVPN 生成。
-- **用户与用户组**：生命周期管理、CIDR 规范化、批量操作、下载分发。
-- **设备绑定**：`weak_log`、`weak_fingerprint`、`strict_hwaddr` 三种策略。
-- **对端与 Mesh**：站点 LAN、`iroute`、按用户组或标签下发 Mesh 路由、SSH 远端运维。
-- **标签联动**：用户/组标签可用于中心防火墙、对端 Mesh 路由可见范围和对端远端防火墙；远端标签按每个对端独立 ipset 管理，成员变化会重建集合并原子更新规则。
-- **防火墙**：iptables + ipset，声明式 reconcile、标签规则与远端规则协作。
-- **管理界面**：NiceGUI 管理壳 + AG Grid / Vue 预编译前端资源。
-- **CLI**：用户、用户组、设备绑定、OVPN、防火墙等命令行操作。
-- **公网 API**：HTTP Basic 下的用户创建、批量创建、切组、删除、重置设备绑定与一次性下载。
-- **诊断、备份与日志**：系统诊断、备份恢复、OpenVPN/NiceVPN 日志轮转；企业 SSO 认证事件独立记录于 `data/logs/sso-auth.jsonl`，可在「服务管理 → 本机实例 → 认证日志」按需查看。
-
-完整能力说明见 [docs/overview.md](./docs/overview.md)。
-
-## 快速开始
-
-推荐使用项目根目录的 `start.sh`：
+需要 Python 3.10+。Linux 主机上的 OpenVPN、PKI 和防火墙依赖可通过初始化向导安装或复用。
 
 ```bash
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 ./start.sh
 ```
 
-浏览器访问：
+访问管理界面：`http://<主机>:8880`。
 
-```text
-http://<主机>:8880/
-```
-
-未完成初始化时会进入 First Run Setup。
-
-初始化时会分别检测 OpenVPN 与 EasyRSA：已有 OpenVPN 会直接复用；如果缺少 EasyRSA，会在建立 PKI 前自动单独安装，不会重复安装或升级 OpenVPN。已有完整 PKI 会继续复用，不会重新生成 CA。同时检查 systemd 中是否已有 OpenVPN server 服务单元；没有时，复用项目原有的 OpenVPN 源码模板生成脚本补齐服务文件，不重新编译 OpenVPN。
-
-复用已有 OpenVPN 或手动指定 OpenVPN 路径时，初始化会通过共享依赖脚本检查 `iptables`、`iptables-save`、`iptables-restore`、`ipset`、`conntrack`、`sysctl`、`logrotate` 等运行工具；缺少时按 Debian/RHEL 发行版映射一次补齐，不会重新安装 OpenVPN。已有 EasyRSA 默认复用，只补查 OpenSSL；只有确实缺少 EasyRSA 时才安装下载/解压工具。需要显式强制重装 EasyRSA 时，可在运行安装入口前设置 `EASYRSA_FORCE_INSTALL=1`。
-
-正式 Vue 运行产物已经提交在 `app/ui/vue/dist/`，普通生产启动**不需要 Node/npm，也不需要 Docker 来构建前端**。
-
-首次安装需要源码编译 OpenVPN 时，安装器会将 DCO（数据通道卸载）作为可选优化：先尝试安装对应开发包，再检查 `libnl-genl-3.0` 是否达到 `3.4.0`。缺失或版本过低时会自动使用 `--disable-dco` 编译，继续提供常规 VPN 功能，不会因为 DCO 依赖不满足而中断安装。DCO 是否实际启用还取决于运行内核是否提供兼容的 `ovpn-dco` 模块。
-
-### Python 解释器选择
-
-`start.sh` 按以下优先级选择 Python：
-
-1. `PYTHON_BIN`
-2. 项目目录 `.venv/bin/python`
-3. 当前 `VIRTUAL_ENV`
-4. 当前 `CONDA_PREFIX`
-5. PATH 中满足 Python 3.10+ 的解释器
-
-例如：
-
-```bash
-PYTHON_BIN=/usr/local/bin/python3.14 ./start.sh
-PYTHON_BIN=/opt/nicevpn-venv/bin/python sudo -E ./start.sh daemon
-```
-
-项目存在 `.venv` 时会保留 `.venv/bin/python` 路径，不解析到 uv 的基础 Python，以确保 systemd 继续使用该虚拟环境的依赖。
-
-OpenVPN 的 `client-connect` / `client-disconnect` 钩子不继承 NiceVPN 主进程的虚拟环境。NiceVPN 同步 `/etc/openvpn/scripts/` 时会自动把当前运行的 Python（通常为项目 `.venv/bin/python`）写入钩子脚本；不修改系统 `/usr/bin/python3`。旧版已部署脚本升级后可通过重启 NiceVPN（或触发服务配置重新生成）同步，OpenVPN 会在下次连接/断开时执行新脚本。需要临时指定其他解释器时，可在 OpenVPN server.conf 使用 `setenv PY3_BIND /绝对路径/python` 与 `setenv PY3_AUDIT /绝对路径/python`，要求 Python 3.10+。修改 server.conf 后需重启对应 OpenVPN 实例才会生效。
+仓库已包含 Vue 生产构建产物，正常启动不需要 Node.js、npm 或 Docker。
 
 ## 生产部署
 
-### systemd
-
-推荐：
+使用 systemd：
 
 ```bash
 sudo -E ./start.sh daemon
 ```
 
-daemon 模式会：
+只安装一个 `openvpn-mgmt.service`，同时管理两个端口：
 
-- 使用仓库内预编译前端资源；
-- 把当前项目真实目录和选定 Python 写入 `/etc/systemd/system/openvpn-mgmt.service`；
-- enable + restart `openvpn-mgmt`；
-- 安装 NiceVPN / OpenVPN 的 logrotate 策略；
-- 只维护**一个** NiceVPN systemd 服务。
+- `8880`：管理界面，建议仅内网或 VPN 可访问。
+- `8881`：公网 API、一次性下载和 SSO 回调。公网使用时建议经 HTTPS 反向代理。
 
-最终服务同时监听：
-
-| 端口 | 用途 |
-|---|---|
-| `8880` | NiceGUI 管理界面 |
-| `8881` | 独立公网 API 路由 |
-
-监听地址可通过 `/etc/nicevpn/listen.env` 配置：
+监听地址可写入 `/etc/nicevpn/listen.env`：
 
 ```ini
 NICEVPN_UI_HOST=0.0.0.0
 NICEVPN_UI_PORT=8880
-
 NICEVPN_API_HOST=0.0.0.0
 NICEVPN_API_PORT=8881
 ```
 
-生产环境建议：
+Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提供 OpenVPN 运行环境及持久化数据目录。
 
-- 公网拒绝直接访问管理端 `8880`；
-- API 使用 HTTPS 反向代理后再转发到 `8881`；
-- 若由 Nginx 终结 TLS，可将 `NICEVPN_API_HOST=127.0.0.1`；
-- 一次性下载只走 8881 API 端口的 `/download/{token}`，8880 管理端不再提供下载路由；管理页的「复制」「推送」共享此下载链接。
-- `download_base_url` **可选**：配置后按指定的 IP/域名生成下载链接；留空时统一使用启动检测到的本机 IP + API 监听端口（默认 8881），包括复制、推送以及 API 返回的下载地址。无需域名即可部署和测试。
-- 如果 API 仅绑定 `127.0.0.1`、无法自动找到可访问的监听 IP，则应填写反代可访问的下载地址；外地用户无法访问私网 IP 时可配置公网 IP 或 HTTPS 域名。
+## 数据
 
-公网 API 详情见 [api.md](./api.md)。
-
-### 日志轮转
-
-`start.sh daemon` 会安装 `/etc/logrotate.d/nicevpn-openvpn`。
-
-当前策略管理：
-
-- `openvpn-device-bind.log`
-- `openvpn-session-audit.jsonl`
-- `openvpn-connection-audit.jsonl`
-- `server.log`
-
-历史日志轮转后**立即 gzip 压缩**；`server-status.log` 为状态文件，不参与轮转。
-
-如果发行版的 `logrotate.service` 使用 `ProtectSystem=full/strict`，安装脚本会通过 systemd drop-in 仅允许其写入实际 OpenVPN 日志目录，不放开整个 `/etc`。
-
-### Docker
-
-Docker 镜像直接使用仓库中的预编译 Vue 产物，同一个容器进程同时监听 `8880` 和 `8881`。
-
-```bash
-DOCKER_BUILDKIT=1 docker build -t nicevpn:latest -f deploy/docker/Dockerfile .
-
-docker run -d \
-  --name nicevpn \
-  --privileged \
-  --network host \
-  -v /opt/openvpn-mgmt/data:/app/data \
-  -v /opt/openvpn-mgmt/backups:/app/backups \
-  nicevpn:latest
-```
-
-使用 `--network host` 时无需额外 `-p`。
-
-## CLI
-
-CLI 不需要构建前端：
-
-```bash
-./start.sh cli --help
-```
-
-也可以使用：
-
-```bash
-python main.py cli --help
-python cli.py --help
-```
-
-完整命令、`--dry-run`、JSON 输出、OVPN 导出和 bash Tab 补全见 **[cli.md](./cli.md)**。
-
-## 数据与升级
-
-结构化管理元数据使用：
-
-```text
-data/nicevpn.db
-```
-
-包含用户、用户组、对端、中心防火墙规则、标签等结构化数据。
-
-旧版本升级时，启动阶段会自动将旧 JSON 数据迁入 SQLite，并把旧 JSON 归档到：
-
-```text
-backups/storage-migration-<UTC>/
-```
-
-以下仍保持文件形态：
-
-- 系统配置；
-- PKI / CRL；
-- CCD；
-- OVPN；
-- 设备绑定；
-- 远端链缓存；
-- 下载令牌 / bundle；
-- 审计与运行日志。
-
-若需要降级到仍使用 JSON 的旧版本，必须先停止服务并从迁移归档恢复对应 JSON；旧版本不会读取 `nicevpn.db`。
+- SQLite：用户、组、对端、标签和防火墙等结构化数据。
+- 文件：系统配置、PKI/CRL、CCD、OVPN、运行状态及审计日志。
+- 备份时保留 `data/` 和 `backups/`；启用 SSO 时，数据库必须与 `data/sso_provider_master.key` 一起备份。
 
 ## 文档
 
-| 文档 | 用途 |
+| 文档 | 内容 |
 |---|---|
-| [docs/overview.md](./docs/overview.md) | 产品能力与模块说明 |
-| [cli.md](./cli.md) | CLI 使用说明与命令参考 |
-| [api.md](./api.md) | 公网 VPN API |
-| [CLAUDE.md](./CLAUDE.md) | AI / 开发者架构与开发约束 |
-| `openspec/changes/` | 功能变更设计、规范与任务归档 |
+| [docs/overview.md](docs/overview.md) | 功能概览 |
+| [docs/security.md](docs/security.md) | SSO 与设备绑定 |
+| [docs/firewall-tags.md](docs/firewall-tags.md) | 标签、防火墙与 Mesh |
+| [docs/storage.md](docs/storage.md) | SQLite 与迁移 |
+| [docs/logging.md](docs/logging.md) | 日志与审计 |
+| [api.md](api.md) | 公网 API |
+| [cli.md](cli.md) | CLI |
+| [CLAUDE.md](CLAUDE.md) | AI / 开发约束 |
+| `openspec/changes/` | 变更设计与历史记录 |
 
-## 开发与测试
-
-安装依赖：
+## 开发
 
 ```bash
 pip install -r requirements.txt
-```
-
-单元测试：
-
-```bash
 python -m pytest tests/unit -q
-```
-
-需要重新构建前端时：
-
-```bash
 ./start.sh --build-ui
-# 或
-./build-ui.sh
 ```
 
-GitHub Actions 当前覆盖：
-
-- Python 3.14 单元测试；
-- OpenSpec strict validation；
-- shell / UTF-8 / whitespace 检查；
-- 按改动范围执行 Docker build；
-- 按改动范围执行 Chrome browser smoke。
-
-代码注释和文档字符串使用中文，代码标识符使用英文。架构与开发边界以 [CLAUDE.md](./CLAUDE.md)、代码和当前 OpenSpec 为准。
-> **SSO 升级清理**：schema v9 将 SQLite 旧认证审计导出到 `data/logs/sso-auth-legacy.jsonl` 后删除废弃表，统一钉钉配置成功保存/导入后清理旧企业凭证。建议升级前备份数据库和 `data/sso_provider_master.key`。
-
-> **企业认证自动重连（SQLite v12）**：钉钉首次登录通过后，NiceVPN 按原证书指纹复用 SSO 会话；OpenVPN 仍自行验证证书、CRL 与 TLS。在线客户端由 Management `status 3` 按每实例随机 1–5 秒确认，SQLite 约每 55 分钟原地刷新同一条会话记录（为 1 小时超时预留 5 分钟余量）；**正常断开后保留 1 小时复用窗口，持续在线按周期续期**。支持 OpenVPN / NiceVPN 重启及 TLS REAUTH；撤销、白名单失效、缺少可信证书指纹等情况仍不能绕过认证。详见 `docs/enterprise-sso.md`。
+`./build-ui.sh` 也可单独构建前端。测试基线以 GitHub Actions 配置为准。
