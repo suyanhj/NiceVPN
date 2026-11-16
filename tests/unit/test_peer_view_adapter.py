@@ -21,12 +21,26 @@ BASE = {
 @pytest.mark.parametrize(
     ("extra", "global_key", "expected_capable", "label", "tone"),
     [
-        ({"ssh_password": "secret"}, False, True, "可远程运维", "success"),
-        ({"ssh_private_key": "PRIVATE"}, False, True, "可远程运维", "success"),
-        ({}, True, True, "可远程运维", "success"),
+        ({"ssh_password": "secret"}, False, True, "待验证", "info"),
+        ({"ssh_private_key": "PRIVATE"}, False, True, "待验证", "info"),
+        ({}, True, True, "待验证", "info"),
         ({}, False, False, "缺少凭据", "warning"),
         ({"ssh_host": ""}, True, False, "未配置 SSH", "unknown"),
         ({"ssh_username": ""}, True, False, "未配置 SSH", "unknown"),
+        (
+            {
+                "ssh_password": "secret",
+                "remote_status": {"ssh_status": "connected"},
+            },
+            False, True, "最近已连通", "success",
+        ),
+        (
+            {
+                "ssh_password": "secret",
+                "remote_status": {"ssh_status": "failed", "ssh_error": "timed out"},
+            },
+            False, True, "最近连接失败", "failed",
+        ),
     ],
 )
 def test_peer_adapter_auth_combinations(
@@ -107,3 +121,27 @@ def test_peer_adapter_displays_tag_mesh_visibility():
     assert row["visible_group_names"] == ["开发组"]
     assert row["visible_tag_names"] == ["运维", "研发"]
     assert row["mesh_label"] == "组：开发组；标签：运维、研发"
+
+
+
+def test_peer_adapter_shows_remote_operation_failure_separately_from_ssh() -> None:
+    row = adapt_peer_view(
+        {
+            **BASE,
+            "ssh_password": "secret",
+            "remote_status": {
+                "ssh_status": "connected",
+                "ssh_checked_at": "2026-11-16T18:00:00+00:00",
+                "last_operation": "对端防火墙下发",
+                "last_operation_status": "failed",
+                "last_operation_error": "iptables timed out",
+            },
+        },
+    )
+
+    assert row["connection_label"] == "最近已连通"
+    assert row["connection_tone"] == "success"
+    assert row["ssh_verified"] is True
+    assert row["remote_operation_label"] == "对端防火墙下发失败"
+    assert row["remote_operation_tone"] == "failed"
+    assert "iptables timed out" in row["remote_operation_tooltip"]

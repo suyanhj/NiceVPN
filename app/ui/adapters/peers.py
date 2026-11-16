@@ -74,6 +74,13 @@ def adapt_peer_view(
     ssh_identity_ready = bool(ssh_host and ssh_username)
     remote_capable = ssh_identity_ready and has_auth
 
+    remote_status = row.get("remote_status")
+    if not isinstance(remote_status, Mapping):
+        remote_status = {}
+    ssh_status = str(remote_status.get("ssh_status") or "").strip().lower()
+    ssh_checked_at = str(remote_status.get("ssh_checked_at") or "").strip()
+    ssh_error = str(remote_status.get("ssh_error") or "").strip()
+
     if not ssh_identity_ready:
         connection_label = "未配置 SSH"
         connection_tone = "unknown"
@@ -82,10 +89,46 @@ def adapt_peer_view(
         connection_label = "缺少凭据"
         connection_tone = "warning"
         connection_reason = "请配置 SSH 密码、对端私钥或系统全局私钥"
-    else:
-        connection_label = "可远程运维"
+    elif ssh_status == "connected":
+        connection_label = "最近已连通"
         connection_tone = "success"
         connection_reason = ""
+    elif ssh_status == "failed":
+        connection_label = "最近连接失败"
+        connection_tone = "failed"
+        connection_reason = ssh_error or "最近一次 SSH 连接失败"
+    else:
+        connection_label = "待验证"
+        connection_tone = "info"
+        connection_reason = "SSH 凭据已配置，尚未进行连接验证"
+
+    connection_tooltip_parts = []
+    if ssh_checked_at:
+        connection_tooltip_parts.append(f"最近验证：{ssh_checked_at}")
+    if ssh_error and ssh_status == "failed":
+        connection_tooltip_parts.append(ssh_error)
+    if not connection_tooltip_parts:
+        connection_tooltip_parts.append(connection_reason)
+    connection_tooltip = "\n".join(part for part in connection_tooltip_parts if part)
+
+    last_operation = str(remote_status.get("last_operation") or "").strip()
+    last_operation_status = str(remote_status.get("last_operation_status") or "").strip().lower()
+    last_operation_error = str(remote_status.get("last_operation_error") or "").strip()
+    last_operation_at = str(remote_status.get("last_operation_at") or "").strip()
+    remote_operation_label = ""
+    remote_operation_tone = "info"
+    remote_operation_tooltip = ""
+    if last_operation and last_operation_status in {"success", "failed"}:
+        remote_operation_label = (
+            f"{last_operation}{'成功' if last_operation_status == 'success' else '失败'}"
+        )
+        remote_operation_tone = "success" if last_operation_status == "success" else "failed"
+        remote_operation_tooltip = "\n".join(
+            part for part in (
+                f"最近操作：{last_operation_at}" if last_operation_at else "",
+                last_operation_error,
+            ) if part
+        )
 
     if busy:
         connection_label = "远程操作中"
@@ -106,9 +149,14 @@ def adapt_peer_view(
         "ssh_username": ssh_username,
         "ssh_port": int(row.get("ssh_port") or 22),
         "remote_capable": remote_capable,
+        "ssh_verified": ssh_status == "connected",
         "connection_label": connection_label,
         "connection_tone": connection_tone,
         "connection_reason": connection_reason,
+        "connection_tooltip": connection_tooltip,
+        "remote_operation_label": remote_operation_label,
+        "remote_operation_tone": remote_operation_tone,
+        "remote_operation_tooltip": remote_operation_tooltip,
         "busy": bool(busy),
         "can_install": remote_capable and not busy,
         "can_push": remote_capable and not busy,

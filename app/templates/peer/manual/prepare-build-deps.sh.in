@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# NiceVPN 对端源码编译依赖：同时覆盖 OpenSSL 与 OpenVPN 2.7.9。
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        build-essential tar gzip curl ca-certificates pkg-config \
+        autoconf automake libtool zlib1g-dev libssl-dev \
+        libnl-3-dev libnl-genl-3-dev libpam0g-dev libcap-ng-dev \
+        liblzo2-dev liblz4-dev libpkcs11-helper1-dev libsystemd-dev conntrack
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y \
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig \
+        autoconf automake libtool zlib-devel openssl-devel libnl3-devel \
+        pam-devel libcap-ng-devel lzo-devel lz4-devel \
+        pkcs11-helper-devel systemd-devel which conntrack-tools
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y \
+        gcc gcc-c++ make tar gzip curl ca-certificates pkgconfig \
+        autoconf automake libtool zlib-devel openssl-devel libnl3-devel \
+        pam-devel libcap-ng-devel lzo-devel lz4-devel \
+        pkcs11-helper-devel systemd-devel which conntrack-tools
+else
+    echo "不支持的包管理器：请手动安装 OpenSSL/OpenVPN 编译依赖。" >&2
+    exit 1
+fi

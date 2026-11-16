@@ -256,7 +256,7 @@ class PeersPage:
                 on_click=lambda: ui.navigate.to("/peers"),
             )
             secondary_action(
-                "复制全部命令",
+                "复制基础部署命令",
                 icon="content_copy",
                 on_click=lambda: self._copy_manual_text(
                     all_commands,
@@ -1029,8 +1029,16 @@ class PeersPage:
                         status_badge(
                             str(view["connection_tone"]),
                             label=str(view["connection_label"]),
-                            icon="cloud_done" if view["remote_capable"] else "cloud_off",
+                            icon="cloud_done" if view["ssh_verified"] else "cloud_off",
+                            tooltip=str(view["connection_tooltip"] or ""),
                         )
+                        if view["remote_operation_label"]:
+                            status_badge(
+                                str(view["remote_operation_tone"]),
+                                label=str(view["remote_operation_label"]),
+                                icon="error" if view["remote_operation_tone"] == "failed" else "check_circle",
+                                tooltip=str(view["remote_operation_tooltip"] or ""),
+                            )
                     with ui.element("div").classes("peers-record-meta"):
                         with ui.element("span").classes("peers-record-meta-tag"):
                             ui.icon("person", size="14px")
@@ -1151,6 +1159,7 @@ class PeersPage:
                 options=usernames,
                 label="绑定用户（每用户一个对端，须有 CCD）",
                 value=usernames[0],
+                with_input=True,
             ).classes("w-full")
             fields["cidrs"] = ui.textarea(
                 label="后方内网 CIDR（多行或逗号分隔）",
@@ -1420,6 +1429,7 @@ class PeersPage:
                     if current_user in usernames
                     else (usernames[0] if usernames else None)
                 ),
+                with_input=True,
             ).classes("w-full")
             fields["cidrs"] = ui.textarea(
                 label="后方内网 CIDR",

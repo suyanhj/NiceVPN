@@ -343,9 +343,26 @@ class TagRepositoryMixin:
         """一次读取全部标签的关联数量，不反复打开连接或加载成员 payload。"""
         result: dict[str, dict[str, int]] = {}
         specs = (
-            ("user_tags", "tag_id", "users", ""),
-            ("group_tags", "tag_id", "groups", ""),
-            ("firewall_rules", "owner_id", "rules", "WHERE owner_type='tag'"),
+            (
+                "user_tags AS t JOIN users AS u ON u.username=t.username",
+                "t.tag_id",
+                "users",
+                "WHERE u.status IN ('active','disabled')",
+            ),
+            (
+                "group_tags AS t JOIN groups AS g ON g.id=t.group_id",
+                "t.tag_id",
+                "groups",
+                "WHERE COALESCE(g.status, 'active') <> 'deleted'",
+            ),
+            (
+                "firewall_rules AS t",
+                "t.owner_id",
+                "rules",
+                "WHERE t.owner_type='tag' "
+                "AND LOWER(COALESCE(json_extract(t.payload, '$.status'), '')) <> 'deleted' "
+                "AND COALESCE(json_extract(t.payload, '$.deleted'), 0) <> 1",
+            ),
         )
         with self.connection() as conn:
             for table, column, key, where in specs:
@@ -370,20 +387,24 @@ class TagRepositoryMixin:
         where = ""
         params: list[Any] = [tid]
         if kind == "users":
-            table = "user_tags AS t LEFT JOIN users AS u ON u.username=t.username"
-            match = "t.tag_id=?"
+            table = "user_tags AS t JOIN users AS u ON u.username=t.username"
+            match = "t.tag_id=? AND u.status IN ('active','disabled')"
             expression = "t.username"
-            projection = "t.username, COALESCE(u.status, 'unknown') AS status"
+            projection = "t.username, u.status"
             ordering = "t.username COLLATE NOCASE"
         elif kind == "groups":
-            table = "group_tags AS t LEFT JOIN groups AS g ON g.id=t.group_id"
-            match = "t.tag_id=?"
+            table = "group_tags AS t JOIN groups AS g ON g.id=t.group_id"
+            match = "t.tag_id=? AND COALESCE(g.status, 'active') <> 'deleted'"
             expression = "g.name"
             projection = "t.group_id, g.payload"
             ordering = "g.name COLLATE NOCASE, t.group_id"
         else:
             table = "firewall_rules AS t"
-            match = "t.owner_id=? AND t.owner_type='tag'"
+            match = (
+                "t.owner_id=? AND t.owner_type='tag' "
+                "AND LOWER(COALESCE(json_extract(t.payload, '$.status'), '')) <> 'deleted' "
+                "AND COALESCE(json_extract(t.payload, '$.deleted'), 0) <> 1"
+            )
             expression = "COALESCE(json_extract(t.payload, '$.description'), '')"
             projection = "t.payload"
             ordering = "t.priority, t.id"
@@ -418,12 +439,20 @@ class TagRepositoryMixin:
         """分页列表与全选搜索结果共用同一过滤条件，避免选择范围不一致。"""
         if kind == "users":
             table, where, key, order = (
-                "users", "status <> 'deleted'", "username", "username COLLATE NOCASE"
+                "users",
+                "status IN ('active','disabled')",
+                "username",
+                "username COLLATE NOCASE",
             )
             projection = "username, status"
             id_column = "username"
         elif kind == "groups":
-            table, where, key, order = "groups", "1=1", "name", "name COLLATE NOCASE, id"
+            table, where, key, order = (
+                "groups",
+                "status <> 'deleted'",
+                "name",
+                "name COLLATE NOCASE, id",
+            )
             projection = "id, name, payload"
             id_column = "id"
         else:

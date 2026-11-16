@@ -76,7 +76,8 @@ def test_peers_page_uses_shared_header_toolbar_status_and_cards(
             await user.should_see("新建对端")
             await user.should_see("刷新 Mesh 路由")
             await user.should_see("广州站点")
-            await user.should_see("可远程运维")
+            # SSH 凭据存在不代表已连通，首次探测前应保持待验证。
+            await user.should_see("待验证")
             await user.should_see("peer-gz")
             await user.should_see("192.168.10.0/24")
             await user.should_see("Mesh: 开发组")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 from app.storage.repository_helpers import (
-    _dump_payload, _load_payload, _peer_index_values, _like_pattern,
+    _dump_payload, _load_payload, _peer_index_values, _like_pattern, _now_iso,
 )
 
 
@@ -18,6 +18,14 @@ class PeerRepositoryMixin:
         payload = dict(data)
         payload["id"] = peer_id
         with self.connection(write=True) as conn:
+            existing = conn.execute(
+                "SELECT payload FROM peers WHERE id = ?", (peer_id,)
+            ).fetchone()
+            if existing is not None and "remote_status" not in payload:
+                previous = _load_payload(existing["payload"])
+                remote_status = previous.get("remote_status")
+                if isinstance(remote_status, dict):
+                    payload["remote_status"] = remote_status
             conn.execute(
                 """
                 INSERT INTO peers(
@@ -52,6 +60,42 @@ class PeerRepositoryMixin:
                     *_peer_index_values(payload),
                 ),
             )
+
+    def update_peer_remote_status(self, peer_id: str, **updates: Any) -> bool:
+        """原子更新单个对端的 SSH 连通性和最近远程操作状态。"""
+        allowed = {
+            "ssh_status",
+            "ssh_checked_at",
+            "ssh_error",
+            "last_operation",
+            "last_operation_status",
+            "last_operation_at",
+            "last_operation_error",
+        }
+        values = {key: value for key, value in updates.items() if key in allowed}
+        if not values:
+            return False
+        pid = str(peer_id or "").strip()
+        if not pid:
+            return False
+        with self.connection(write=True) as conn:
+            row = conn.execute(
+                "SELECT payload FROM peers WHERE id = ?", (pid,)
+            ).fetchone()
+            if row is None:
+                return False
+            payload = _load_payload(row["payload"])
+            remote_status = payload.get("remote_status")
+            if not isinstance(remote_status, dict):
+                remote_status = {}
+            remote_status.update(values)
+            remote_status["updated_at"] = _now_iso()
+            payload["remote_status"] = remote_status
+            conn.execute(
+                "UPDATE peers SET payload = ? WHERE id = ?",
+                (_dump_payload(payload), pid),
+            )
+        return True
 
     def get_peer(self, peer_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:

@@ -1,3 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 发行版包通常使用 openvpn-client@client.service；
+# 源码编译或自定义部署可能提供 openvpn-client.service。
 systemctl daemon-reload
-systemctl enable --now openvpn-client@client.service
-systemctl restart openvpn-client@client.service
+if systemctl cat openvpn-client@client.service >/dev/null 2>&1; then
+    unit="openvpn-client@client.service"
+elif systemctl cat openvpn-client.service >/dev/null 2>&1; then
+    unit="openvpn-client.service"
+else
+    echo "未找到 openvpn-client@client.service 或 openvpn-client.service，请先安装/配置 systemd unit。" >&2
+    exit 1
+fi
+
+systemctl enable --now "${unit}"
+systemctl restart "${unit}"

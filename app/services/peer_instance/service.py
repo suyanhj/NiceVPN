@@ -185,11 +185,100 @@ def mesh_lan_cidrs_for_user_group(
 
 
 
+def _track_peer_remote_operation(operation: str):
+    """记录单个 Peer 的远端操作结果，不将其与 SSH 连通性混为一谈。"""
+    def decorate(func):
+        @functools.wraps(func)
+        def wrapped(self, *args, **kwargs):
+            peer_id = args[0] if args else kwargs.get("peer_id", "")
+            try:
+                result = func(self, *args, **kwargs)
+            except Exception as exc:
+                self._record_peer_remote_operation(peer_id, operation, "failed", str(exc))
+                raise
+            if (
+                operation == "OpenVPN 探测"
+                and isinstance(result, dict)
+                and "connected" in result
+            ):
+                self._record_peer_ssh_probe_result(
+                    peer_id,
+                    connected=bool(result.get("connected")),
+                    error=str(result.get("ssh_error") or ""),
+                )
+            failed = (
+                isinstance(result, dict)
+                and (
+                    result.get("ok") is False
+                    or result.get("connected") is False
+                )
+            )
+            error = ""
+            if failed:
+                error = str(
+                    result.get("error")
+                    or result.get("ssh_error")
+                    or result.get("message")
+                    or "远端返回失败状态"
+                )
+            self._record_peer_remote_operation(
+                peer_id,
+                operation,
+                "failed" if failed else "success",
+                error,
+            )
+            return result
+        return wrapped
+    return decorate
+
+
 class PeerService:
     """对端实例 CRUD；绑定用户须已存在且已有 CCD。"""
 
     def __init__(self, store: SqliteStore | None = None) -> None:
         self.store = store or get_default_store()
+
+    def _record_peer_ssh_probe_result(
+        self, peer_id: str, *, connected: bool, error: str = "",
+    ) -> None:
+        """记录 SSH 探测的连通性，使用 PeerService 当前 store（支持测试/多实例注入）。"""
+        updater = getattr(self.store, "update_peer_remote_status", None)
+        if not callable(updater):
+            return
+        try:
+            updater(
+                str(peer_id or ""),
+                ssh_status="connected" if connected else "failed",
+                ssh_checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                ssh_error=str(error or "").strip()[:500],
+            )
+        except Exception:
+            peer_remote_log.warning(
+                "记录对端 SSH 探测状态失败 peer_id=%s", peer_id, exc_info=True,
+            )
+
+    def _record_peer_remote_operation(
+        self, peer_id: str, operation: str, status: str, error: str = "",
+    ) -> None:
+        """持久化最近一次远端操作结果；状态写入异常不改变原操作结果。"""
+        updater = getattr(self.store, "update_peer_remote_status", None)
+        if not callable(updater):
+            return
+        try:
+            updater(
+                str(peer_id or ""),
+                last_operation=operation,
+                last_operation_status=status,
+                last_operation_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                last_operation_error=str(error or "").strip()[:500],
+            )
+        except Exception:
+            peer_remote_log.warning(
+                "记录对端远程操作状态失败 peer_id=%s operation=%s",
+                peer_id,
+                operation,
+                exc_info=True,
+            )
 
     def list_peer_lan_firewall_presets_for_center_form(self) -> list[dict]:
         """供中心规则表单下拉选择对端内网 CIDR，列出所有已配置 LAN 的对端。"""
@@ -267,6 +356,7 @@ class PeerService:
             masquerade_on_peer=bool(row.get("masquerade_on_peer")),
         )
 
+    @_track_peer_remote_operation("OpenVPN 探测")
     def probe_openvpn_via_ssh(
         self,
         peer_id: str,
@@ -318,6 +408,7 @@ class PeerService:
             openvpn_binary=ob,
         )
 
+    @_track_peer_remote_operation("对端防火墙下发")
     def deploy_peer_site_firewall_via_ssh(
         self,
         peer_id: str,
@@ -346,6 +437,7 @@ class PeerService:
         gs = str(cfg.get("global_subnet") or "").strip()
         return apply_peer_site_iptables_via_ssh(row, gs, force=force)
 
+    @_track_peer_remote_operation("远端防火墙读取")
     def fetch_remote_peer_filter_chain_snapshot(self, peer_id: str) -> dict:
         """经 SSH 拉取对端本 peer 的 ``VPN_PEER_*`` 链与 FORWARD 引用行（只读）。"""
         from app.services.peer_instance.remote_peer_iptables import fetch_peer_filter_chain_snapshot_via_ssh
@@ -355,6 +447,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return fetch_peer_filter_chain_snapshot_via_ssh(row)
 
+    @_track_peer_remote_operation("远端防火墙更新")
     def apply_remote_peer_filter_chain_rests(self, peer_id: str, rests: list[str]) -> None:
         """兼容原始规则调用；通过原子 iptables-restore 回写对端本 peer 用户链。"""
         from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_rests_via_ssh
@@ -364,6 +457,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         replace_peer_filter_chain_rests_via_ssh(row, rests)
 
+    @_track_peer_remote_operation("远端防火墙更新")
     def apply_remote_peer_filter_chain_plan(
         self, peer_id: str, rests: list[str], ipsets: list | None = None,
     ) -> None:
@@ -377,6 +471,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         replace_peer_filter_chain_plan_via_ssh(row, rests, list(ipsets or []))
 
+    @_track_peer_remote_operation("OVPN 配置推送")
     def deploy_peer_ovpn_via_ssh(self, peer_id: str, *, remote_path: str | None = None) -> dict:
         """经 SSH 将本地 ``OVPN_PROFILES_DIR/<绑定用户>.ovpn`` 上传到对端。
 
@@ -393,6 +488,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return upload_bound_user_ovpn_via_ssh(row, remote_path=remote_path)
 
+    @_track_peer_remote_operation("自定义 OVPN 推送")
     def deploy_peer_ovpn_from_local_path_via_ssh(
         self, peer_id: str, local_path: str, *, remote_path: str | None = None
     ) -> dict:
@@ -404,6 +500,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return upload_custom_ovpn_file_via_ssh(row, local_path, remote_path=remote_path)
 
+    @_track_peer_remote_operation("OpenVPN 安装")
     def install_openvpn_on_peer_via_ssh(self, peer_id: str) -> dict:
         """经 SSH 在对端安装 OpenVPN：Debian 系同初始化向导官方源；RHEL 系 dnf/yum 安装包。
 
@@ -420,6 +517,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return install_openvpn_on_peer_via_ssh(row)
 
+    @_track_peer_remote_operation("OpenVPN 服务状态读取")
     def fetch_peer_client_service_status_via_ssh(self, peer_id: str) -> dict:
         """经 SSH 查询对端 ``openvpn-client`` systemd 服务状态。"""
         from app.services.peer_instance.remote_peer_ovpn import fetch_openvpn_client_service_status_via_ssh
@@ -429,6 +527,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return fetch_openvpn_client_service_status_via_ssh(row)
 
+    @_track_peer_remote_operation("OpenVPN 服务控制")
     def control_peer_client_service_via_ssh(self, peer_id: str, action: str) -> dict:
         """经 SSH 控制对端 ``openvpn-client`` systemd 服务。"""
         from app.services.peer_instance.remote_peer_ovpn import control_openvpn_client_service_via_ssh
@@ -438,6 +537,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return control_openvpn_client_service_via_ssh(row, action)
 
+    @_track_peer_remote_operation("OpenVPN 日志读取")
     def fetch_peer_client_service_logs_via_ssh(self, peer_id: str, *, lines: int = 200) -> dict:
         """经 SSH 拉取对端 ``openvpn-client`` 文件日志。"""
         from app.services.peer_instance.remote_peer_ovpn import fetch_openvpn_client_service_logs_via_ssh
@@ -447,6 +547,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return fetch_openvpn_client_service_logs_via_ssh(row, lines=lines)
 
+    @_track_peer_remote_operation("OpenVPN systemd 下发")
     def deploy_peer_client_systemd_via_ssh(self, peer_id: str, *, config_path: str | None = None) -> dict:
         """经 SSH 启用对端 ``openvpn-client`` systemd 服务。"""
         from app.services.peer_instance.remote_peer_ovpn import deploy_openvpn_client_systemd_via_ssh
@@ -456,6 +557,7 @@ class PeerService:
             raise ValueError(f"对端实例不存在: {peer_id}")
         return deploy_openvpn_client_systemd_via_ssh(row, config_path=config_path)
 
+    @_track_peer_remote_operation("OpenVPN 一键装配")
     def ensure_openvpn_on_peer_via_ssh(self, peer_id: str) -> dict:
         """幂等确保对端 OpenVPN 客户端完整装配并通过最终状态校验。
 
@@ -789,12 +891,42 @@ class PeerService:
         peer = PeerInstance(**merged)
         self._ensure_bound_username_unique(peer.bound_username, exclude_peer_id=peer_id)
         dumped = peer.model_dump()
+        ssh_config_fields = (
+            "ssh_host",
+            "ssh_port",
+            "ssh_username",
+            "ssh_password",
+            "ssh_private_key",
+            "ssh_private_key_passphrase",
+        )
+        ssh_config_changed = any(
+            str(cur.get(field) or "") != str(dumped.get(field) or "")
+            for field in ssh_config_fields
+        )
         need_fw = _vpn_forward_wire_snapshot(cur) != _vpn_forward_wire_snapshot(dumped)
         need_mesh = _mesh_push_wire_snapshot(cur) != _mesh_push_wire_snapshot(dumped)
         need_ccd = _ccd_iroute_wire_snapshot(cur) != _ccd_iroute_wire_snapshot(dumped)
         ccd_snapshot = _snapshot_ccd_files() if (need_ccd or need_mesh) else {}
 
         self.store.upsert_peer(dumped)
+        if ssh_config_changed:
+            updater = getattr(self.store, "update_peer_remote_status", None)
+            if callable(updater):
+                try:
+                    updater(
+                        peer_id,
+                        ssh_status="unknown",
+                        ssh_checked_at="",
+                        ssh_error="",
+                        last_operation="",
+                        last_operation_status="",
+                        last_operation_at="",
+                        last_operation_error="",
+                    )
+                except Exception:
+                    peer_remote_log.warning(
+                        "重置对端 SSH 状态失败 peer_id=%s", peer_id, exc_info=True,
+                    )
         try:
             if os.name != "nt":
                 from app.services.firewall.rule_service import FirewallRuleService

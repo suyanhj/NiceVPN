@@ -272,6 +272,10 @@ class TagsPage:
                     placeholder=placeholders[kind],
                     value=search,
                 ).props("outlined dense clearable").classes("flex-grow")
+                search_input.on(
+                    "keydown.enter",
+                    lambda: self._apply_detail_search(tag_id, kind, search_input.value),
+                )
                 secondary_action(
                     "查询", icon="search",
                     on_click=lambda: self._apply_detail_search(tag_id, kind, search_input.value),
@@ -334,8 +338,7 @@ class TagsPage:
                         ui.icon("person_outline", size="sm")
                         ui.label(username).classes("tags-detail-name")
                     ui.badge(
-                        "启用" if status == "active" else "停用" if status == "disabled"
-                        else "已删除" if status == "deleted" else "未知"
+                        "启用" if status == "active" else "停用"
                     ).props("outline")
 
     @staticmethod
