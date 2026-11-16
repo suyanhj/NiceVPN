@@ -156,30 +156,151 @@ EOF
     fi
 }
 
+# 如果上次在 prefix 备份切换后被 SIGKILL，先恢复最近的完整旧版本；
+# 未发布的 stage 目录只会在持有安装锁时清理。
+openvpn_recover_source_install() {
+    local prefix_parent prefix_base backup_root latest_backup="" stage_root
+    prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
+    prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
+    mkdir -p -- "${prefix_parent}"
+
+    if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+        for backup_root in "${prefix_parent}/.${prefix_base}.backup."*; do
+            [ -d "${backup_root}/${prefix_base}" ] || continue
+            latest_backup="${backup_root}/${prefix_base}"
+        done
+        if [ -n "${latest_backup}" ]; then
+            mv -T -- "${latest_backup}" "${OPENVPN_PREFIX}"
+            rmdir -- "$(dirname -- "${latest_backup}")" 2>/dev/null || true
+            _log "检测到上次 OpenVPN prefix 切换中断，已恢复旧版本: ${OPENVPN_PREFIX}"
+        fi
+    fi
+
+    for stage_root in "${prefix_parent}/.${prefix_base}.stage."*; do
+        [ -d "${stage_root}" ] || continue
+        rm -rf -- "${stage_root}"
+    done
+}
+
 openvpn_compile_install() {
     openvpn_download_source
-    rm -rf "${OPENVPN_SRC_ROOT}"
-    mkdir -p "${OPENVPN_SRC_ROOT}"
+    openvpn_recover_source_install
+
+    local prefix_parent prefix_base stage_root staged_prefix staged_bin
+    local version_output version expected_version backup_root backup_prefix
+    case "${OPENVPN_PREFIX}" in
+        /*) ;;
+        *)
+            echo "OPENVPN_PREFIX 必须是绝对路径: ${OPENVPN_PREFIX}" >&2
+            return 1
+            ;;
+    esac
+    [ "${OPENVPN_PREFIX}" != "/" ] || {
+        echo "OPENVPN_PREFIX 不能是根目录" >&2
+        return 1
+    }
+    case "${OPENVPN_BIN}" in
+        "${OPENVPN_PREFIX}/"*) ;;
+        *)
+            echo "OPENVPN_BIN 必须位于 OPENVPN_PREFIX 内，无法安全进行目录切换: ${OPENVPN_BIN}" >&2
+            return 1
+            ;;
+    esac
+
+    prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
+    prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
+    mkdir -p -- "${prefix_parent}"
+    stage_root="$(mktemp -d "${prefix_parent}/.${prefix_base}.stage.XXXXXX")"
+    staged_prefix="${stage_root}${OPENVPN_PREFIX}"
+    staged_bin="${stage_root}${OPENVPN_BIN}"
+    backup_root=""
+    backup_prefix=""
+    OPENVPN_LAST_BACKUP_PREFIX=""
+
+    rm -rf -- "${OPENVPN_SRC_ROOT}"
+    mkdir -p -- "${OPENVPN_SRC_ROOT}"
     tar -xzf "${OPENVPN_CACHE}" -C "${OPENVPN_SRC_ROOT}"
     if [ ! -d "${OPENVPN_SRC_DIR}" ]; then
-        OPENVPN_SRC_DIR="$(find "${OPENVPN_SRC_ROOT}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+        OPENVPN_SRC_DIR="$(find "${OPENVPN_SRC_ROOT}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
     fi
     [ -n "${OPENVPN_SRC_DIR}" ] && [ -d "${OPENVPN_SRC_DIR}" ] || {
         echo "无法识别 OpenVPN 源码目录: ${OPENVPN_SRC_ROOT}" >&2
-        exit 1
+        rm -rf -- "${stage_root}"
+        return 1
     }
+
     cd "${OPENVPN_SRC_DIR}"
     openvpn_configure_with_optional_features
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
-    make install
+    # DESTDIR 把所有安装产物写入同一文件系统的 stage；不直接覆盖正在使用的 prefix。
+    make install DESTDIR="${stage_root}"
+
+    [ -f "${staged_bin}" ] && [ -x "${staged_bin}" ] || {
+        echo "OpenVPN staged binary 不存在或不可执行: ${staged_bin}" >&2
+        rm -rf -- "${stage_root}"
+        return 1
+    }
+    version_output="$("${staged_bin}" --version 2>&1)" || {
+        echo "OpenVPN staged binary 无法执行 --version: ${staged_bin}" >&2
+        rm -rf -- "${stage_root}"
+        return 1
+    }
+    version="$(printf '%s\n' "${version_output}" | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+    expected_version="${OPENVPN_TAG#v}"
+    if [ -z "${version}" ] || [ "${version}" != "${expected_version}" ]; then
+        echo "OpenVPN staged version 校验失败：期望 ${expected_version}，实际 ${version:-unknown}" >&2
+        rm -rf -- "${stage_root}"
+        return 1
+    fi
+
+    if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
+        [ -d "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ] || {
+            echo "现有 OPENVPN_PREFIX 不是普通目录，拒绝替换: ${OPENVPN_PREFIX}" >&2
+            rm -rf -- "${stage_root}"
+            return 1
+        }
+        backup_root="${prefix_parent}/.${prefix_base}.backup.$(date +%s).$$"
+        if ! mkdir -m 0700 -- "${backup_root}"; then
+            echo "无法创建 OpenVPN 旧版本备份目录: ${backup_root}" >&2
+            rm -rf -- "${stage_root}"
+            return 1
+        fi
+        backup_prefix="${backup_root}/${prefix_base}"
+        if ! mv -T -- "${OPENVPN_PREFIX}" "${backup_prefix}"; then
+            rmdir -- "${backup_root}" 2>/dev/null || true
+            echo "无法备份现有 OpenVPN prefix，未切换新版本" >&2
+            rm -rf -- "${stage_root}"
+            return 1
+        fi
+    fi
+
+    if ! mv -T -- "${staged_prefix}" "${OPENVPN_PREFIX}"; then
+        if [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ]; then
+            if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
+                rmdir -- "${backup_root}" 2>/dev/null || true
+            else
+                _log "严重：新 prefix 部署失败且旧版本恢复失败，旧版本保留在 ${backup_prefix}"
+            fi
+        fi
+        echo "OpenVPN prefix 原子切换失败: ${OPENVPN_PREFIX}" >&2
+        rm -rf -- "${stage_root}"
+        return 1
+    fi
+
+    OPENVPN_LAST_BACKUP_PREFIX="${backup_prefix}"
+    rm -rf -- "${stage_root}"
+
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
         if ! nicevpn_atomic_symlink "${OPENVPN_BIN}" /usr/local/sbin/openvpn; then
             _log "警告：无法安全更新 /usr/local/sbin/openvpn（可能存在非符号链接文件），保留现状"
         fi
     fi
-    _log "OpenVPN 已编译安装到 ${OPENVPN_PREFIX}"
+    if [ -n "${OPENVPN_LAST_BACKUP_PREFIX}" ]; then
+        _log "OpenVPN ${version} 已原子部署到 ${OPENVPN_PREFIX}，旧版本保留在 ${OPENVPN_LAST_BACKUP_PREFIX}"
+    else
+        _log "OpenVPN ${version} 已原子部署到 ${OPENVPN_PREFIX}"
+    fi
 }
-
 _parse_openvpn_version_parts() {
     local raw="${1#v}"
     local major minor
@@ -382,13 +503,43 @@ EOF
     _log "EasyRSA 已原子切换到 ${install_dir}，版本=${actual_version}，旧 current=${old_current:-无}"
 )
 openvpn_post_compile_setup() {
-    openvpn_install_server_systemd_from_src
-    openvpn_install_client_systemd_from_src
-    easyrsa_download_and_install
-    openvpn_install_server_systemd_override
+    openvpn_install_server_systemd_from_src || return 1
+    openvpn_install_client_systemd_from_src || return 1
+    easyrsa_download_and_install || return 1
+    openvpn_install_server_systemd_override || return 1
 }
 
 OPENVPN_ACTIVE_INSTANCES=()
+OPENVPN_LAST_BACKUP_PREFIX=""
+
+# 只有源码 prefix 存在旧版本备份时才回滚；新装和系统包安装不会误删文件。
+openvpn_rollback_previous_prefix() {
+    local reason="${1:-安装后校验失败}"
+    local backup_prefix="${OPENVPN_LAST_BACKUP_PREFIX:-}"
+    local failed_prefix
+    [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ] || return 0
+
+    failed_prefix="${OPENVPN_PREFIX}.failed.$(date +%s).$"
+    if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
+        if ! mv -T -- "${OPENVPN_PREFIX}" "${failed_prefix}"; then
+            _log "无法暂存失败的新 OpenVPN prefix，旧版本仍保留在 ${backup_prefix}"
+            return 1
+        fi
+    fi
+
+    if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
+        rmdir -- "$(dirname -- "${backup_prefix}")" 2>/dev/null || true
+        OPENVPN_LAST_BACKUP_PREFIX=""
+        _log "${reason}，已恢复旧 OpenVPN prefix；失败版本保留在 ${failed_prefix}"
+        return 0
+    fi
+
+    if [ -d "${failed_prefix}" ] && [ ! -e "${OPENVPN_PREFIX}" ]; then
+        mv -T -- "${failed_prefix}" "${OPENVPN_PREFIX}" || true
+    fi
+    _log "旧 OpenVPN prefix 恢复失败，备份仍保留在 ${backup_prefix}"
+    return 1
+}
 
 openvpn_acquire_install_lock() {
     nicevpn_ensure_commands flock util-linux
@@ -440,7 +591,7 @@ openvpn_validate_systemd_unit() {
     return 0
 }
 
-openvpn_post_install_validate() {
+_openvpn_post_install_validate_impl() {
     local candidate="" binary="" version_output="" version="" expected_version="" unit state
     for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
         /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
@@ -504,4 +655,12 @@ openvpn_post_install_validate() {
     done
 
     _log "安装后校验通过: binary=${binary} version=${version} active_instances=${#OPENVPN_ACTIVE_INSTANCES[@]}"
+}
+
+openvpn_post_install_validate() {
+    if _openvpn_post_install_validate_impl; then
+        return 0
+    fi
+    openvpn_rollback_previous_prefix "OpenVPN 安装后校验失败" || true
+    return 1
 }
