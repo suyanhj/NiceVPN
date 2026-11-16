@@ -15,12 +15,10 @@ SERVICE = ROOT / "deploy" / "systemd" / "openvpn-mgmt.service"
 def _select_python_for_test(
     root: Path, *, explicit_python: str = ""
 ) -> subprocess.CompletedProcess[str]:
-    """只执行 start.sh 的解释器选择函数，避免启动 NiceGUI 或写入 systemd。"""
-    assert START.read_text(encoding="utf-8").strip().endswith('main "$@"')
+    """执行 start.sh 和 CLI 安装器共用的解释器选择函数，不启动服务。"""
     script = (
-        "source <(sed '$d' \"$1\")\n"
-        'ROOT_DIR="$2"\n'
-        'select_python\n'
+        'source "$1/deploy/shell/python-runtime.sh"\n'
+        'nicevpn_select_python "$2"\n'
         'printf "\\nSELECTED_PYTHON=%s\\n" "$PYTHON_BIN"\n'
     )
     env = os.environ.copy()
@@ -28,7 +26,7 @@ def _select_python_for_test(
     env.pop("CONDA_PREFIX", None)
     env["PYTHON_BIN"] = explicit_python
     return subprocess.run(
-        ["bash", "-c", script, "bash", str(START), str(root)],
+        ["bash", "-c", script, "bash", str(ROOT), str(root)],
         env=env,
         capture_output=True,
         text=True,
@@ -66,12 +64,14 @@ def test_start_sh_explicit_python_still_has_highest_priority(tmp_path: Path) -> 
     assert f"SELECTED_PYTHON={os.path.abspath(sys.executable)}" in result.stdout
 
 
-def test_start_sh_does_not_silently_ignore_broken_project_venv(tmp_path: Path) -> None:
-    """项目 .venv 损坏时直接报错，不回退到 uv 的系统解释器。"""
+def test_start_sh_skips_broken_project_venv_and_falls_back(tmp_path: Path) -> None:
+    """项目 .venv 缺少解释器时，继续检测系统 Python。"""
     (tmp_path / ".venv").mkdir()
     result = _select_python_for_test(tmp_path)
-    assert result.returncode != 0
-    assert "项目 .venv 存在，但 bin/python 不可执行" in result.stderr
+    assert result.returncode == 0, result.stderr
+    selected = result.stdout.split("SELECTED_PYTHON=", 1)[1].strip()
+    assert selected != str(tmp_path / ".venv" / "bin" / "python")
+    assert "继续检测系统 Python" in result.stderr
 
 
 def test_start_sh_bash_syntax() -> None:
@@ -87,13 +87,16 @@ def test_start_sh_bash_syntax() -> None:
 def test_start_sh_supports_python_discovery_and_daemon_mode() -> None:
     text = START.read_text(encoding="utf-8")
 
+    runtime = (ROOT / "deploy" / "shell" / "python-runtime.sh").read_text(encoding="utf-8")
     assert 'PYTHON_BIN="${PYTHON_BIN:-}"' in text
-    assert "VIRTUAL_ENV" in text
-    assert "CONDA_PREFIX" in text
-    assert ".venv/bin/python" in text
-    assert "os.path.abspath(sys.executable)" in text
-    assert "os.path.realpath(sys.executable)" not in text
-    assert "sys.version_info >= (3, 10)" in text
+    assert 'source "${ROOT_DIR}/deploy/shell/python-runtime.sh"' in text
+    assert 'nicevpn_select_python "${ROOT_DIR}"' in text
+    assert "VIRTUAL_ENV" in runtime
+    assert "CONDA_PREFIX" in runtime
+    assert ".venv/bin/python" in runtime
+    assert "os.path.abspath(sys.executable)" in runtime
+    assert "os.path.realpath(sys.executable)" not in runtime
+    assert "sys.version_info >= (3, 10)" in runtime
     assert 'if [[ "${1:-}" == "daemon" ]]' in text
     assert "systemctl daemon-reload" in text
     assert 'systemctl enable "${SERVICE_NAME}"' in text
