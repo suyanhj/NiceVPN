@@ -62,12 +62,14 @@ fi
 
 # 转成绝对路径，确保 .bashrc 在任意工作目录都能注册补全。
 LINK_NAME="$(cd "${LINK_DIR}" && pwd)/$(basename "${LINK_NAME}")"
+LINK_DIR="$(dirname "${LINK_NAME}")"
+CLI_NAME="$(basename "${LINK_NAME}")"
 PYTHON_BIN_DIR="$("${PYTHON_BIN}" -c 'import os, sys; print(os.path.dirname(sys.executable))')"
 
 echo "已创建：${LINK_NAME} -> ${CLI_PY}"
 echo
 echo "将以下两行加入 ~/.bashrc，然后执行 source ~/.bashrc："
-printf '  export PATH=%q:"$PATH"\n' "${PYTHON_BIN_DIR}"
-printf '  eval "$(%q %q)"\n' "${REGISTER_BIN}" "${LINK_NAME}"
+printf '  export PATH=%q:%q:"$PATH"\n' "${PYTHON_BIN_DIR}" "${LINK_DIR}"
+printf '  eval "$(%q %q)"\n' "${REGISTER_BIN}" "${CLI_NAME}"
 echo
 echo "使用：ovpn-cli <TAB><TAB>"
