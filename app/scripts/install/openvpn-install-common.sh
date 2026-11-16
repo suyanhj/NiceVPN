@@ -337,9 +337,9 @@ EOF
     trap cleanup_easyrsa_install EXIT
 
     tar -xzf "${EASYRSA_CACHE}" -C "${tmp_dir}"
-    source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 2 -type d -name easyrsa3 | head -n 1)"
+    source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 2 -type d -name easyrsa3 -print -quit)"
     if [ -z "${source_dir}" ]; then
-        source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+        source_dir="$(find "${tmp_dir}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
     fi
     [ -n "${source_dir}" ] && [ -f "${source_dir}/easyrsa" ] || {
         echo "无法识别 EasyRSA 解压目录或缺少 easyrsa 脚本: ${tmp_dir}" >&2
@@ -388,8 +388,23 @@ openvpn_post_compile_setup() {
 
 OPENVPN_ACTIVE_INSTANCES=()
 
+openvpn_acquire_install_lock() {
+    nicevpn_ensure_commands flock util-linux
+    mkdir -p /run/lock
+    exec 9>/run/lock/nicevpn-install.lock
+    if ! flock -n 9; then
+        echo "已有 NiceVPN/OpenVPN 安装任务正在执行，请稍后重试" >&2
+        return 1
+    fi
+}
+
 openvpn_capture_active_instances() {
     OPENVPN_ACTIVE_INSTANCES=()
+    if [ "${INSTALL_SERVER_SYSTEMD}" != "1" ] && \
+        [ "${INSTALL_CLIENT_SYSTEMD}" != "1" ] && \
+        [ "${INSTALL_SERVER_OVERRIDE}" != "1" ]; then
+        return 0
+    fi
     if ! command -v systemctl >/dev/null 2>&1; then
         return 0
     fi
