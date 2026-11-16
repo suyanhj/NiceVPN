@@ -540,7 +540,7 @@ openvpn_rollback_previous_prefix() {
     local failed_prefix
     [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ] || return 0
 
-    failed_prefix="${OPENVPN_PREFIX}.failed.$(date +%s).$"
+    failed_prefix="${OPENVPN_PREFIX}.failed.$(date +%s).${BASHPID}"
     if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
         if ! mv -T -- "${OPENVPN_PREFIX}" "${failed_prefix}"; then
             _log "无法暂存失败的新 OpenVPN prefix，旧版本仍保留在 ${backup_prefix}"
