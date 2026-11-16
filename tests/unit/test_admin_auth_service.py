@@ -78,7 +78,7 @@ def test_cli_outputs_only_hash_and_never_plaintext(
     monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
     caplog.set_level(logging.INFO)
 
-    result = entry.cmd_hash_admin_password(argparse.Namespace())
+    result = entry.cmd_admin_password_hash(argparse.Namespace())
     captured = capsys.readouterr()
 
     assert result == 0
@@ -98,7 +98,7 @@ def test_cli_rejects_confirmation_mismatch_without_echoing_passwords(
     answers = iter(("first-secret", "second-secret"))
     monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
 
-    result = entry.cmd_hash_admin_password(argparse.Namespace())
+    result = entry.cmd_admin_password_hash(argparse.Namespace())
     captured = capsys.readouterr()
 
     assert result == 1
@@ -111,7 +111,7 @@ def test_cli_parser_registers_hash_admin_password_command() -> None:
     """凭据生成命令通过现有 CLI 入口可达。"""
 
     args = entry.build_parser().parse_args(["hash-admin-password"])
-    assert args.func is entry.cmd_hash_admin_password
+    assert args.func is entry.cmd_admin_password_hash
 
 
 def test_login_failure_limit_recovers_after_window() -> None:
