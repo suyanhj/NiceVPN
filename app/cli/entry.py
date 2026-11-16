@@ -809,7 +809,6 @@ def _tag_member_payload(ts: TagService, tag: dict) -> dict:
 
 
 def cmd_tag_list(args: argparse.Namespace) -> int:
-    del args
     ts = TagService()
     counts = ts.store.list_tag_counts()
     rows = []
@@ -821,12 +820,15 @@ def cmd_tag_list(args: argparse.Namespace) -> int:
             "group_count": int(count.get("groups", 0)),
             "rule_count": int(count.get("rules", 0)),
         })
-    _print_rows(rows, [
-        ("name", "标签"), ("id", "ID"), ("description", "说明"),
-        ("user_count", "用户"), ("group_count", "用户组"),
-        ("rule_count", "中心规则"), ("device_binding_exempt", "设备豁免"),
-        ("sso_required", "SSO"),
-    ])
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_rows(rows, [
+            ("name", "标签"), ("id", "ID"), ("description", "说明"),
+            ("user_count", "用户"), ("group_count", "用户组"),
+            ("rule_count", "中心规则"), ("device_binding_exempt", "设备豁免"),
+            ("sso_required", "SSO"),
+        ])
     return 0
 
 
@@ -916,7 +918,18 @@ def cmd_tag_delete(args: argparse.Namespace) -> int:
 
 def cmd_tag_member_list(args: argparse.Namespace) -> int:
     ts = TagService()
-    _print_json(_tag_member_payload(ts, _resolve_tag(ts, args.tag_ref)))
+    tag = _resolve_tag(ts, args.tag_ref)
+    members = ts.store.get_tag_members(str(tag["id"]))
+    groups_by_id = {str(row["id"]): row for row in GroupService().list_all()}
+    _print_json({
+        "tag_id": tag["id"],
+        "tag_name": tag.get("name"),
+        "users": members.get("usernames") or [],
+        "groups": [
+            {"id": gid, "name": str(groups_by_id.get(gid, {}).get("name") or "")}
+            for gid in (members.get("group_ids") or [])
+        ],
+    })
     return 0
 
 
@@ -1149,6 +1162,7 @@ def build_parser() -> argparse.ArgumentParser:
     tag = sub.add_parser("tag", help="标签管理（含成员关联）")
     tag_sub = tag.add_subparsers(dest="tag_command", required=True)
     tl = tag_sub.add_parser("list", help="列出标签及关联数量")
+    tl.add_argument("--json", action="store_true", help="输出 JSON")
     tl.set_defaults(func=cmd_tag_list, dry_run=False)
     tshow = tag_sub.add_parser("show", help="查看标签、成员和引用详情")
     tshow.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
@@ -1189,8 +1203,11 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         tm = member_sub.add_parser(action, help=help_text)
         tm.add_argument("tag_ref", metavar="TAG", help="标签名称或 ID")
-        tm.add_argument("--user", dest="usernames", action="append", default=[], help="用户名，可重复指定")
-        tm.add_argument("--group", dest="groups", action="append", default=[], help="用户组名称或 ID，可重复指定")
+        if action != "clear":
+            tm.add_argument("--user", dest="usernames", action="append", default=[], help="用户名，可重复指定")
+            tm.add_argument("--group", dest="groups", action="append", default=[], help="用户组名称或 ID，可重复指定")
+        else:
+            tm.set_defaults(usernames=[], groups=[])
         _add_dry_run(tm)
         tm.set_defaults(func=cmd_tag_member_change, operation=action)
 
