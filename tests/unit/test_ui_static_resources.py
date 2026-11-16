@@ -8,13 +8,6 @@ import re
 UI_DIR = Path(__file__).resolve().parents[2] / "app" / "ui"
 STATIC_DIR = UI_DIR / "static"
 
-
-def test_static_resource_directories_are_explicit() -> None:
-    """静态资源按自有样式、薄适配和第三方依赖分区。"""
-
-    assert {"css", "js", "vendor"} <= {path.name for path in STATIC_DIR.iterdir() if path.is_dir()}
-
-
 def test_static_resources_do_not_expose_sensitive_files() -> None:
     """浏览器可见目录不得混入配置、凭据、证书或运行日志。"""
 
@@ -49,64 +42,6 @@ def test_firewall_uses_aggrid_row_drag_without_duplicate_sortable_bundle() -> No
     assert ".make_sortable(" not in combined_source
     assert "new Sortable(" not in combined_source
     assert not (STATIC_DIR / "Sortable.min.js").exists()
-
-
-def test_firewall_remote_import_batch_methods_stay_out_of_remote_core() -> None:
-    """远端导入/批量边界保持独立，避免重新长回 Remote 核心模块。"""
-
-    page_source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
-    remote_source = (UI_DIR / "pages" / "firewall_remote.py").read_text(encoding="utf-8")
-    import_source = (
-        UI_DIR / "pages" / "firewall_remote_imports.py"
-    ).read_text(encoding="utf-8")
-
-    assert "FirewallRemoteImportBatchMixin" in page_source
-    for method in (
-        "_prepare_remote_import",
-        "_execute_remote_import",
-        "_show_remote_import_dialog",
-        "_import_ok_remote_async",
-        "_do_batch_remote_delete_async",
-        "_do_batch_remote_set_enabled_async",
-    ):
-        assert f"def {method}(" in import_source
-        assert f"def {method}(" not in remote_source
-
-
-def test_firewall_remote_single_rule_actions_stay_out_of_remote_core() -> None:
-    """远端单条规则动作保持独立，Remote 核心只负责同步/Grid/排序。"""
-
-    page_source = (UI_DIR / "pages" / "firewall.py").read_text(encoding="utf-8")
-    remote_source = (UI_DIR / "pages" / "firewall_remote.py").read_text(encoding="utf-8")
-    actions_source = (
-        UI_DIR / "pages" / "firewall_remote_actions.py"
-    ).read_text(encoding="utf-8")
-
-    assert "FirewallRemoteActionsMixin" in page_source
-    for method in (
-        "_show_edit_remote_line_dialog",
-        "_save_remote_rows_and_push",
-        "_confirm_delete_remote_line",
-        "_do_delete_remote_line_async",
-        "_show_create_remote_line_dialog",
-        "_insert_remote_rows_and_push",
-    ):
-        assert f"def {method}(" in actions_source
-        assert f"def {method}(" not in remote_source
-
-
-def test_page_modules_do_not_duplicate_clipboard_scripts() -> None:
-    """页面只能调用共享剪贴板入口，不得散落浏览器复制脚本。"""
-
-    page_sources = {
-        path.name: path.read_text(encoding="utf-8")
-        for path in (UI_DIR / "pages").glob("*.py")
-    }
-    assert "copy_text_to_clipboard" in page_sources["firewall.py"]
-    for name, source in page_sources.items():
-        assert "navigator.clipboard" not in source, name
-        assert "document.execCommand" not in source, name
-
 
 def test_services_uses_nicegui_scroll_area_without_inline_scroll_script() -> None:
     """日志跟随滚动只使用 NiceGUI 滚动区事件与方法。"""

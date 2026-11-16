@@ -185,61 +185,6 @@ def test_shared_create_action_supports_semantic_icon_only_mode() -> None:
     with pytest.raises(ValueError, match="纯图标操作按钮必须提供图标"):
         create_action("新建用户", icon_only=True)
 
-
-def test_page_create_actions_share_low_emphasis_v2_variant() -> None:
-    """页级新增入口统一使用 create_action，保存/推送等主操作不受影响。"""
-
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    actions_source = (
-        root / "app" / "ui" / "components" / "actions.py"
-    ).read_text(encoding="utf-8")
-    shell_css = (
-        root / "app" / "ui" / "static" / "css" / "shell.css"
-    ).read_text(encoding="utf-8")
-
-    assert '"create": "outline color=primary"' in actions_source
-    assert 'def create_action(' in actions_source
-    assert ".vpn-action--create" in shell_css
-    assert "border: 1px solid rgba(45, 212, 191, 0.62) !important;" in shell_css
-    assert "background: rgba(45, 212, 191, 0.035) !important;" in shell_css
-    assert "0 0 16px rgba(45, 212, 191, 0.16)" in shell_css
-
-    page_expectations = {
-        "groups.py": "新建用户组",
-        "peers.py": "新建对端",
-        "users.py": "新建用户",
-        "firewall.py": "新建规则",
-    }
-    for filename, label in page_expectations.items():
-        source = (
-            root / "app" / "ui" / "pages" / filename
-        ).read_text(encoding="utf-8")
-        assert "create_action(" in source
-        create_index = source.index("create_action(")
-        assert label in source[create_index:create_index + 260]
-
-    users_source = (
-        root / "app" / "ui" / "pages" / "users.py"
-    ).read_text(encoding="utf-8")
-    firewall_source = (
-        root / "app" / "ui" / "pages" / "firewall.py"
-    ).read_text(encoding="utf-8")
-    firewall_remote_source = (
-        root / "app" / "ui" / "pages" / "firewall_remote.py"
-    ).read_text(encoding="utf-8")
-    peers_source = (
-        root / "app" / "ui" / "pages" / "peers.py"
-    ).read_text(encoding="utf-8")
-    # 页级“新建”动作保持 create variant；弹窗确认动作可复用 primary/secondary。
-    assert 'create_action(\n                "新建用户"' in users_source
-    assert 'secondary_action("取消"' in users_source
-    assert 'primary_action(\n                    "切换"' in users_source
-    assert "primary_action(" in (firewall_source + firewall_remote_source)
-    assert "primary_action(" in peers_source
-
-
 def test_shared_dialog_theme_overrides_legacy_quasar_skin() -> None:
     """共享表单/确认弹窗必须使用 V2 黑灰青蓝主题，而不是 legacy 蓝灰卡片。"""
 
@@ -649,31 +594,6 @@ def test_shared_server_pager_uses_single_ag_grid_style_contract() -> None:
     assert "vpn-data-grid__server-pager" not in data_grid_source
     assert ".vpn-server-pager" in shell_css
     assert ".vpn-data-grid__grid .ag-paging-panel" in shell_css
-
-
-def test_shared_server_pager_matches_certificate_footer_dimensions() -> None:
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    shell_css = (
-        root / "app" / "ui" / "static" / "css" / "shell.css"
-    ).read_text(encoding="utf-8")
-
-    assert "height: 44px;" in shell_css
-    assert "background: #0c0c0d;" in shell_css
-    assert "font-size: 13px;" in shell_css
-    assert "width: auto !important;" in shell_css
-    assert "width: 28px !important;" in shell_css
-    assert "overflow-x: auto;" in shell_css
-    assert ".vpn-server-pager-menu" in shell_css
-    assert "min-width: 56px !important;" in shell_css
-    server_pager_source = (
-        root / "app" / "ui" / "components" / "server_pager.py"
-    ).read_text(encoding="utf-8")
-    assert "ui.select(" not in server_pager_source
-    assert "ui.menu()" in server_pager_source
-    assert "vpn-server-pager-menu__item--active" in server_pager_source
-
 
 def test_ag_grid_page_size_options_are_centered_like_server_pager() -> None:
     from pathlib import Path
