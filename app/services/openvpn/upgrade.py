@@ -769,9 +769,13 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
             except Exception as exc:
                 record_rollback_error(f"重启原实例 {name}", exc)
 
-        failed_instances = [
-            name for name in active_instances if not is_instance_active(name)
-        ]
+        failed_instances: list[str] = []
+        for name in active_instances:
+            try:
+                if not is_instance_active(name):
+                    failed_instances.append(name)
+            except Exception as exc:
+                record_rollback_error(f"检查原实例 {name} 状态", exc)
         if failed_instances:
             record_rollback_error(
                 "验证原实例运行状态",
