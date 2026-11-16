@@ -30,7 +30,7 @@ logrotate -d /etc/logrotate.conf
 |---|---|
 | `/etc/openvpn/log/openvpn-session-audit.jsonl` | OpenVPN 连接、断开、设备绑定结果 |
 | `/etc/openvpn/log/openvpn-connection-audit.jsonl` | VPN 网段发起的 conntrack NEW / DESTROY 连接事件 |
-| `data/logs/sso-auth.jsonl` | 企业 SSO 认证结果 |
+| `data/logs/sso-auth.jsonl` | 企业 SSO 认证结果；可在「服务管理 → 本机实例 → 认证日志」查看 |
 
 事件使用扁平 JSON，每行一条。公共字段包括 `schema_version`、`event_time`、`event_source`、`event_dataset`、`event_type` 和 `vpn_instance`。
 
