@@ -596,7 +596,9 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
             )
 
     # 未切换的新候选目录不再被引用，可以安全清理；old_tree 始终保留。
-    for candidate in parent.glob(f"{prefix.name}.nicevpn-new-*"):
+    stale_candidates = list(parent.glob(f"{prefix.name}.nicevpn-new-*"))
+    stale_candidates.extend(parent.glob(f".{prefix.name}.stage.*"))
+    for candidate in stale_candidates:
         try:
             _remove_path_strict(candidate)
         except Exception:
