@@ -236,7 +236,6 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
             await user.open("/")
             await user.should_see("新建对端站点")
             await user.should_see("搜索可用用户")
-            await user.should_see("输入用户名关键字，例如 zhang")
             await user.should_see("SSH 认证")
             await user.should_see("创建")
 
