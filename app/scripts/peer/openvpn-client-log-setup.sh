@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
+
 : "${SERVICE_NAME:?必须设置 SERVICE_NAME}"
 : "${CLIENT_LOG_DIR:=/etc/openvpn/log}"
 : "${LOG_ROTATE_DAYS:=7}"
@@ -24,14 +28,14 @@ ROTATE_PATH="/etc/logrotate.d/ovpn-mgmt-openvpn-client"
 
 echo "[peer-client] 配置 client 日志目录与 systemd drop-in: service=${SERVICE_NAME}"
 
-mkdir -p "${CLIENT_LOG_DIR}" "${OVERRIDE_DIR}"
-cat > "${OVERRIDE_PATH}" <<'EOF'
+mkdir -p "${CLIENT_LOG_DIR}"
+nicevpn_atomic_write_stdin "${OVERRIDE_PATH}" 0644 <<'EOF'
 [Service]
 ReadWritePaths=/etc/openvpn/log
 EOF
 
 if command -v logrotate >/dev/null 2>&1; then
-    cat > "${ROTATE_PATH}" <<EOF
+    nicevpn_atomic_write_stdin "${ROTATE_PATH}" 0644 <<EOF
 ${CLIENT_LOG_DIR}/client.log {
     daily
     rotate ${LOG_ROTATE_DAYS}
