@@ -1149,28 +1149,22 @@ _openvpn_post_install_validate_impl() {
             fi
         done
     else
-        for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
-            /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
+        for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn"; do
             if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
                 binary="${candidate}"
                 break
             fi
         done
     fi
-    if [ -z "${binary}" ]; then
+    if [ -z "${binary}" ] && [ "${OPENVPN_INSTALL_MODE:-}" = "package" ]; then
         candidate="$(command -v openvpn 2>/dev/null || true)"
-        if [ -n "${candidate}" ] && [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-            case "${OPENVPN_INSTALL_MODE:-}" in
-                package)
-                    case "${candidate}" in
-                        /usr/sbin/openvpn|/usr/bin/openvpn) binary="${candidate}" ;;
-                    esac
-                    ;;
-                *)
+        case "${candidate}" in
+            /usr/sbin/openvpn|/usr/bin/openvpn)
+                if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
                     binary="${candidate}"
-                    ;;
-            esac
-        fi
+                fi
+                ;;
+        esac
     fi
     [ -n "${binary}" ] || {
         echo "OpenVPN 安装后未找到与安装模式匹配的可执行二进制" >&2
