@@ -156,7 +156,7 @@ def test_preflight_upgrade_reports_temporary_client(
     assert result["client_result"]["source"] == "temporary"
 
 
-def test_apply_staged_upgrade_stops_before_backup_when_preflight_fails(
+def test_apply_staged_upgrade_stops_before_shell_switch_when_preflight_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
