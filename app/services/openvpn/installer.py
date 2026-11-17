@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from app.core.config import load_config
+from app.core.config import load_config, save_config
 from app.core.constants import (
     EASYRSA_INSTALL_DIR,
     OPENVPN_INSTALL_PREFIX,
@@ -353,25 +353,76 @@ def install_easyrsa(
 
 
 
+
+_LEGACY_EASYRSA_INSTALL_DIR = Path("/opt/easy-rsa")
+
+
+def _sync_legacy_install_paths(
+    on_output: Callable[[str], None] | None = None,
+) -> bool:
+    """Shell 迁移完成后，只同步系统配置中保存的旧可执行文件路径。"""
+
+    config = load_config()
+    changed = False
+    openvpn_paths = {
+        str(Path(OPENVPN_INSTALL_ROOT) / "sbin" / "openvpn"):
+            str(Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"),
+        str(Path(OPENVPN_INSTALL_ROOT) / "bin" / "openvpn"):
+            str(Path(OPENVPN_INSTALL_PREFIX) / "bin" / "openvpn"),
+    }
+    old_openvpn = str(config.get("openvpn_bin") or "").strip()
+    new_openvpn = openvpn_paths.get(old_openvpn)
+    if new_openvpn and Path(new_openvpn).is_file() and os.access(new_openvpn, os.X_OK):
+        config["openvpn_bin"] = new_openvpn
+        config["openvpn_install_mode"] = "source"
+        changed = True
+
+    old_easyrsa = str(config.get("easyrsa_dir") or "").strip()
+    new_easyrsa = Path(EASYRSA_INSTALL_DIR) / "current" / "easyrsa"
+    if (
+        old_easyrsa.startswith(f"{_LEGACY_EASYRSA_INSTALL_DIR}/")
+        and new_easyrsa.is_file()
+        and os.access(new_easyrsa, os.X_OK)
+    ):
+        config["easyrsa_dir"] = str(new_easyrsa)
+        config["easyrsa_install_mode"] = "source"
+        changed = True
+
+    if changed:
+        save_config(config)
+        _emit(on_output, "[配置] 已同步系统设置中的 OpenVPN / EasyRSA 可执行文件路径")
+    return changed
+
+
 def recover_interrupted_openvpn_install(
     on_output: Callable[[str], None] | None = None,
 ) -> bool:
-    """应用启动时恢复 Shell 安装入口留下的持久化事务。"""
+    """应用启动时恢复安装事务，并检查/迁移旧版 OpenVPN 与 EasyRSA 目录。"""
+
+    if os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() != 0):
+        return False
 
     prefix = Path(OPENVPN_INSTALL_PREFIX)
     transaction_root = prefix.parent / f".{prefix.name}.install-transaction"
-    if not transaction_root.exists() and not transaction_root.is_symlink():
-        return False
-
     script_path = _INSTALL_SCRIPTS_DIR / "openvpn-recover.sh"
     if not script_path.is_file():
-        raise FileNotFoundError(f"OpenVPN 安装事务恢复脚本不存在: {script_path}")
-    _emit(on_output, f"[恢复] 检测到 Shell 安装事务: {transaction_root}")
+        raise FileNotFoundError(f"OpenVPN 安装检查脚本不存在: {script_path}")
+
+    if transaction_root.exists() or transaction_root.is_symlink():
+        _emit(on_output, f"[恢复] 检测到 Shell 安装事务: {transaction_root}")
+    else:
+        _emit(on_output, "[检查] 检查 OpenVPN / EasyRSA 安装目录")
+
     _run_command(
         ["bash", str(script_path)],
         on_output,
-        env=_subprocess_env({"OPENVPN_PREFIX": str(prefix)}),
+        env=_subprocess_env({
+            "OPENVPN_ROOT_DIR": str(OPENVPN_INSTALL_ROOT),
+            "OPENVPN_PREFIX": str(prefix),
+            "EASYRSA_INSTALL_DIR": str(EASYRSA_INSTALL_DIR),
+        }),
     )
+    _sync_legacy_install_paths(on_output)
     return True
 
 

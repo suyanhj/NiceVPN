@@ -322,6 +322,155 @@ def _run_common_shell(
     )
 
 
+
+def test_startup_recovery_runs_shell_layout_check_without_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    monkeypatch.setattr(installer_mod.os, "geteuid", lambda: 0)
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    monkeypatch.setattr(installer_mod, "_sync_legacy_install_paths", lambda _output=None: False)
+
+    assert installer_mod.recover_interrupted_openvpn_install() is True
+    assert len(calls) == 1
+    assert calls[0]["command"] == [
+        "bash",
+        str(_INSTALL_SCRIPTS_DIR / "openvpn-recover.sh"),
+    ]
+    assert calls[0]["env"]["OPENVPN_PREFIX"] == str(installer_mod.OPENVPN_INSTALL_PREFIX)
+
+
+def test_startup_syncs_saved_legacy_install_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
+    openvpn = prefix / "sbin" / "openvpn"
+    openvpn.parent.mkdir(parents=True)
+    openvpn.write_text("#!/bin/sh\n", encoding="utf-8")
+    openvpn.chmod(0o755)
+
+    easyrsa_root = tmp_path / "opt" / "ezrsa"
+    easyrsa = easyrsa_root / "current" / "easyrsa"
+    easyrsa.parent.mkdir(parents=True)
+    easyrsa.write_text("#!/bin/sh\n", encoding="utf-8")
+    easyrsa.chmod(0o755)
+
+    config = {
+        "openvpn_bin": str(root / "sbin" / "openvpn"),
+        "openvpn_install_mode": "custom",
+        "easyrsa_dir": "/opt/easy-rsa/releases/3.2.6/easyrsa",
+        "easyrsa_install_mode": "custom",
+    }
+    saved: list[dict] = []
+    monkeypatch.setattr(installer_mod, "OPENVPN_INSTALL_ROOT", root)
+    monkeypatch.setattr(installer_mod, "OPENVPN_INSTALL_PREFIX", prefix)
+    monkeypatch.setattr(installer_mod, "EASYRSA_INSTALL_DIR", easyrsa_root)
+    monkeypatch.setattr(installer_mod, "load_config", lambda: config)
+    monkeypatch.setattr(installer_mod, "save_config", lambda value: saved.append(dict(value)))
+
+    assert installer_mod._sync_legacy_install_paths() is True
+    assert config["openvpn_bin"] == str(prefix / "sbin" / "openvpn")
+    assert config["openvpn_install_mode"] == "source"
+    assert config["easyrsa_dir"] == str(easyrsa)
+    assert config["easyrsa_install_mode"] == "source"
+    assert saved == [config]
+
+
+def test_startup_migrates_legacy_openvpn_and_easyrsa_layouts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opt" / "openvpn"
+    old_binary = root / "sbin" / "openvpn"
+    old_binary.parent.mkdir(parents=True)
+    old_binary.write_text(
+        "#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n",
+        encoding="utf-8",
+    )
+    old_binary.chmod(0o755)
+    for part in ("include", "lib", "libexec", "share"):
+        (root / part).mkdir(parents=True)
+        (root / part / "marker").write_text(part, encoding="utf-8")
+
+    legacy_easy = tmp_path / "opt" / "easy-rsa"
+    easy_release = legacy_easy / "releases" / "3.2.6"
+    easy_release.mkdir(parents=True)
+    easy_binary = easy_release / "easyrsa"
+    easy_binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    easy_binary.chmod(0o755)
+    (legacy_easy / "current").symlink_to(easy_release)
+
+    systemd_dir = tmp_path / "etc" / "systemd" / "system"
+    systemd_dir.mkdir(parents=True)
+    server_unit = systemd_dir / "openvpn-server@.service"
+    server_unit.write_text(
+        f"ExecStart={root}/sbin/openvpn --config %i.conf\n",
+        encoding="utf-8",
+    )
+    client_unit = systemd_dir / "openvpn-client@.service"
+    client_unit.write_text(
+        f"ExecStart={root}/bin/openvpn --config %i.conf\n",
+        encoding="utf-8",
+    )
+
+    openvpn_cli = tmp_path / "usr" / "local" / "sbin" / "openvpn"
+    openvpn_cli.parent.mkdir(parents=True)
+    openvpn_cli.symlink_to(old_binary)
+    easyrsa_cli = tmp_path / "usr" / "local" / "bin" / "easyrsa"
+    easyrsa_cli.parent.mkdir(parents=True)
+    easyrsa_cli.symlink_to(legacy_easy / "current" / "easyrsa")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    systemctl_log = tmp_path / "systemctl.log"
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_LOG"\n',
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+
+    env = {
+        "OPENVPN_ROOT_DIR": str(root),
+        "OPENVPN_PREFIX": str(root / "current"),
+        "EASYRSA_INSTALL_DIR": str(tmp_path / "opt" / "ezrsa"),
+        "EASYRSA_LEGACY_INSTALL_DIR": str(legacy_easy),
+        "OPENVPN_SYSTEMD_UNIT_DIR": str(systemd_dir),
+        "OPENVPN_CLI_LINK": str(openvpn_cli),
+        "EASYRSA_CLI_LINK": str(easyrsa_cli),
+        "SYSTEMCTL_LOG": str(systemctl_log),
+    }
+    result = _run_common_shell(tmp_path, "openvpn_migrate_legacy_layout", extra_env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    current = root / "current"
+    assert current.is_symlink() and current.readlink() == Path("2.7.8")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
+    assert (root / "2.7.8" / "include" / "marker").read_text(encoding="utf-8") == "include"
+    assert not (root / "sbin").exists()
+    assert f"ExecStart={root}/current/sbin/openvpn" in server_unit.read_text(encoding="utf-8")
+    assert f"ExecStart={root}/current/bin/openvpn" in client_unit.read_text(encoding="utf-8")
+    assert openvpn_cli.readlink() == root / "current" / "sbin" / "openvpn"
+
+    ezrsa = tmp_path / "opt" / "ezrsa"
+    assert not legacy_easy.exists()
+    assert (ezrsa / "3.2.6" / "easyrsa").is_file()
+    assert (ezrsa / "current").is_symlink()
+    assert (ezrsa / "current").readlink() == Path("3.2.6")
+    assert easyrsa_cli.readlink() == ezrsa / "current" / "easyrsa"
+    assert "daemon-reload" in systemctl_log.read_text(encoding="utf-8")
+
+    # 启动检查可重复执行；第二次不再移动目录或重写服务文件。
+    result = _run_common_shell(tmp_path, "openvpn_migrate_legacy_layout", extra_env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize(
     ("version", "supported"),
     [

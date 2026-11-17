@@ -69,7 +69,7 @@ def init():
     config = load_config()
     ensure_storage_ready()
 
-    # 仅恢复 OpenVPN 首次安装留下的 Shell 事务；版本升级只切换稳定软链接。
+    # 启动时由 Shell 检查并迁移旧安装目录，同时恢复中断的安装事务。
     try:
         from app.services.openvpn.installer import recover_interrupted_openvpn_install
 
@@ -78,6 +78,8 @@ def init():
         )
     except Exception:
         logger.critical("启动时恢复中断的 OpenVPN Shell 安装失败，事务材料已保留", exc_info=True)
+
+    config = load_config()
 
     # 管理端不再注册下载和公网 VPN API；二者仅由第二监听端口提供。
 
