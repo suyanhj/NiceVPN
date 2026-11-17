@@ -34,6 +34,7 @@ fi
 : "${OPENVPN_INSTALL_MODE_FILE:=/etc/openvpn/mgmt/openvpn-install-mode}"
 : "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
 : "${EASYRSA_FORCE_INSTALL:=0}"
+: "${EASYRSA_INSTALL_LOCK_FILE:=/run/lock/nicevpn-easyrsa-install.lock}"
 
 : "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"
 
@@ -76,9 +77,24 @@ easyrsa_find_existing_binary() {
     return 1
 }
 
-# 将旧版 /opt/easy-rsa 迁移到新目录；原路径保留兼容软链接。
-# 若新旧目录同时存在，绝不合并或覆盖，优先使用新目录并保留旧目录。
-easyrsa_migrate_legacy_install() {
+# EasyRSA 安装/迁移共享跨进程锁；锁文件放在 /run/lock，不能放进会被移动的安装目录。
+easyrsa_acquire_install_lock() {
+    local lock_parent
+    command -v flock >/dev/null 2>&1 || {
+        echo "缺少 flock，无法保证 EasyRSA 安装/迁移互斥" >&2
+        return 1
+    }
+    lock_parent="$(dirname -- "${EASYRSA_INSTALL_LOCK_FILE}")"
+    mkdir -p -- "${lock_parent}"
+    exec 8>"${EASYRSA_INSTALL_LOCK_FILE}"
+    if ! flock -n 8; then
+        echo "已有 EasyRSA 安装/迁移任务正在执行，请稍后重试" >&2
+        return 1
+    fi
+}
+
+# 调用方必须持有 EasyRSA 全局锁。
+easyrsa_migrate_legacy_install_impl() {
     local legacy="${EASYRSA_LEGACY_INSTALL_DIR}" resolved
     [[ "${legacy}" != "${EASYRSA_INSTALL_DIR}" ]] || return 0
     if [[ -L "${legacy}" ]]; then
@@ -103,11 +119,14 @@ easyrsa_migrate_legacy_install() {
     _log "已将旧 EasyRSA 目录迁移到 ${EASYRSA_INSTALL_DIR}，旧路径保留兼容入口"
 }
 
+# 单独迁移入口与版本安装入口共用同一把锁。
+easyrsa_migrate_legacy_install() (
+    easyrsa_acquire_install_lock
+    easyrsa_migrate_legacy_install_impl
+)
+
 # 已有 EasyRSA 默认复用；只有显式 EASYRSA_FORCE_INSTALL=1 才允许覆盖当前安装入口。
 easyrsa_reuse_existing() {
-    if [[ "${OPENVPN_STAGE_ONLY}" != "1" ]]; then
-        easyrsa_migrate_legacy_install || return 1
-    fi
     [[ "${INSTALL_EASYRSA}" == "1" ]] || return 0
     [[ "${EASYRSA_FORCE_INSTALL}" == "1" ]] && return 0
 
@@ -880,7 +899,8 @@ easyrsa_validate_binary() {
 # 使用不可变版本目录；先完整解压、校验，再原子切换 current。
 # 旧版本不覆盖、不提前删除，更新中断时 current 始终指向原版本。
 easyrsa_download_and_install() (
-    easyrsa_migrate_legacy_install
+    easyrsa_acquire_install_lock
+    easyrsa_migrate_legacy_install_impl
     easyrsa_reuse_existing
     [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
     : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
