@@ -43,7 +43,7 @@ def test_openvpn_uses_shutil_which_instead_of_subprocess(
         ),
     )
 
-    assert detector._find_openvpn_binary() == str(binary.resolve())
+    assert detector._find_openvpn_binary() == str(binary)
 
 
 def test_easyrsa_checks_neighboring_openvpn_prefix_before_path(
@@ -70,7 +70,7 @@ def test_easyrsa_uses_same_path_lookup(
         lambda name: str(easyrsa) if name == "easyrsa" else None,
     )
 
-    assert detector.find_easyrsa() == str(easyrsa.resolve())
+    assert detector.find_easyrsa() == str(easyrsa)
 
 
 def test_nonexistent_path_lookup_does_not_return_invalid_executable(
