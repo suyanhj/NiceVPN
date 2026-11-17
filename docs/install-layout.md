@@ -30,10 +30,10 @@ EasyRSA 继续使用 `releases/ + current` 的版本管理方式，新安装根�
 ## 升级和回滚
 
 - 系统包模式：由 apt/dnf/yum 管理更新。NiceVPN 不会把系统包二进制替换成源码版本。
-- NiceVPN 源码模式：候选版本先在临时目录构建，并完成服务端配置、客户端配置 preflight；通过后发布为独立 release，再原子切换 `/opt/openvpn`。
-- 升级失败：只把 `/opt/openvpn` 切回旧 release，旧版本目录不移动、不删除；systemd 配置和运行实例按原事务流程恢复。切换前会持久化事务 manifest 和 systemd/CLI 快照，事务目录位于 `/opt/openvpn-releases/.nicevpn-upgrade-transaction/`，不依赖 `/tmp`。
-- 升级成功：保留旧 release，供人工回退。版本目录清理应作为独立 GC 操作，不能在切换事务中删除唯一回滚目标。
-- 如果升级进程被 SIGKILL、断电或服务器重启打断，NiceVPN 下次启动会读取持久化 manifest，恢复旧稳定入口、systemd/CLI 快照，并重启升级前处于 active 的服务实例；恢复不完整时保留事务材料并记录严重日志，不会静默删除。
-- 安装成功后，源码安装会重启升级前已运行的 OpenVPN 实例并检查 `active` 状态；包管理器模式则验证包路径、版本、unit 和原运行实例状态。
+- NiceVPN 源码模式：候选版本先在临时目录构建，并完成服务端配置、临时客户端配置 preflight；通过后复制到独立 release 目录并校验 binary 版本及 SHA-256。
+- 升级时只原子切换 `/opt/openvpn` 软链接，然后重启升级前处于 active 的 OpenVPN 实例并检查服务状态；**不重写 systemd unit、override、CLI 软链接或任何 VPN 配置，也不创建整套 NiceVPN 备份**。这些固定路径始终引用 `/opt/openvpn`，切换目标即可生效。
+- 升级失败：Shell 将 `/opt/openvpn` 原子切回旧 release，并重启原运行实例。旧版本目录始终保留，不复制、不移动、不删除。
+- 如果升级进程在切换前中断，当前版本不受影响；切换后中断时，稳定入口仍指向一个完整 release，旧版本目录也仍然保留，可再次切换回去。升级流程不再维护 Python manifest、systemd 快照或独立恢复状态机。
+- 首次安装仍由 Shell 负责 systemd unit/override 初始化和安装后校验；系统包模式则验证包路径、版本、unit 和原运行实例状态。
 
 安装模式记录在 NiceVPN 配置中，并由 `/etc/openvpn/mgmt/openvpn-install-mode` 提供安装脚本与 Python 运行时之间的持久化标记。
