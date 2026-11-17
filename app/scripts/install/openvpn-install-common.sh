@@ -354,7 +354,7 @@ openvpn_source_transaction_paths() {
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
 # 任何一项失败均保留快照供人工排查或下次安装继续恢复。
 openvpn_restore_source_transaction() {
-    local root prefix backup="" failed=0 idx=0 path mode failed_tree=""
+    local root prefix backup="" failed=0 idx=0 path mode
     root="$(openvpn_source_transaction_root)" || return 1
     [[ -d "${root}" && ! -L "${root}" ]] || {
         [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
@@ -372,39 +372,41 @@ openvpn_restore_source_transaction() {
         if [[ -f "${root}/backup-prefix" ]]; then
             IFS= read -r backup < "${root}/backup-prefix" || true
         fi
-        if [[ -n "${backup}" && -d "${backup}" && ! -L "${backup}" ]]; then
-            if [[ -e "${prefix}" || -L "${prefix}" ]]; then
-                failed_tree="${root}/failed-prefix"
-                if ! mv -T -- "${prefix}" "${failed_tree}"; then
-                    echo "无法暂存失败的 OpenVPN 目录: ${prefix}" >&2
+        if [[ -n "${backup}" ]]; then
+            if [[ -d "${backup}" || -L "${backup}" ]]; then
+                if [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+                    echo "回滚拒绝用版本软链接覆盖普通目录: ${prefix}" >&2
+                    failed=1
+                elif ! nicevpn_atomic_symlink "${backup}" "${prefix}"; then
+                    echo "无法恢复 OpenVPN 旧版本入口: ${backup} -> ${prefix}" >&2
                     failed=1
                 fi
-            fi
-            if [[ "${failed}" == "0" ]]; then
-                if ! mv -T -- "${backup}" "${prefix}"; then
-                    echo "无法恢复旧 OpenVPN 目录: ${backup}" >&2
-                    if [[ -e "${failed_tree}" && ! -e "${prefix}" ]]; then
-                        mv -T -- "${failed_tree}" "${prefix}" || true
-                    fi
-                    failed=1
-                fi
-            fi
-        elif [[ ! -e "${root}/original-prefix" ]]; then
-            # 首次安装此前没有 prefix；失败时不保留半完成的新版本。
-            if [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
-                if ! mv -T -- "${prefix}" "${root}/failed-prefix"; then
-                    failed=1
-                fi
-            elif [[ -e "${prefix}" || -L "${prefix}" ]]; then
-                echo "首次安装生成了非普通目录，拒绝删除: ${prefix}" >&2
+            elif [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+                # 事务意图先于旧目录迁移写入；目标不存在且原目录仍在，说明尚未切换。
+                _log "检测到迁移尚未移动旧目录，保留原 OpenVPN 目录: ${prefix}"
+            else
+                echo "OpenVPN 回滚目标不存在，无法恢复: ${backup}" >&2
                 failed=1
             fi
+        elif [[ ! -f "${root}/original-prefix" ]]; then
+            # 首次安装此前没有 prefix；只移除本事务创建的稳定软链接，不删除目录或 release。
+            if [[ -L "${prefix}" ]]; then
+                rm -f -- "${prefix}" || failed=1
+            elif [[ -e "${prefix}" ]]; then
+                echo "首次安装回滚拒绝删除非软链接路径: ${prefix}" >&2
+                failed=1
+            fi
+        elif [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+            _log "旧 OpenVPN 普通目录仍在，保留原目录: ${prefix}"
+        else
+            echo "原 OpenVPN 入口存在但事务未记录旧版本目标，拒绝猜测回滚: ${prefix}" >&2
+            failed=1
         fi
     fi
 
     while IFS= read -r path; do
         if [[ -f "${root}/${idx}.protected" ]]; then
-            # 原有 current 是实体目录；安装器不会将其替换为 symlink。
+            # 历史安装可能把 current 设为实体目录；安装器不会将其替换为 symlink。
             :
         elif [[ -f "${root}/${idx}.missing" ]]; then
             if [[ -f "${path}" || -L "${path}" ]]; then
@@ -441,7 +443,7 @@ openvpn_restore_source_transaction() {
         echo "OpenVPN 已恢复，但清理事务快照失败: ${root}" >&2
         return 1
     fi
-    _log "已恢复源码安装前的 OpenVPN prefix、systemd 配置和命令入口"
+    _log "已恢复 OpenVPN 稳定入口、systemd 配置和安装模式记录"
 }
 
 openvpn_source_transaction_on_exit() {
