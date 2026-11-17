@@ -18,7 +18,11 @@ from app.utils.posix_data_perms import (
     ensure_openvpn_audit_log_files,
     sync_openvpn_runtime_permissions_from_config,
 )
-from app.services.openvpn.detector import detect_openvpn, find_easyrsa
+from app.services.openvpn.detector import (
+    classify_easyrsa_install_mode,
+    detect_openvpn,
+    find_easyrsa,
+)
 from app.utils.audit_log import AuditLogger
 from app.utils.cidr import validate_cidr
 
@@ -122,7 +126,9 @@ class InitWizard:
 
             easyrsa_path = find_easyrsa(result["path"])
             self.config.openvpn_bin = result["path"]
+            self.config.openvpn_install_mode = result.get("install_mode")
             self.config.easyrsa_dir = easyrsa_path
+            self.config.easyrsa_install_mode = classify_easyrsa_install_mode(easyrsa_path)
             save_config(self.config)
             logger.info("步骤 1/5：检测 OpenVPN 成功，version=%s, path=%s", result["version"], result["path"])
             return StepResult(
@@ -189,7 +195,9 @@ class InitWizard:
 
                 easyrsa_path = find_easyrsa(result["path"])
                 self.config.openvpn_bin = result["path"]
+                self.config.openvpn_install_mode = result.get("install_mode")
                 self.config.easyrsa_dir = easyrsa_path
+                self.config.easyrsa_install_mode = classify_easyrsa_install_mode(easyrsa_path)
                 save_config(self.config)
                 self.audit.log("install_openvpn", "system", None,
                                {"version": result["version"]}, "success")
@@ -223,7 +231,9 @@ class InitWizard:
 
             easyrsa_path = find_easyrsa(custom_path)
             self.config.openvpn_bin = custom_path
+            self.config.openvpn_install_mode = "custom"
             self.config.easyrsa_dir = easyrsa_path
+            self.config.easyrsa_install_mode = classify_easyrsa_install_mode(easyrsa_path)
             save_config(self.config)
             logger.info("步骤 1/5：自定义 OpenVPN 路径验证成功，version=%s, path=%s", result["version"], custom_path)
             return StepResult(
@@ -286,6 +296,7 @@ class InitWizard:
                 return StepResult(False, f"EasyRSA 自动安装失败: {exc}")
 
         self.config.easyrsa_dir = easyrsa_dir
+        self.config.easyrsa_install_mode = classify_easyrsa_install_mode(easyrsa_dir)
 
         requested_pki = str(data.get("pki_dir") or "").strip()
         configured_pki = str(self.config.get("pki_dir") or "").strip()
