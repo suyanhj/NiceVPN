@@ -203,16 +203,17 @@ EOF
 openvpn_recover_source_install() {
     local prefix_parent prefix_base backup_root candidate candidate_mtime
     local latest_backup="" latest_backup_root="" latest_mtime=0 stage_root
+    local latest_release="" latest_release_mtime=0 release_binary
     prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
-    mkdir -p -- "${prefix_parent}"
+    mkdir -p -- "${prefix_parent}" "${OPENVPN_RELEASES_DIR}"
 
     if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
-        # 兼容 upgrade.py 的 old_tree 和 Shell 安装流程自己的 backup 目录。
+        # 兼容旧版 upgrade.py 的 old_tree 和 Shell 安装流程自己的 backup 目录。
         for backup_root in "${prefix_parent}/${prefix_base}.nicevpn-old-"*; do
             [ -d "${backup_root}" ] || [ -L "${backup_root}" ] || continue
             candidate="${backup_root}"
-            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
@@ -222,7 +223,7 @@ openvpn_recover_source_install() {
         for backup_root in "${prefix_parent}/.${prefix_base}.backup."*; do
             candidate="${backup_root}/${prefix_base}"
             [ -d "${candidate}" ] && [ ! -L "${candidate}" ] || continue
-            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
@@ -234,14 +235,98 @@ openvpn_recover_source_install() {
             if [ -n "${latest_backup_root}" ]; then
                 rmdir -- "${latest_backup_root}" 2>/dev/null || true
             fi
-            _log "检测到上次 OpenVPN prefix 切换中断，已恢复旧版本: ${OPENVPN_PREFIX}"
+            _log "检测到旧版 OpenVPN 安装切换中断，已恢复目录: ${OPENVPN_PREFIX}"
         fi
     fi
 
-    for stage_root in "${prefix_parent}/.${prefix_base}.stage."*; do
+    # 若在旧目录迁移/新版本发布的极短窗口被 SIGKILL，恢复最近一个完整 release。
+    if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+        for candidate in "${OPENVPN_RELEASES_DIR}"/*; do
+            [ -d "${candidate}" ] || continue
+            release_binary="${candidate}/sbin/openvpn"
+            [ -x "${release_binary}" ] || release_binary="${candidate}/bin/openvpn"
+            [ -x "${release_binary}" ] || continue
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            if [ "${candidate_mtime}" -ge "${latest_release_mtime}" ]; then
+                latest_release_mtime="${candidate_mtime}"
+                latest_release="${candidate}"
+            fi
+        done
+        if [ -n "${latest_release}" ]; then
+            nicevpn_atomic_symlink "${latest_release}" "${OPENVPN_PREFIX}" || {
+                echo "恢复 OpenVPN 稳定入口失败: ${latest_release} -> ${OPENVPN_PREFIX}" >&2
+                return 1
+            }
+            _log "已从版本目录恢复 OpenVPN 稳定入口: ${latest_release}"
+        fi
+    fi
+
+    for stage_root in "${prefix_parent}/.${prefix_base}.stage."* "${OPENVPN_RELEASES_DIR}/.stage."*; do
         [ -d "${stage_root}" ] || continue
         rm -rf -- "${stage_root}"
     done
+}
+
+# 将历史 /opt/openvpn 普通目录迁入不可变版本仓库，再建立固定软链接入口。
+openvpn_migrate_legacy_prefix() {
+    local binary version_output version hash release_id release_dir txn_root
+    if [ -L "${OPENVPN_PREFIX}" ]; then
+        local target
+        target="$(readlink -f -- "${OPENVPN_PREFIX}" 2>/dev/null || true)"
+        [ -n "${target}" ] && [ -d "${target}" ] || {
+            echo "OpenVPN 稳定入口是失效软链接，拒绝覆盖: ${OPENVPN_PREFIX}" >&2
+            return 1
+        }
+        return 0
+    fi
+    [ -d "${OPENVPN_PREFIX}" ] || {
+        if [ -e "${OPENVPN_PREFIX}" ]; then
+            echo "OpenVPN 安装入口不是目录或软链接，拒绝迁移: ${OPENVPN_PREFIX}" >&2
+            return 1
+        fi
+        return 0
+    }
+
+    binary="${OPENVPN_PREFIX}/sbin/openvpn"
+    [ -x "${binary}" ] || binary="${OPENVPN_PREFIX}/bin/openvpn"
+    [ -x "${binary}" ] || {
+        echo "旧 OpenVPN 目录缺少可执行二进制，拒绝自动迁移: ${OPENVPN_PREFIX}" >&2
+        return 1
+    }
+    version_output="$("${binary}" --version 2>&1)" || {
+        echo "旧 OpenVPN 二进制无法读取版本，拒绝迁移: ${binary}" >&2
+        return 1
+    }
+    version="$(printf '%s\n' "${version_output}" | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+    [ -n "${version}" ] || {
+        echo "无法识别旧 OpenVPN 版本，拒绝迁移: ${binary}" >&2
+        return 1
+    }
+    hash="$(sha256sum "${binary}" | awk '{print $1}')"
+    release_id="legacy-${version}-${hash:0:12}"
+    release_dir="${OPENVPN_RELEASES_DIR}/${release_id}"
+    mkdir -p -- "${OPENVPN_RELEASES_DIR}"
+    if [ -e "${release_dir}" ] || [ -L "${release_dir}" ]; then
+        echo "旧 OpenVPN 迁移目标已存在，拒绝覆盖: ${release_dir}" >&2
+        return 1
+    fi
+
+    txn_root="$(openvpn_source_transaction_root)"
+    if [ -f "${txn_root}/ready" ]; then
+        printf '%s\n' "${release_dir}" > "${txn_root}/backup-prefix"
+        : > "${txn_root}/switch-intent"
+    fi
+    mv -T -- "${OPENVPN_PREFIX}" "${release_dir}" || {
+        echo "迁移旧 OpenVPN 目录失败: ${OPENVPN_PREFIX} -> ${release_dir}" >&2
+        return 1
+    }
+    if ! nicevpn_atomic_symlink "${release_dir}" "${OPENVPN_PREFIX}"; then
+        if ! mv -T -- "${release_dir}" "${OPENVPN_PREFIX}"; then
+            echo "严重：旧 OpenVPN 已迁移但稳定入口创建失败，原目录保留在 ${release_dir}" >&2
+        fi
+        return 1
+    fi
+    _log "旧 OpenVPN ${version} 已迁移到 ${release_dir}，稳定入口保持 ${OPENVPN_PREFIX}"
 }
 
 # 源码安装事务快照放在 prefix 同级，避免 /tmp 清理使回滚材料丢失。
