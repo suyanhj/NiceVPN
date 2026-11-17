@@ -85,7 +85,7 @@ def test_logrotate_installer_detects_duplicate_system_policy_and_rolls_back():
     assert '"$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1' in installer
     assert 'had_previous=0' in installer
     assert 'cp -p -- "$CONF_TARGET" "$tmp_backup"' in installer
-    assert 'install -m 0644 "$tmp_backup" "$CONF_TARGET"' in installer
+    assert 'nicevpn_atomic_write_command "$CONF_TARGET" 0644 cat "$tmp_backup"' in installer
     assert 'rm -f -- "$CONF_TARGET"' in installer
 
 
