@@ -17,9 +17,9 @@ def test_parse_probe_stdout_bin_and_version() -> None:
 
 
 def test_parse_probe_stdout_quoted_bin() -> None:
-    out = 'BIN:"/opt/openvpn/sbin/openvpn"\nOpenVPN 2.5.9\n'
+    out = 'BIN:"/opt/openvpn/current/sbin/openvpn"\nOpenVPN 2.5.9\n'
     b, v = ro._parse_probe_stdout(out)
-    assert b == "/opt/openvpn/sbin/openvpn"
+    assert b == "/opt/openvpn/current/sbin/openvpn"
     assert v == "2.5.9"
 
 

@@ -108,7 +108,7 @@ def test_preferred_paths_require_executable_permission(
 
 def test_install_mode_classification_recognizes_source_package_and_custom_paths() -> None:
     assert detector.classify_openvpn_install_mode("/opt/openvpn/current/sbin/openvpn") == "source"
-    assert detector.classify_openvpn_install_mode("/opt/openvpn/sbin/openvpn") == "source"
+    assert detector.classify_openvpn_install_mode("/opt/openvpn/2.7.1/sbin/openvpn") == "source"
     assert detector.classify_openvpn_install_mode("/usr/sbin/openvpn") == "package"
     assert detector.classify_openvpn_install_mode("/srv/openvpn/bin/openvpn") == "custom"
 

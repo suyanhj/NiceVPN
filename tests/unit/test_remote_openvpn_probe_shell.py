@@ -11,7 +11,7 @@ def test_probe_shell_no_preferred_only_standard():
     s = _build_openvpn_probe_shell()
     assert s.startswith("set -e\n")
     assert "command -v openvpn" in s
-    assert "/usr/sbin/openvpn" in s or "/opt/openvpn/sbin/openvpn" in s
+    assert "/usr/sbin/openvpn" in s or "/opt/openvpn/current/sbin/openvpn" in s
 
 
 def test_probe_shell_preferred_before_standard_list():

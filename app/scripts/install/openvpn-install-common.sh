@@ -241,6 +241,17 @@ openvpn_recover_source_install() {
         }
     fi
 
+    for part in sbin bin share lib lib64 include libexec; do
+        if [[ -e "${root}/${part}" && ! -L "${root}/${part}" ]]; then
+            echo "检测到旧版 OpenVPN 目录: ${root}/${part}；请先执行 scripts/migrate-version-layout-once.sh" >&2
+            return 1
+        fi
+        if [[ -L "${root}/${part}" && "$(readlink -- "${root}/${part}")" != "current/${part}" ]]; then
+            echo "OpenVPN 兼容入口指向异常: ${root}/${part}" >&2
+            return 1
+        fi
+    done
+
     for stage_root in "${root}"/.stage.* "${root}"/.nicevpn-openvpn-upgrade.*; do
         [[ -d "${stage_root}" ]] || continue
         rm -rf -- "${stage_root}"
@@ -761,7 +772,7 @@ easyrsa_validate_binary() {
 }
 
 # EasyRSA 同样采用 /opt/ezrsa/<version> + current -> <version>。
-# 版本目录不可覆盖；同版本内容不一致时明确报错。
+# 版本目录只按版本号命名；已存在时校验版本并复用，不覆盖。
 easyrsa_download_and_install() (
     easyrsa_acquire_install_lock
     easyrsa_reuse_existing
@@ -886,7 +897,7 @@ openvpn_rollback_previous_prefix() {
     [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ] || return 0
 
     if ! nicevpn_atomic_symlink "$(basename -- "${backup_prefix}")" "${OPENVPN_PREFIX}"; then
-        _log "旧 OpenVPN release 回滚失败，旧版本仍保留在 ${backup_prefix}"
+        _log "旧 OpenVPN 版本回滚失败，旧版本仍保留在 ${backup_prefix}"
         return 1
     fi
     OPENVPN_LAST_BACKUP_PREFIX=""
