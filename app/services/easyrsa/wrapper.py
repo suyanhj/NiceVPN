@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import logging
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,7 +9,6 @@ from app.core.config import load_config
 from app.core.constants import (
     EASYRSA_CA_EXPIRE_DAYS,
     EASYRSA_CERT_EXPIRE_DAYS,
-    OPENVPN_SEARCH_PATHS,
 )
 
 logger = logging.getLogger(__name__)
@@ -306,19 +304,11 @@ class EasyRSAError(Exception):
 
 
 def _resolve_openvpn_bin() -> str:
-    """解析 OpenVPN 可执行文件路径。"""
-    config = load_config()
-    configured = str(config.get("openvpn_bin", "") or "").strip()
-    if configured and Path(configured).is_file():
-        return configured
+    """复用安装检测器解析稳定 OpenVPN 入口，避免落到旧版本真实目录。"""
+    from app.services.openvpn.detector import detect_openvpn
 
-    which_path = shutil.which("openvpn")
-    if which_path:
-        return which_path
-
-    for candidate in OPENVPN_SEARCH_PATHS:
-        path = Path(candidate)
-        if path.is_file():
-            return str(path)
-
+    detected = detect_openvpn()
+    binary = str(detected.get("path") or "").strip()
+    if binary and Path(binary).is_file():
+        return binary
     raise FileNotFoundError("未找到 OpenVPN 可执行文件，请先完成 OpenVPN 安装")
