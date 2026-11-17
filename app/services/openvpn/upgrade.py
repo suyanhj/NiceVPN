@@ -1040,7 +1040,7 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
 
 
 def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) -> dict:
-    """原子切换 /opt/openvpn 稳定软链接；旧 release 保留用于快速回滚。"""
+    """通过持久化事务切换稳定入口；旧 release 保留，进程中断后可在启动时恢复。"""
 
     current = detect_openvpn()
     if current.get("install_mode") != "source":
@@ -1048,67 +1048,88 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
             "当前 OpenVPN 不是 NiceVPN 管理的源码安装，拒绝执行源码 release 切换。"
         )
 
+    # 先恢复上次异常退出留下的事务，再兼容恢复更早版本的旧式备份目录。
+    _recover_interrupted_openvpn_upgrade_locked(on_output)
     prefix = Path(OPENVPN_INSTALL_PREFIX)
     releases_dir = Path(OPENVPN_RELEASES_DIR)
     _recover_interrupted_prefix_switch(prefix)
+
     preflight = preflight_upgrade_candidate(stage, on_output)
     if not preflight.get("ok"):
         raise RuntimeError(str(preflight.get("error") or "候选 OpenVPN preflight 失败"))
 
+    stage_binary = Path(str(stage.get("binary") or ""))
+    if not stage_binary.is_file():
+        raise RuntimeError(f"候选 OpenVPN binary 不存在: {stage_binary}")
+    version = str(stage.get("version") or _openvpn_version(stage_binary))
+    release_id = _release_id(version, stage_binary)
+    release_dir = releases_dir / release_id
+    release_stage = releases_dir / f".{release_id}.stage-{uuid.uuid4().hex[:12]}"
+
     from app.services.backup import create_full_backup
 
-    backup_file = create_full_backup(label=f"openvpn-upgrade-{stage.get('version')}")
+    backup_file = create_full_backup(label=f"openvpn-upgrade-{version}")
     _emit(on_output, f"[备份] NiceVPN 完整备份: {backup_file}")
 
     active_instances = [
         name for name in iter_all_openvpn_instance_names() if is_instance_active(name)
     ]
+    old_target = _legacy_release_target(prefix, releases_dir)
+    prefix_was_present = prefix.exists() or prefix.is_symlink()
 
-    rollback_root = Path(tempfile.mkdtemp(prefix="nicevpn-openvpn-rollback-"))
     unit = Path("/etc/systemd/system/openvpn-server@.service")
     override_dir = Path("/etc/systemd/system/openvpn-server@.service.d")
     cli_link = Path("/usr/local/sbin/openvpn")
+    txn_root = _upgrade_transaction_root()
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    if txn_root.exists() or txn_root.is_symlink():
+        raise RuntimeError(f"OpenVPN 升级事务目录仍存在，拒绝覆盖: {txn_root}")
+    txn_root.mkdir(mode=0o700, parents=True, exist_ok=False)
+
+    manifest_written = False
     try:
         snapshots = [
-            _snapshot_path(unit, rollback_root, "openvpn-server.service"),
-            _snapshot_path(override_dir, rollback_root, "openvpn-server.service.d"),
-            _snapshot_path(cli_link, rollback_root, "openvpn-cli-link"),
+            _snapshot_path(unit, txn_root, "openvpn-server.service"),
+            _snapshot_path(override_dir, txn_root, "openvpn-server.service.d"),
+            _snapshot_path(cli_link, txn_root, "openvpn-cli-link"),
         ]
-    except Exception:
-        shutil.rmtree(rollback_root, ignore_errors=True)
-        raise
+        manifest = {
+            "schema_version": 1,
+            "state": "switching",
+            "prefix": str(prefix),
+            "releases_dir": str(releases_dir),
+            "prefix_was_present": prefix_was_present,
+            "old_target": str(old_target) if old_target else None,
+            "new_release": str(release_dir),
+            "release_stage": str(release_stage),
+            "version": version,
+            "backup_file": str(backup_file),
+            "active_instances": active_instances,
+            "snapshots": snapshots,
+        }
+        # 必须先持久化回滚目标和系统配置快照，再迁移旧目录或切换软链接。
+        _write_upgrade_manifest(txn_root, manifest)
+        manifest_written = True
 
-    release_stage: Path | None = None
-    release_dir: Path | None = None
-    old_target: Path | None = None
-    candidate_installed = False
-    preserve_rollback_artifacts = False
-
-    try:
-        # 首次升级旧版普通目录时只迁移一次；迁移后仍通过稳定入口访问。
-        old_target = _migrate_legacy_prefix(prefix, releases_dir)
-        if old_target is None and prefix.is_symlink():
-            old_target = prefix.resolve(strict=True)
-
-        stage_binary = Path(str(stage.get("binary") or ""))
-        if not stage_binary.is_file():
-            raise RuntimeError(f"候选 OpenVPN binary 不存在: {stage_binary}")
-        version = str(stage.get("version") or _openvpn_version(stage_binary))
-        release_id = _release_id(version, stage_binary)
-        release_dir = releases_dir / release_id
-        releases_dir.mkdir(parents=True, exist_ok=True)
+        migrated_target = _migrate_legacy_prefix(prefix, releases_dir)
+        if migrated_target != old_target:
+            raise RuntimeError(
+                f"OpenVPN 旧版本迁移目标发生变化: expected={old_target}, actual={migrated_target}"
+            )
 
         if release_dir.exists() or release_dir.is_symlink():
             if not release_dir.is_dir() or release_dir.is_symlink():
                 raise RuntimeError(f"OpenVPN release 目标不是普通目录: {release_dir}")
             existing_binary = _release_binary(release_dir)
-            if _openvpn_version(existing_binary) != version or _release_id(version, existing_binary) != release_id:
+            if (
+                _openvpn_version(existing_binary) != version
+                or _release_id(version, existing_binary) != release_id
+            ):
                 raise RuntimeError(f"已有 OpenVPN release 校验不匹配，拒绝覆盖: {release_dir}")
             (release_dir / ".nicevpn-failed").unlink(missing_ok=True)
             _emit(on_output, f"[复用] 已校验候选版本目录: {release_dir}")
         else:
-            release_stage = releases_dir / f".{release_id}.stage-{uuid.uuid4().hex[:12]}"
-            _emit(on_output, f"[发布] 将 OpenVPN {version} 安装到不可变目录 {release_dir}")
+            _emit(on_output, f"[发布] 将 OpenVPN {version} 安装到独立 release: {release_dir}")
             shutil.copytree(Path(str(stage["prefix"])), release_stage, symlinks=True)
             staged_binary = _release_binary(release_stage)
             if _openvpn_version(staged_binary) != version:
@@ -1116,11 +1137,11 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
             if _release_id(version, staged_binary) != release_id:
                 raise RuntimeError("候选 release binary SHA-256 校验失败")
             os.replace(release_stage, release_dir)
-            release_stage = None
+            manifest["release_stage"] = None
+            _write_upgrade_manifest(txn_root, manifest)
 
         _emit(on_output, f"[升级] 原子切换稳定入口 {prefix} -> {release_dir}")
         _atomic_symlink(release_dir, prefix)
-        candidate_installed = True
 
         cli_link.parent.mkdir(parents=True, exist_ok=True)
         _remove_path_strict(cli_link)
@@ -1157,6 +1178,16 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
         if failed_instances:
             raise RuntimeError("升级后实例未恢复运行: " + ", ".join(failed_instances))
 
+        manifest["state"] = "committed"
+        manifest["release_stage"] = None
+        _write_upgrade_manifest(txn_root, manifest)
+        try:
+            shutil.rmtree(txn_root)
+        except OSError:
+            # committed manifest 表示新版本已验收；下次启动只清理事务目录，不回滚。
+            logger.warning("OpenVPN 升级成功，但事务目录清理失败: %s", txn_root, exc_info=True)
+
+        _emit(on_output, f"[完成] OpenVPN {version} 升级成功，稳定入口指向 {release_dir}")
         return {
             "ok": True,
             "version": version,
@@ -1168,110 +1199,19 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
             "postflight": postflight,
         }
     except Exception as upgrade_exc:
-        _emit(on_output, "[回滚] OpenVPN 升级失败，恢复旧 release 稳定入口与 systemd")
-        rollback_errors: list[str] = []
-
-        def record_rollback_error(step: str, error: Exception) -> None:
-            rollback_errors.append(f"{step}: {error}")
-            logger.critical(
-                "OpenVPN 升级回滚步骤失败 step=%s: %s",
-                step,
-                error,
-                exc_info=True,
-            )
-
-        if release_stage is not None:
+        if manifest_written:
             try:
-                _remove_path_strict(release_stage)
-            except Exception as exc:
-                record_rollback_error("清理候选 release staging", exc)
-
-        if candidate_installed:
-            try:
-                if old_target is not None and old_target.is_dir():
-                    _atomic_symlink(old_target, prefix)
-                elif prefix.is_symlink():
-                    prefix.unlink()
-                elif prefix.exists():
-                    raise RuntimeError(f"拒绝删除非软链接 OpenVPN 路径: {prefix}")
-            except Exception as exc:
-                record_rollback_error("恢复旧 OpenVPN release 入口", exc)
-
-        # systemd unit、override、CLI symlink 分开恢复；某一项失败不阻断其它恢复。
-        for record in snapshots:
-            try:
-                _restore_path(record)
-            except Exception as exc:
-                record_rollback_error(f"恢复系统路径 {record.get('path')}", exc)
-
-        try:
-            proc = _run(["systemctl", "daemon-reload"], timeout=30)
-            if proc.returncode != 0:
-                raise RuntimeError((proc.stderr or proc.stdout or "daemon-reload 失败").strip())
-        except Exception as exc:
-            record_rollback_error("systemd daemon-reload", exc)
-
-        for name in active_instances:
-            try:
-                proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
-                if proc.returncode != 0:
-                    raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
-            except Exception as exc:
-                record_rollback_error(f"重启原实例 {name}", exc)
-
-        failed_instances: list[str] = []
-        for name in active_instances:
-            try:
-                if not is_instance_active(name):
-                    failed_instances.append(name)
-            except Exception as exc:
-                record_rollback_error(f"检查原实例 {name} 状态", exc)
-        if failed_instances:
-            record_rollback_error(
-                "验证原实例运行状态",
-                RuntimeError("未恢复运行: " + ", ".join(failed_instances)),
-            )
-
-        if not rollback_errors and release_dir is not None and release_dir.is_dir():
-            try:
-                current_target = prefix.resolve(strict=True) if prefix.is_symlink() else None
-                if current_target != release_dir.resolve():
-                    (release_dir / ".nicevpn-failed").write_text(
-                        f"OpenVPN upgrade activation failed: {upgrade_exc}\n",
-                        encoding="utf-8",
-                    )
-            except OSError:
-                logger.warning("Unable to mark failed OpenVPN release %s", release_dir, exc_info=True)
-
-        if rollback_errors:
-            preserve_rollback_artifacts = True
-            artifact_paths = [str(rollback_root)]
-            if release_dir is not None and release_dir.exists():
-                artifact_paths.append(str(release_dir))
-            details = "；".join(rollback_errors)
-            _emit(
-                on_output,
-                "[严重] OpenVPN 回滚不完整，已保留恢复材料: "
-                + ", ".join(artifact_paths),
-            )
-            raise RuntimeError(
-                f"OpenVPN 升级失败: {upgrade_exc}；回滚不完整: {details}；"
-                f"恢复材料: {', '.join(artifact_paths)}"
-            ) from upgrade_exc
-
-        _emit(on_output, "[回滚] 稳定入口已恢复到旧 release，原运行实例已重新启动")
-        raise
-    finally:
-        if release_stage is not None:
-            try:
-                _remove_path_strict(release_stage)
-            except Exception:
-                logger.warning("清理 OpenVPN release staging 失败: %s", release_stage, exc_info=True)
-        if not preserve_rollback_artifacts:
-            shutil.rmtree(rollback_root, ignore_errors=True)
+                _recover_interrupted_openvpn_upgrade_locked(on_output)
+            except Exception as rollback_exc:
+                logger.critical(
+                    "OpenVPN 升级失败且持久化回滚未完成；事务保留在 %s",
+                    txn_root,
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"OpenVPN 升级失败: {upgrade_exc}；自动回滚不完整: {rollback_exc}；"
+                    f"恢复材料: {txn_root}"
+                ) from upgrade_exc
         else:
-            logger.critical(
-                "OpenVPN 回滚不完整，保留 rollback_root=%s release_dir=%s",
-                rollback_root,
-                release_dir,
-            )
+            shutil.rmtree(txn_root, ignore_errors=True)
+        raise
