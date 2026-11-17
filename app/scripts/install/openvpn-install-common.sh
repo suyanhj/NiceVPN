@@ -217,11 +217,11 @@ openvpn_source_transaction_root() {
         echo "无效的 OPENVPN_PREFIX: ${OPENVPN_PREFIX}" >&2
         return 1
     }
-    printf '%s/.%s.install-transaction\\n' "$(dirname -- "${prefix}")" "$(basename -- "${prefix}")"
+    printf '%s/.%s.install-transaction\n' "$(dirname -- "${prefix}")" "$(basename -- "${prefix}")"
 }
 
 openvpn_source_transaction_paths() {
-    printf '%s\\n' \
+    printf '%s\n' \
         /etc/systemd/system/openvpn-server@.service \
         /etc/systemd/system/openvpn-client@.service \
         /etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf \
@@ -453,6 +453,13 @@ openvpn_compile_install() {
             return 1
         fi
         backup_prefix="${backup_root}/${prefix_base}"
+        # 旧 prefix 被移走之前必须先持久记录回滚目标，覆盖 SIGKILL 窗口。
+        local txn_root
+        txn_root="$(openvpn_source_transaction_root)"
+        if [ -f "${txn_root}/ready" ]; then
+            printf '%s\n' "${backup_prefix}" > "${txn_root}/backup-prefix"
+            : > "${txn_root}/switch-intent"
+        fi
         if ! mv -T -- "${OPENVPN_PREFIX}" "${backup_prefix}"; then
             rmdir -- "${backup_root}" 2>/dev/null || true
             echo "无法备份现有 OpenVPN prefix，未切换新版本" >&2
@@ -461,14 +468,13 @@ openvpn_compile_install() {
         fi
     fi
 
-    # 在原目录切换前持久记录回滚目标；SIGKILL 后下次可完整恢复。
-    if [ -f "$(openvpn_source_transaction_root)/ready" ]; then
+    # 首次安装没有旧 prefix；也要在发布新目录前标记回滚意图。
+    if [ -z "${backup_prefix}" ]; then
         local txn_root
         txn_root="$(openvpn_source_transaction_root)"
-        if [ -n "${backup_prefix}" ]; then
-            printf '%s\\n' "${backup_prefix}" > "${txn_root}/backup-prefix"
+        if [ -f "${txn_root}/ready" ]; then
+            : > "${txn_root}/switch-intent"
         fi
-        : > "${txn_root}/switch-intent"
     fi
     if ! mv -T -- "${staged_prefix}" "${OPENVPN_PREFIX}"; then
         if [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ]; then
