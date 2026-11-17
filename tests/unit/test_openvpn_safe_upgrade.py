@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -281,3 +282,181 @@ def test_package_install_is_not_offered_source_upgrade(
     assert result["upgrade_available"] is False
     assert result["release"] is None
     assert "包管理器" in result["reason"]
+
+
+
+def _upgrade_manifest(
+    prefix: Path,
+    releases: Path,
+    old_release: Path,
+    new_release: Path,
+    state: str,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "state": state,
+        "prefix": str(prefix),
+        "releases_dir": str(releases),
+        "prefix_was_present": True,
+        "old_target": str(old_release),
+        "new_release": str(new_release),
+        "release_stage": None,
+        "active_instances": ["server"],
+        "snapshots": [
+            {
+                "path": "/etc/systemd/system/openvpn-server@.service",
+                "exists": False,
+                "kind": "missing",
+            },
+            {
+                "path": "/etc/systemd/system/openvpn-server@.service.d",
+                "exists": False,
+                "kind": "missing",
+            },
+            {
+                "path": "/usr/local/sbin/openvpn",
+                "exists": False,
+                "kind": "missing",
+            },
+        ],
+    }
+
+
+def test_interrupted_upgrade_recovery_restores_old_release_and_running_instances(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    releases = tmp_path / "opt" / "openvpn-releases"
+    old_release = releases / "2.7.8-old"
+    new_release = releases / "2.8.0-new"
+    _write_openvpn_binary(old_release / "sbin" / "openvpn", "2.7.8")
+    _write_openvpn_binary(new_release / "sbin" / "openvpn", "2.8.0")
+    mod._atomic_symlink(new_release, prefix)
+
+    monkeypatch.setattr(mod, "OPENVPN_INSTALL_PREFIX", str(prefix))
+    monkeypatch.setattr(mod, "OPENVPN_RELEASES_DIR", str(releases))
+    root = releases / ".nicevpn-upgrade-transaction"
+    root.mkdir(parents=True)
+    mod._write_upgrade_manifest(
+        root,
+        _upgrade_manifest(prefix, releases, old_release, new_release, "switched"),
+    )
+
+    restored: list[str] = []
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        mod,
+        "_restore_path",
+        lambda record: restored.append(str(record["path"])),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        lambda command, **_kwargs: commands.append(list(command))
+        or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(mod, "is_instance_active", lambda _name: True)
+
+    assert mod._recover_interrupted_openvpn_upgrade_locked() is True
+    assert prefix.resolve() == old_release
+    assert (new_release / ".nicevpn-failed").is_file()
+    assert len(restored) == 3
+    assert ["systemctl", "daemon-reload"] in commands
+    assert ["systemctl", "restart", "openvpn-server@server"] in commands
+    assert not root.exists()
+
+
+def test_prepared_upgrade_recovery_does_not_restart_untouched_services(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    releases = tmp_path / "opt" / "openvpn-releases"
+    old_release = releases / "2.7.8-old"
+    new_release = releases / "2.8.0-new"
+    _write_openvpn_binary(old_release / "sbin" / "openvpn", "2.7.8")
+    _write_openvpn_binary(new_release / "sbin" / "openvpn", "2.8.0")
+    mod._atomic_symlink(new_release, prefix)
+
+    monkeypatch.setattr(mod, "OPENVPN_INSTALL_PREFIX", str(prefix))
+    monkeypatch.setattr(mod, "OPENVPN_RELEASES_DIR", str(releases))
+    root = releases / ".nicevpn-upgrade-transaction"
+    root.mkdir(parents=True)
+    mod._write_upgrade_manifest(
+        root,
+        _upgrade_manifest(prefix, releases, old_release, new_release, "prepared"),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_restore_path",
+        lambda _record: pytest.fail("prepared phase must not restore untouched systemd files"),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("prepared phase must not restart services"),
+    )
+    monkeypatch.setattr(
+        mod,
+        "is_instance_active",
+        lambda _name: pytest.fail("prepared phase must not inspect running instances"),
+    )
+
+    assert mod._recover_interrupted_openvpn_upgrade_locked() is True
+    assert prefix.resolve() == old_release
+    assert (new_release / ".nicevpn-failed").is_file()
+    assert not root.exists()
+
+
+def test_upgrade_manifest_rejects_unapproved_system_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    releases = tmp_path / "opt" / "openvpn-releases"
+    old_release = releases / "old"
+    new_release = releases / "new"
+    monkeypatch.setattr(mod, "OPENVPN_INSTALL_PREFIX", str(prefix))
+    monkeypatch.setattr(mod, "OPENVPN_RELEASES_DIR", str(releases))
+    manifest = _upgrade_manifest(prefix, releases, old_release, new_release, "switched")
+    manifest["snapshots"][0]["path"] = "/etc/passwd"
+
+    with pytest.raises(RuntimeError, match="未授权的系统路径"):
+        mod._validate_upgrade_manifest(releases / ".nicevpn-upgrade-transaction", manifest)
+
+
+def test_upgrade_rejects_candidate_staged_from_a_different_current_release(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    releases = tmp_path / "opt" / "openvpn-releases"
+    current_binary = _write_openvpn_binary(prefix / "sbin" / "openvpn", "2.7.8")
+    monkeypatch.setattr(mod, "OPENVPN_INSTALL_PREFIX", str(prefix))
+    monkeypatch.setattr(mod, "OPENVPN_RELEASES_DIR", str(releases))
+    monkeypatch.setattr(mod, "_recover_interrupted_openvpn_upgrade_locked", lambda *_args: False)
+    monkeypatch.setattr(mod, "_recover_interrupted_prefix_switch", lambda _prefix: None)
+    monkeypatch.setattr(
+        mod,
+        "detect_openvpn",
+        lambda: {
+            "install_mode": "source",
+            "version": "2.7.8",
+            "path": str(current_binary),
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "preflight_upgrade_candidate",
+        lambda *_args, **_kwargs: pytest.fail("过期候选不应进入 preflight"),
+    )
+
+    with pytest.raises(RuntimeError, match="候选 OpenVPN 已过期"):
+        mod._apply_staged_upgrade_locked(
+            {
+                "binary": str(tmp_path / "candidate"),
+                "version": "2.8.0",
+                "base_release_id": "stale-base-release",
+            }
+        )
