@@ -127,7 +127,8 @@ def test_common_script_supports_non_destructive_staging_builds() -> None:
         entry = _read_install_script_text(name)
         assert 'if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]' in entry
         assert "install_source_dependencies" in entry
-        assert "openvpn_compile_install" in entry
+        # 源码安装现在由一个事务入口统一编排二进制切换、systemd 和 postflight。
+        assert "openvpn_run_source_install" in entry
 
 
 def test_stage_source_build_uses_distribution_install_entry(
