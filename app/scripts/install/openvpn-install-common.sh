@@ -591,7 +591,7 @@ openvpn_run_package_postflight() {
 openvpn_compile_install() {
     local stage_parent stage_root staged_prefix staged_bin
     local version_output version expected_version hash release_id release_dir
-    local existing_version old_target="" txn_root
+    local existing_version existing_hash old_target="" txn_root
 
     OPENVPN_PREFIX="${OPENVPN_PREFIX%/}"
     case "${OPENVPN_PREFIX}" in
@@ -713,9 +713,18 @@ openvpn_compile_install() {
             echo "OpenVPN release 目标不是普通目录，拒绝覆盖: ${release_dir}" >&2
             return 1
         }
+        [ -x "${release_dir}/sbin/openvpn" ] || {
+            echo "已有 OpenVPN release 缺少可执行 binary: ${release_dir}" >&2
+            return 1
+        }
         existing_version="$("${release_dir}/sbin/openvpn" --version 2>&1 | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
         [ "${existing_version}" = "${version}" ] || {
             echo "已有 OpenVPN release 版本不匹配: ${release_dir} (${existing_version:-unknown})" >&2
+            return 1
+        }
+        existing_hash="$(sha256sum "${release_dir}/sbin/openvpn" | awk '{print $1}')"
+        [ "${existing_hash:0:12}" = "${hash:0:12}" ] || {
+            echo "已有 OpenVPN release binary SHA-256 与目录标识不匹配: ${release_dir}" >&2
             return 1
         }
         rm -f -- "${release_dir}/.nicevpn-failed"
@@ -1077,7 +1086,7 @@ openvpn_validate_active_instances() {
 
 openvpn_validate_systemd_unit() {
     local unit="${1:?必须指定 systemd unit}"
-    local output unit_state
+    local output unit_state fragment_path
     command -v systemctl >/dev/null 2>&1 || {
         echo "未找到 systemctl，无法验证服务单元: ${unit}" >&2
         return 1
@@ -1091,9 +1100,20 @@ openvpn_validate_systemd_unit() {
         echo "systemd 服务单元不存在或已屏蔽: ${unit} state=${unit_state:-not-found}" >&2
         return 1
     fi
+
+    # systemd-analyze 检查 unit 与其 drop-in 的语法和依赖；精简系统没有该命令时，
+    # 仍保留 systemctl 的基础校验。
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        fragment_path="$(systemctl show --property=FragmentPath --value "${unit}" 2>/dev/null || true)"
+        if [ -n "${fragment_path}" ] && [ -f "${fragment_path}" ]; then
+            systemd-analyze verify "${fragment_path}" || {
+                echo "systemd unit 语法/依赖校验失败: ${unit} (${fragment_path})" >&2
+                return 1
+            }
+        fi
+    fi
     return 0
 }
-
 _openvpn_post_install_validate_impl() {
     local candidate="" binary="" version_output="" version="" expected_version=""
     if [[ "${OPENVPN_INSTALL_MODE:-}" == "package" ]]; then
