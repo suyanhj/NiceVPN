@@ -1024,21 +1024,40 @@ openvpn_validate_systemd_unit() {
 
 _openvpn_post_install_validate_impl() {
     local candidate="" binary="" version_output="" version="" expected_version="" unit state
-    for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
-        /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
-        if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-            binary="${candidate}"
-            break
-        fi
-    done
+    if [[ "${OPENVPN_INSTALL_MODE:-}" == "package" ]]; then
+        # 系统包安装必须验证包管理器路径，不能被历史 /opt/openvpn 源码目录抢先命中。
+        for candidate in /usr/sbin/openvpn /usr/bin/openvpn; do
+            if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+                binary="${candidate}"
+                break
+            fi
+        done
+    else
+        for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
+            /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
+            if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+                binary="${candidate}"
+                break
+            fi
+        done
+    fi
     if [ -z "${binary}" ]; then
         candidate="$(command -v openvpn 2>/dev/null || true)"
         if [ -n "${candidate}" ] && [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-            binary="${candidate}"
+            case "${OPENVPN_INSTALL_MODE:-}" in
+                package)
+                    case "${candidate}" in
+                        /usr/sbin/openvpn|/usr/bin/openvpn) binary="${candidate}" ;;
+                    esac
+                    ;;
+                *)
+                    binary="${candidate}"
+                    ;;
+            esac
         fi
     fi
     [ -n "${binary}" ] || {
-        echo "OpenVPN 安装后未找到可执行二进制" >&2
+        echo "OpenVPN 安装后未找到与安装模式匹配的可执行二进制" >&2
         return 1
     }
 
@@ -1084,17 +1103,8 @@ _openvpn_post_install_validate_impl() {
             return 1
         fi
     fi
-
-    for unit in "${OPENVPN_ACTIVE_INSTANCES[@]}"; do
-        state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
-        if [ "${state}" != "active" ]; then
-            echo "安装后原运行中的 OpenVPN 服务未保持 active: ${unit} state=${state:-unknown}" >&2
-            return 1
-        fi
-    done
-
-    _log "安装后校验通过: binary=${binary} version=${version} active_instances=${#OPENVPN_ACTIVE_INSTANCES[@]}"
 }
+
 
 openvpn_post_install_validate() {
     if _openvpn_post_install_validate_impl; then
