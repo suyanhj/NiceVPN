@@ -103,7 +103,7 @@ def build_peer_site_manual_context(
         {
             "title": "可选：源码编译安装 OpenVPN 2.7.9",
             "optional": True,
-            "summary": "发行版软件包版本不满足需求或需要固定版本时执行，安装到 /opt/openvpn，并禁用 DCO；若系统 OpenSSL 已满足 1.1.1+，可跳过上一项。",
+            "summary": "发行版软件包版本不满足需求或需要固定版本时执行，安装到 /opt/openvpn-releases 的独立版本目录，并通过 /opt/openvpn 稳定软链接切换；禁用 DCO。若系统 OpenSSL 已满足 1.1.1+，可跳过上一项。",
             "command": _render_manual_template("build-openvpn.sh.in", template_values),
         },
         {
