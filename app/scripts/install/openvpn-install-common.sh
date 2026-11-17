@@ -912,13 +912,7 @@ easyrsa_download_and_install() (
     [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
     : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
 
-    nicevpn_ensure_commands flock util-linux
     mkdir -p "${EASYRSA_INSTALL_DIR}/releases"
-    exec 9>"${EASYRSA_INSTALL_DIR}/.install.lock"
-    if ! flock -n 9; then
-        echo "已有 EasyRSA 安装/升级任务正在执行，请稍后重试" >&2
-        exit 1
-    fi
 
     # 上次被 SIGKILL 中断时只可能留下未发布的临时目录；current 不受影响。
     find "${EASYRSA_INSTALL_DIR}/releases" -mindepth 1 -maxdepth 1 \
