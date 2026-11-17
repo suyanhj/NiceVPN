@@ -85,9 +85,8 @@ def ensure_openvpn_runtime_dirs() -> None:
 # EasyRSA 标准搜索路径列表（按优先级排序）
 EASYRSA_SEARCH_PATHS = [
     "/opt/ezrsa/current/easyrsa",
-    "/opt/ezrsa/easyrsa",
-    "/opt/easy-rsa/current/easyrsa",
-    "/opt/easy-rsa/easyrsa",
+    "/opt/openvpn/current/share/easy-rsa/easyrsa",
+    "/opt/openvpn/current/share/easy-rsa/3/easyrsa",
     "/opt/openvpn/share/easy-rsa/easyrsa",
     "/opt/openvpn/share/easy-rsa/3/easyrsa",
     "/usr/share/easy-rsa/easyrsa",
@@ -103,6 +102,9 @@ EASYRSA_CA_EXPIRE_DAYS = 4380
 
 # OpenVPN 标准搜索路径列表（按优先级排序）
 OPENVPN_SEARCH_PATHS = [
+    "/opt/openvpn/current/sbin/openvpn",
+    "/opt/openvpn/current/bin/openvpn",
+    # 根目录兼容入口，供尚未更新的 systemd unit 和脚本使用。
     "/opt/openvpn/sbin/openvpn",
     "/opt/openvpn/bin/openvpn",
     "/usr/local/sbin/openvpn",
@@ -111,13 +113,10 @@ OPENVPN_SEARCH_PATHS = [
     "/usr/bin/openvpn",
 ]
 
-# 红帽系源码安装目录
-OPENVPN_INSTALL_PREFIX = "/opt/openvpn"
-# OpenVPN 源码版本不可变存放目录；OPENVPN_INSTALL_PREFIX 始终是稳定软链接入口。
-OPENVPN_RELEASES_DIR = "/opt/openvpn-releases"
+# OpenVPN 源码安装根目录与稳定版本入口。
+OPENVPN_INSTALL_ROOT = "/opt/openvpn"
+OPENVPN_INSTALL_PREFIX = "/opt/openvpn/current"
 EASYRSA_INSTALL_DIR = "/opt/ezrsa"
-# 旧版 NiceVPN 曾使用该目录，迁移后保留兼容软链接。
-EASYRSA_LEGACY_INSTALL_DIR = "/opt/easy-rsa"
 
 # OpenVPN Management Interface 默认端口起始值
 MGMT_PORT_START = 7505

@@ -20,9 +20,6 @@ openvpn_acquire_install_lock
 # 即使本次将改用系统包，也先恢复上次中断的源码安装事务。
 openvpn_restore_source_transaction
 openvpn_capture_active_instances
-if [ "${OPENVPN_STAGE_ONLY}" != "1" ]; then
-    easyrsa_migrate_legacy_install
-fi
 easyrsa_reuse_existing
 
 PM="$(nicevpn_package_manager)" || {

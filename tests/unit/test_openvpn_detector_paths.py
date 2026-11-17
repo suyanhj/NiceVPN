@@ -107,22 +107,21 @@ def test_preferred_paths_require_executable_permission(
 
 
 def test_install_mode_classification_recognizes_source_package_and_custom_paths() -> None:
+    assert detector.classify_openvpn_install_mode("/opt/openvpn/current/sbin/openvpn") == "source"
     assert detector.classify_openvpn_install_mode("/opt/openvpn/sbin/openvpn") == "source"
     assert detector.classify_openvpn_install_mode("/usr/sbin/openvpn") == "package"
     assert detector.classify_openvpn_install_mode("/srv/openvpn/bin/openvpn") == "custom"
 
 
-def test_source_mode_prefers_stable_entry_over_saved_release_path(
+def test_source_mode_prefers_current_entry_over_saved_version_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    prefix = tmp_path / "opt" / "openvpn"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
     stable = _touch(prefix / "sbin" / "openvpn")
-    old_release = _touch(tmp_path / "opt" / "openvpn-releases" / "2.7.8" / "sbin" / "openvpn")
+    old_release = _touch(root / "2.7.8-abcdef123456" / "sbin" / "openvpn")
     monkeypatch.setattr(detector, "OPENVPN_INSTALL_PREFIX", str(prefix))
-    monkeypatch.setattr(
-        detector, "OPENVPN_RELEASES_DIR",
-        str(tmp_path / "opt" / "openvpn-releases"),
-    )
+    monkeypatch.setattr(detector, "OPENVPN_INSTALL_ROOT", str(root))
     monkeypatch.setattr(detector, "OPENVPN_SEARCH_PATHS", (str(stable),))
 
     assert detector._find_openvpn_binary({
@@ -135,13 +134,11 @@ def test_source_mode_prefers_stable_entry_over_saved_release_path(
 def test_package_mode_never_falls_back_to_old_source_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    prefix = tmp_path / "opt" / "openvpn"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
     source_binary = _touch(prefix / "sbin" / "openvpn")
     monkeypatch.setattr(detector, "OPENVPN_INSTALL_PREFIX", str(prefix))
-    monkeypatch.setattr(
-        detector, "OPENVPN_RELEASES_DIR",
-        str(tmp_path / "opt" / "openvpn-releases"),
-    )
+    monkeypatch.setattr(detector, "OPENVPN_INSTALL_ROOT", str(root))
     monkeypatch.setattr(detector.shutil, "which", lambda _name: str(source_binary))
 
     assert detector._find_openvpn_binary({
