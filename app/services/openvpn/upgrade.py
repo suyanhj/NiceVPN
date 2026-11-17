@@ -684,6 +684,8 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
             for candidate in releases_dir.iterdir():
                 if not candidate.is_dir() or candidate.name.startswith("."):
                     continue
+                if (candidate / ".nicevpn-failed").is_file():
+                    continue
                 try:
                     _release_binary(candidate)
                     candidates.append((candidate.stat().st_mtime_ns, candidate))
@@ -829,6 +831,7 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
             existing_binary = _release_binary(release_dir)
             if _openvpn_version(existing_binary) != version or _release_id(version, existing_binary) != release_id:
                 raise RuntimeError(f"已有 OpenVPN release 校验不匹配，拒绝覆盖: {release_dir}")
+            (release_dir / ".nicevpn-failed").unlink(missing_ok=True)
             _emit(on_output, f"[复用] 已校验候选版本目录: {release_dir}")
         else:
             release_stage = releases_dir / f".{release_id}.stage-{uuid.uuid4().hex[:12]}"
@@ -955,6 +958,17 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
                 "验证原实例运行状态",
                 RuntimeError("未恢复运行: " + ", ".join(failed_instances)),
             )
+
+        if not rollback_errors and release_dir is not None and release_dir.is_dir():
+            try:
+                current_target = prefix.resolve(strict=True) if prefix.is_symlink() else None
+                if current_target != release_dir.resolve():
+                    (release_dir / ".nicevpn-failed").write_text(
+                        f"OpenVPN upgrade activation failed: {upgrade_exc}\n",
+                        encoding="utf-8",
+                    )
+            except OSError:
+                logger.warning("Unable to mark failed OpenVPN release %s", release_dir, exc_info=True)
 
         if rollback_errors:
             preserve_rollback_artifacts = True
