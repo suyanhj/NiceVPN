@@ -338,6 +338,31 @@ def install_easyrsa(
     return str(installed_bin)
 
 
+def recover_interrupted_easyrsa_migration(
+    on_output: Callable[[str], None] | None = None,
+) -> bool:
+    """恢复 EasyRSA 旧目录迁移中断后留下的兼容路径链接。"""
+
+    install_root = Path(EASYRSA_INSTALL_DIR)
+    migration_marker = install_root.parent / f".{install_root.name}-legacy-migration"
+    if not migration_marker.is_file():
+        return False
+
+    script_path = _INSTALL_SCRIPTS_DIR / "easyrsa-migrate.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"EasyRSA 迁移恢复脚本不存在: {script_path}")
+    _emit(on_output, f"[恢复] 检测到 EasyRSA 目录迁移事务: {migration_marker}")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env({
+            "EASYRSA_INSTALL_DIR": str(EASYRSA_INSTALL_DIR),
+            "EASYRSA_LEGACY_INSTALL_DIR": str(EASYRSA_LEGACY_INSTALL_DIR),
+        }),
+    )
+    return True
+
+
 def recover_interrupted_openvpn_install(
     on_output: Callable[[str], None] | None = None,
 ) -> bool:
