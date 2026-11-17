@@ -98,7 +98,7 @@ easyrsa_reuse_existing() {
     [[ "${EASYRSA_FORCE_INSTALL}" == "1" ]] && return 0
 
     if [[ -e "${EASYRSA_INSTALL_DIR}/current" && ! -L "${EASYRSA_INSTALL_DIR}/current" ]]; then
-        echo "EasyRSA current 必须是软链接，请先执行 scripts/migrate-version-layout-once.sh" >&2
+        echo "EasyRSA current 必须是软链接: ${EASYRSA_INSTALL_DIR}/current" >&2
         return 1
     fi
     if [[ -L "${EASYRSA_INSTALL_DIR}/current" ]]; then
@@ -106,7 +106,7 @@ easyrsa_reuse_existing() {
         current_target="$(readlink -f -- "${EASYRSA_INSTALL_DIR}/current" 2>/dev/null || true)"
         case "${current_target}" in
             "${EASYRSA_INSTALL_DIR}/"*) ;;
-            *) echo "EasyRSA current 仍指向根目录外的版本目录，请先执行 scripts/migrate-version-layout-once.sh" >&2; return 1 ;;
+            *) echo "EasyRSA current 指向安装目录之外，拒绝继续: ${current_target}" >&2; return 1 ;;
         esac
         [[ -x "${current_target}/easyrsa" ]] || {
             echo "EasyRSA current 目标缺少可执行脚本: ${current_target}" >&2
@@ -114,7 +114,7 @@ easyrsa_reuse_existing() {
         }
     fi
     if [[ -f "${EASYRSA_INSTALL_DIR}/easyrsa" && ! -L "${EASYRSA_INSTALL_DIR}/easyrsa" ]]; then
-        echo "检测到旧版 EasyRSA 平铺目录，请先执行 scripts/migrate-version-layout-once.sh" >&2
+        echo "检测到旧版 EasyRSA 平铺目录，当前安装仅支持版本目录 + current 结构: ${EASYRSA_INSTALL_DIR}" >&2
         return 1
     fi
 
@@ -207,12 +207,12 @@ EOF
     fi
 }
 
-# 校验 current 入口和目录结构；旧布局由独立的一次性脚本处理，不在安装时自动迁移。
+# 校验 current 入口和目录结构；不自动迁移旧布局。
 openvpn_recover_source_install() {
     local root="${OPENVPN_ROOT_DIR}" current="${OPENVPN_PREFIX}"
     local target part stage_root
     [[ ! -L "${root}" ]] || {
-        echo "OpenVPN 安装根目录仍是旧版软链接: ${root}；请先执行 scripts/migrate-version-layout-once.sh" >&2
+        echo "OpenVPN 安装根目录不能是软链接: ${root}；预期为普通目录，版本由 ${current} 管理" >&2
         return 1
     }
     [[ ! -e "${root}" || -d "${root}" ]] || {
@@ -222,7 +222,7 @@ openvpn_recover_source_install() {
     mkdir -p -- "${root}"
 
     if [[ -e "${current}" && ! -L "${current}" ]]; then
-        echo "OpenVPN current 必须是软链接: ${current}；请先执行 scripts/migrate-version-layout-once.sh" >&2
+        echo "OpenVPN current 必须是软链接: ${current}" >&2
         return 1
     fi
     if [[ -L "${current}" ]]; then
@@ -233,7 +233,7 @@ openvpn_recover_source_install() {
         }
         case "${target}" in
             "${root}/"*) ;;
-            *) echo "OpenVPN current 仍指向根目录外的版本目录，请先执行 scripts/migrate-version-layout-once.sh" >&2; return 1 ;;
+            *) echo "OpenVPN current 指向安装根目录之外，拒绝继续: ${target}" >&2; return 1 ;;
         esac
         [[ -x "${target}/sbin/openvpn" || -x "${target}/bin/openvpn" ]] || {
             echo "OpenVPN current 目标缺少可执行 binary: ${target}" >&2
@@ -243,7 +243,7 @@ openvpn_recover_source_install() {
 
     for part in sbin bin share lib lib64 include libexec; do
         if [[ -e "${root}/${part}" && ! -L "${root}/${part}" ]]; then
-            echo "检测到旧版 OpenVPN 目录: ${root}/${part}；请先执行 scripts/migrate-version-layout-once.sh" >&2
+            echo "检测到旧版 OpenVPN 目录: ${root}/${part}；当前安装仅支持版本目录 + current 结构" >&2
             return 1
         fi
         if [[ -L "${root}/${part}" && "$(readlink -- "${root}/${part}")" != "current/${part}" ]]; then
