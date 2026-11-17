@@ -18,7 +18,7 @@ def _touch(path: Path) -> Path:
 def test_openvpn_preferred_path_does_not_invoke_path_lookup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    binary = _touch(tmp_path / "opt" / "openvpn" / "sbin" / "openvpn")
+    binary = _touch(tmp_path / "opt" / "openvpn" / "current" / "sbin" / "openvpn")
     monkeypatch.setattr(detector, "OPENVPN_SEARCH_PATHS", (str(binary),))
     monkeypatch.setattr(
         detector.shutil, "which",
@@ -49,8 +49,8 @@ def test_openvpn_uses_shutil_which_instead_of_subprocess(
 def test_easyrsa_checks_neighboring_openvpn_prefix_before_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    binary = _touch(tmp_path / "opt" / "openvpn" / "sbin" / "openvpn")
-    easyrsa = _touch(tmp_path / "opt" / "openvpn" / "share" / "easy-rsa" / "easyrsa")
+    binary = _touch(tmp_path / "opt" / "openvpn" / "current" / "sbin" / "openvpn")
+    easyrsa = _touch(tmp_path / "opt" / "openvpn" / "current" / "share" / "easy-rsa" / "easyrsa")
     monkeypatch.setattr(detector, "EASYRSA_SEARCH_PATHS", ())
     monkeypatch.setattr(
         detector.shutil, "which",
@@ -119,7 +119,7 @@ def test_source_mode_prefers_current_entry_over_saved_version_path(
     root = tmp_path / "opt" / "openvpn"
     prefix = root / "current"
     stable = _touch(prefix / "sbin" / "openvpn")
-    old_release = _touch(root / "2.7.8-abcdef123456" / "sbin" / "openvpn")
+    old_release = _touch(root / "2.7.8" / "sbin" / "openvpn")
     monkeypatch.setattr(detector, "OPENVPN_INSTALL_PREFIX", str(prefix))
     monkeypatch.setattr(detector, "OPENVPN_INSTALL_ROOT", str(root))
     monkeypatch.setattr(detector, "OPENVPN_SEARCH_PATHS", (str(stable),))

@@ -1,64 +1,53 @@
 # OpenVPN / EasyRSA 安装目录与版本切换
 
-NiceVPN 源码安装统一采用「版本目录平铺 + current 软链接」布局。OpenVPN 与 EasyRSA 不再额外套一层 releases/，也不再使用独立的 /opt/openvpn-releases。
+源码安装统一采用版本目录平铺 + `current` 相对软链接。目录名只使用版本号，不附加 hash，不创建 `releases/` 子目录。
 
 ## 目录结构
 
     /opt/openvpn/
-    ├── current -> 2.7.9-<binary-sha256前缀>
-    ├── 2.7.9-<binary-sha256前缀>/
-    │   ├── sbin/openvpn
-    │   ├── lib/...
-    │   └── share/...
-    ├── 2.7.8-<binary-sha256前缀>/
-    ├── sbin -> current/sbin
-    ├── bin -> current/bin
-    └── share -> current/share
+    ├── current -> 2.7.1
+    ├── 2.1.1/
+    ├── 2.5.1/
+    └── 2.7.1/
+        ├── sbin/openvpn
+        ├── lib/...
+        └── share/...
 
     /opt/ezrsa/
-    ├── current -> 3.2.4-<tree-sha256前缀>
-    ├── 3.2.4-<tree-sha256前缀>/
-    │   ├── easyrsa
-    │   └── x509-types/...
-    └── 3.1.x-<tree-sha256前缀>/
+    ├── current -> 3.2.4
+    ├── 3.1.7/
+    └── 3.2.4/
+        ├── easyrsa
+        └── x509-types/...
 
-版本目录名由版本号和内容 SHA-256 前缀组成。同一版本但内容不同不会覆盖已有目录。安装完成后只切换相对路径 current，旧版本目录保留。
+## 安装和升级
 
-## 安装模式
+- OpenVPN 编译时固定使用 `/opt/openvpn/current` 作为 prefix，构建产物安装到独立 staging，再发布到 `/opt/openvpn/<version>/`。
+- EasyRSA 安装到 `/opt/ezrsa/<version>/`。
+- 安装完成后通过原子更新相对软链接切换 `current`。
+- 旧版本目录保留；回滚只需把 `current` 指回旧版本，再重启服务。
+- systemd、NiceVPN 和 CLI 使用固定入口 `/opt/openvpn/current/sbin/openvpn`、`/opt/ezrsa/current/easyrsa`，无需随版本修改。
+- 同一版本目录已存在时会校验版本并复用；不会静默覆盖已有目录。
+- 系统包安装仍由 apt/dnf/yum 管理，不会切换到源码版本。
 
-| 组件 | 系统包模式 | NiceVPN 源码模式 |
-|---|---|---|
-| OpenVPN binary | /usr/sbin/openvpn 或 /usr/bin/openvpn | /opt/openvpn/current/sbin/openvpn |
-| OpenVPN 版本目录 | 由 apt/dnf/yum 管理 | /opt/openvpn/<version>-<hash>/ |
-| OpenVPN 固定入口 | 系统包路径 | /opt/openvpn/current |
-| EasyRSA | 发行版包路径，如 /usr/share/easy-rsa/ | /opt/ezrsa/current/easyrsa |
-| EasyRSA 版本目录 | 由包管理器管理 | /opt/ezrsa/<version>-<hash>/ |
+## 当前测试环境一次性调整
 
-OpenVPN 编译时的 prefix 固定为 /opt/openvpn/current。构建产物先进入隔离 staging 目录，完成版本和 binary SHA-256 校验后发布到 /opt/openvpn/<version>-<hash>/，最后原子切换 current。根目录的 sbin/bin/share 等兼容链接指向 current，旧 systemd unit 和 CLI 路径无需因版本升级而改写。
-
-EasyRSA 使用相同的目录规则，版本目录直接位于 /opt/ezrsa/ 下，current 指向当前版本。
-
-## 旧测试环境调整
-
-正常安装、升级和应用启动不再自动迁移旧目录。旧测试环境只需手动执行一次：
+之前测试版本目录可能带有 hash 后缀，例如 `2.7.1-a1b2c3d4e5f6`。新布局只保留版本号。拉取本次代码后，在测试机执行一次：
 
     bash scripts/migrate-version-layout-once.sh
 
-脚本会：
-- 将当前 OpenVPN 版本及 /opt/openvpn-releases 中的历史版本整理到 /opt/openvpn/<version>-<hash>/。
-- 将当前 EasyRSA 版本及旧 releases/ 目录中的版本整理到 /opt/ezrsa/<version>-<hash>/。
-- 重建 current 和 OpenVPN 根目录兼容链接。
-- 原目录和旧版本仓库均保留为备份，不删除 PKI、配置、证书或历史二进制。
-- 遇到同版本但内容不同、路径类型异常或无法识别的目录时停止，不覆盖现有数据。
+脚本只处理 `/opt/openvpn` 和 `/opt/ezrsa` 下的版本目录：
+- 将 `<version>-<hash>` 重命名为 `<version>`。
+- 把 `current` 更新为指向纯版本号的相对软链接。
+- 删除旧实现创建的 `sbin/bin/share` 等兼容软链接。
+- 不复制或删除 PKI、证书、VPN 配置和 systemd 文件。
+- 若同版本目录内容冲突，或 `current` 指向安装根目录之外，脚本会停止，不会覆盖。
 
-执行前请确保没有 OpenVPN 安装/升级任务正在运行。脚本完成后检查 /opt/openvpn/current/sbin/openvpn --version、/opt/ezrsa/current/easyrsa --version 及 VPN 服务状态。确认正常后，再手动清理备份目录。
+执行前先停止正在进行的安装/升级任务。执行后检查 OpenVPN、EasyRSA 版本及 VPN 服务状态即可。
 
-## 升级和回滚
+## 关键固定路径
 
-- 系统包模式：由 apt/dnf/yum 管理更新。NiceVPN 不会把系统包二进制替换成源码版本。
-- NiceVPN 源码模式：候选版本先在临时目录构建，并完成服务端配置、临时客户端配置 preflight；通过后发布到根目录下的独立版本目录。
-- 升级只原子切换 /opt/openvpn/current，然后重启升级前处于 active 的 OpenVPN 实例并检查服务状态；不重写 systemd unit、override、CLI 软链接或 VPN 配置。
-- 升级失败时，Shell 将 current 原子切回旧版本并重启原运行实例。新旧版本目录都保留，不复制、不移动、不删除。
-- 系统包安装仍验证包路径、版本、unit 和原运行实例状态。
-
-安装模式记录在 NiceVPN 配置中，并由 /etc/openvpn/mgmt/openvpn-install-mode 提供安装脚本与 Python 运行时之间的持久化标记。
+| 组件 | 固定入口 | 版本目录 |
+|---|---|---|
+| OpenVPN | `/opt/openvpn/current/sbin/openvpn` | `/opt/openvpn/<version>/` |
+| EasyRSA | `/opt/ezrsa/current/easyrsa` | `/opt/ezrsa/<version>/` |

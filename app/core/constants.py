@@ -87,8 +87,6 @@ EASYRSA_SEARCH_PATHS = [
     "/opt/ezrsa/current/easyrsa",
     "/opt/openvpn/current/share/easy-rsa/easyrsa",
     "/opt/openvpn/current/share/easy-rsa/3/easyrsa",
-    "/opt/openvpn/share/easy-rsa/easyrsa",
-    "/opt/openvpn/share/easy-rsa/3/easyrsa",
     "/usr/share/easy-rsa/easyrsa",
     "/usr/share/easy-rsa/3/easyrsa",
     "/usr/share/easy-rsa/3.0/easyrsa",
@@ -104,9 +102,6 @@ EASYRSA_CA_EXPIRE_DAYS = 4380
 OPENVPN_SEARCH_PATHS = [
     "/opt/openvpn/current/sbin/openvpn",
     "/opt/openvpn/current/bin/openvpn",
-    # 根目录兼容入口，供尚未更新的 systemd unit 和脚本使用。
-    "/opt/openvpn/sbin/openvpn",
-    "/opt/openvpn/bin/openvpn",
     "/usr/local/sbin/openvpn",
     "/usr/local/bin/openvpn",
     "/usr/sbin/openvpn",

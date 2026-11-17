@@ -252,7 +252,7 @@ def _run_openvpn_upgrade_shell(
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     root = tmp_path / "opt" / "openvpn"
     prefix = root / "current"
-    old_release = root / "2.7.8-abcdef123456"
+    old_release = root / "2.7.8"
     root.mkdir(parents=True)
     if legacy_prefix:
         old_root = prefix
@@ -319,10 +319,10 @@ def test_shell_upgrade_switches_current_and_keeps_previous_version(
     assert result.returncode == 0, result.stdout + result.stderr
     assert prefix.is_symlink()
     assert prefix.resolve().parent == root
-    assert prefix.resolve().name.startswith("2.8.0-")
-    assert (root / "2.7.8-abcdef123456" / "sbin" / "openvpn").is_file()
-    assert (root / "sbin").is_symlink()
-    assert (root / "sbin").readlink() == Path("current/sbin")
+    assert prefix.readlink() == Path("2.8.0")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
+    assert (root / "2.8.0" / "sbin" / "openvpn").is_file()
+    assert not (root / "sbin").exists() and not (root / "sbin").is_symlink()
     assert log_path.read_text(encoding="utf-8").splitlines() == [
         "openvpn-server@server.service"
     ]
@@ -351,8 +351,8 @@ def test_shell_upgrade_failure_switches_back_and_restarts_old_instance(
     )
 
     assert result.returncode != 0
-    assert prefix.resolve() == root / "2.7.8-abcdef123456"
-    assert (root / "2.7.8-abcdef123456" / "sbin" / "openvpn").is_file()
+    assert prefix.readlink() == Path("2.7.8")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
     assert len(log_path.read_text(encoding="utf-8").splitlines()) == 2
     assert "切回旧版本" in result.stderr
 

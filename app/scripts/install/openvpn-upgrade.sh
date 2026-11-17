@@ -48,7 +48,7 @@ openvpn_upgrade_rollback() {
     [[ "${switched}" == "1" ]] || return 0
 
     echo "[openvpn-upgrade] ${reason}，切回旧版本: ${old_target}" >&2
-    if ! nicevpn_atomic_symlink "${old_target}" "${OPENVPN_PREFIX}"; then
+    if ! nicevpn_atomic_symlink "$(basename -- "${old_target}")" "${OPENVPN_PREFIX}"; then
         echo "[openvpn-upgrade] 严重：旧版本软链接恢复失败，旧版本目录仍保留: ${old_target}" >&2
         return 1
     fi
@@ -118,8 +118,7 @@ mkdir -p -- "${OPENVPN_ROOT_DIR}"
 find "${OPENVPN_ROOT_DIR}" -mindepth 1 -maxdepth 1 \
     -type d -name '.nicevpn-openvpn-upgrade.*' -exec rm -rf -- {} + 2>/dev/null || true
 
-candidate_hash="$(sha256sum "${candidate_binary}" | awk '{print $1}')"
-release_id="${candidate_version}-${candidate_hash:0:12}"
+release_id="${candidate_version}"
 release_dir="${OPENVPN_ROOT_DIR}/${release_id}"
 
 if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
@@ -132,9 +131,8 @@ if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
         exit 1
     }
     existing_version="$(openvpn_binary_version "${existing_binary}")"
-    existing_hash="$(sha256sum "${existing_binary}" | awk '{print $1}')"
-    [[ "${existing_version}" == "${candidate_version}" && "${existing_hash}" == "${candidate_hash}" ]] || {
-        echo "同版本 OpenVPN 内容不同，拒绝覆盖: ${release_dir}" >&2
+    [[ "${existing_version}" == "${candidate_version}" ]] || {
+        echo "已有 OpenVPN 版本目录不匹配，拒绝覆盖: ${release_dir}" >&2
         exit 1
     }
     echo "[openvpn-upgrade] 复用已校验版本目录: ${release_dir}"
@@ -145,10 +143,9 @@ else
         echo "release staging 缺少 OpenVPN binary: ${release_stage}" >&2
         exit 1
     }
-    staged_hash="$(sha256sum "${staged_binary}" | awk '{print $1}')"
     staged_version="$(openvpn_binary_version "${staged_binary}")"
-    [[ "${staged_version}" == "${candidate_version}" && "${staged_hash}" == "${candidate_hash}" ]] || {
-        echo "release staging 校验失败: ${release_stage}" >&2
+    [[ "${staged_version}" == "${candidate_version}" ]] || {
+        echo "release staging 版本校验失败: ${release_stage}" >&2
         exit 1
     }
     mv -T -- "${release_stage}" "${release_dir}"
@@ -164,8 +161,6 @@ fi
 echo "[openvpn-upgrade] 原子切换 current: ${OPENVPN_PREFIX} -> ${release_id}"
 switched=1
 nicevpn_atomic_symlink "${release_id}" "${OPENVPN_PREFIX}"
-openvpn_ensure_compat_symlinks
-
 active_binary="$(openvpn_find_binary "${OPENVPN_PREFIX}")"
 active_version="$(openvpn_binary_version "${active_binary}")"
 [[ "${active_version}" == "${OPENVPN_EXPECTED_VERSION}" ]] || {

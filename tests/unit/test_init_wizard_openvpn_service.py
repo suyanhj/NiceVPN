@@ -27,7 +27,7 @@ def _wizard() -> InitWizard:
 def test_detect_openvpn_ensures_server_unit_before_continuing(
     monkeypatch,
 ) -> None:
-    binary = "/opt/openvpn/sbin/openvpn"
+    binary = "/opt/openvpn/current/sbin/openvpn"
     calls: list[tuple[str, object]] = []
 
     monkeypatch.setattr(

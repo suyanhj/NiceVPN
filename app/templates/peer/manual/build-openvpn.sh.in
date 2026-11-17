@@ -67,17 +67,16 @@ ACTUAL_VERSION="$("${STAGED_BIN}" --version | sed -n '1{s/.*OpenVPN[[:space:]]\\
     exit 1
 }
 
-BINARY_HASH="$(sha256sum "${STAGED_BIN}" | awk '{print $1}')"
-RELEASE_ID="${OPENVPN_VERSION}-${BINARY_HASH:0:12}"
+RELEASE_ID="${OPENVPN_VERSION}"
 RELEASE_DIR="${OPENVPN_ROOT_DIR}/${RELEASE_ID}"
 if [ -e "${RELEASE_DIR}" ] || [ -L "${RELEASE_DIR}" ]; then
-    [ -x "${RELEASE_DIR}/sbin/openvpn" ] || {
+    [ -d "${RELEASE_DIR}" ] && [ -x "${RELEASE_DIR}/sbin/openvpn" ] || {
         echo "OpenVPN 版本目录异常，拒绝覆盖: ${RELEASE_DIR}" >&2
         exit 1
     }
-    EXISTING_HASH="$(sha256sum "${RELEASE_DIR}/sbin/openvpn" | awk '{print $1}')"
-    [ "${EXISTING_HASH}" = "${BINARY_HASH}" ] || {
-        echo "同版本 OpenVPN 内容不同，拒绝覆盖: ${RELEASE_DIR}" >&2
+    EXISTING_VERSION="$("${RELEASE_DIR}/sbin/openvpn" --version | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+    [ "${EXISTING_VERSION}" = "${OPENVPN_VERSION}" ] || {
+        echo "已有 OpenVPN 目录版本不匹配，拒绝覆盖: ${RELEASE_DIR}" >&2
         exit 1
     }
 else
@@ -91,21 +90,6 @@ fi
 NEW_LINK="${OPENVPN_ROOT_DIR}/.current.link.${BASHPID}"
 ln -s "${RELEASE_ID}" "${NEW_LINK}"
 mv -Tf -- "${NEW_LINK}" "${OPENVPN_PREFIX}"
-
-for PART in sbin bin share lib lib64 include libexec; do
-    [ -d "${OPENVPN_PREFIX}/${PART}" ] || continue
-    if [ -L "${OPENVPN_ROOT_DIR}/${PART}" ]; then
-        [ "$(readlink -- "${OPENVPN_ROOT_DIR}/${PART}")" = "current/${PART}" ] || {
-            echo "OpenVPN 兼容入口指向异常: ${OPENVPN_ROOT_DIR}/${PART}" >&2
-            exit 1
-        }
-    elif [ -e "${OPENVPN_ROOT_DIR}/${PART}" ]; then
-        echo "OpenVPN 兼容入口被普通路径占用: ${OPENVPN_ROOT_DIR}/${PART}" >&2
-        exit 1
-    else
-        ln -s "current/${PART}" "${OPENVPN_ROOT_DIR}/${PART}"
-    fi
-done
 
 "${OPENVPN_PREFIX}/sbin/openvpn" --version | head -n 1
 echo "OpenVPN ${OPENVPN_VERSION} 已安装到 ${RELEASE_DIR}；稳定入口：${OPENVPN_PREFIX}"

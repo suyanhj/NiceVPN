@@ -522,38 +522,44 @@ def test_easyrsa_install_shell_syntax() -> None:
 
 
 
-def test_one_off_version_layout_migration_script_moves_openvpn_to_current_root(
+def test_one_off_version_layout_migration_script_renames_hashed_dirs_to_versions(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "opt" / "openvpn"
-    current_binary = root / "sbin" / "openvpn"
-    current_binary.parent.mkdir(parents=True)
-    current_binary.write_text(
-        "#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n",
-        encoding="utf-8",
-    )
-    current_binary.chmod(0o755)
-
-    old_releases = tmp_path / "opt" / "openvpn-releases"
-    old_binary = old_releases / "2.7.7-old" / "sbin" / "openvpn"
-    old_binary.parent.mkdir(parents=True)
-    old_binary.write_text(
-        "#!/bin/sh\nprintf 'OpenVPN 2.7.7\\n'\n",
-        encoding="utf-8",
-    )
-    old_binary.chmod(0o755)
+    openvpn_root = tmp_path / "opt" / "openvpn"
+    active_openvpn = openvpn_root / "2.7.8-abcdef123456"
+    old_openvpn = openvpn_root / "2.7.7-abcdef123456"
+    for directory, version in ((active_openvpn, "2.7.8"), (old_openvpn, "2.7.7")):
+        binary = directory / "sbin" / "openvpn"
+        binary.parent.mkdir(parents=True)
+        binary.write_text(
+            f"#!/bin/sh\nprintf 'OpenVPN {version}\n'\n",
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+    (openvpn_root / "current").symlink_to(active_openvpn.name)
+    (openvpn_root / "sbin").symlink_to("current/sbin")
+    (openvpn_root / "share").symlink_to("current/share")
 
     easyrsa_root = tmp_path / "opt" / "ezrsa"
-    legacy_easyrsa_root = tmp_path / "opt" / "easy-rsa"
+    active_easyrsa = easyrsa_root / "3.2.4-abcdef123456"
+    old_easyrsa = easyrsa_root / "3.1.7-abcdef123456"
+    for directory, version in ((active_easyrsa, "3.2.4"), (old_easyrsa, "3.1.7")):
+        directory.mkdir(parents=True)
+        binary = directory / "easyrsa"
+        binary.write_text(
+            f"#!/bin/sh\necho 'EasyRSA version {version}'\n",
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+    (easyrsa_root / "current").symlink_to(active_easyrsa.name)
+
     script = Path(__file__).resolve().parents[2] / "scripts" / "migrate-version-layout-once.sh"
     env = os.environ.copy()
     env.update(
         {
             "MIGRATE_ALLOW_NON_ROOT": "1",
-            "OPENVPN_ROOT_DIR": str(root),
-            "OPENVPN_OLD_RELEASES_DIR": str(old_releases),
+            "OPENVPN_ROOT_DIR": str(openvpn_root),
             "EASYRSA_INSTALL_DIR": str(easyrsa_root),
-            "EASYRSA_LEGACY_ROOT_DIR": str(legacy_easyrsa_root),
         }
     )
     syntax = subprocess.run(
@@ -573,18 +579,17 @@ def test_one_off_version_layout_migration_script_moves_openvpn_to_current_root(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (root / "current").is_symlink()
-    assert (root / "current" / "sbin" / "openvpn").is_file()
-    assert "2.7.8" in (root / "current" / "sbin" / "openvpn").read_text(encoding="utf-8")
-    assert (root / "sbin").is_symlink()
-    old_version_dirs = [
-        item for item in root.iterdir()
-        if item.is_dir() and item.name.startswith("2.7.7-")
-    ]
-    assert len(old_version_dirs) == 1
-    assert (old_version_dirs[0] / "sbin" / "openvpn").is_file()
-    assert old_releases.is_dir()
-    assert list(tmp_path.glob("opt/openvpn.legacy-layout.*"))
+    assert (openvpn_root / "current").readlink() == Path("2.7.8")
+    assert (openvpn_root / "2.7.8" / "sbin" / "openvpn").is_file()
+    assert (openvpn_root / "2.7.7" / "sbin" / "openvpn").is_file()
+    assert not (openvpn_root / "2.7.8-abcdef123456").exists()
+    assert not (openvpn_root / "sbin").is_symlink()
+    assert not (openvpn_root / "share").is_symlink()
+
+    assert (easyrsa_root / "current").readlink() == Path("3.2.4")
+    assert (easyrsa_root / "3.2.4" / "easyrsa").is_file()
+    assert (easyrsa_root / "3.1.7" / "easyrsa").is_file()
+    assert not (easyrsa_root / "3.2.4-abcdef123456").exists()
 
 
 def test_openvpn_install_refuses_legacy_prefix_without_one_off_script(
@@ -593,7 +598,7 @@ def test_openvpn_install_refuses_legacy_prefix_without_one_off_script(
     root = tmp_path / "opt" / "openvpn"
     binary = root / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n", encoding="utf-8")
+    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n", encoding="utf-8")
     binary.chmod(0o755)
 
     result = _run_common_shell(
@@ -617,7 +622,7 @@ def test_openvpn_install_refuses_current_link_outside_version_root(
     old_release = tmp_path / "opt" / "openvpn-releases" / "2.7.8-old"
     binary = old_release / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n", encoding="utf-8")
+    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n", encoding="utf-8")
     binary.chmod(0o755)
     root.mkdir(parents=True)
     (root / "current").symlink_to(old_release)
@@ -633,7 +638,7 @@ def test_openvpn_install_refuses_current_link_outside_version_root(
     )
 
     assert result.returncode != 0
-    assert "旧 releases 路径" in result.stderr
+    assert "根目录外的版本目录" in result.stderr
 
 
 def test_easyrsa_install_refuses_current_link_outside_version_root(
@@ -657,14 +662,16 @@ def test_easyrsa_install_refuses_current_link_outside_version_root(
     )
 
     assert result.returncode != 0
-    assert "旧 releases 目录" in result.stderr
+    assert "根目录外的版本目录" in result.stderr
 
 
 def test_easyrsa_install_uses_flat_version_directory_and_current_link() -> None:
     common = _read_install_script_text("openvpn-install-common.sh")
     assert 'install_dir="${EASYRSA_INSTALL_DIR}/${release_id}"' in common
     assert 'current_link="${EASYRSA_INSTALL_DIR}/current"' in common
-    assert 'release_id="${actual_version}-${source_tree_hash:0:12}"' in common
+    assert 'release_id="${actual_version}"' in common
+    assert 'release_id="${version}"' in common
+    assert "easyrsa_tree_hash" not in common
     assert "EASYRSA_INSTALL_DIR}/releases/" not in common
     assert "easyrsa_migrate_legacy_install" not in common
 

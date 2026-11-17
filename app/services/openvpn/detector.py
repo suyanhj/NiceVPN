@@ -94,7 +94,6 @@ def classify_openvpn_install_mode(path: str | None) -> str | None:
         raw == str(source_prefix / "sbin" / "openvpn")
         or raw == str(source_root / "sbin" / "openvpn")
         or _path_is_within(candidate, source_root)
-        or _path_is_within(candidate, Path("/opt/openvpn-releases"))
     ):
         return "source"
     if raw in {"/usr/sbin/openvpn", "/usr/bin/openvpn"}:
@@ -255,8 +254,6 @@ def _find_openvpn_binary(config: dict | None = None) -> str | None:
         candidates = [
             f"{OPENVPN_INSTALL_PREFIX}/sbin/openvpn",
             f"{OPENVPN_INSTALL_PREFIX}/bin/openvpn",
-            f"{OPENVPN_INSTALL_ROOT}/sbin/openvpn",
-            f"{OPENVPN_INSTALL_ROOT}/bin/openvpn",
             configured,
         ]
         candidates = [

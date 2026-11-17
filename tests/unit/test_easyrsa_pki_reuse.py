@@ -316,11 +316,12 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
 
     def fake_run(cmd, _output, *, env=None, cwd=None):
         calls.append((cmd, dict(env or {})))
-        current = install_root / "current"
-        current.mkdir(parents=True)
-        easyrsa = current / "easyrsa"
+        version_dir = install_root / "3.2.4"
+        version_dir.mkdir(parents=True)
+        easyrsa = version_dir / "easyrsa"
         easyrsa.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
         easyrsa.chmod(0o755)
+        (install_root / "current").symlink_to(version_dir.name)
 
     monkeypatch.setattr(installer_mod, "_run_command", fake_run)
 
