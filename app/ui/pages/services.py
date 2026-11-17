@@ -407,9 +407,9 @@ class ServicesPage:
                     self._refresh_list_with_client()
                 except Exception as exc:
                     logger.exception("OpenVPN 安全升级失败")
-                    status_label.text = f"升级失败，Shell 已尝试切回旧版本：{exc}"
+                    status_label.text = f"升级失败：{exc}。旧版本目录仍然保留。"
                     self._notify_for_page(
-                        f"OpenVPN 升级失败并已尝试回滚: {exc}",
+                        f"OpenVPN 升级失败: {exc}",
                         type="negative",
                         multi_line=True,
                     )
