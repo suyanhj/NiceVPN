@@ -585,14 +585,14 @@ def _write_fake_systemctl(tmp_path: Path) -> Path:
     log_path = tmp_path / "systemctl.log"
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
-        "#!/bin/sh\\n"
-        'case "$1" in\\n'
-        '  list-units) printf "%s\\n" "openvpn-server@server.service loaded active running OpenVPN Server" ;;\\n'
-        '  list-unit-files) printf "%s\\n" "openvpn-server@.service enabled" ;;\\n'
-        '  restart) printf "%s\\n" "$2" >> "$SYSTEMCTL_LOG" ;;\\n'
-        '  is-active|daemon-reload|show) exit 0 ;;\\n'
-        '  *) exit 0 ;;\\n'
-        'esac\\n',
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        '  list-units) printf "%s\n" "openvpn-server@server.service loaded active running OpenVPN Server" ;;\n'
+        '  list-unit-files) printf "%s\n" "openvpn-server@.service enabled" ;;\n'
+        '  restart) printf "%s\n" "$2" >> "$SYSTEMCTL_LOG" ;;\n'
+        '  is-active|daemon-reload|show) exit 0 ;;\n'
+        '  *) exit 0 ;;\n'
+        'esac\n',
         encoding="utf-8",
     )
     systemctl.chmod(0o755)
@@ -607,7 +607,7 @@ def test_source_postflight_restarts_and_verifies_previously_active_instances(
     binary = prefix / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
     binary.write_text(
-        "#!/bin/sh\\nprintf 'OpenVPN 2.7.8\\n'\\n",
+        "#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n",
         encoding="utf-8",
     )
     binary.chmod(0o755)
@@ -643,7 +643,7 @@ def test_source_postflight_rejects_stale_system_binary_when_prefix_binary_missin
     stale = tmp_path / "usr" / "sbin" / "openvpn"
     stale.parent.mkdir(parents=True)
     stale.write_text(
-        "#!/bin/sh\\nprintf 'OpenVPN 2.7.8\\n'\\n",
+        "#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n",
         encoding="utf-8",
     )
     stale.chmod(0o755)
@@ -704,7 +704,7 @@ def test_shell_transaction_restore_restarts_saved_active_instances(
     (root / "ready").touch()
     (root / "paths").write_text("", encoding="utf-8")
     (root / "active-instances").write_text(
-        "openvpn-server@server.service\\n",
+        "openvpn-server@server.service\n",
         encoding="utf-8",
     )
 
@@ -733,10 +733,10 @@ def test_easyrsa_migration_recovers_crash_after_directory_move(
     current = new_root / "current"
     current.mkdir(parents=True)
     binary = current / "easyrsa"
-    binary.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     binary.chmod(0o755)
     marker = tmp_path / "opt" / ".ezrsa-legacy-migration"
-    marker.write_text(str(legacy) + "\\n", encoding="utf-8")
+    marker.write_text(str(legacy) + "\n", encoding="utf-8")
 
     result = _run_common_shell(
         tmp_path,
