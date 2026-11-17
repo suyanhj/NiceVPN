@@ -977,7 +977,7 @@ EOF
     fi
 
     local tmp_dir stage_dir source_dir expected_version actual_version archive_hash
-    local release_id install_dir current_link old_current
+    local release_id install_dir current_link old_current source_script_hash existing_script_hash stage_script_hash
     tmp_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/.extract.XXXXXX")"
     stage_dir=""
     cleanup_easyrsa_install() {
@@ -1001,6 +1001,7 @@ EOF
     expected_version="${EASYRSA_TAG#v}"
     chmod +x "${source_dir}/easyrsa"
     actual_version="$(easyrsa_validate_binary "${source_dir}/easyrsa" "${expected_version}")"
+    source_script_hash="$(sha256sum "${source_dir}/easyrsa" | awk '{print $1}')"
     archive_hash="$(sha256sum "${EASYRSA_CACHE}" | awk '{print $1}')"
     release_id="${actual_version}-${archive_hash:0:12}"
     install_dir="${EASYRSA_INSTALL_DIR}/releases/${release_id}"
@@ -1013,12 +1014,22 @@ EOF
         }
         local existing_version
         existing_version="$(easyrsa_validate_binary "${install_dir}/easyrsa" "${expected_version}")"
+        existing_script_hash="$(sha256sum "${install_dir}/easyrsa" | awk '{print $1}')"
+        [ "${existing_script_hash}" = "${source_script_hash}" ] || {
+            echo "已有 EasyRSA release 脚本 SHA-256 与下载候选不一致，拒绝复用: ${install_dir}" >&2
+            exit 1
+        }
         _log "复用已校验的不可变 EasyRSA 版本目录: ${install_dir} (${existing_version})"
     else
         stage_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/releases/.${release_id}.stage.XXXXXX")"
         cp -a "${source_dir}/." "${stage_dir}/"
         chmod +x "${stage_dir}/easyrsa"
         easyrsa_validate_binary "${stage_dir}/easyrsa" "${expected_version}" >/dev/null
+        stage_script_hash="$(sha256sum "${stage_dir}/easyrsa" | awk '{print $1}')"
+        [ "${stage_script_hash}" = "${source_script_hash}" ] || {
+            echo "EasyRSA staging 脚本 SHA-256 校验失败: ${stage_dir}" >&2
+            exit 1
+        }
         # stage 与 releases 位于同一文件系统，rename 后目录一次性可见。
         mv -T -- "${stage_dir}" "${install_dir}"
         stage_dir=""
