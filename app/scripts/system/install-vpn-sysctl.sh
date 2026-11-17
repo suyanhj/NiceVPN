@@ -10,7 +10,11 @@ if [ ! -f "${SYSCTL_SOURCE}" ]; then
     exit 2
 fi
 
-install -D -m 0644 "${SYSCTL_SOURCE}" "${SYSCTL_TARGET}"
+# sysctl.d 配置也复用项目共享原子写入，避免进程中断时留下半写入文件。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
+nicevpn_atomic_write_command "${SYSCTL_TARGET}" 0644 cat "${SYSCTL_SOURCE}"
 echo "[sysctl] 已安装 ${SYSCTL_TARGET}"
 
 SYSCTL_BIN="$(command -v sysctl || true)"
