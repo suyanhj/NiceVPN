@@ -927,7 +927,7 @@ def _recover_interrupted_openvpn_upgrade_locked(
         shutil.rmtree(root)
         _emit(on_output, "[恢复] 清理已提交的 OpenVPN 升级事务")
         return True
-    if state != "switching":
+    if state not in {"prepared", "switched"}:
         raise RuntimeError(f"未知 OpenVPN 升级事务状态: {state!r}，恢复材料保留在 {root}")
 
     errors: list[str] = []
@@ -971,29 +971,30 @@ def _recover_interrupted_openvpn_upgrade_locked(
     except Exception as exc:
         record("恢复 OpenVPN 稳定入口", exc)
 
-    for snapshot in manifest.get("snapshots", []):
-        try:
-            _restore_path(snapshot)
-        except Exception as exc:
-            record(f"恢复系统路径 {snapshot.get('path')}", exc)
-
-    try:
-        proc = _run(["systemctl", "daemon-reload"], timeout=30)
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or proc.stdout or "daemon-reload 失败").strip())
-    except Exception as exc:
-        record("systemd daemon-reload", exc)
-
-    if not errors:
-        for name in manifest.get("active_instances", []):
+    if state == "switched":
+        for snapshot in manifest.get("snapshots", []):
             try:
-                proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
-                if proc.returncode != 0:
-                    raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
-                if not is_instance_active(name):
-                    raise RuntimeError("restart 后实例仍未处于 active 状态")
+                _restore_path(snapshot)
             except Exception as exc:
-                record(f"恢复原实例 {name}", exc)
+                record(f"恢复系统路径 {snapshot.get('path')}", exc)
+
+        try:
+            proc = _run(["systemctl", "daemon-reload"], timeout=30)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or proc.stdout or "daemon-reload 失败").strip())
+        except Exception as exc:
+            record("systemd daemon-reload", exc)
+
+        if not errors:
+            for name in manifest.get("active_instances", []):
+                try:
+                    proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
+                    if proc.returncode != 0:
+                        raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
+                    if not is_instance_active(name):
+                        raise RuntimeError("restart 后实例仍未处于 active 状态")
+                except Exception as exc:
+                    record(f"恢复原实例 {name}", exc)
 
     if new_release is not None and new_release.is_dir() and new_release != old_target:
         try:
@@ -1100,7 +1101,7 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
         ]
         manifest = {
             "schema_version": 1,
-            "state": "switching",
+            "state": "prepared",
             "prefix": str(prefix),
             "releases_dir": str(releases_dir),
             "prefix_was_present": prefix_was_present,
@@ -1147,6 +1148,8 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
 
         _emit(on_output, f"[升级] 原子切换稳定入口 {prefix} -> {release_dir}")
         _atomic_symlink(release_dir, prefix)
+        manifest["state"] = "switched"
+        _write_upgrade_manifest(txn_root, manifest)
 
         cli_link.parent.mkdir(parents=True, exist_ok=True)
         _atomic_symlink(prefix / "sbin" / "openvpn", cli_link)
