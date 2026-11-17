@@ -313,7 +313,9 @@ class ServicesPage:
                     target_version = str(info.get("target_version") or "未知")
                     target_label.text = f"目标版本：{target_version}"
                     if not bool(info.get("upgrade_available")):
-                        status_label.text = "当前已经是最新版本，无需升级。"
+                        status_label.text = str(
+                            info.get("reason") or "当前已经是最新版本，无需升级。"
+                        )
                         server_label.text = "服务端配置：未执行"
                         client_label.text = "客户端配置：未执行"
                         return
