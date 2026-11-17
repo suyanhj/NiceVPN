@@ -93,7 +93,16 @@ ln -s "${RELEASE_ID}" "${NEW_LINK}"
 mv -Tf -- "${NEW_LINK}" "${OPENVPN_PREFIX}"
 
 for PART in sbin bin share lib lib64 include libexec; do
-    if [ -d "${OPENVPN_PREFIX}/${PART}" ] && [ ! -e "${OPENVPN_ROOT_DIR}/${PART}" ] && [ ! -L "${OPENVPN_ROOT_DIR}/${PART}" ]; then
+    [ -d "${OPENVPN_PREFIX}/${PART}" ] || continue
+    if [ -L "${OPENVPN_ROOT_DIR}/${PART}" ]; then
+        [ "$(readlink -- "${OPENVPN_ROOT_DIR}/${PART}")" = "current/${PART}" ] || {
+            echo "OpenVPN 兼容入口指向异常: ${OPENVPN_ROOT_DIR}/${PART}" >&2
+            exit 1
+        }
+    elif [ -e "${OPENVPN_ROOT_DIR}/${PART}" ]; then
+        echo "OpenVPN 兼容入口被普通路径占用: ${OPENVPN_ROOT_DIR}/${PART}" >&2
+        exit 1
+    else
         ln -s "current/${PART}" "${OPENVPN_ROOT_DIR}/${PART}"
     fi
 done

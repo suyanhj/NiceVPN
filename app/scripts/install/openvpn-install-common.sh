@@ -101,6 +101,18 @@ easyrsa_reuse_existing() {
         echo "EasyRSA current 必须是软链接，请先执行 scripts/migrate-version-layout-once.sh" >&2
         return 1
     fi
+    if [[ -L "${EASYRSA_INSTALL_DIR}/current" ]]; then
+        local current_target
+        current_target="$(readlink -f -- "${EASYRSA_INSTALL_DIR}/current" 2>/dev/null || true)"
+        case "${current_target}" in
+            "${EASYRSA_INSTALL_DIR}/"*) ;;
+            *) echo "EasyRSA current 仍指向旧 releases 目录，请先执行 scripts/migrate-version-layout-once.sh" >&2; return 1 ;;
+        esac
+        [[ -x "${current_target}/easyrsa" ]] || {
+            echo "EasyRSA current 目标缺少可执行脚本: ${current_target}" >&2
+            return 1
+        }
+    fi
     if [[ -f "${EASYRSA_INSTALL_DIR}/easyrsa" && ! -L "${EASYRSA_INSTALL_DIR}/easyrsa" ]]; then
         echo "检测到旧版 EasyRSA 平铺目录，请先执行 scripts/migrate-version-layout-once.sh" >&2
         return 1
@@ -219,6 +231,10 @@ openvpn_recover_source_install() {
             echo "OpenVPN current 是失效软链接: ${current}" >&2
             return 1
         }
+        case "${target}" in
+            "${root}/"*) ;;
+            *) echo "OpenVPN current 仍指向根目录外的旧 releases 路径，请先执行 scripts/migrate-version-layout-once.sh" >&2; return 1 ;;
+        esac
         [[ -x "${target}/sbin/openvpn" || -x "${target}/bin/openvpn" ]] || {
             echo "OpenVPN current 目标缺少可执行 binary: ${target}" >&2
             return 1

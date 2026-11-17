@@ -610,6 +610,56 @@ def test_openvpn_install_refuses_legacy_prefix_without_one_off_script(
     assert "migrate-version-layout-once.sh" in result.stderr
 
 
+def test_openvpn_install_refuses_current_link_outside_version_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opt" / "openvpn"
+    old_release = tmp_path / "opt" / "openvpn-releases" / "2.7.8-old"
+    binary = old_release / "sbin" / "openvpn"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n", encoding="utf-8")
+    binary.chmod(0o755)
+    root.mkdir(parents=True)
+    (root / "current").symlink_to(old_release)
+
+    result = _run_common_shell(
+        tmp_path,
+        "openvpn_recover_source_install",
+        extra_env={
+            "OPENVPN_ROOT_DIR": str(root),
+            "OPENVPN_PREFIX": str(root / "current"),
+            "OPENVPN_BIN": str(root / "current" / "sbin" / "openvpn"),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "旧 releases 路径" in result.stderr
+
+
+def test_easyrsa_install_refuses_current_link_outside_version_root(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "opt" / "ezrsa"
+    old_release = tmp_path / "opt" / "ezrsa-releases" / "3.2.4-old"
+    binary = old_release / "easyrsa"
+    old_release.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    install_root.mkdir(parents=True)
+    (install_root / "current").symlink_to(old_release)
+
+    result = _run_common_shell(
+        tmp_path,
+        "INSTALL_EASYRSA=1; easyrsa_reuse_existing",
+        extra_env={
+            "EASYRSA_INSTALL_DIR": str(install_root),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "旧 releases 目录" in result.stderr
+
+
 def test_easyrsa_install_uses_flat_version_directory_and_current_link() -> None:
     common = _read_install_script_text("openvpn-install-common.sh")
     assert 'install_dir="${EASYRSA_INSTALL_DIR}/${release_id}"' in common
