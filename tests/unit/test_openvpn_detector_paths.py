@@ -128,6 +128,7 @@ def test_source_mode_prefers_stable_entry_over_saved_release_path(
         "openvpn_install_mode": "source",
         "openvpn_bin": str(old_release),
     }) == str(stable)
+    assert detector._find_openvpn_binary({"openvpn_bin": str(old_release)}) == str(stable)
 
 
 def test_package_mode_never_falls_back_to_old_source_binary(
