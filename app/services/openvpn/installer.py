@@ -12,6 +12,7 @@ from typing import Callable
 from app.core.config import load_config
 from app.core.constants import (
     EASYRSA_INSTALL_DIR,
+    EASYRSA_LEGACY_INSTALL_DIR,
     OPENVPN_INSTALL_PREFIX,
     OPENVPN_MIN_VERSION,
 )
@@ -292,6 +293,26 @@ def install_easyrsa(
     force_install = os.environ.get("EASYRSA_FORCE_INSTALL", "0") == "1"
     existing_bin = find_easyrsa()
     if existing_bin and not force_install:
+        legacy_root = Path(EASYRSA_LEGACY_INSTALL_DIR)
+        try:
+            Path(existing_bin).relative_to(legacy_root)
+            is_legacy_install = True
+        except ValueError:
+            is_legacy_install = False
+        if is_legacy_install:
+            migration_script = _INSTALL_SCRIPTS_DIR / "easyrsa-migrate.sh"
+            if not migration_script.is_file():
+                raise FileNotFoundError(f"EasyRSA 兼容迁移脚本不存在: {migration_script}")
+            _emit(on_output, "[迁移] 将旧版 /opt/easy-rsa 安全迁移到 /opt/ezrsa")
+            _run_command(
+                ["bash", str(migration_script)],
+                on_output,
+                env=_subprocess_env({
+                    "EASYRSA_INSTALL_DIR": str(EASYRSA_INSTALL_DIR),
+                    "EASYRSA_LEGACY_INSTALL_DIR": str(EASYRSA_LEGACY_INSTALL_DIR),
+                }),
+            )
+            existing_bin = find_easyrsa() or existing_bin
         _emit(on_output, f"[检查] 已存在 EasyRSA，跳过下载和覆盖: {existing_bin}")
         ensure_easyrsa_runtime_dependencies(on_output)
         return existing_bin
