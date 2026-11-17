@@ -885,7 +885,7 @@ def _validate_upgrade_manifest(root: Path, manifest: dict) -> tuple[Path, Path, 
                 raise RuntimeError("OpenVPN 升级事务快照文件不在事务目录内")
     instances = manifest.get("active_instances", [])
     if not isinstance(instances, list) or any(
-        not isinstance(name, str) or not name or "/" in name or "\\x00" in name
+        not isinstance(name, str) or not name or "/" in name or "\x00" in name
         for name in instances
     ):
         raise RuntimeError("OpenVPN 升级事务 active_instances 格式错误")
@@ -945,8 +945,9 @@ def _recover_interrupted_openvpn_upgrade_locked(
                 elif not prefix.exists():
                     _atomic_symlink(old_target, prefix)
                 elif prefix.is_dir():
-                    # 普通目录仍在说明旧目录迁移尚未发生；绝不覆盖它。
-                    pass
+                    raise RuntimeError(
+                        f"旧 release 已存在但稳定入口仍是普通目录，拒绝覆盖: {prefix}"
+                    )
                 else:
                     raise RuntimeError(f"无法安全恢复旧 OpenVPN 入口: {prefix}")
             elif prefix.is_dir() and not prefix.is_symlink():
@@ -980,15 +981,16 @@ def _recover_interrupted_openvpn_upgrade_locked(
     except Exception as exc:
         record("systemd daemon-reload", exc)
 
-    for name in manifest.get("active_instances", []):
-        try:
-            proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
-            if proc.returncode != 0:
-                raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
-            if not is_instance_active(name):
-                raise RuntimeError("restart 后实例仍未处于 active 状态")
-        except Exception as exc:
-            record(f"恢复原实例 {name}", exc)
+    if not errors:
+        for name in manifest.get("active_instances", []):
+            try:
+                proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
+                if proc.returncode != 0:
+                    raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
+                if not is_instance_active(name):
+                    raise RuntimeError("restart 后实例仍未处于 active 状态")
+            except Exception as exc:
+                record(f"恢复原实例 {name}", exc)
 
     if new_release is not None and new_release.is_dir() and new_release != old_target:
         try:
@@ -1144,8 +1146,7 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
         _atomic_symlink(release_dir, prefix)
 
         cli_link.parent.mkdir(parents=True, exist_ok=True)
-        _remove_path_strict(cli_link)
-        cli_link.symlink_to(prefix / "sbin" / "openvpn")
+        _atomic_symlink(prefix / "sbin" / "openvpn", cli_link)
 
         from app.services.openvpn.installer import (
             install_openvpn_server_systemd_from_staged_source,
