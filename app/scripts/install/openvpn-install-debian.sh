@@ -90,8 +90,7 @@ if [ -n "${PKG_VERSION}" ] && [ "${PKG_VERSION}" != "(none)" ] \
         pkgs+=(easy-rsa openssl)
     fi
     nicevpn_install_packages apt-get "${pkgs[@]}"
-    openvpn_install_server_systemd_override
-    openvpn_post_install_validate
+    openvpn_run_package_postflight
     exit 0
 fi
 
