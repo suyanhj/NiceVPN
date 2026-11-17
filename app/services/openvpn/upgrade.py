@@ -29,6 +29,7 @@ from app.services.openvpn.instance import (
     iter_all_openvpn_instance_names,
     resolve_server_conf_dir,
 )
+from app.services.openvpn.install_lock import openvpn_install_lock
 from app.services.user.ovpn_gen import generate_ovpn
 
 logger = logging.getLogger(__name__)
@@ -555,6 +556,60 @@ def cleanup_staged_candidate(stage: dict | None) -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _recover_interrupted_prefix_switch(prefix: Path) -> None:
+    """恢复进程被强制终止后留下的 prefix 备份；不自动删除可回滚的旧版本。"""
+    parent = prefix.parent
+    if not parent.is_dir():
+        return
+
+    if not prefix.exists() and not prefix.is_symlink():
+        candidates: list[tuple[int, Path, Path | None]] = []
+
+        # upgrade.py 的 old_tree：<prefix>.nicevpn-old-<uuid>
+        for candidate in parent.glob(f"{prefix.name}.nicevpn-old-*"):
+            if candidate.is_dir() or candidate.is_symlink():
+                try:
+                    candidates.append((candidate.lstat().st_ctime_ns, candidate, None))
+                except OSError:
+                    continue
+
+        # Shell 初次安装/升级的备份：.<prefix>.backup.<time>.<pid>/<prefix>
+        for backup_root in parent.glob(f".{prefix.name}.backup.*"):
+            candidate = backup_root / prefix.name
+            if candidate.is_dir() and not candidate.is_symlink():
+                try:
+                    candidates.append((candidate.lstat().st_ctime_ns, candidate, backup_root))
+                except OSError:
+                    continue
+
+        if candidates:
+            _, restore_path, backup_root = max(candidates, key=lambda item: item[0])
+            os.replace(restore_path, prefix)
+            if backup_root is not None:
+                try:
+                    backup_root.rmdir()
+                except OSError:
+                    pass
+            logger.warning(
+                "Recovered interrupted OpenVPN prefix switch: %s -> %s",
+                restore_path,
+                prefix,
+            )
+
+    # 未切换的新候选目录不再被引用，可以安全清理；old_tree 始终保留。
+    stale_candidates = list(parent.glob(f"{prefix.name}.nicevpn-new-*"))
+    stale_candidates.extend(parent.glob(f".{prefix.name}.stage.*"))
+    for candidate in stale_candidates:
+        try:
+            _remove_path_strict(candidate)
+        except Exception:
+            logger.warning(
+                "Unable to clean stale OpenVPN candidate tree %s",
+                candidate,
+                exc_info=True,
+            )
+
+
 def _snapshot_path(path: Path, root: Path, name: str) -> dict:
     record = {"path": str(path), "exists": path.exists() or path.is_symlink(), "kind": "missing"}
     if not record["exists"]:
@@ -605,11 +660,12 @@ def _restore_path(record: dict) -> None:
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
-    """串行执行 OpenVPN 切换，拒绝同一进程内并发升级。"""
+    """串行执行 OpenVPN 切换，并与 Shell 安装入口共享跨进程锁。"""
     if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
         raise RuntimeError("OpenVPN 升级正在执行，请勿重复发起")
     try:
-        return _apply_staged_upgrade_locked(stage, on_output)
+        with openvpn_install_lock():
+            return _apply_staged_upgrade_locked(stage, on_output)
     finally:
         _OPENVPN_UPGRADE_APPLY_LOCK.release()
 
@@ -621,6 +677,8 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
     唯一可恢复的备份目录。
     """
 
+    prefix = Path(OPENVPN_INSTALL_PREFIX)
+    _recover_interrupted_prefix_switch(prefix)
     preflight = preflight_upgrade_candidate(stage, on_output)
     if not preflight.get("ok"):
         raise RuntimeError(str(preflight.get("error") or "候选 OpenVPN preflight 失败"))
@@ -635,7 +693,6 @@ def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) 
     ]
 
     rollback_root = Path(tempfile.mkdtemp(prefix="nicevpn-openvpn-rollback-"))
-    prefix = Path(OPENVPN_INSTALL_PREFIX)
     unit = Path("/etc/systemd/system/openvpn-server@.service")
     override_dir = Path("/etc/systemd/system/openvpn-server@.service.d")
     cli_link = Path("/usr/local/sbin/openvpn")

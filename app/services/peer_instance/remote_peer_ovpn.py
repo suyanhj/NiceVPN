@@ -119,12 +119,15 @@ def _strip_peer_script_wrapper(text: str) -> str:
 
 
 def _bundle_peer_script(script_name: str, env: dict[str, str]) -> str:
-    """将对端脚本与环境变量打包为可在 SSH 上执行的 bash。"""
-    lines = ["set -eux"]
+    """将原子文件 helper、对端脚本与环境变量打包为可在 SSH 上执行的 bash。"""
+    lines = ["set -euxo pipefail"]
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(str(value))}")
+    atomic_helper = (_PEER_SCRIPTS_DIR.parent / "common" / "atomic-files.sh").read_text(
+        encoding="utf-8"
+    )
     body = _strip_peer_script_wrapper(_read_peer_script_text(script_name))
-    return "\n".join(lines) + "\n" + body
+    return "\n".join(lines) + "\n" + atomic_helper + "\n" + body
 
 
 def _exec_bundled_peer_script(

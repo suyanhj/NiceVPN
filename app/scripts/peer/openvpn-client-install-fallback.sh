@@ -9,20 +9,21 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
+
 : "${OPENVPN_BIN:?必须设置 OPENVPN_BIN}"
 : "${CONFIG_PATH:?必须设置 CONFIG_PATH}"
 : "${UNIT_TEMPLATE:?必须设置 UNIT_TEMPLATE}"
 : "${SERVICE_NAME:=openvpn-client.service}"
 
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}"
-tmp="$(mktemp /tmp/ovpn-mgmt-unit.XXXXXX)"
 
 printf '%s' "${UNIT_TEMPLATE}" \
     | sed -e "s#@OPENVPN_BIN@#${OPENVPN_BIN}#g" \
           -e "s#@CONFIG_PATH@#${CONFIG_PATH}#g" \
-    > "${tmp}"
-install -m 0644 -T "${tmp}" "${UNIT_PATH}"
-rm -f "${tmp}"
+    | nicevpn_atomic_write_stdin "${UNIT_PATH}" 0644
 
 systemctl daemon-reload
 echo "[peer-client] 已安装兜底 systemd unit: ${UNIT_PATH} openvpn=${OPENVPN_BIN} config=${CONFIG_PATH}"

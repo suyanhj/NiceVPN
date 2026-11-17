@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=../../app/scripts/common/atomic-files.sh
+source "$ROOT_DIR/app/scripts/common/atomic-files.sh"
 CONF_TEMPLATE="$ROOT_DIR/deploy/logrotate/nicevpn-openvpn.conf.in"
 
 CONF_TARGET="/etc/logrotate.d/nicevpn-openvpn"
@@ -73,10 +75,10 @@ if [[ -e "$CONF_TARGET" ]]; then
     had_previous=1
 fi
 
-install -m 0644 "$tmp_conf" "$CONF_TARGET"
+nicevpn_atomic_write_command "$CONF_TARGET" 0644 cat "$tmp_conf"
 if ! "$LOGROTATE_BIN" -d /etc/logrotate.conf > "$tmp_check" 2>&1; then
     if [[ "$had_previous" = "1" ]]; then
-        install -m 0644 "$tmp_backup" "$CONF_TARGET"
+        nicevpn_atomic_write_command "$CONF_TARGET" 0644 cat "$tmp_backup"
     else
         rm -f -- "$CONF_TARGET"
     fi
@@ -90,12 +92,10 @@ fi
 if command -v systemctl >/dev/null 2>&1 &&
    [[ -d /run/systemd/system ]] &&
    systemctl cat logrotate.service >/dev/null 2>&1; then
-    install -d -m 0755 "$SYSTEMD_DROPIN_DIR"
-    cat > "$SYSTEMD_DROPIN_TARGET" <<EOF
+    nicevpn_atomic_write_stdin "$SYSTEMD_DROPIN_TARGET" 0644 <<EOF
 [Service]
 ReadWritePaths=-$LOG_DIR
 EOF
-    chmod 0644 "$SYSTEMD_DROPIN_TARGET"
     systemctl daemon-reload
 fi
 

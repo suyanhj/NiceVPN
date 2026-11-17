@@ -16,7 +16,9 @@ from app.services.openvpn.detector import find_easyrsa
 log = logging.getLogger(__name__)
 
 _INSTALL_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "install"
-_LINUX_PACKAGE_HELPERS = _INSTALL_SCRIPTS_DIR.parent / "common" / "linux-packages.sh"
+_COMMON_SCRIPTS_DIR = _INSTALL_SCRIPTS_DIR.parent / "common"
+_LINUX_PACKAGE_HELPERS = _COMMON_SCRIPTS_DIR / "linux-packages.sh"
+_ATOMIC_FILE_HELPERS = _COMMON_SCRIPTS_DIR / "atomic-files.sh"
 _RUNTIME_DEPENDENCY_SCRIPT = _INSTALL_SCRIPTS_DIR / "ensure-runtime-dependencies.sh"
 
 _OPENVPN_SOURCE_ROOT = Path("/tmp/ovpn-mgmt-openvpn-src")
@@ -336,6 +338,7 @@ def install_openvpn(
         _emit(on_output, f"[信息] 开始为 {distro} {version_id} 安装 OpenVPN（{script_path.name}）...")
         _run_command(["bash", str(script_path)], on_output, env=_subprocess_env(env))
 
+        # 安装脚本已完成二进制、版本、systemd unit 与原运行实例校验。
         # 仅本地服务端 OpenVPN 安装后部署系统日志策略；对端脚本不安装
         # NiceVPN 特定配置（远端客户端安装逻辑继续保持不变）。
         logrotate_installer = (
@@ -352,6 +355,7 @@ def install_openvpn(
             except Exception as rotate_exc:
                 _emit(on_output, f"[警告] OpenVPN 已安装，但日志轮转初始化未完成：{rotate_exc}")
                 log.warning("OpenVPN 已安装，日志轮转初始化失败: %s", rotate_exc)
+
     except Exception as exc:
         _emit(on_output, f"[错误] 安装 OpenVPN 失败: {exc}")
         log.exception("安装 OpenVPN 失败")
@@ -437,16 +441,17 @@ def _build_easyrsa_install_env(
 
 def _render_remote_install_script(distro: str, env: dict[str, str]) -> str:
     """将对端安装脚本打包为单段 bash（export 环境变量 + 内联 common + 入口逻辑）。"""
-    lines = ["set -eux"]
+    lines = ["set -euxo pipefail"]
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
 
     linux_text = _LINUX_PACKAGE_HELPERS.read_text(encoding="utf-8")
+    atomic_text = _ATOMIC_FILE_HELPERS.read_text(encoding="utf-8")
     common_text = _read_install_script_text("openvpn-install-common.sh")
     entry_text = _strip_entry_script_wrapper(
         _read_install_script_text(f"openvpn-install-{distro}.sh")
     )
-    return "\n".join(lines) + "\n" + linux_text + "\n" + common_text + "\n" + entry_text
+    return "\n".join(lines) + "\n" + linux_text + "\n" + atomic_text + "\n" + common_text + "\n" + entry_text
 
 
 def _read_install_script_text(name: str) -> str:
@@ -472,7 +477,9 @@ def _strip_entry_script_wrapper(text: str) -> str:
         if stripped.startswith("SCRIPT_DIR="):
             continue
         if "source " in stripped and (
-            "openvpn-install-common.sh" in stripped or "linux-packages.sh" in stripped
+            "openvpn-install-common.sh" in stripped
+            or "linux-packages.sh" in stripped
+            or "atomic-files.sh" in stripped
         ):
             continue
         if stripped.startswith("# shellcheck"):

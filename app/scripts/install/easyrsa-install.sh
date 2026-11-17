@@ -3,6 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
 # shellcheck source=../common/linux-packages.sh
@@ -26,12 +28,10 @@ nicevpn_ensure_easyrsa_install_dependencies
 
 easyrsa_download_and_install
 
-installed_bin="$(easyrsa_find_existing_binary || true)"
-if [[ -z "${installed_bin}" ]]; then
-    installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
-fi
+installed_bin="${EASYRSA_INSTALL_DIR}/current/easyrsa"
 [[ -f "${installed_bin}" && -x "${installed_bin}" ]] || {
-    echo "EasyRSA 安装后未找到可执行脚本: ${installed_bin}" >&2
+    echo "EasyRSA 安装后未找到 current 可执行脚本: ${installed_bin}" >&2
     exit 1
 }
-_log "EasyRSA 已就绪: ${installed_bin}"
+installed_version="$(easyrsa_validate_binary "${installed_bin}" "${EASYRSA_TAG#v}")"
+_log "EasyRSA 已就绪: ${installed_bin} version=${installed_version}"

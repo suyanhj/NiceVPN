@@ -9,11 +9,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/atomic-files.sh
+source "${SCRIPT_DIR}/../common/atomic-files.sh"
 # shellcheck source=openvpn-install-common.sh
 source "${SCRIPT_DIR}/openvpn-install-common.sh"
 # shellcheck source=../common/linux-packages.sh
 source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
+openvpn_acquire_install_lock
+openvpn_capture_active_instances
 easyrsa_reuse_existing
 
 PM="$(nicevpn_package_manager)" || {
@@ -58,7 +62,11 @@ if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
     _log "强制源码构建模式：跳过 OpenVPN 系统包安装"
     install_source_dependencies
     openvpn_compile_install
-    openvpn_post_compile_setup
+    if ! openvpn_post_compile_setup; then
+        openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
+        exit 1
+    fi
+    openvpn_post_install_validate
     exit 0
 fi
 
@@ -80,6 +88,7 @@ if [ -n "${PKG_VERSION}" ] && version_ge "${PKG_VERSION}" "${OPENVPN_MIN_VERSION
     if [ "${INSTALL_EASYRSA}" = "1" ]; then
         easyrsa_download_and_install
     fi
+    openvpn_post_install_validate
     exit 0
 fi
 
@@ -87,4 +96,8 @@ _log "仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_VERSION
 install_source_dependencies
 
 openvpn_compile_install
-openvpn_post_compile_setup
+if ! openvpn_post_compile_setup; then
+    openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
+    exit 1
+fi
+openvpn_post_install_validate
