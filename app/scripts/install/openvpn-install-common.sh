@@ -507,24 +507,46 @@ openvpn_commit_source_transaction() {
     trap - EXIT
 }
 
+openvpn_write_install_mode() {
+    local mode="${1:?必须指定安装模式}"
+    # 仅中心服务端安装写入本机标记；对端 client 安装不应改写中心 NiceVPN 状态。
+    if [[ "${INSTALL_SERVER_SYSTEMD}" != "1" && "${INSTALL_SERVER_OVERRIDE}" != "1" ]]; then
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "${OPENVPN_INSTALL_MODE_FILE}")"
+    printf '%s\n' "${mode}" | nicevpn_atomic_write_stdin "${OPENVPN_INSTALL_MODE_FILE}" 0644
+}
+
 openvpn_run_source_install() {
+    if [[ "${OPENVPN_STAGE_ONLY}" == "1" ]]; then
+        # 升级候选只编译到临时目录，不迁移当前 prefix、不改 systemd/CLI/EasyRSA。
+        trap 'if [[ -n "${OPENVPN_BUILD_STAGE_ROOT:-}" && -d "${OPENVPN_BUILD_STAGE_ROOT}" ]]; then rm -rf -- "${OPENVPN_BUILD_STAGE_ROOT}"; fi' EXIT
+        openvpn_compile_install
+        trap - EXIT
+        return 0
+    fi
+
+    OPENVPN_INSTALL_MODE=source
     openvpn_begin_source_transaction
     openvpn_compile_install
     openvpn_post_compile_setup
     _openvpn_post_install_validate_impl
+    openvpn_write_install_mode source
     openvpn_commit_source_transaction
 }
 
 # 系统包的安装与回退由包管理器负责；NiceVPN 只回滚自己修改的
-# systemd override / EasyRSA 链接，避免 postflight 失败时留下半配置状态。
+# systemd override / EasyRSA 链接 / 安装模式标记。
 openvpn_run_package_postflight() {
     local use_easyrsa_script="${1:-0}"
+    OPENVPN_INSTALL_MODE=package
     openvpn_begin_source_transaction package
     openvpn_install_server_systemd_override
     if [[ "${use_easyrsa_script}" == "1" && "${INSTALL_EASYRSA}" == "1" ]]; then
         easyrsa_download_and_install
     fi
     _openvpn_post_install_validate_impl
+    openvpn_write_install_mode package
     openvpn_commit_source_transaction
 }
 
