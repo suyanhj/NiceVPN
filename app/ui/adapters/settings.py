@@ -11,6 +11,10 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from app.models.config import SystemConfig
+from app.services.openvpn.detector import (
+    classify_easyrsa_install_mode,
+    classify_openvpn_install_mode,
+)
 from app.utils.public_domains import with_default_ip_api_port
 
 
@@ -81,7 +85,9 @@ def build_openvpn_path_config(
     if not easy:
         raise ValueError("EasyRSA 脚本路径必填")
     data["openvpn_bin"] = ovpn
+    data["openvpn_install_mode"] = classify_openvpn_install_mode(ovpn)
     data["easyrsa_dir"] = easy
+    data["easyrsa_install_mode"] = classify_easyrsa_install_mode(easy)
     return SystemConfig(**data)
 
 

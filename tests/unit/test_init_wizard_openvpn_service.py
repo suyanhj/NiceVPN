@@ -38,10 +38,11 @@ def test_detect_openvpn_ensures_server_unit_before_continuing(
             "path": binary,
             "version": "2.7.8",
             "meets_requirement": True,
+            "install_mode": "source",
             "distro": {},
         },
     )
-    monkeypatch.setattr(wizard_module, "find_easyrsa", lambda _path: "/opt/easy-rsa/current/easyrsa")
+    monkeypatch.setattr(wizard_module, "find_easyrsa", lambda _path: "/opt/ezrsa/current/easyrsa")
     monkeypatch.setattr(wizard_module, "save_config", lambda _config: None)
 
     from app.services.openvpn import installer as installer_module
@@ -65,6 +66,8 @@ def test_detect_openvpn_ensures_server_unit_before_continuing(
     assert result.next_step == WizardStep.CONFIG_PKI
     assert calls == [(binary, "2.7.8", logs.append)]
     assert wizard.config.openvpn_bin == binary
+    assert wizard.config.openvpn_install_mode == "source"
+    assert wizard.config.easyrsa_install_mode == "source"
 
 
 def test_detect_openvpn_stops_when_server_unit_cannot_be_installed(

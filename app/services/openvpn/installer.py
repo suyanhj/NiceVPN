@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
-from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
+from app.core.constants import (
+    EASYRSA_INSTALL_DIR,
+    EASYRSA_LEGACY_INSTALL_DIR,
+    OPENVPN_INSTALL_PREFIX,
+    OPENVPN_MIN_VERSION,
+    OPENVPN_RELEASES_DIR,
+)
 from app.services.openvpn.detector import find_easyrsa
 
 log = logging.getLogger(__name__)
@@ -98,7 +104,11 @@ def stage_openvpn_source_build(
     )
     env.update(
         {
-            "OPENVPN_PREFIX": str(prefix),
+            "OPENVPN_PREFIX": str(OPENVPN_INSTALL_PREFIX),
+            "OPENVPN_BIN": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"),
+            "OPENVPN_SBIN_DIR": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin"),
+            "OPENVPN_STAGE_ONLY": "1",
+            "OPENVPN_STAGE_DIR": str(prefix),
             "OPENVPN_CACHE": str(cache),
             "OPENVPN_SRC_ROOT": str(src_root),
             "OPENVPN_CREATE_SYMLINK": "0",
@@ -147,6 +157,36 @@ def stage_openvpn_source_build(
     }
 
 
+
+def apply_openvpn_release_upgrade(
+    *,
+    stage_prefix: str | Path,
+    expected_version: str,
+    expected_current_binary: str | Path,
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """调用 Shell 完成 release 发布、稳定软链接切换、服务重启和失败回滚。"""
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-upgrade.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN 升级脚本不存在: {script_path}")
+
+    env = _subprocess_env({
+        "OPENVPN_PREFIX": str(OPENVPN_INSTALL_PREFIX),
+        "OPENVPN_RELEASES_DIR": str(OPENVPN_RELEASES_DIR),
+        "OPENVPN_BIN": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"),
+        "OPENVPN_STAGE_PREFIX": str(Path(stage_prefix).expanduser()),
+        "OPENVPN_EXPECTED_VERSION": str(expected_version),
+        "OPENVPN_EXPECTED_CURRENT_BINARY": str(Path(expected_current_binary).expanduser()),
+        "INSTALL_SERVER_SYSTEMD": "1",
+        "INSTALL_CLIENT_SYSTEMD": "0",
+        "INSTALL_SERVER_OVERRIDE": "0",
+        "INSTALL_EASYRSA": "0",
+        "OPENVPN_CREATE_SYMLINK": "0",
+    })
+    _run_command(["bash", str(script_path)], on_output, env=env)
+
+
 def install_openvpn_server_systemd_from_staged_source(
     *,
     source_dir: Path,
@@ -165,7 +205,7 @@ def install_openvpn_server_systemd_from_staged_source(
         "OPENVPN_TAG": str(tag),
     }
     if openvpn_bin:
-        binary = Path(openvpn_bin).expanduser().resolve()
+        binary = Path(openvpn_bin).expanduser()
         env_values["OPENVPN_BIN"] = str(binary)
         env_values["OPENVPN_SBIN_DIR"] = str(binary.parent)
 
@@ -186,7 +226,6 @@ def ensure_openvpn_server_systemd_unit(
     binary = Path(openvpn_bin).expanduser()
     if not binary.is_file():
         raise FileNotFoundError(f"OpenVPN 二进制不存在: {binary}")
-    binary = binary.resolve()
 
     try:
         proc = subprocess.run(
@@ -285,6 +324,26 @@ def install_easyrsa(
     force_install = os.environ.get("EASYRSA_FORCE_INSTALL", "0") == "1"
     existing_bin = find_easyrsa()
     if existing_bin and not force_install:
+        legacy_root = Path(EASYRSA_LEGACY_INSTALL_DIR)
+        try:
+            Path(existing_bin).relative_to(legacy_root)
+            is_legacy_install = True
+        except ValueError:
+            is_legacy_install = False
+        if is_legacy_install:
+            migration_script = _INSTALL_SCRIPTS_DIR / "easyrsa-migrate.sh"
+            if not migration_script.is_file():
+                raise FileNotFoundError(f"EasyRSA 兼容迁移脚本不存在: {migration_script}")
+            _emit(on_output, "[迁移] 将旧版 /opt/easy-rsa 安全迁移到 /opt/ezrsa")
+            _run_command(
+                ["bash", str(migration_script)],
+                on_output,
+                env=_subprocess_env({
+                    "EASYRSA_INSTALL_DIR": str(EASYRSA_INSTALL_DIR),
+                    "EASYRSA_LEGACY_INSTALL_DIR": str(EASYRSA_LEGACY_INSTALL_DIR),
+                }),
+            )
+            existing_bin = find_easyrsa() or existing_bin
         _emit(on_output, f"[检查] 已存在 EasyRSA，跳过下载和覆盖: {existing_bin}")
         ensure_easyrsa_runtime_dependencies(on_output)
         return existing_bin
@@ -308,6 +367,53 @@ def install_easyrsa(
 
     _emit(on_output, f"[完成] EasyRSA 已就绪: {installed_bin}")
     return str(installed_bin)
+
+
+def recover_interrupted_easyrsa_migration(
+    on_output: Callable[[str], None] | None = None,
+) -> bool:
+    """恢复 EasyRSA 旧目录迁移中断后留下的兼容路径链接。"""
+
+    install_root = Path(EASYRSA_INSTALL_DIR)
+    migration_marker = install_root.parent / f".{install_root.name}-legacy-migration"
+    if not migration_marker.is_file():
+        return False
+
+    script_path = _INSTALL_SCRIPTS_DIR / "easyrsa-migrate.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"EasyRSA 迁移恢复脚本不存在: {script_path}")
+    _emit(on_output, f"[恢复] 检测到 EasyRSA 目录迁移事务: {migration_marker}")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env({
+            "EASYRSA_INSTALL_DIR": str(EASYRSA_INSTALL_DIR),
+            "EASYRSA_LEGACY_INSTALL_DIR": str(EASYRSA_LEGACY_INSTALL_DIR),
+        }),
+    )
+    return True
+
+
+def recover_interrupted_openvpn_install(
+    on_output: Callable[[str], None] | None = None,
+) -> bool:
+    """应用启动时恢复 Shell 安装入口留下的持久化事务。"""
+
+    prefix = Path(OPENVPN_INSTALL_PREFIX)
+    transaction_root = prefix.parent / f".{prefix.name}.install-transaction"
+    if not transaction_root.exists() and not transaction_root.is_symlink():
+        return False
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-recover.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN 安装事务恢复脚本不存在: {script_path}")
+    _emit(on_output, f"[恢复] 检测到 Shell 安装事务: {transaction_root}")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env({"OPENVPN_PREFIX": str(prefix)}),
+    )
+    return True
 
 
 def install_openvpn(

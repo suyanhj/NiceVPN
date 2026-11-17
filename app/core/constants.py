@@ -16,6 +16,8 @@ DEVICE_BINDINGS_DIR = OPENVPN_MGMT_DIR / "device_bindings"
 # client-connect 脚本读取，一行：weak_log | weak_fingerprint | strict_hwaddr（weak 见 device-bind.sh 头注释）
 DEVICE_BIND_MODE_FILE = OPENVPN_MGMT_DIR / "device_bind_mode"
 DEVICE_BIND_EXEMPTIONS_FILE = OPENVPN_MGMT_DIR / "device_bind_exemptions.json"
+# NiceVPN 最近一次安装入口记录的 OpenVPN 安装模式（package/source/custom）。
+OPENVPN_INSTALL_MODE_FILE = OPENVPN_MGMT_DIR / "openvpn-install-mode"
 # 客户端 .ovpn 成品（非管理端 JSON，与 OpenVPN 分发物同属系统区）
 OVPN_PROFILES_DIR = OPENVPN_MGMT_DIR / "ovpn"
 # 经 SSH 下发到对端主机上的客户端配置固定路径（官方 openvpn-client@client.service 默认读取）
@@ -82,6 +84,8 @@ def ensure_openvpn_runtime_dirs() -> None:
 
 # EasyRSA 标准搜索路径列表（按优先级排序）
 EASYRSA_SEARCH_PATHS = [
+    "/opt/ezrsa/current/easyrsa",
+    "/opt/ezrsa/easyrsa",
     "/opt/easy-rsa/current/easyrsa",
     "/opt/easy-rsa/easyrsa",
     "/opt/openvpn/share/easy-rsa/easyrsa",
@@ -109,7 +113,11 @@ OPENVPN_SEARCH_PATHS = [
 
 # 红帽系源码安装目录
 OPENVPN_INSTALL_PREFIX = "/opt/openvpn"
-EASYRSA_INSTALL_DIR = "/opt/easy-rsa"
+# OpenVPN 源码版本不可变存放目录；OPENVPN_INSTALL_PREFIX 始终是稳定软链接入口。
+OPENVPN_RELEASES_DIR = "/opt/openvpn-releases"
+EASYRSA_INSTALL_DIR = "/opt/ezrsa"
+# 旧版 NiceVPN 曾使用该目录，迁移后保留兼容软链接。
+EASYRSA_LEGACY_INSTALL_DIR = "/opt/easy-rsa"
 
 # OpenVPN Management Interface 默认端口起始值
 MGMT_PORT_START = 7505

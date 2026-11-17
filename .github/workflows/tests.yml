@@ -292,6 +292,7 @@ jobs:
           bash -n start.sh
           bash -n deploy/shell/python-runtime.sh
           bash -n deploy/shell/install-ovpn-cli-symlink.sh
+          bash -n app/scripts/install/openvpn-upgrade.sh
           bash -n tests/shell/test_python_runtime.sh
           bash tests/shell/test_python_runtime.sh
           grep -F 'build-ui.sh' start.sh

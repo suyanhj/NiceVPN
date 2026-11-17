@@ -76,6 +76,7 @@ Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提�
 | [docs/firewall-tags.md](docs/firewall-tags.md) | 标签、防火墙与 Mesh |
 | [docs/storage.md](docs/storage.md) | SQLite 与迁移 |
 | [docs/logging.md](docs/logging.md) | 日志与审计 |
+| [docs/install-layout.md](docs/install-layout.md) | OpenVPN / EasyRSA 安装目录、安装模式与版本回滚 |
 | [api.md](api.md) | 公网 API |
 | [cli.md](cli.md) | CLI |
 | [agent.md](agent.md) | AI / 开发约束 |

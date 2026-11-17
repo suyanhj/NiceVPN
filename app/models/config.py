@@ -44,8 +44,14 @@ class SystemConfig(BaseModel):
         description="管理后台 WebSocket 断线后的页面状态保留时间，单位为秒",
     )
     global_subnet: Optional[str] = Field(default=None, description="全局子网 CIDR")
-    openvpn_bin: Optional[str] = Field(default=None, description="OpenVPN 可执行文件路径")
-    easyrsa_dir: Optional[str] = Field(default=None, description="EasyRSA 目录路径")
+    openvpn_bin: Optional[str] = Field(default=None, description="OpenVPN 稳定可执行文件入口")
+    openvpn_install_mode: Optional[Literal["package", "source", "custom"]] = Field(
+        default=None, description="OpenVPN 安装来源：系统包、源码版本管理或自定义路径"
+    )
+    easyrsa_dir: Optional[str] = Field(default=None, description="EasyRSA 可执行脚本路径")
+    easyrsa_install_mode: Optional[Literal["package", "source", "custom"]] = Field(
+        default=None, description="EasyRSA 安装来源：系统包、NiceVPN 版本目录或自定义路径"
+    )
     pki_dir: Optional[str] = Field(default=None, description="PKI 目录路径")
     # OpenVPN 实例名 -> 展示用元数据（端口、协议、子网等）
     instances: dict[str, Any] = Field(default_factory=dict, description="已注册的 OpenVPN 实例")

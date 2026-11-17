@@ -148,6 +148,8 @@ def test_openvpn_device_and_ssh_builders_preserve_other_config() -> None:
     assert path_cfg.server_ip == "vpn.example.com"
     assert path_cfg.notify_enabled is True
     assert path_cfg.openvpn_bin == "/usr/sbin/openvpn"
+    assert path_cfg.openvpn_install_mode == "package"
+    assert path_cfg.easyrsa_install_mode == "package"
 
     device_cfg = build_device_bind_config(
         path_cfg,

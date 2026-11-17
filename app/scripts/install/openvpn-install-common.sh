@@ -13,11 +13,13 @@ fi
 : "${OPENVPN_TAG:=v2.7.0}"
 : "${OPENVPN_ASSET:=openvpn-2.7.0.tar.gz}"
 : "${OPENVPN_PREFIX:=/opt/openvpn}"
+: "${OPENVPN_RELEASES_DIR:=/opt/openvpn-releases}"
 : "${OPENVPN_SBIN_DIR:=${OPENVPN_PREFIX}/sbin}"
 : "${OPENVPN_BIN:=${OPENVPN_SBIN_DIR}/openvpn}"
 : "${OPENVPN_CACHE:=/tmp/${OPENVPN_ASSET}}"
 : "${OPENVPN_SRC_ROOT:=/tmp/ovpn-mgmt-openvpn-src}"
-: "${EASYRSA_INSTALL_DIR:=/opt/easy-rsa}"
+: "${EASYRSA_INSTALL_DIR:=/opt/ezrsa}"
+: "${EASYRSA_LEGACY_INSTALL_DIR:=/opt/easy-rsa}"
 : "${EASYRSA_TAG:=v3.2.4}"
 : "${EASYRSA_ASSET:=EasyRSA-3.2.4.tgz}"
 : "${EASYRSA_CACHE:=/tmp/${EASYRSA_ASSET}}"
@@ -27,8 +29,12 @@ fi
 : "${INSTALL_SERVER_OVERRIDE:=0}"
 : "${OPENVPN_CREATE_SYMLINK:=1}"
 : "${OPENVPN_FORCE_SOURCE:=0}"
+: "${OPENVPN_STAGE_ONLY:=0}"
+: "${OPENVPN_STAGE_DIR:=}"
+: "${OPENVPN_INSTALL_MODE_FILE:=/etc/openvpn/mgmt/openvpn-install-mode}"
 : "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
 : "${EASYRSA_FORCE_INSTALL:=0}"
+: "${EASYRSA_INSTALL_LOCK_FILE:=/run/lock/nicevpn-easyrsa-install.lock}"
 
 : "${OPENVPN_SRC_DIR:=${OPENVPN_SRC_ROOT}/${OPENVPN_ASSET%.tar.gz}}"
 
@@ -47,6 +53,8 @@ easyrsa_find_existing_binary() {
     local -a candidates=(
         "${EASYRSA_INSTALL_DIR}/current/easyrsa"
         "${EASYRSA_INSTALL_DIR}/easyrsa"
+        "${EASYRSA_LEGACY_INSTALL_DIR}/current/easyrsa"
+        "${EASYRSA_LEGACY_INSTALL_DIR}/easyrsa"
         "${OPENVPN_PREFIX}/share/easy-rsa/easyrsa"
         "${OPENVPN_PREFIX}/share/easy-rsa/3/easyrsa"
         "/usr/share/easy-rsa/easyrsa"
@@ -68,6 +76,90 @@ easyrsa_find_existing_binary() {
     fi
     return 1
 }
+
+# EasyRSA 安装/迁移共享跨进程锁；锁文件放在 /run/lock，不能放进会被移动的安装目录。
+easyrsa_acquire_install_lock() {
+    local lock_parent
+    if declare -F nicevpn_ensure_commands >/dev/null 2>&1; then
+        nicevpn_ensure_commands flock util-linux
+    fi
+    command -v flock >/dev/null 2>&1 || {
+        echo "缺少 flock，无法保证 EasyRSA 安装/迁移互斥" >&2
+        return 1
+    }
+    lock_parent="$(dirname -- "${EASYRSA_INSTALL_LOCK_FILE}")"
+    mkdir -p -- "${lock_parent}"
+    exec 8>"${EASYRSA_INSTALL_LOCK_FILE}"
+    if ! flock -n 8; then
+        echo "已有 EasyRSA 安装/迁移任务正在执行，请稍后重试" >&2
+        return 1
+    fi
+}
+
+# 调用方必须持有 EasyRSA 全局锁。
+easyrsa_migrate_legacy_install_impl() {
+    local legacy="${EASYRSA_LEGACY_INSTALL_DIR}" resolved
+    local migration_marker
+    migration_marker="$(dirname -- "${EASYRSA_INSTALL_DIR}")/.$(basename -- "${EASYRSA_INSTALL_DIR}")-legacy-migration"
+
+    if [[ -L "${legacy}" ]]; then
+        resolved="$(readlink -f -- "${legacy}" 2>/dev/null || true)"
+        if [[ "${resolved}" == "${EASYRSA_INSTALL_DIR}" ]]; then
+            rm -f -- "${migration_marker}"
+        fi
+        return 0
+    fi
+
+    if [[ -e "${legacy}" && ( -e "${EASYRSA_INSTALL_DIR}" || -L "${EASYRSA_INSTALL_DIR}" ) ]]; then
+        _log "检测到新旧 EasyRSA 目录同时存在，保留两者不做覆盖: ${legacy} / ${EASYRSA_INSTALL_DIR}"
+        rm -f -- "${migration_marker}"
+        return 0
+    fi
+
+    if [[ -f "${migration_marker}" && ! -e "${legacy}" && -d "${EASYRSA_INSTALL_DIR}" ]]; then
+        # 上次在 mv 后、兼容链接创建前中断；新目录完整保留，只补回旧路径入口。
+        nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}" || {
+            echo "恢复 EasyRSA 旧路径兼容链接失败: ${legacy}" >&2
+            return 1
+        }
+        rm -f -- "${migration_marker}"
+        _log "已恢复中断的 EasyRSA 兼容链接: ${legacy} -> ${EASYRSA_INSTALL_DIR}"
+        return 0
+    fi
+
+    [[ -d "${legacy}" ]] || {
+        if [[ -f "${migration_marker}" ]]; then
+            echo "EasyRSA 迁移标记存在，但新旧目录均无法恢复: ${migration_marker}" >&2
+            return 1
+        fi
+        return 0
+    }
+
+    mkdir -p -- "$(dirname -- "${EASYRSA_INSTALL_DIR}")"
+    printf '%s\n' "${legacy}" | nicevpn_atomic_write_stdin "${migration_marker}" 0600 || return 1
+    mv -T -- "${legacy}" "${EASYRSA_INSTALL_DIR}" || {
+        echo "迁移旧 EasyRSA 目录失败: ${legacy} -> ${EASYRSA_INSTALL_DIR}" >&2
+        rm -f -- "${migration_marker}"
+        return 1
+    }
+    if ! nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
+        echo "无法创建 EasyRSA 旧路径兼容链接，尝试恢复原目录: ${legacy}" >&2
+        if mv -T -- "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
+            rm -f -- "${migration_marker}"
+        else
+            echo "严重：EasyRSA 兼容链接和原目录恢复均失败；迁移标记保留在 ${migration_marker}" >&2
+        fi
+        return 1
+    fi
+    rm -f -- "${migration_marker}"
+    _log "已将旧 EasyRSA 目录迁移到 ${EASYRSA_INSTALL_DIR}，旧路径保留兼容入口"
+}
+
+# 单独迁移入口与版本安装入口共用同一把锁。
+easyrsa_migrate_legacy_install() (
+    easyrsa_acquire_install_lock
+    easyrsa_migrate_legacy_install_impl
+)
 
 # 已有 EasyRSA 默认复用；只有显式 EASYRSA_FORCE_INSTALL=1 才允许覆盖当前安装入口。
 easyrsa_reuse_existing() {
@@ -168,16 +260,17 @@ EOF
 openvpn_recover_source_install() {
     local prefix_parent prefix_base backup_root candidate candidate_mtime
     local latest_backup="" latest_backup_root="" latest_mtime=0 stage_root
+    local latest_release="" latest_release_mtime=0 release_binary
     prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
-    mkdir -p -- "${prefix_parent}"
+    mkdir -p -- "${prefix_parent}" "${OPENVPN_RELEASES_DIR}"
 
     if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
-        # 兼容 upgrade.py 的 old_tree 和 Shell 安装流程自己的 backup 目录。
+        # 兼容旧版 upgrade.py 的 old_tree 和 Shell 安装流程自己的 backup 目录。
         for backup_root in "${prefix_parent}/${prefix_base}.nicevpn-old-"*; do
             [ -d "${backup_root}" ] || [ -L "${backup_root}" ] || continue
             candidate="${backup_root}"
-            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
@@ -187,7 +280,7 @@ openvpn_recover_source_install() {
         for backup_root in "${prefix_parent}/.${prefix_base}.backup."*; do
             candidate="${backup_root}/${prefix_base}"
             [ -d "${candidate}" ] && [ ! -L "${candidate}" ] || continue
-            candidate_mtime="$(stat -c %Z "${candidate}" 2>/dev/null || echo 0)"
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
             if [ "${candidate_mtime}" -ge "${latest_mtime}" ]; then
                 latest_mtime="${candidate_mtime}"
                 latest_backup="${candidate}"
@@ -199,14 +292,99 @@ openvpn_recover_source_install() {
             if [ -n "${latest_backup_root}" ]; then
                 rmdir -- "${latest_backup_root}" 2>/dev/null || true
             fi
-            _log "检测到上次 OpenVPN prefix 切换中断，已恢复旧版本: ${OPENVPN_PREFIX}"
+            _log "检测到旧版 OpenVPN 安装切换中断，已恢复目录: ${OPENVPN_PREFIX}"
         fi
     fi
 
-    for stage_root in "${prefix_parent}/.${prefix_base}.stage."*; do
+    # 若在旧目录迁移/新版本发布的极短窗口被 SIGKILL，恢复最近一个完整 release。
+    if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+        for candidate in "${OPENVPN_RELEASES_DIR}"/*; do
+            [ -d "${candidate}" ] || continue
+            [ ! -f "${candidate}/.nicevpn-failed" ] || continue
+            release_binary="${candidate}/sbin/openvpn"
+            [ -x "${release_binary}" ] || release_binary="${candidate}/bin/openvpn"
+            [ -x "${release_binary}" ] || continue
+            candidate_mtime="$(stat -c %Y "${candidate}" 2>/dev/null || echo 0)"
+            if [ "${candidate_mtime}" -ge "${latest_release_mtime}" ]; then
+                latest_release_mtime="${candidate_mtime}"
+                latest_release="${candidate}"
+            fi
+        done
+        if [ -n "${latest_release}" ]; then
+            nicevpn_atomic_symlink "${latest_release}" "${OPENVPN_PREFIX}" || {
+                echo "恢复 OpenVPN 稳定入口失败: ${latest_release} -> ${OPENVPN_PREFIX}" >&2
+                return 1
+            }
+            _log "已从版本目录恢复 OpenVPN 稳定入口: ${latest_release}"
+        fi
+    fi
+
+    for stage_root in "${prefix_parent}/.${prefix_base}.stage."* "${OPENVPN_RELEASES_DIR}/.stage."*; do
         [ -d "${stage_root}" ] || continue
         rm -rf -- "${stage_root}"
     done
+}
+
+# 将历史 /opt/openvpn 普通目录迁入不可变版本仓库，再建立固定软链接入口。
+openvpn_migrate_legacy_prefix() {
+    local binary version_output version hash release_id release_dir txn_root
+    if [ -L "${OPENVPN_PREFIX}" ]; then
+        local target
+        target="$(readlink -f -- "${OPENVPN_PREFIX}" 2>/dev/null || true)"
+        [ -n "${target}" ] && [ -d "${target}" ] || {
+            echo "OpenVPN 稳定入口是失效软链接，拒绝覆盖: ${OPENVPN_PREFIX}" >&2
+            return 1
+        }
+        return 0
+    fi
+    [ -d "${OPENVPN_PREFIX}" ] || {
+        if [ -e "${OPENVPN_PREFIX}" ]; then
+            echo "OpenVPN 安装入口不是目录或软链接，拒绝迁移: ${OPENVPN_PREFIX}" >&2
+            return 1
+        fi
+        return 0
+    }
+
+    binary="${OPENVPN_PREFIX}/sbin/openvpn"
+    [ -x "${binary}" ] || binary="${OPENVPN_PREFIX}/bin/openvpn"
+    [ -x "${binary}" ] || {
+        echo "旧 OpenVPN 目录缺少可执行二进制，拒绝自动迁移: ${OPENVPN_PREFIX}" >&2
+        return 1
+    }
+    version_output="$("${binary}" --version 2>&1)" || {
+        echo "旧 OpenVPN 二进制无法读取版本，拒绝迁移: ${binary}" >&2
+        return 1
+    }
+    version="$(printf '%s\n' "${version_output}" | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+    [ -n "${version}" ] || {
+        echo "无法识别旧 OpenVPN 版本，拒绝迁移: ${binary}" >&2
+        return 1
+    }
+    hash="$(sha256sum "${binary}" | awk '{print $1}')"
+    release_id="legacy-${version}-${hash:0:12}"
+    release_dir="${OPENVPN_RELEASES_DIR}/${release_id}"
+    mkdir -p -- "${OPENVPN_RELEASES_DIR}"
+    if [ -e "${release_dir}" ] || [ -L "${release_dir}" ]; then
+        echo "旧 OpenVPN 迁移目标已存在，拒绝覆盖: ${release_dir}" >&2
+        return 1
+    fi
+
+    txn_root="$(openvpn_source_transaction_root)"
+    if [ -f "${txn_root}/ready" ]; then
+        printf '%s\n' "${release_dir}" > "${txn_root}/backup-prefix"
+        : > "${txn_root}/switch-intent"
+    fi
+    mv -T -- "${OPENVPN_PREFIX}" "${release_dir}" || {
+        echo "迁移旧 OpenVPN 目录失败: ${OPENVPN_PREFIX} -> ${release_dir}" >&2
+        return 1
+    }
+    if ! nicevpn_atomic_symlink "${release_dir}" "${OPENVPN_PREFIX}"; then
+        if ! mv -T -- "${release_dir}" "${OPENVPN_PREFIX}"; then
+            echo "严重：旧 OpenVPN 已迁移但稳定入口创建失败，原目录保留在 ${release_dir}" >&2
+        fi
+        return 1
+    fi
+    _log "旧 OpenVPN ${version} 已迁移到 ${release_dir}，稳定入口保持 ${OPENVPN_PREFIX}"
 }
 
 # 源码安装事务快照放在 prefix 同级，避免 /tmp 清理使回滚材料丢失。
@@ -225,7 +403,8 @@ openvpn_source_transaction_paths() {
         /etc/systemd/system/openvpn-server@.service \
         /etc/systemd/system/openvpn-client@.service \
         /etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf \
-        /usr/local/sbin/openvpn
+        /usr/local/sbin/openvpn \
+        "${OPENVPN_INSTALL_MODE_FILE}"
     if [[ "${INSTALL_EASYRSA}" == "1" ]]; then
         printf '%s\n' "${EASYRSA_INSTALL_DIR}/current" /usr/local/bin/easyrsa
     fi
@@ -234,7 +413,7 @@ openvpn_source_transaction_paths() {
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
 # 任何一项失败均保留快照供人工排查或下次安装继续恢复。
 openvpn_restore_source_transaction() {
-    local root prefix backup="" failed=0 idx=0 path mode failed_tree=""
+    local root prefix backup="" new_prefix="" failed=0 idx=0 path mode
     root="$(openvpn_source_transaction_root)" || return 1
     [[ -d "${root}" && ! -L "${root}" ]] || {
         [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
@@ -252,39 +431,51 @@ openvpn_restore_source_transaction() {
         if [[ -f "${root}/backup-prefix" ]]; then
             IFS= read -r backup < "${root}/backup-prefix" || true
         fi
-        if [[ -n "${backup}" && -d "${backup}" && ! -L "${backup}" ]]; then
-            if [[ -e "${prefix}" || -L "${prefix}" ]]; then
-                failed_tree="${root}/failed-prefix"
-                if ! mv -T -- "${prefix}" "${failed_tree}"; then
-                    echo "无法暂存失败的 OpenVPN 目录: ${prefix}" >&2
+        if [[ -n "${backup}" ]]; then
+            if [[ -d "${backup}" || -L "${backup}" ]]; then
+                if [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+                    echo "回滚拒绝用版本软链接覆盖普通目录: ${prefix}" >&2
+                    failed=1
+                elif ! nicevpn_atomic_symlink "${backup}" "${prefix}"; then
+                    echo "无法恢复 OpenVPN 旧版本入口: ${backup} -> ${prefix}" >&2
                     failed=1
                 fi
-            fi
-            if [[ "${failed}" == "0" ]]; then
-                if ! mv -T -- "${backup}" "${prefix}"; then
-                    echo "无法恢复旧 OpenVPN 目录: ${backup}" >&2
-                    if [[ -e "${failed_tree}" && ! -e "${prefix}" ]]; then
-                        mv -T -- "${failed_tree}" "${prefix}" || true
-                    fi
-                    failed=1
-                fi
-            fi
-        elif [[ ! -e "${root}/original-prefix" ]]; then
-            # 首次安装此前没有 prefix；失败时不保留半完成的新版本。
-            if [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
-                if ! mv -T -- "${prefix}" "${root}/failed-prefix"; then
-                    failed=1
-                fi
-            elif [[ -e "${prefix}" || -L "${prefix}" ]]; then
-                echo "首次安装生成了非普通目录，拒绝删除: ${prefix}" >&2
+            elif [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+                # 事务意图先于旧目录迁移写入；目标不存在且原目录仍在，说明尚未切换。
+                _log "检测到迁移尚未移动旧目录，保留原 OpenVPN 目录: ${prefix}"
+            else
+                echo "OpenVPN 回滚目标不存在，无法恢复: ${backup}" >&2
                 failed=1
+            fi
+        elif [[ ! -f "${root}/original-prefix" ]]; then
+            # 首次安装此前没有 prefix；只移除本事务创建的稳定软链接，不删除目录或 release。
+            if [[ -L "${prefix}" ]]; then
+                rm -f -- "${prefix}" || failed=1
+            elif [[ -e "${prefix}" ]]; then
+                echo "首次安装回滚拒绝删除非软链接路径: ${prefix}" >&2
+                failed=1
+            fi
+        elif [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+            _log "旧 OpenVPN 普通目录仍在，保留原目录: ${prefix}"
+        else
+            echo "原 OpenVPN 入口存在但事务未记录旧版本目标，拒绝猜测回滚: ${prefix}" >&2
+            failed=1
+        fi
+
+        if [[ -f "${root}/new-prefix" ]]; then
+            IFS= read -r new_prefix < "${root}/new-prefix" || true
+            if [[ -n "${new_prefix}" && -d "${new_prefix}" && "${new_prefix}" != "${backup}" ]]; then
+                : > "${new_prefix}/.nicevpn-failed" || {
+                    echo "无法标记失败的 OpenVPN release: ${new_prefix}" >&2
+                    failed=1
+                }
             fi
         fi
     fi
 
     while IFS= read -r path; do
         if [[ -f "${root}/${idx}.protected" ]]; then
-            # 原有 current 是实体目录；安装器不会将其替换为 symlink。
+            # 历史安装可能把 current 设为实体目录；安装器不会将其替换为 symlink。
             :
         elif [[ -f "${root}/${idx}.missing" ]]; then
             if [[ -f "${path}" || -L "${path}" ]]; then
@@ -313,6 +504,25 @@ openvpn_restore_source_transaction() {
     if [[ -f "${root}/systemd-required" ]]; then
         systemctl daemon-reload || failed=1
     fi
+    if [[ -f "${root}/active-instances" ]] && command -v systemctl >/dev/null 2>&1; then
+        local -a saved_active_instances=()
+        while IFS= read -r path; do
+            [[ -n "${path}" ]] || continue
+            case "${path}" in
+                openvpn-server@*.service|openvpn-client@*.service|openvpn@*.service|openvpn-client.service)
+                    saved_active_instances+=("${path}")
+                    ;;
+                *)
+                    echo "安装事务中的活动服务名称无效，拒绝执行: ${path}" >&2
+                    failed=1
+                    ;;
+            esac
+        done < "${root}/active-instances"
+        if ! openvpn_restart_and_validate_units "${saved_active_instances[@]}"; then
+            echo "恢复原 OpenVPN 实例运行状态失败" >&2
+            failed=1
+        fi
+    fi
     if [[ "${failed}" != "0" ]]; then
         echo "OpenVPN 安装回滚不完整，已保留事务快照: ${root}" >&2
         return 1
@@ -321,7 +531,7 @@ openvpn_restore_source_transaction() {
         echo "OpenVPN 已恢复，但清理事务快照失败: ${root}" >&2
         return 1
     fi
-    _log "已恢复源码安装前的 OpenVPN prefix、systemd 配置和命令入口"
+    _log "已恢复 OpenVPN 稳定入口、systemd 配置和安装模式记录"
 }
 
 openvpn_source_transaction_on_exit() {
@@ -340,10 +550,17 @@ openvpn_source_transaction_on_exit() {
 }
 
 openvpn_begin_source_transaction() {
-    local root path idx=0
+    local mode="${1:-source}" root path idx=0
     openvpn_restore_source_transaction || return 1
-    openvpn_recover_source_install || return 1
+    if [[ "${mode}" == "source" ]]; then
+        openvpn_recover_source_install || return 1
+    elif [[ "${mode}" != "package" ]]; then
+        echo "未知 OpenVPN 安装事务类型: ${mode}" >&2
+        return 1
+    fi
     root="$(openvpn_source_transaction_root)" || return 1
+    # 系统包模式可能根本没有自编译 prefix，先保证快照所在父目录存在。
+    mkdir -p -- "$(dirname -- "${root}")" || return 1
     mkdir -m 0700 -- "${root}" || return 1
     openvpn_source_transaction_paths > "${root}/paths" || return 1
     while IFS= read -r path; do
@@ -366,6 +583,11 @@ openvpn_begin_source_transaction() {
     if [[ "${INSTALL_SERVER_SYSTEMD}" == "1" || "${INSTALL_CLIENT_SYSTEMD}" == "1" || "${INSTALL_SERVER_OVERRIDE}" == "1" ]]; then
         : > "${root}/systemd-required"
     fi
+    if (declare -p OPENVPN_ACTIVE_INSTANCES >/dev/null 2>&1); then
+        printf '%s\n' "${OPENVPN_ACTIVE_INSTANCES[@]}" > "${root}/active-instances"
+    else
+        : > "${root}/active-instances"
+    fi
     : > "${root}/ready"
     trap 'openvpn_source_transaction_on_exit "$?"' EXIT
 }
@@ -378,17 +600,54 @@ openvpn_commit_source_transaction() {
     trap - EXIT
 }
 
+openvpn_write_install_mode() {
+    local mode="${1:?必须指定安装模式}"
+    # 仅中心服务端安装写入本机标记；对端 client 安装不应改写中心 NiceVPN 状态。
+    if [[ "${INSTALL_SERVER_SYSTEMD}" != "1" && "${INSTALL_SERVER_OVERRIDE}" != "1" ]]; then
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "${OPENVPN_INSTALL_MODE_FILE}")"
+    printf '%s\n' "${mode}" | nicevpn_atomic_write_stdin "${OPENVPN_INSTALL_MODE_FILE}" 0644
+}
+
 openvpn_run_source_install() {
+    if [[ "${OPENVPN_STAGE_ONLY}" == "1" ]]; then
+        # 升级候选只编译到临时目录，不迁移当前 prefix、不改 systemd/CLI/EasyRSA。
+        trap 'if [[ -n "${OPENVPN_BUILD_STAGE_ROOT:-}" && -d "${OPENVPN_BUILD_STAGE_ROOT}" ]]; then rm -rf -- "${OPENVPN_BUILD_STAGE_ROOT}"; fi' EXIT
+        openvpn_compile_install
+        trap - EXIT
+        return 0
+    fi
+
+    OPENVPN_INSTALL_MODE=source
     openvpn_begin_source_transaction
     openvpn_compile_install
     openvpn_post_compile_setup
     _openvpn_post_install_validate_impl
+    openvpn_write_install_mode source
+    openvpn_commit_source_transaction
+}
+
+# 系统包的安装与回退由包管理器负责；NiceVPN 只回滚自己修改的
+# systemd override / EasyRSA 链接 / 安装模式标记。
+openvpn_run_package_postflight() {
+    local use_easyrsa_script="${1:-0}"
+    OPENVPN_INSTALL_MODE=package
+    openvpn_begin_source_transaction package
+    openvpn_install_server_systemd_override
+    if [[ "${use_easyrsa_script}" == "1" && "${INSTALL_EASYRSA}" == "1" ]]; then
+        easyrsa_download_and_install
+    fi
+    _openvpn_post_install_validate_impl
+    openvpn_write_install_mode package
     openvpn_commit_source_transaction
 }
 
 openvpn_compile_install() {
-    local prefix_parent prefix_base stage_root staged_prefix staged_bin
-    local version_output version expected_version backup_root backup_prefix
+    local stage_parent stage_root staged_prefix staged_bin
+    local version_output version expected_version hash release_id release_dir
+    local existing_version existing_hash old_target="" txn_root
+
     OPENVPN_PREFIX="${OPENVPN_PREFIX%/}"
     case "${OPENVPN_PREFIX}" in
         /*) ;;
@@ -404,24 +663,49 @@ openvpn_compile_install() {
     case "${OPENVPN_BIN}" in
         "${OPENVPN_PREFIX}/"*) ;;
         *)
-            echo "OPENVPN_BIN 必须位于 OPENVPN_PREFIX 内，无法安全进行目录切换: ${OPENVPN_BIN}" >&2
+            echo "OPENVPN_BIN 必须位于 OPENVPN_PREFIX 内: ${OPENVPN_BIN}" >&2
             return 1
             ;;
     esac
-    openvpn_recover_source_install
-    # 恢复旧 prefix 优先于网络下载，确保中断恢复不依赖下载源可用。
-    openvpn_download_source
 
-    prefix_parent="$(dirname -- "${OPENVPN_PREFIX}")"
-    prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
-    mkdir -p -- "${prefix_parent}"
-    stage_root="$(mktemp -d "${prefix_parent}/.${prefix_base}.stage.XXXXXX")"
+    if [[ "${OPENVPN_STAGE_ONLY}" == "1" ]]; then
+        [[ "${OPENVPN_STAGE_DIR}" == /* && "${OPENVPN_STAGE_DIR}" != "/" ]] || {
+            echo "OPENVPN_STAGE_DIR 必须是非根绝对路径" >&2
+            return 1
+        }
+        if [[ -e "${OPENVPN_STAGE_DIR}" || -L "${OPENVPN_STAGE_DIR}" ]]; then
+            echo "OpenVPN staging 目标已存在，拒绝覆盖: ${OPENVPN_STAGE_DIR}" >&2
+            return 1
+        fi
+        stage_parent="$(dirname -- "${OPENVPN_STAGE_DIR}")"
+        mkdir -p -- "${stage_parent}"
+        stage_root="$(mktemp -d "${stage_parent}/.nicevpn-openvpn-stage.XXXXXX")"
+    else
+        OPENVPN_RELEASES_DIR="${OPENVPN_RELEASES_DIR%/}"
+        case "${OPENVPN_RELEASES_DIR}" in
+            /*) ;;
+            *)
+                echo "OPENVPN_RELEASES_DIR 必须是绝对路径: ${OPENVPN_RELEASES_DIR}" >&2
+                return 1
+                ;;
+        esac
+        case "${OPENVPN_RELEASES_DIR}" in
+            "${OPENVPN_PREFIX}"|"${OPENVPN_PREFIX}/"*)
+                echo "OPENVPN_RELEASES_DIR 不能位于稳定入口内部: ${OPENVPN_RELEASES_DIR}" >&2
+                return 1
+                ;;
+        esac
+        openvpn_recover_source_install || return 1
+        openvpn_migrate_legacy_prefix || return 1
+        mkdir -p -- "${OPENVPN_RELEASES_DIR}"
+        stage_root="$(mktemp -d "${OPENVPN_RELEASES_DIR}/.stage.XXXXXX")"
+    fi
+
     OPENVPN_BUILD_STAGE_ROOT="${stage_root}"
     staged_prefix="${stage_root}${OPENVPN_PREFIX}"
     staged_bin="${stage_root}${OPENVPN_BIN}"
-    backup_root=""
-    backup_prefix=""
-    OPENVPN_LAST_BACKUP_PREFIX=""
+
+    openvpn_download_source
 
     rm -rf -- "${OPENVPN_SRC_ROOT}"
     mkdir -p -- "${OPENVPN_SRC_ROOT}"
@@ -432,97 +716,125 @@ openvpn_compile_install() {
     [ -n "${OPENVPN_SRC_DIR}" ] && [ -d "${OPENVPN_SRC_DIR}" ] || {
         echo "无法识别 OpenVPN 源码目录: ${OPENVPN_SRC_ROOT}" >&2
         rm -rf -- "${stage_root}"
+        OPENVPN_BUILD_STAGE_ROOT=""
         return 1
     }
 
     cd "${OPENVPN_SRC_DIR}"
     openvpn_configure_with_optional_features
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
-    # DESTDIR 把所有安装产物写入同一文件系统的 stage；不直接覆盖正在使用的 prefix。
+    # DESTDIR 将完整安装树写入隔离目录；编译 prefix 始终是稳定入口 /opt/openvpn。
     make install DESTDIR="${stage_root}"
 
     [ -f "${staged_bin}" ] && [ -x "${staged_bin}" ] || {
         echo "OpenVPN staged binary 不存在或不可执行: ${staged_bin}" >&2
         rm -rf -- "${stage_root}"
+        OPENVPN_BUILD_STAGE_ROOT=""
         return 1
     }
     version_output="$("${staged_bin}" --version 2>&1)" || {
         echo "OpenVPN staged binary 无法执行 --version: ${staged_bin}" >&2
         rm -rf -- "${stage_root}"
+        OPENVPN_BUILD_STAGE_ROOT=""
         return 1
     }
     version="$(printf '%s\n' "${version_output}" | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
     expected_version="${OPENVPN_TAG#v}"
     if [ -z "${version}" ] || [ "${version}" != "${expected_version}" ]; then
-        echo "OpenVPN staged version 校验失败：期望 ${expected_version}，实际 ${version:-unknown}" >&2
+        echo "OpenVPN staged 版本校验失败：期望 ${expected_version}，实际 ${version:-unknown}" >&2
         rm -rf -- "${stage_root}"
+        OPENVPN_BUILD_STAGE_ROOT=""
         return 1
     fi
 
-    if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
-        [ -d "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ] || {
-            echo "现有 OPENVPN_PREFIX 不是普通目录，拒绝替换: ${OPENVPN_PREFIX}" >&2
+    if [[ "${OPENVPN_STAGE_ONLY}" == "1" ]]; then
+        mv -T -- "${staged_prefix}" "${OPENVPN_STAGE_DIR}" || {
+            echo "发布 OpenVPN staging 目录失败: ${OPENVPN_STAGE_DIR}" >&2
             rm -rf -- "${stage_root}"
+            OPENVPN_BUILD_STAGE_ROOT=""
             return 1
         }
-        backup_root="${prefix_parent}/.${prefix_base}.backup.$(date +%s).$$"
-        if ! mkdir -m 0700 -- "${backup_root}"; then
-            echo "无法创建 OpenVPN 旧版本备份目录: ${backup_root}" >&2
-            rm -rf -- "${stage_root}"
-            return 1
-        fi
-        backup_prefix="${backup_root}/${prefix_base}"
-        # 旧 prefix 被移走之前必须先持久记录回滚目标，覆盖 SIGKILL 窗口。
-        local txn_root
-        txn_root="$(openvpn_source_transaction_root)"
-        if [ -f "${txn_root}/ready" ]; then
-            printf '%s\n' "${backup_prefix}" > "${txn_root}/backup-prefix"
-            : > "${txn_root}/switch-intent"
-        fi
-        if ! mv -T -- "${OPENVPN_PREFIX}" "${backup_prefix}"; then
-            rmdir -- "${backup_root}" 2>/dev/null || true
-            echo "无法备份现有 OpenVPN prefix，未切换新版本" >&2
-            rm -rf -- "${stage_root}"
-            return 1
-        fi
+        rm -rf -- "${stage_root}"
+        OPENVPN_BUILD_STAGE_ROOT=""
+        _log "OpenVPN ${version} 候选构建完成，隔离目录: ${OPENVPN_STAGE_DIR}"
+        return 0
     fi
 
-    # 首次安装没有旧 prefix；也要在发布新目录前标记回滚意图。
-    if [ -z "${backup_prefix}" ]; then
-        local txn_root
-        txn_root="$(openvpn_source_transaction_root)"
-        if [ -f "${txn_root}/ready" ]; then
-            : > "${txn_root}/switch-intent"
-        fi
+    hash="$(sha256sum "${staged_bin}" | awk '{print $1}')"
+    release_id="${version}-${hash:0:12}"
+    release_dir="${OPENVPN_RELEASES_DIR}/${release_id}"
+    if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
+        [ -d "${release_dir}" ] && [ ! -L "${release_dir}" ] || {
+            echo "OpenVPN release 目标不是普通目录，拒绝覆盖: ${release_dir}" >&2
+            return 1
+        }
+        [ -x "${release_dir}/sbin/openvpn" ] || {
+            echo "已有 OpenVPN release 缺少可执行 binary: ${release_dir}" >&2
+            return 1
+        }
+        existing_version="$("${release_dir}/sbin/openvpn" --version 2>&1 | sed -n '1{s/.*OpenVPN[[:space:]]\+\([0-9][0-9.]*\).*/\1/p;}')"
+        [ "${existing_version}" = "${version}" ] || {
+            echo "已有 OpenVPN release 版本不匹配: ${release_dir} (${existing_version:-unknown})" >&2
+            return 1
+        }
+        existing_hash="$(sha256sum "${release_dir}/sbin/openvpn" | awk '{print $1}')"
+        [ "${existing_hash:0:12}" = "${hash:0:12}" ] || {
+            echo "已有 OpenVPN release binary SHA-256 与目录标识不匹配: ${release_dir}" >&2
+            return 1
+        }
+        rm -f -- "${release_dir}/.nicevpn-failed"
+        _log "复用已校验的 OpenVPN release: ${release_dir}"
+    else
+        mv -T -- "${staged_prefix}" "${release_dir}" || {
+            echo "发布 OpenVPN release 失败: ${release_dir}" >&2
+            return 1
+        }
     fi
-    if ! mv -T -- "${staged_prefix}" "${OPENVPN_PREFIX}"; then
-        if [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ]; then
-            if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
-                rmdir -- "${backup_root}" 2>/dev/null || true
-            else
-                _log "严重：新 prefix 部署失败且旧版本恢复失败，旧版本保留在 ${backup_prefix}"
-            fi
-        fi
-        echo "OpenVPN prefix 原子切换失败: ${OPENVPN_PREFIX}" >&2
-        rm -rf -- "${stage_root}"
+
+    if [[ -L "${OPENVPN_PREFIX}" ]]; then
+        old_target="$(readlink -f -- "${OPENVPN_PREFIX}" 2>/dev/null || true)"
+        [ -n "${old_target}" ] || {
+            echo "无法解析当前 OpenVPN 稳定入口: ${OPENVPN_PREFIX}" >&2
+            return 1
+        }
+    elif [[ -e "${OPENVPN_PREFIX}" ]]; then
+        echo "OpenVPN 稳定入口仍是普通路径，迁移未完成: ${OPENVPN_PREFIX}" >&2
         return 1
     fi
 
-    OPENVPN_LAST_BACKUP_PREFIX="${backup_prefix}"
+    txn_root="$(openvpn_source_transaction_root)"
+    if [[ -f "${txn_root}/ready" ]]; then
+        if [[ -n "${old_target}" && ! -f "${txn_root}/backup-prefix" ]]; then
+            printf '%s\n' "${old_target}" > "${txn_root}/backup-prefix"
+        fi
+        printf '%s\n' "${release_dir}" > "${txn_root}/new-prefix"
+        : > "${txn_root}/switch-intent"
+    fi
+
+    if ! nicevpn_atomic_symlink "${release_dir}" "${OPENVPN_PREFIX}"; then
+        if [[ -n "${old_target}" ]]; then
+            nicevpn_atomic_symlink "${old_target}" "${OPENVPN_PREFIX}" || true
+        fi
+        echo "OpenVPN 稳定入口切换失败: ${OPENVPN_PREFIX} -> ${release_dir}" >&2
+        return 1
+    fi
+
+    OPENVPN_LAST_BACKUP_PREFIX="${old_target}"
     rm -rf -- "${stage_root}"
     OPENVPN_BUILD_STAGE_ROOT=""
 
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
         if ! nicevpn_atomic_symlink "${OPENVPN_BIN}" /usr/local/sbin/openvpn; then
-            _log "警告：无法安全更新 /usr/local/sbin/openvpn（可能存在非符号链接文件），保留现状"
+            _log "警告：无法安全更新 /usr/local/sbin/openvpn，保留现状"
         fi
     fi
-    if [ -n "${OPENVPN_LAST_BACKUP_PREFIX}" ]; then
-        _log "OpenVPN ${version} 已原子部署到 ${OPENVPN_PREFIX}，旧版本保留在 ${OPENVPN_LAST_BACKUP_PREFIX}"
+    if [ -n "${old_target}" ]; then
+        _log "OpenVPN ${version} 已原子切换到 ${release_dir}；旧版本保留在 ${old_target}"
     else
-        _log "OpenVPN ${version} 已原子部署到 ${OPENVPN_PREFIX}"
+        _log "OpenVPN ${version} 已原子部署到 ${release_dir}"
     fi
 }
+
 _parse_openvpn_version_parts() {
     local raw="${1#v}"
     local major minor
@@ -623,17 +935,13 @@ easyrsa_validate_binary() {
 # 使用不可变版本目录；先完整解压、校验，再原子切换 current。
 # 旧版本不覆盖、不提前删除，更新中断时 current 始终指向原版本。
 easyrsa_download_and_install() (
+    easyrsa_acquire_install_lock
+    easyrsa_migrate_legacy_install_impl
     easyrsa_reuse_existing
     [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
     : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
 
-    nicevpn_ensure_commands flock util-linux
     mkdir -p "${EASYRSA_INSTALL_DIR}/releases"
-    exec 9>"${EASYRSA_INSTALL_DIR}/.install.lock"
-    if ! flock -n 9; then
-        echo "已有 EasyRSA 安装/升级任务正在执行，请稍后重试" >&2
-        exit 1
-    fi
 
     # 上次被 SIGKILL 中断时只可能留下未发布的临时目录；current 不受影响。
     find "${EASYRSA_INSTALL_DIR}/releases" -mindepth 1 -maxdepth 1 \
@@ -669,7 +977,7 @@ EOF
     fi
 
     local tmp_dir stage_dir source_dir expected_version actual_version archive_hash
-    local release_id install_dir current_link old_current
+    local release_id install_dir current_link old_current source_script_hash existing_script_hash stage_script_hash
     tmp_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/.extract.XXXXXX")"
     stage_dir=""
     cleanup_easyrsa_install() {
@@ -693,6 +1001,7 @@ EOF
     expected_version="${EASYRSA_TAG#v}"
     chmod +x "${source_dir}/easyrsa"
     actual_version="$(easyrsa_validate_binary "${source_dir}/easyrsa" "${expected_version}")"
+    source_script_hash="$(sha256sum "${source_dir}/easyrsa" | awk '{print $1}')"
     archive_hash="$(sha256sum "${EASYRSA_CACHE}" | awk '{print $1}')"
     release_id="${actual_version}-${archive_hash:0:12}"
     install_dir="${EASYRSA_INSTALL_DIR}/releases/${release_id}"
@@ -705,12 +1014,22 @@ EOF
         }
         local existing_version
         existing_version="$(easyrsa_validate_binary "${install_dir}/easyrsa" "${expected_version}")"
+        existing_script_hash="$(sha256sum "${install_dir}/easyrsa" | awk '{print $1}')"
+        [ "${existing_script_hash}" = "${source_script_hash}" ] || {
+            echo "已有 EasyRSA release 脚本 SHA-256 与下载候选不一致，拒绝复用: ${install_dir}" >&2
+            exit 1
+        }
         _log "复用已校验的不可变 EasyRSA 版本目录: ${install_dir} (${existing_version})"
     else
         stage_dir="$(mktemp -d "${EASYRSA_INSTALL_DIR}/releases/.${release_id}.stage.XXXXXX")"
         cp -a "${source_dir}/." "${stage_dir}/"
         chmod +x "${stage_dir}/easyrsa"
         easyrsa_validate_binary "${stage_dir}/easyrsa" "${expected_version}" >/dev/null
+        stage_script_hash="$(sha256sum "${stage_dir}/easyrsa" | awk '{print $1}')"
+        [ "${stage_script_hash}" = "${source_script_hash}" ] || {
+            echo "EasyRSA staging 脚本 SHA-256 校验失败: ${stage_dir}" >&2
+            exit 1
+        }
         # stage 与 releases 位于同一文件系统，rename 后目录一次性可见。
         mv -T -- "${stage_dir}" "${install_dir}"
         stage_dir=""
@@ -718,6 +1037,18 @@ EOF
 
     old_current="$(readlink "${current_link}" 2>/dev/null || true)"
     nicevpn_atomic_symlink "${install_dir}" "${current_link}"
+    if ! easyrsa_validate_binary "${current_link}/easyrsa" "${expected_version}" >/dev/null; then
+        echo "EasyRSA current 切换后版本校验失败，恢复旧版本入口" >&2
+        if [ -n "${old_current}" ]; then
+            nicevpn_atomic_symlink "${old_current}" "${current_link}" || {
+                echo "严重：EasyRSA current 版本校验失败且旧入口恢复失败: ${current_link}" >&2
+                exit 1
+            }
+        else
+            rm -f -- "${current_link}"
+        fi
+        exit 1
+    fi
     if ! nicevpn_atomic_symlink "${current_link}/easyrsa" /usr/local/bin/easyrsa; then
         _log "警告：无法更新 /usr/local/bin/easyrsa；NiceVPN 将优先使用 ${current_link}/easyrsa"
     fi
@@ -734,33 +1065,19 @@ openvpn_post_compile_setup() {
 OPENVPN_ACTIVE_INSTANCES=()
 OPENVPN_LAST_BACKUP_PREFIX=""
 
-# 只有源码 prefix 存在旧版本备份时才回滚；新装和系统包安装不会误删文件。
+# 回滚只切换稳定软链接；新旧版本目录均保留，绝不移动或删除 release。
 openvpn_rollback_previous_prefix() {
     local reason="${1:-安装后校验失败}"
     local backup_prefix="${OPENVPN_LAST_BACKUP_PREFIX:-}"
-    local failed_prefix
     [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ] || return 0
 
-    failed_prefix="${OPENVPN_PREFIX}.failed.$(date +%s).${BASHPID}"
-    if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
-        if ! mv -T -- "${OPENVPN_PREFIX}" "${failed_prefix}"; then
-            _log "无法暂存失败的新 OpenVPN prefix，旧版本仍保留在 ${backup_prefix}"
-            return 1
-        fi
+    if ! nicevpn_atomic_symlink "${backup_prefix}" "${OPENVPN_PREFIX}"; then
+        _log "旧 OpenVPN release 回滚失败，旧版本仍保留在 ${backup_prefix}"
+        return 1
     fi
-
-    if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
-        rmdir -- "$(dirname -- "${backup_prefix}")" 2>/dev/null || true
-        OPENVPN_LAST_BACKUP_PREFIX=""
-        _log "${reason}，已恢复旧 OpenVPN prefix；失败版本保留在 ${failed_prefix}"
-        return 0
-    fi
-
-    if [ -d "${failed_prefix}" ] && [ ! -e "${OPENVPN_PREFIX}" ]; then
-        mv -T -- "${failed_prefix}" "${OPENVPN_PREFIX}" || true
-    fi
-    _log "旧 OpenVPN prefix 恢复失败，备份仍保留在 ${backup_prefix}"
-    return 1
+    OPENVPN_LAST_BACKUP_PREFIX=""
+    _log "${reason}，已将稳定入口恢复到旧版本: ${backup_prefix}"
+    return 0
 }
 
 openvpn_acquire_install_lock() {
@@ -794,9 +1111,64 @@ openvpn_capture_active_instances() {
     done < <(awk 'NF {print $1}' <<< "${output}")
 }
 
+# 对已经运行的实例执行 restart，并验证 systemd 最终状态。
+# 逐个处理且不中断剩余实例，便于失败时完整报告并触发事务回滚。
+openvpn_restart_and_validate_units() {
+    local binary="" unit failed=0 pid running_inode installed_inode
+    if [ "$#" -gt 0 ] && [[ "$1" == /* || "$1" == ./* ]]; then
+        binary="$1"
+        shift
+    fi
+    [ "$#" -gt 0 ] || return 0
+    command -v systemctl >/dev/null 2>&1 || {
+        echo "存在运行中的 OpenVPN 实例，但未找到 systemctl" >&2
+        return 1
+    }
+    for unit in "$@"; do
+        case "${unit}" in
+            openvpn-server@*.service|openvpn-client@*.service|openvpn@*.service|openvpn-client.service) ;;
+            *)
+                echo "拒绝操作未知的 OpenVPN systemd unit: ${unit}" >&2
+                failed=1
+                continue
+                ;;
+        esac
+
+        # 包管理器可能已经自动重启服务；比较进程 inode，避免无意义的二次断连。
+        if [ -n "${binary}" ]; then
+            pid="$(systemctl show --property=MainPID --value "${unit}" 2>/dev/null || true)"
+            if [[ "${pid}" =~ ^[1-9][0-9]*$ ]]; then
+                running_inode="$(stat -Lc '%d:%i' "/proc/${pid}/exe" 2>/dev/null || true)"
+                installed_inode="$(stat -Lc '%d:%i' "${binary}" 2>/dev/null || true)"
+                if [ -n "${running_inode}" ] && [ "${running_inode}" = "${installed_inode}" ]; then
+                    _log "OpenVPN 实例已运行当前 binary，无需重复重启: ${unit}"
+                    if ! systemctl is-active --quiet "${unit}"; then
+                        echo "OpenVPN 实例状态异常: ${unit}" >&2
+                        failed=1
+                    fi
+                    continue
+                fi
+            fi
+        fi
+
+        if ! systemctl restart "${unit}"; then
+            echo "重启 OpenVPN 实例失败: ${unit}" >&2
+            failed=1
+            continue
+        fi
+        if ! systemctl is-active --quiet "${unit}"; then
+            echo "OpenVPN 实例重启后未处于 active 状态: ${unit}" >&2
+            failed=1
+        else
+            _log "OpenVPN 实例运行状态校验通过: ${unit}"
+        fi
+    done
+    [ "${failed}" = "0" ]
+}
+
 openvpn_validate_systemd_unit() {
     local unit="${1:?必须指定 systemd unit}"
-    local output unit_state
+    local output unit_state fragment_path
     command -v systemctl >/dev/null 2>&1 || {
         echo "未找到 systemctl，无法验证服务单元: ${unit}" >&2
         return 1
@@ -810,26 +1182,53 @@ openvpn_validate_systemd_unit() {
         echo "systemd 服务单元不存在或已屏蔽: ${unit} state=${unit_state:-not-found}" >&2
         return 1
     fi
-    return 0
-}
 
-_openvpn_post_install_validate_impl() {
-    local candidate="" binary="" version_output="" version="" expected_version="" unit state
-    for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn" \
-        /usr/local/sbin/openvpn /usr/local/bin/openvpn /usr/sbin/openvpn /usr/bin/openvpn; do
-        if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-            binary="${candidate}"
-            break
+    # systemd-analyze 检查 unit 与其 drop-in 的语法和依赖；精简系统没有该命令时，
+    # 仍保留 systemctl 的基础校验。
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        fragment_path="/etc/systemd/system/${unit}"
+        if [ ! -f "${fragment_path}" ]; then
+            fragment_path="$(systemctl show --property=FragmentPath --value "${unit}" 2>/dev/null || true)"
         fi
-    done
-    if [ -z "${binary}" ]; then
-        candidate="$(command -v openvpn 2>/dev/null || true)"
-        if [ -n "${candidate}" ] && [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-            binary="${candidate}"
+        if [ -n "${fragment_path}" ] && [ -f "${fragment_path}" ]; then
+            systemd-analyze verify "${fragment_path}" || {
+                echo "systemd unit 语法/依赖校验失败: ${unit} (${fragment_path})" >&2
+                return 1
+            }
         fi
     fi
+    return 0
+}
+_openvpn_post_install_validate_impl() {
+    local candidate="" binary="" version_output="" version="" expected_version=""
+    if [[ "${OPENVPN_INSTALL_MODE:-}" == "package" ]]; then
+        # 系统包安装必须验证包管理器路径，不能被历史 /opt/openvpn 源码目录抢先命中。
+        for candidate in /usr/sbin/openvpn /usr/bin/openvpn; do
+            if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+                binary="${candidate}"
+                break
+            fi
+        done
+    else
+        for candidate in "${OPENVPN_BIN}" "${OPENVPN_PREFIX}/bin/openvpn"; do
+            if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+                binary="${candidate}"
+                break
+            fi
+        done
+    fi
+    if [ -z "${binary}" ] && [ "${OPENVPN_INSTALL_MODE:-}" = "package" ]; then
+        candidate="$(command -v openvpn 2>/dev/null || true)"
+        case "${candidate}" in
+            /usr/sbin/openvpn|/usr/bin/openvpn)
+                if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+                    binary="${candidate}"
+                fi
+                ;;
+        esac
+    fi
     [ -n "${binary}" ] || {
-        echo "OpenVPN 安装后未找到可执行二进制" >&2
+        echo "OpenVPN 安装后未找到与安装模式匹配的可执行二进制" >&2
         return 1
     }
 
@@ -846,7 +1245,7 @@ _openvpn_post_install_validate_impl() {
         echo "OpenVPN 安装后版本不满足要求：${version} < ${OPENVPN_MIN_VERSION}，binary=${binary}" >&2
         return 1
     }
-    if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
+    if [ "${OPENVPN_INSTALL_MODE:-}" = "source" ]; then
         expected_version="${OPENVPN_TAG#v}"
         [ "${version}" = "${expected_version}" ] || {
             echo "OpenVPN 源码安装版本不匹配：期望 ${expected_version}，实际 ${version}" >&2
@@ -876,16 +1275,11 @@ _openvpn_post_install_validate_impl() {
         fi
     fi
 
-    for unit in "${OPENVPN_ACTIVE_INSTANCES[@]}"; do
-        state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
-        if [ "${state}" != "active" ]; then
-            echo "安装后原运行中的 OpenVPN 服务未保持 active: ${unit} state=${state:-unknown}" >&2
-            return 1
-        fi
-    done
-
-    _log "安装后校验通过: binary=${binary} version=${version} active_instances=${#OPENVPN_ACTIVE_INSTANCES[@]}"
+    # 若包管理器已自动重启，按 /proc/<pid>/exe inode 判断并跳过二次重启；
+    # 源码切换后旧进程 inode 不同，则必须重启到新 release。
+    openvpn_restart_and_validate_units "${binary}" "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
 }
+
 
 openvpn_post_install_validate() {
     if _openvpn_post_install_validate_impl; then

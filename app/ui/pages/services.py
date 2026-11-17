@@ -313,7 +313,9 @@ class ServicesPage:
                     target_version = str(info.get("target_version") or "未知")
                     target_label.text = f"目标版本：{target_version}"
                     if not bool(info.get("upgrade_available")):
-                        status_label.text = "当前已经是最新版本，无需升级。"
+                        status_label.text = str(
+                            info.get("reason") or "当前已经是最新版本，无需升级。"
+                        )
                         server_label.text = "服务端配置：未执行"
                         client_label.text = "客户端配置：未执行"
                         return
@@ -383,7 +385,7 @@ class ServicesPage:
                 upgrade_button.disable()
                 close_button.disable()
                 status_label.text = (
-                    f"正在升级到 OpenVPN {stage.get('version')}；失败会自动恢复旧 binary/systemd…"
+                    f"正在升级到 OpenVPN {stage.get('version')}；仅切换版本软链接并重启原运行实例…"
                 )
                 try:
                     result = await run.io_bound(
@@ -391,8 +393,7 @@ class ServicesPage:
                         stage,
                     )
                     status_label.text = (
-                        f"OpenVPN {result.get('version')} 升级完成；"
-                        f"{len(result.get('active_instances') or [])} 个原运行实例已恢复。"
+                        f"OpenVPN {result.get('version')} 升级完成；旧版本目录已保留，可随时回退。"
                     )
                     current_label.text = f"当前版本：{result.get('version')}"
                     target_label.text = f"目标版本：{result.get('version')}（已安装）"
@@ -406,9 +407,9 @@ class ServicesPage:
                     self._refresh_list_with_client()
                 except Exception as exc:
                     logger.exception("OpenVPN 安全升级失败")
-                    status_label.text = f"升级失败，已执行自动回滚：{exc}"
+                    status_label.text = f"升级失败：{exc}。旧版本目录仍然保留。"
                     self._notify_for_page(
-                        f"OpenVPN 升级失败并已尝试回滚: {exc}",
+                        f"OpenVPN 升级失败: {exc}",
                         type="negative",
                         multi_line=True,
                     )
@@ -426,11 +427,11 @@ class ServicesPage:
                 confirm_dialog.show(
                     title=f"升级到 OpenVPN {stage.get('version')}？",
                     message=(
-                        "升级会创建完整 NiceVPN 备份，替换本机 OpenVPN binary/systemd，"
-                        "并重启当前正在运行的实例。"
+                        "升级只会发布新的版本目录、原子切换 /opt/openvpn 软链接，"
+                        "不会修改现有配置文件或 systemd unit。"
                     ),
                     danger_level="warning",
-                    impact="在线 VPN 会话会短暂中断；任何实例或升级后 preflight 失败都会自动回滚。",
+                    impact="在线 VPN 会话会短暂中断；服务重启失败会切回旧版本软链接并恢复原运行实例。",
                     on_confirm=lambda: ui.timer(0.01, run_upgrade, once=True),
                 )
 

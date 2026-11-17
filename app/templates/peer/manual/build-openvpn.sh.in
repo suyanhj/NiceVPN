@@ -3,10 +3,19 @@ set -euo pipefail
 
 OPENVPN_VERSION="2.7.9"
 OPENVPN_PREFIX="/opt/openvpn"
+OPENVPN_RELEASES_DIR="/opt/openvpn-releases"
 OPENSSL_PREFIX="/usr/local/openssl-1.1.1"
 BUILD_ROOT="/usr/local/src/nicevpn-peer-build"
+STAGE_ROOT=""
 
-mkdir -p "${BUILD_ROOT}"
+cleanup() {
+    if [[ -n "${STAGE_ROOT}" && -d "${STAGE_ROOT}" ]]; then
+        rm -rf -- "${STAGE_ROOT}"
+    fi
+}
+trap cleanup EXIT
+
+mkdir -p "${BUILD_ROOT}" "${OPENVPN_RELEASES_DIR}"
 cd "${BUILD_ROOT}"
 curl -fL --retry 3 \
     "https://github.com/OpenVPN/openvpn/releases/download/v${OPENVPN_VERSION}/openvpn-${OPENVPN_VERSION}.tar.gz" \
@@ -40,6 +49,66 @@ export OPENSSL_CFLAGS OPENSSL_LIBS CPPFLAGS LDFLAGS PKG_CONFIG_PATH
     OPENSSL_CFLAGS="${OPENSSL_CFLAGS}" \
     OPENSSL_LIBS="${OPENSSL_LIBS}"
 make -j"$(nproc)"
-make install
 
+STAGE_ROOT="$(mktemp -d "${OPENVPN_RELEASES_DIR}/.stage.XXXXXX")"
+make install DESTDIR="${STAGE_ROOT}"
+STAGED_PREFIX="${STAGE_ROOT}${OPENVPN_PREFIX}"
+STAGED_BIN="${STAGED_PREFIX}/sbin/openvpn"
+[ -x "${STAGED_BIN}" ] || {
+    echo "候选 OpenVPN binary 不存在: ${STAGED_BIN}" >&2
+    exit 1
+}
+ACTUAL_VERSION="$("${STAGED_BIN}" --version | sed -n '1{s/.*OpenVPN[[:space:]]\\+\\([0-9][0-9.]*\\).*/\\1/p;}')"
+[ "${ACTUAL_VERSION}" = "${OPENVPN_VERSION}" ] || {
+    echo "OpenVPN 版本校验失败：期望 ${OPENVPN_VERSION}，实际 ${ACTUAL_VERSION:-unknown}" >&2
+    exit 1
+}
+
+BINARY_HASH="$(sha256sum "${STAGED_BIN}" | awk '{print $1}')"
+RELEASE_DIR="${OPENVPN_RELEASES_DIR}/${OPENVPN_VERSION}-${BINARY_HASH:0:12}"
+if [ -e "${RELEASE_DIR}" ] || [ -L "${RELEASE_DIR}" ]; then
+    [ -x "${RELEASE_DIR}/sbin/openvpn" ] || {
+        echo "OpenVPN release 目标异常，拒绝覆盖: ${RELEASE_DIR}" >&2
+        exit 1
+    }
+    [ "$("${RELEASE_DIR}/sbin/openvpn" --version | sed -n '1{s/.*OpenVPN[[:space:]]\\+\\([0-9][0-9.]*\\).*/\\1/p;}')" = "${OPENVPN_VERSION}" ] || {
+        echo "已有 OpenVPN release 版本不匹配: ${RELEASE_DIR}" >&2
+        exit 1
+    }
+else
+    mv -T -- "${STAGED_PREFIX}" "${RELEASE_DIR}"
+fi
+
+# 旧版普通 prefix 先迁移为 legacy release；不覆盖已有目录或自定义文件。
+if [ -d "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+    OLD_BIN="${OPENVPN_PREFIX}/sbin/openvpn"
+    [ -x "${OLD_BIN}" ] || {
+        echo "已有 OpenVPN prefix 缺少 binary，拒绝覆盖: ${OPENVPN_PREFIX}" >&2
+        exit 1
+    }
+    OLD_VERSION="$("${OLD_BIN}" --version | sed -n '1{s/.*OpenVPN[[:space:]]\\+\\([0-9][0-9.]*\\).*/\\1/p;}')"
+    OLD_HASH="$(sha256sum "${OLD_BIN}" | awk '{print $1}')"
+    OLD_RELEASE="${OPENVPN_RELEASES_DIR}/legacy-${OLD_VERSION}-${OLD_HASH:0:12}"
+    [ ! -e "${OLD_RELEASE}" ] && [ ! -L "${OLD_RELEASE}" ] || {
+        echo "旧 OpenVPN release 迁移目标已存在，拒绝覆盖: ${OLD_RELEASE}" >&2
+        exit 1
+    }
+    mv -T -- "${OPENVPN_PREFIX}" "${OLD_RELEASE}"
+    OLD_LINK="${OPENVPN_PREFIX}.link.${BASHPID}"
+    ln -s "${OLD_RELEASE}" "${OLD_LINK}"
+    mv -Tf -- "${OLD_LINK}" "${OPENVPN_PREFIX}"
+elif [ -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
+    echo "OpenVPN 稳定入口不是目录或软链接，拒绝覆盖: ${OPENVPN_PREFIX}" >&2
+    exit 1
+elif [ -L "${OPENVPN_PREFIX}" ]; then
+    readlink -f -- "${OPENVPN_PREFIX}" >/dev/null || {
+        echo "OpenVPN 稳定入口是失效软链接，拒绝覆盖: ${OPENVPN_PREFIX}" >&2
+        exit 1
+    }
+fi
+
+NEW_LINK="${OPENVPN_PREFIX}.link.${BASHPID}"
+ln -s "${RELEASE_DIR}" "${NEW_LINK}"
+mv -Tf -- "${NEW_LINK}" "${OPENVPN_PREFIX}"
 "${OPENVPN_PREFIX}/sbin/openvpn" --version | head -n 1
+echo "OpenVPN ${OPENVPN_VERSION} 已安装到 ${RELEASE_DIR}；稳定入口：${OPENVPN_PREFIX}"
