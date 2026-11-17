@@ -13,6 +13,9 @@ from app.core.constants import (
     EASYRSA_SEARCH_PATHS,
     OPENVPN_MIN_VERSION,
     OPENVPN_SEARCH_PATHS,
+    OPENVPN_INSTALL_PREFIX,
+    OPENVPN_RELEASES_DIR,
+    OPENVPN_INSTALL_MODE_FILE,
 )
 
 
@@ -71,22 +74,78 @@ def detect_distro_family(distro_info: dict | None = None) -> str | None:
     return None
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def classify_openvpn_install_mode(path: str | None) -> str | None:
+    """根据稳定入口及真实目标识别安装来源，不把软链接目标写回配置。"""
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw)
+    source_prefix = Path(OPENVPN_INSTALL_PREFIX)
+    if (
+        raw == str(source_prefix / "sbin" / "openvpn")
+        or _path_is_within(candidate, source_prefix)
+        or _path_is_within(candidate, Path(OPENVPN_RELEASES_DIR))
+    ):
+        return "source"
+    if raw in {"/usr/sbin/openvpn", "/usr/bin/openvpn"}:
+        return "package"
+    return "custom"
+
+
+def classify_easyrsa_install_mode(path: str | None) -> str | None:
+    """识别 EasyRSA 的包管理器安装、NiceVPN 版本目录或自定义路径。"""
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw)
+    source_roots = (Path("/opt/ezrsa"), Path("/opt/easy-rsa"), Path(OPENVPN_INSTALL_PREFIX))
+    if any(_path_is_within(candidate, root) for root in source_roots):
+        return "source"
+    if raw.startswith("/usr/share/easy-rsa/"):
+        return "package"
+    return "custom"
+
+
 def detect_openvpn() -> dict:
-    """检测系统中的 OpenVPN 安装状态。"""
+    """检测 OpenVPN，并优先遵循持久化安装模式，避免误用旧源码版本。"""
+    try:
+        from app.core.config import load_config
+
+        config = load_config()
+    except Exception:
+        config = {}
+    mode = str(config.get("openvpn_install_mode") or "").strip() or None
+    if mode not in {"package", "source", "custom"}:
+        try:
+            marker = Path(OPENVPN_INSTALL_MODE_FILE).read_text(encoding="utf-8").strip()
+            mode = marker if marker in {"package", "source", "custom"} else None
+        except OSError:
+            mode = None
+
     result = {
         "installed": False,
         "path": None,
         "version": None,
         "meets_requirement": False,
+        "install_mode": mode,
         "distro": get_distro_info(),
     }
 
-    bin_path = _find_openvpn_binary()
+    bin_path = _find_openvpn_binary({**dict(config), "openvpn_install_mode": mode})
     if not bin_path:
         return result
 
     result["installed"] = True
     result["path"] = bin_path
+    result["install_mode"] = mode or classify_openvpn_install_mode(bin_path)
 
     version_str = _extract_version(bin_path)
     if version_str:
@@ -102,11 +161,12 @@ def detect_openvpn() -> dict:
 
 
 def find_easyrsa(openvpn_bin: str | None = None) -> str | None:
-    """按标准路径列表搜索 easyrsa 脚本。"""
+    """按标准路径搜索 EasyRSA，保留 current 软链接入口而非解析到版本目录。"""
     search_paths = list(EASYRSA_SEARCH_PATHS)
 
     if openvpn_bin:
-        prefix = Path(openvpn_bin).resolve().parent.parent
+        # 不 resolve：源码安装的 /opt/openvpn 本身也是稳定软链接入口。
+        prefix = Path(openvpn_bin).expanduser().parent.parent
         extra_paths = [
             prefix / "share" / "easy-rsa" / "easyrsa",
             prefix / "share" / "easy-rsa" / "3" / "easyrsa",
@@ -150,7 +210,7 @@ def _find_installed_executable(
     for candidate in search_paths:
         path = Path(candidate)
         if path.is_file() and os.access(path, os.X_OK):
-            return str(path.resolve())
+            return str(path)
 
     found = shutil.which(command)
     if found:
@@ -160,9 +220,56 @@ def _find_installed_executable(
     return None
 
 
-def _find_openvpn_binary() -> str | None:
-    """搜索 OpenVPN 可执行文件。"""
-    return _find_installed_executable(OPENVPN_SEARCH_PATHS, "openvpn")
+def _find_openvpn_binary(config: dict | None = None) -> str | None:
+    """按持久化安装模式查找 OpenVPN，始终返回稳定入口而非 resolve() 结果。"""
+    config = config or {}
+    mode = str(config.get("openvpn_install_mode") or "").strip()
+    configured = str(config.get("openvpn_bin") or "").strip()
+
+    if mode == "custom":
+        candidates = [configured] if configured else []
+    elif mode == "package":
+        candidates = [
+            configured,
+            "/usr/sbin/openvpn",
+            "/usr/bin/openvpn",
+            "/usr/local/sbin/openvpn",
+            "/usr/local/bin/openvpn",
+        ]
+        candidates = [
+            item for item in candidates
+            if item and classify_openvpn_install_mode(item) == "package"
+        ]
+    elif mode == "source":
+        candidates = [
+            f"{OPENVPN_INSTALL_PREFIX}/sbin/openvpn",
+            f"{OPENVPN_INSTALL_PREFIX}/bin/openvpn",
+            configured,
+        ]
+        candidates = [
+            item for item in candidates
+            if item and classify_openvpn_install_mode(item) == "source"
+        ]
+    else:
+        candidates = list(OPENVPN_SEARCH_PATHS)
+        if configured:
+            candidates.insert(0, configured)
+
+    found = _find_installed_executable(candidates, "openvpn")
+    if found:
+        return found
+
+    # 自定义路径丢失时不能静默切换到另一套 OpenVPN。
+    if mode in {"custom", "source"}:
+        return None
+    if mode == "package":
+        found = shutil.which("openvpn")
+        if found and classify_openvpn_install_mode(found) == "package":
+            path = Path(found)
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+        return None
+    return None
 
 def _extract_version(bin_path: str) -> str | None:
     """执行 openvpn --version 并提取版本号。"""
