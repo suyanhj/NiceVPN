@@ -216,7 +216,7 @@ def test_easyrsa_download_reuses_existing_binary_without_download(
     install_root = tmp_path / "easy-rsa"
     existing = install_root / "current" / "easyrsa"
     existing.parent.mkdir(parents=True)
-    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     existing.chmod(0o755)
 
     result = _run_common_shell(
@@ -235,7 +235,7 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
     install_root = tmp_path / "easy-rsa"
     existing = install_root / "current" / "easyrsa"
     existing.parent.mkdir(parents=True)
-    existing.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    existing.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     existing.chmod(0o755)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -243,7 +243,7 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
     if dirname_bin:
         (bin_dir / "dirname").symlink_to(dirname_bin)
     openssl = bin_dir / "openssl"
-    openssl.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    openssl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     openssl.chmod(0o755)
 
     env = os.environ.copy()
@@ -522,7 +522,7 @@ def test_legacy_openvpn_prefix_migrates_to_immutable_release_and_stable_link(
     prefix = tmp_path / "opt" / "openvpn"
     binary = prefix / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\\nprintf 'OpenVPN 2.7.8\\n'\\n", encoding="utf-8")
+    binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n", encoding="utf-8")
     binary.chmod(0o755)
     releases = tmp_path / "opt" / "openvpn-releases"
 
@@ -554,7 +554,7 @@ def test_legacy_easyrsa_root_migrates_and_keeps_compatibility_link(
     current = legacy / "current"
     current.mkdir(parents=True)
     script = current / "easyrsa"
-    script.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     script.chmod(0o755)
     new_root = tmp_path / "opt" / "ezrsa"
 
