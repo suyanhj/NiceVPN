@@ -328,7 +328,7 @@ def test_shell_upgrade_switches_current_and_keeps_previous_version(
     ]
 
 
-def test_upgrade_rejects_legacy_plain_current_directory_until_one_off_migration(
+def test_upgrade_rejects_legacy_plain_current_directory(
     tmp_path: Path,
 ) -> None:
     result, prefix, root, _ = _run_openvpn_upgrade_shell(
@@ -339,7 +339,7 @@ def test_upgrade_rejects_legacy_plain_current_directory_until_one_off_migration(
     assert result.returncode != 0
     assert prefix.is_dir() and not prefix.is_symlink()
     assert (prefix / "sbin" / "openvpn").is_file()
-    assert "migrate-version-layout-once.sh" in result.stderr
+    assert "OpenVPN current 必须是软链接" in result.stderr
 
 
 def test_shell_upgrade_failure_switches_back_and_restarts_old_instance(

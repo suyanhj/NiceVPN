@@ -106,7 +106,7 @@ easyrsa_reuse_existing() {
         current_target="$(readlink -f -- "${EASYRSA_INSTALL_DIR}/current" 2>/dev/null || true)"
         case "${current_target}" in
             "${EASYRSA_INSTALL_DIR}/"*) ;;
-            *) echo "EasyRSA current 指向安装目录之外，拒绝继续: ${current_target}" >&2; return 1 ;;
+            *) echo "EasyRSA current 指向根目录外的版本目录，拒绝继续: ${current_target}" >&2; return 1 ;;
         esac
         [[ -x "${current_target}/easyrsa" ]] || {
             echo "EasyRSA current 目标缺少可执行脚本: ${current_target}" >&2
@@ -233,7 +233,7 @@ openvpn_recover_source_install() {
         }
         case "${target}" in
             "${root}/"*) ;;
-            *) echo "OpenVPN current 指向安装根目录之外，拒绝继续: ${target}" >&2; return 1 ;;
+            *) echo "OpenVPN current 指向根目录外的版本目录，拒绝继续: ${target}" >&2; return 1 ;;
         esac
         [[ -x "${target}/sbin/openvpn" || -x "${target}/bin/openvpn" ]] || {
             echo "OpenVPN current 目标缺少可执行 binary: ${target}" >&2
