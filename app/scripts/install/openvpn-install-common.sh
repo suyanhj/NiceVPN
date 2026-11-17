@@ -245,6 +245,7 @@ openvpn_recover_source_install() {
     if [ ! -e "${OPENVPN_PREFIX}" ] && [ ! -L "${OPENVPN_PREFIX}" ]; then
         for candidate in "${OPENVPN_RELEASES_DIR}"/*; do
             [ -d "${candidate}" ] || continue
+            [ ! -f "${candidate}/.nicevpn-failed" ] || continue
             release_binary="${candidate}/sbin/openvpn"
             [ -x "${release_binary}" ] || release_binary="${candidate}/bin/openvpn"
             [ -x "${release_binary}" ] || continue
@@ -357,7 +358,7 @@ openvpn_source_transaction_paths() {
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
 # 任何一项失败均保留快照供人工排查或下次安装继续恢复。
 openvpn_restore_source_transaction() {
-    local root prefix backup="" failed=0 idx=0 path
+    local root prefix backup="" new_prefix="" failed=0 idx=0 path
     root="$(openvpn_source_transaction_root)" || return 1
     [[ -d "${root}" && ! -L "${root}" ]] || {
         [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
@@ -404,6 +405,16 @@ openvpn_restore_source_transaction() {
         else
             echo "原 OpenVPN 入口存在但事务未记录旧版本目标，拒绝猜测回滚: ${prefix}" >&2
             failed=1
+        fi
+
+        if [[ -f "${root}/new-prefix" ]]; then
+            IFS= read -r new_prefix < "${root}/new-prefix" || true
+            if [[ -n "${new_prefix}" && -d "${new_prefix}" && "${new_prefix}" != "${backup}" ]]; then
+                : > "${new_prefix}/.nicevpn-failed" || {
+                    echo "无法标记失败的 OpenVPN release: ${new_prefix}" >&2
+                    failed=1
+                }
+            fi
         fi
     fi
 
@@ -683,6 +694,7 @@ openvpn_compile_install() {
             echo "已有 OpenVPN release 版本不匹配: ${release_dir} (${existing_version:-unknown})" >&2
             return 1
         }
+        rm -f -- "${release_dir}/.nicevpn-failed"
         _log "复用已校验的 OpenVPN release: ${release_dir}"
     else
         mv -T -- "${staged_prefix}" "${release_dir}" || {
@@ -707,6 +719,7 @@ openvpn_compile_install() {
         if [[ -n "${old_target}" && ! -f "${txn_root}/backup-prefix" ]]; then
             printf '%s\n' "${old_target}" > "${txn_root}/backup-prefix"
         fi
+        printf '%s\n' "${release_dir}" > "${txn_root}/new-prefix"
         : > "${txn_root}/switch-intent"
     fi
 
