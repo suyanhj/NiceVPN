@@ -584,7 +584,7 @@ openvpn_begin_source_transaction() {
         : > "${root}/systemd-required"
     fi
     if (declare -p OPENVPN_ACTIVE_INSTANCES >/dev/null 2>&1); then
-        printf '%s\\n' "${OPENVPN_ACTIVE_INSTANCES[@]}" > "${root}/active-instances"
+        printf '%s\n' "${OPENVPN_ACTIVE_INSTANCES[@]}" > "${root}/active-instances"
     else
         : > "${root}/active-instances"
     fi
