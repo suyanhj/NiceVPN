@@ -13,6 +13,8 @@ from app.core.constants import (
     DATA_DIR,
     LOGS_DIR,
     OPENVPN_DEFAULT_MAX_CLIENTS,
+    OPENVPN_INSTALL_MODE_FILE,
+    OPENVPN_INSTALL_PREFIX,
 )
 from app.utils.posix_data_perms import (
     ensure_openvpn_audit_log_files,
@@ -173,6 +175,22 @@ class InitWizard:
             on_output=data.get("on_output"),
         )
         if success:
+            # 安装脚本已按包管理器/源码模式完成 postflight；先同步持久化模式，
+            # 避免旧 config.json 的模式让检测器继续选中另一套历史 binary。
+            try:
+                installed_mode = Path(OPENVPN_INSTALL_MODE_FILE).read_text(
+                    encoding="utf-8"
+                ).strip()
+                if installed_mode in {"package", "source"}:
+                    self.config.openvpn_install_mode = installed_mode
+                    if installed_mode == "source":
+                        self.config.openvpn_bin = str(
+                            Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"
+                        )
+                    save_config(self.config)
+            except OSError:
+                logger.warning("读取 OpenVPN 安装模式标记失败，继续使用现有配置", exc_info=True)
+
             # 安装后重新检测
             result = detect_openvpn()
             if result["installed"] and result["meets_requirement"]:
