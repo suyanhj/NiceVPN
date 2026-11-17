@@ -68,7 +68,7 @@ def test_find_easyrsa_requires_an_executable_script(
 
     assert find_easyrsa() is None
     candidate.chmod(0o755)
-    assert find_easyrsa() == str(candidate.resolve())
+    assert find_easyrsa() == str(candidate)
 
 
 def test_find_existing_easyrsa_pki_supports_common_openvpn_layout(
