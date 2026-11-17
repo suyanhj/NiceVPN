@@ -213,6 +213,10 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
             "仅 NiceVPN 管理的源码安装支持此升级流程；系统包请使用 apt/dnf/yum 更新，"
             "自定义路径请自行维护。"
         )
+    base_version = str(current.get("version") or "")
+    base_binary = str(current.get("path") or "")
+    if not base_version or not Path(base_binary).is_file():
+        raise RuntimeError("无法确认当前 OpenVPN 版本与 binary，拒绝创建升级候选")
 
     from app.services.openvpn.installer import stage_openvpn_source_build
 
@@ -245,6 +249,8 @@ def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
         "stage_root": str(stage_root),
         **staged,
         "version": version,
+        "base_version": base_version,
+        "base_release_id": _release_id(base_version, base_binary),
     }
 
 
@@ -1048,17 +1054,29 @@ def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
 def _apply_staged_upgrade_locked(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     """通过持久化事务切换稳定入口；旧 release 保留，进程中断后可在启动时恢复。"""
 
+    # 先恢复上次异常退出留下的事务，再读取当前版本，避免基于恢复前的旧状态判断。
+    _recover_interrupted_openvpn_upgrade_locked(on_output)
+    prefix = Path(OPENVPN_INSTALL_PREFIX)
+    releases_dir = Path(OPENVPN_RELEASES_DIR)
+    _recover_interrupted_prefix_switch(prefix)
+
     current = detect_openvpn()
     if current.get("install_mode") != "source":
         raise RuntimeError(
             "当前 OpenVPN 不是 NiceVPN 管理的源码安装，拒绝执行源码 release 切换。"
         )
-
-    # 先恢复上次异常退出留下的事务，再兼容恢复更早版本的旧式备份目录。
-    _recover_interrupted_openvpn_upgrade_locked(on_output)
-    prefix = Path(OPENVPN_INSTALL_PREFIX)
-    releases_dir = Path(OPENVPN_RELEASES_DIR)
-    _recover_interrupted_prefix_switch(prefix)
+    expected_base = str(stage.get("base_release_id") or "")
+    if expected_base:
+        current_version = str(current.get("version") or "")
+        current_binary = str(current.get("path") or "")
+        if not current_version or not Path(current_binary).is_file():
+            raise RuntimeError("无法重新确认当前 OpenVPN 版本，候选升级已失效")
+        actual_base = _release_id(current_version, current_binary)
+        if actual_base != expected_base:
+            raise RuntimeError(
+                "候选 OpenVPN 已过期：预检后当前安装版本发生变化，"
+                "请重新检查并生成候选版本。"
+            )
 
     preflight = preflight_upgrade_candidate(stage, on_output)
     if not preflight.get("ok"):
