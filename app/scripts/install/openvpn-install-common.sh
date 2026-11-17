@@ -340,9 +340,14 @@ openvpn_source_transaction_on_exit() {
 }
 
 openvpn_begin_source_transaction() {
-    local root path idx=0
+    local mode="${1:-source}" root path idx=0
     openvpn_restore_source_transaction || return 1
-    openvpn_recover_source_install || return 1
+    if [[ "${mode}" == "source" ]]; then
+        openvpn_recover_source_install || return 1
+    elif [[ "${mode}" != "package" ]]; then
+        echo "未知 OpenVPN 安装事务类型: ${mode}" >&2
+        return 1
+    fi
     root="$(openvpn_source_transaction_root)" || return 1
     mkdir -m 0700 -- "${root}" || return 1
     openvpn_source_transaction_paths > "${root}/paths" || return 1
@@ -382,6 +387,19 @@ openvpn_run_source_install() {
     openvpn_begin_source_transaction
     openvpn_compile_install
     openvpn_post_compile_setup
+    _openvpn_post_install_validate_impl
+    openvpn_commit_source_transaction
+}
+
+# 系统包的安装与回退由包管理器负责；NiceVPN 只回滚自己修改的
+# systemd override / EasyRSA 链接，避免 postflight 失败时留下半配置状态。
+openvpn_run_package_postflight() {
+    local use_easyrsa_script="${1:-0}"
+    openvpn_begin_source_transaction package
+    openvpn_install_server_systemd_override
+    if [[ "${use_easyrsa_script}" == "1" && "${INSTALL_EASYRSA}" == "1" ]]; then
+        easyrsa_download_and_install
+    fi
     _openvpn_post_install_validate_impl
     openvpn_commit_source_transaction
 }
