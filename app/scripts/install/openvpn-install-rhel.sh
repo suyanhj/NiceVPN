@@ -17,6 +17,8 @@ source "${SCRIPT_DIR}/openvpn-install-common.sh"
 source "${SCRIPT_DIR}/../common/linux-packages.sh"
 
 openvpn_acquire_install_lock
+# 即使本次将改用系统包，也先恢复上次中断的源码安装事务。
+openvpn_restore_source_transaction
 openvpn_capture_active_instances
 easyrsa_reuse_existing
 
