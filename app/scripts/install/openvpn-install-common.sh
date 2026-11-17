@@ -396,6 +396,8 @@ easyrsa_migrate_legacy_root() {
 openvpn_update_legacy_paths() {
     local root="${OPENVPN_ROOT_DIR%/}" current="${OPENVPN_PREFIX%/}"
     local unit changed=0 target
+    local legacy_easy_root="${EASYRSA_LEGACY_INSTALL_DIR%/}"
+    local easyrsa_releases="${EASYRSA_INSTALL_DIR%/}/releases"
 
     # 只改 NiceVPN 管理的 systemd 模板文件，不碰发行版包管理器的 unit。
     for unit in \
@@ -432,7 +434,7 @@ openvpn_update_legacy_paths() {
     if [[ -L "${EASYRSA_CLI_LINK}" && -x "${EASYRSA_INSTALL_DIR}/current/easyrsa" ]]; then
         target="$(readlink -- "${EASYRSA_CLI_LINK}")"
         case "${target}" in
-            "${EASYRSA_LEGACY_INSTALL_DIR}"/*|"${EASYRSA_INSTALL_DIR}/releases/"*)
+            "${legacy_easy_root}"/*|"${easyrsa_releases}/"*)
                 nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}/current/easyrsa" "${EASYRSA_CLI_LINK}" || return 1
                 ;;
         esac
