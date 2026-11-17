@@ -258,7 +258,11 @@ def _find_openvpn_binary(config: dict | None = None) -> str | None:
     else:
         candidates = list(OPENVPN_SEARCH_PATHS)
         if configured:
-            candidates.insert(0, configured)
+            if classify_openvpn_install_mode(configured) == "source":
+                # 旧配置可能保存过 current 的真实 release 路径，稳定入口优先。
+                candidates.append(configured)
+            else:
+                candidates.insert(0, configured)
 
     found = _find_installed_executable(
         candidates, "openvpn", allow_path=mode not in {"custom", "source", "package"}
