@@ -104,7 +104,7 @@ class SsoSettingsPanel:
                 ).classes("w-full")
                 with ui.row().classes("w-full items-center gap-2"):
                     ui.label("允许企业")
-                    ui.icon("help_outline").classes("text-gray-400 cursor-help").tooltip(
+                    ui.icon("help_outline").classes("vpn-help-hint").tooltip(
                         "CorpId 或企业名称至少填一项；两项都填时以 CorpId 为准。"
                         "仅填名称需要钉钉“通讯录组织基础信息读权限”。"
                     )
@@ -128,7 +128,7 @@ class SsoSettingsPanel:
                     ).props("outline no-caps")
                 self.lookup_status = ui.label(
                     "无需进入钉钉企业后台：点击查询，在钉钉授权页选择企业，CorpId 会自动填入此处。"
-                ).classes("text-xs text-gray-500")
+                ).classes("section-caption")
                 if dingtalk is None and self.providers.legacy_dingtalk_companies():
                     ui.button(
                         "导入旧钉钉配置", icon="upload", on_click=self._import_legacy,

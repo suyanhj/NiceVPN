@@ -3861,3 +3861,37 @@ body {
     margin-left: auto;
   }
 }
+
+
+/* Public alert card: semantic status colors with shared V2 surface tokens. */
+.alert-card {
+  display:flex;
+  min-width:0;
+  padding:var(--vpn-space-4);
+  gap:var(--vpn-space-3);
+  border:1px solid var(--vpn-border);
+  border-radius:var(--vpn-radius-md);
+  background:var(--vpn-panel) !important;
+  color:var(--vpn-text);
+}
+.alert-card__icon-wrap {
+  display:flex;
+  flex:0 0 40px;
+  align-items:center;
+  justify-content:center;
+  width:40px;
+  height:40px;
+  border-radius:var(--vpn-radius-sm);
+}
+.alert-card__icon-wrap--info {
+  background:color-mix(in srgb,var(--vpn-color-info) 13%,var(--vpn-panel));
+  color:var(--vpn-color-info);
+}
+.alert-card__icon-wrap--warning {
+  background:color-mix(in srgb,var(--vpn-color-warning) 14%,var(--vpn-panel));
+  color:var(--vpn-color-warning);
+}
+.alert-card__icon-wrap--error {
+  background:color-mix(in srgb,var(--vpn-color-danger) 14%,var(--vpn-panel));
+  color:var(--vpn-color-danger);
+}

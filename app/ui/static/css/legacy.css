@@ -1257,455 +1257,74 @@
     background: rgba(148, 163, 184, 0.12) !important;
   }
 
-  /* 对端部署说明侧栏：精致工具文档，降低 Markdown 默认字号与标题冲击 */
-  .peer-manual-drawer {
-    display: flex;
-    flex-direction: column;
-    padding: 0 !important;
-    overflow: hidden;
-    background:
-    linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98)) !important;
-  }
-
-  .peer-manual-drawer-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 18px 20px 14px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-    background: rgba(15, 23, 42, 0.36);
-  }
-
-  .peer-manual-title {
-    color: var(--vpn-text-heading);
-    font-size: 17px;
-    font-weight: 750;
-    letter-spacing: -0.01em;
-    line-height: 1.25;
-  }
-
-  .peer-manual-subtitle {
-    color: var(--vpn-text-muted);
-    font-size: 12px;
-    line-height: 1.35;
-    margin-top: 3px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .peer-manual-hint {
-    margin: 12px 20px 0;
-    padding: 10px 12px;
-    border-radius: 12px;
-    border: 1px solid rgba(45, 212, 191, 0.14);
-    background: rgba(45, 212, 191, 0.055);
-    color: var(--vpn-text-muted);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .peer-manual-preview {
-    margin: 12px 20px 0;
-    padding: 18px 20px !important;
-    background: rgba(10, 18, 32, 0.62) !important;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 14px;
-    color: var(--vpn-text) !important;
-    min-height: 0;
-  }
-
-  .peer-manual-preview .nicegui-markdown {
-    color: var(--vpn-text) !important;
-    font-size: 13px;
-    line-height: 1.58;
-  }
-
-  .peer-manual-preview .nicegui-markdown :is(h1, h2, h3, h4, h5, h6) {
-    color: var(--vpn-text-heading) !important;
-    margin-top: 1.05em;
-    margin-bottom: 0.45em;
-    line-height: 1.25;
-    letter-spacing: -0.01em;
-  }
-
-  .peer-manual-preview .nicegui-markdown h1 {
-    font-size: 20px;
-    margin-top: 0;
-    padding-bottom: 10px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  }
-
-  .peer-manual-preview .nicegui-markdown h2 {
-    font-size: 15px;
-  }
-
-  .peer-manual-preview .nicegui-markdown h3 {
-    font-size: 14px;
-  }
-
-  .peer-manual-preview .nicegui-markdown :is(p, ul, ol, li, table) {
-    color: var(--vpn-text) !important;
-  }
-
-  .peer-manual-preview .nicegui-markdown p {
-    margin: 0.45em 0;
-  }
-
-  .peer-manual-preview .nicegui-markdown :is(ul, ol) {
-    margin: 0.45em 0 0.75em;
-    padding-left: 1.25rem;
-  }
-
-  .peer-manual-preview .nicegui-markdown li {
-    margin: 0.22em 0;
-  }
-
-  .peer-manual-preview .nicegui-markdown strong {
-    color: var(--vpn-text-heading) !important;
-  }
-
-  .peer-manual-preview .nicegui-markdown a {
-    color: var(--vpn-accent-soft) !important;
-  }
-
-  .peer-manual-preview .nicegui-markdown hr {
-    border: none;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
-    margin: 1em 0;
-  }
-
-  .peer-manual-preview .nicegui-markdown blockquote {
-    border-left: 3px solid var(--vpn-accent);
-    margin: 0.6em 0;
-    padding-left: 12px;
-    color: var(--vpn-text-muted) !important;
-  }
-
-  .peer-manual-preview .nicegui-markdown :not(pre) > code {
-    background: rgba(148, 163, 184, 0.12) !important;
-    color: #e2e8f0 !important;
-    padding: 0.1em 0.35em;
-    border-radius: 6px;
-    font-size: 0.9em;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-  }
-
+  /* 对端部署说明与远程日志：共享 V2 Design Tokens，保留文档型布局。 */
+  .peer-manual-drawer { display:flex; flex-direction:column; padding:0 !important; overflow:hidden; background:var(--vpn-panel) !important; }
+  .peer-manual-drawer-head { display:flex; align-items:center; justify-content:space-between; gap:var(--vpn-space-4); padding:var(--vpn-space-4) var(--vpn-space-5); border-bottom:1px solid var(--vpn-border); background:var(--vpn-bg-soft); }
+  .peer-manual-title { color:var(--vpn-text-heading); font-size:17px; font-weight:700; letter-spacing:-0.01em; line-height:1.25; }
+  .peer-manual-subtitle { color:var(--vpn-text-muted); font-size:12px; line-height:1.4; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .peer-manual-hint { margin:var(--vpn-space-3) var(--vpn-space-5) 0; padding:10px 12px; border-radius:var(--vpn-radius-sm); border:1px solid color-mix(in srgb,var(--vpn-color-info) 22%,transparent); background:color-mix(in srgb,var(--vpn-color-info) 7%,var(--vpn-panel)); color:var(--vpn-text-muted); font-size:12px; line-height:1.5; }
+  .peer-manual-preview { margin:var(--vpn-space-3) var(--vpn-space-5) 0; padding:var(--vpn-space-5) !important; background:var(--vpn-panel-3) !important; border:1px solid var(--vpn-border); border-radius:var(--vpn-radius-md); color:var(--vpn-text) !important; min-height:0; }
+  .peer-manual-preview .nicegui-markdown { color:var(--vpn-text) !important; font-size:13px; line-height:1.6; }
+  .peer-manual-preview .nicegui-markdown :is(h1,h2,h3,h4,h5,h6) { color:var(--vpn-text-heading) !important; margin-top:1.05em; margin-bottom:0.45em; line-height:1.25; letter-spacing:-0.01em; }
+  .peer-manual-preview .nicegui-markdown h1 { font-size:20px; margin-top:0; padding-bottom:10px; border-bottom:1px solid var(--vpn-border); }
+  .peer-manual-preview .nicegui-markdown h2 { font-size:15px; }
+  .peer-manual-preview .nicegui-markdown h3 { font-size:14px; }
+  .peer-manual-preview .nicegui-markdown :is(p,ul,ol,li,table) { color:var(--vpn-text) !important; }
+  .peer-manual-preview .nicegui-markdown p { margin:0.45em 0; }
+  .peer-manual-preview .nicegui-markdown :is(ul,ol) { margin:0.45em 0 0.75em; padding-left:1.25rem; }
+  .peer-manual-preview .nicegui-markdown li { margin:0.22em 0; }
+  .peer-manual-preview .nicegui-markdown strong { color:var(--vpn-text-heading) !important; }
+  .peer-manual-preview .nicegui-markdown a { color:var(--vpn-color-brand-soft) !important; }
+  .peer-manual-preview .nicegui-markdown hr { border:none; border-top:1px solid var(--vpn-border); margin:1em 0; }
+  .peer-manual-preview .nicegui-markdown blockquote { border-left:3px solid var(--vpn-color-brand); margin:0.6em 0; padding-left:12px; color:var(--vpn-text-muted) !important; }
+  .peer-manual-preview .nicegui-markdown :not(pre) > code { background:var(--vpn-panel-2) !important; color:var(--vpn-text) !important; padding:0.1em 0.35em; border-radius:6px; font-size:0.9em; border:1px solid var(--vpn-border); }
   .peer-manual-preview .nicegui-markdown pre,
-  .peer-manual-preview .nicegui-markdown .codehilite {
-    background: rgba(15, 23, 42, 0.98) !important;
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 10px;
-    padding: 10px 12px;
-    overflow-x: auto;
-    color: #e2e8f0 !important;
-    font-size: 12px;
-    line-height: 1.5;
-  }
-
-  .peer-manual-preview .nicegui-markdown pre code {
-    background: transparent !important;
-    padding: 0;
-    color: inherit !important;
-  }
-
-  .peer-manual-preview .nicegui-markdown table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 0.75em 0;
-  }
-
+  .peer-manual-preview .nicegui-markdown .codehilite { background:var(--vpn-bg-soft) !important; border:1px solid var(--vpn-border); border-radius:var(--vpn-radius-sm); padding:10px 12px; overflow-x:auto; color:var(--vpn-text) !important; font-size:12px; line-height:1.5; }
+  .peer-manual-preview .nicegui-markdown pre code { background:transparent !important; padding:0; color:inherit !important; }
+  .peer-manual-preview .nicegui-markdown table { border-collapse:collapse; width:100%; margin:0.75em 0; }
   .peer-manual-preview .nicegui-markdown th,
-  .peer-manual-preview .nicegui-markdown td {
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    padding: 7px 9px;
-    color: var(--vpn-text) !important;
-    font-size: 12px;
-  }
-
-  .peer-manual-preview .nicegui-markdown th {
-    background: rgba(148, 163, 184, 0.08);
-    color: var(--vpn-text-heading) !important;
-  }
-
-  .peer-manual-drawer-foot {
-    width: 100%;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 20px 16px;
-    border-top: 1px solid rgba(148, 163, 184, 0.1);
-    background: rgba(15, 23, 42, 0.5);
-    flex-shrink: 0;
-  }
-
-  .peer-manual-page {
-    gap: 18px;
-  }
-
-  .peer-manual-hero,
-  .peer-manual-summary-card,
-  .peer-manual-step-card,
-  .peer-manual-empty {
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    background:
-    linear-gradient(180deg, rgba(24, 35, 56, 0.94), rgba(15, 23, 42, 0.94));
-    border-radius: 18px;
-    box-shadow: var(--vpn-shadow-soft);
-  }
-
-  .peer-manual-hero {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
-    padding: 22px;
-  }
-
-  .peer-manual-hero-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .peer-manual-hero-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .peer-manual-page-title {
-    color: var(--vpn-text-heading);
-    font-size: 24px;
-    font-weight: 760;
-    letter-spacing: -0.02em;
-    line-height: 1.22;
-  }
-
-  .peer-manual-page-subtitle {
-    color: var(--vpn-text-muted);
-    font-size: 13px;
-    line-height: 1.55;
-  }
-
-  .peer-manual-chip-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 6px;
-  }
-
-  .peer-manual-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    max-width: 100%;
-    padding: 6px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(94, 169, 255, 0.16);
-    background: rgba(94, 169, 255, 0.08);
-    color: var(--vpn-text);
-  }
-
-  .peer-manual-chip-label {
-    color: var(--vpn-text-soft);
-    font-size: 11px;
-  }
-
-  .peer-manual-chip-value {
-    color: var(--vpn-text-heading);
-    font-size: 12px;
-    font-weight: 650;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .peer-manual-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.76fr);
-    gap: 16px;
-  }
-
-  .peer-manual-summary-card {
-    padding: 18px;
-  }
-
-  .peer-manual-section-title {
-    color: var(--vpn-text-heading);
-    font-size: 15px;
-    font-weight: 720;
-    letter-spacing: -0.01em;
-    margin-bottom: 12px;
-  }
-
-  .peer-manual-note {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 9px 0;
-    color: var(--vpn-text-muted);
-    border-top: 1px solid rgba(148, 163, 184, 0.08);
-  }
-
-  .peer-manual-note:first-of-type {
-    border-top: 0;
-    padding-top: 0;
-  }
-
-  .peer-manual-note-text {
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  .peer-manual-meta-row {
-    display: grid;
-    grid-template-columns: 92px minmax(0, 1fr);
-    gap: 10px;
-    padding: 8px 0;
-    border-top: 1px solid rgba(148, 163, 184, 0.08);
-  }
-
-  .peer-manual-meta-row:first-of-type {
-    border-top: 0;
-    padding-top: 0;
-  }
-
-  .peer-manual-meta-label {
-    color: var(--vpn-text-soft);
-    font-size: 12px;
-  }
-
-  .peer-manual-meta-value {
-    color: var(--vpn-text-heading);
-    font-size: 12px;
-    line-height: 1.45;
-    word-break: break-all;
-  }
-
-  .peer-manual-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .peer-manual-step-card {
-    padding: 16px;
-  }
-
-  .peer-manual-step-head {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 12px;
-  }
-
-  .peer-manual-step-index {
-    width: 28px;
-    height: 28px;
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    color: #dbeafe;
-    background: rgba(94, 169, 255, 0.12);
-    border: 1px solid rgba(94, 169, 255, 0.18);
-    font-size: 13px;
-    font-weight: 760;
-  }
-
-  .peer-manual-step-title {
-    color: var(--vpn-text-heading);
-    font-size: 15px;
-    font-weight: 720;
-    line-height: 1.35;
-  }
-
-  .peer-manual-step-summary {
-    color: var(--vpn-text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-    margin-top: 2px;
-  }
-
-  .peer-manual-command {
-    border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 14px;
-    overflow: hidden;
-    background: rgba(6, 12, 24, 0.72);
-  }
-
-  .peer-manual-command-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    background: rgba(15, 23, 42, 0.78);
-  }
-
-  .peer-manual-command-lang {
-    color: var(--vpn-text-soft);
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .peer-manual-copy-btn {
-    color: #dbeafe !important;
-    border-radius: 8px;
-  }
-
-  .peer-manual-command-code {
-    display: block;
-  }
-
-  .peer-manual-command-code pre {
-    margin: 0;
-    padding: 13px 14px;
-    overflow-x: auto;
-    color: #e2e8f0;
-    font-size: 12px;
-    line-height: 1.55;
-    font-family: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
-    white-space: pre;
-  }
-
-  .peer-manual-command-code code {
-    color: inherit;
-    font-family: inherit;
-  }
-
-  .peer-manual-empty {
-    min-height: 280px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    text-align: center;
-    padding: 36px 18px;
-  }
-
-  @media (max-width: 900px) {
-    .peer-manual-hero {
-      flex-direction: column;
-    }
-
-    .peer-manual-hero-actions {
-      width: 100%;
-      justify-content: flex-start;
-    }
-
-    .peer-manual-grid {
-      grid-template-columns: 1fr;
-    }
+  .peer-manual-preview .nicegui-markdown td { border:1px solid var(--vpn-border); padding:7px 9px; color:var(--vpn-text) !important; font-size:12px; }
+  .peer-manual-preview .nicegui-markdown th { background:var(--vpn-panel-2); color:var(--vpn-text-heading) !important; }
+  .peer-manual-drawer-foot { width:100%; justify-content:flex-end; gap:var(--vpn-space-2); padding:12px var(--vpn-space-5) 16px; border-top:1px solid var(--vpn-border); background:var(--vpn-bg-soft); flex-shrink:0; }
+  .peer-manual-page { gap:var(--vpn-space-4); }
+  .peer-manual-hero,.peer-manual-summary-card,.peer-manual-step-card,.peer-manual-empty { border:1px solid var(--vpn-border); background:var(--vpn-panel) !important; border-radius:var(--vpn-radius-lg); box-shadow:var(--vpn-shadow-soft); }
+  .peer-manual-hero { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--vpn-space-4); padding:var(--vpn-space-5); }
+  .peer-manual-hero-copy { min-width:0; display:flex; flex-direction:column; gap:var(--vpn-space-2); }
+  .peer-manual-hero-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--vpn-space-2); flex-wrap:wrap; }
+  .peer-manual-page-title { color:var(--vpn-text-heading); font-size:24px; font-weight:750; letter-spacing:-0.02em; line-height:1.22; }
+  .peer-manual-page-subtitle { color:var(--vpn-text-muted); font-size:13px; line-height:1.55; }
+  .peer-manual-chip-row { display:flex; align-items:center; gap:var(--vpn-space-2); flex-wrap:wrap; margin-top:6px; }
+  .peer-manual-chip { display:inline-flex; align-items:center; gap:var(--vpn-space-2); max-width:100%; padding:6px 10px; border-radius:999px; border:1px solid var(--vpn-border-strong); background:color-mix(in srgb,var(--vpn-color-brand) 8%,var(--vpn-panel)); color:var(--vpn-text); }
+  .peer-manual-chip-label { color:var(--vpn-text-soft); font-size:11px; }
+  .peer-manual-chip-value { color:var(--vpn-text-heading); font-size:12px; font-weight:650; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .peer-manual-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,0.76fr); gap:var(--vpn-space-4); }
+  .peer-manual-summary-card { padding:var(--vpn-space-4); }
+  .peer-manual-section-title { color:var(--vpn-text-heading); font-size:15px; font-weight:700; letter-spacing:-0.01em; margin-bottom:12px; }
+  .peer-manual-note { display:flex; align-items:flex-start; gap:var(--vpn-space-2); padding:9px 0; color:var(--vpn-text-muted); border-top:1px solid var(--vpn-border); }
+  .peer-manual-note:first-of-type { border-top:0; padding-top:0; }
+  .peer-manual-note-text { font-size:13px; line-height:1.5; }
+  .peer-manual-meta-row { display:grid; grid-template-columns:92px minmax(0,1fr); gap:10px; padding:8px 0; border-top:1px solid var(--vpn-border); }
+  .peer-manual-meta-row:first-of-type { border-top:0; padding-top:0; }
+  .peer-manual-meta-label { color:var(--vpn-text-soft); font-size:12px; }
+  .peer-manual-meta-value { color:var(--vpn-text-heading); font-size:12px; line-height:1.45; word-break:break-all; }
+  .peer-manual-steps { display:flex; flex-direction:column; gap:var(--vpn-space-3); }
+  .peer-manual-step-card { padding:var(--vpn-space-4); }
+  .peer-manual-step-head { display:flex; align-items:flex-start; gap:var(--vpn-space-3); margin-bottom:var(--vpn-space-3); }
+  .peer-manual-step-index { width:28px; height:28px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; border-radius:var(--vpn-radius-sm); color:var(--vpn-color-brand-soft); background:color-mix(in srgb,var(--vpn-color-brand) 12%,var(--vpn-panel)); border:1px solid var(--vpn-border-strong); font-size:13px; font-weight:750; }
+  .peer-manual-step-title { color:var(--vpn-text-heading); font-size:15px; font-weight:700; line-height:1.35; }
+  .peer-manual-step-summary { color:var(--vpn-text-muted); font-size:12px; line-height:1.5; margin-top:2px; }
+  .peer-manual-command { width:100%; min-width:0; border:1px solid var(--vpn-border); border-radius:var(--vpn-radius-md); overflow:hidden; background:var(--vpn-panel-3); }
+  .peer-manual-command-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border-bottom:1px solid var(--vpn-border); background:var(--vpn-bg-soft); }
+  .peer-manual-command-lang { color:var(--vpn-text-soft); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; }
+  .peer-manual-copy-btn { color:var(--vpn-color-brand-soft) !important; border-radius:var(--vpn-radius-sm); }
+  .peer-manual-command-code { display:block; width:100%; min-width:0; }
+  .peer-manual-command-code pre { width:100%; max-width:100%; box-sizing:border-box; margin:0; padding:13px 14px; overflow-x:auto; overflow-y:visible; color:var(--vpn-text); font-size:12px; line-height:1.55; font-family:var(--vpn-font-mono); white-space:pre; }
+  .peer-manual-command-code code { color:inherit; font-family:inherit; }
+  .peer-manual-empty { min-height:280px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--vpn-space-3); text-align:center; padding:36px 18px; }
+  @media (max-width:900px) {
+    .peer-manual-hero { flex-direction:column; }
+    .peer-manual-hero-actions { width:100%; justify-content:flex-start; }
+    .peer-manual-grid { grid-template-columns:1fr; }
   }
 
   .peer-install-log-frame {
