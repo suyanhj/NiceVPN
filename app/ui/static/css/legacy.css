@@ -1774,3 +1774,53 @@
     background: rgba(148, 163, 184, 0.38);
     border: 2px solid rgba(10, 18, 32, 0.74);
   }
+
+
+/* 对端部署手册：展开步骤与命令块必须撑满卡片，避免 Quasar expansion
+   内容槽按内部内容宽度收缩，造成代码只显示在左侧的窄列。 */
+.peer-manual-step-card {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.peer-manual-step-card > .q-expansion-item,
+.peer-manual-step-card .q-expansion-item__container,
+.peer-manual-step-card .q-expansion-item__content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.peer-manual-step-card .q-expansion-item__content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.peer-manual-step-card .q-expansion-item__content > * {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.peer-manual-step-card .peer-manual-command,
+.peer-manual-step-card .peer-manual-command-code {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.peer-manual-step-card .peer-manual-command-code pre {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: visible;
+}

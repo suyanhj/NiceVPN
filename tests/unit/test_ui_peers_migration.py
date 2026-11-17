@@ -464,3 +464,16 @@ def test_peer_help_keeps_user_and_firewall_shortcuts() -> None:
             await user.should_see("防火墙")
 
     asyncio.run(verify())
+
+def test_peer_manual_expansion_and_command_styles_fill_available_width() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "app" / "ui" / "static" / "css" / "legacy.css").read_text(
+        encoding="utf-8"
+    )
+    assert ".peer-manual-step-card .q-expansion-item__content" in css
+    assert "align-items: stretch;" in css
+    assert ".peer-manual-step-card .peer-manual-command" in css
+    assert "width: 100%;" in css
+    assert "overflow-x: auto;" in css
