@@ -357,7 +357,7 @@ openvpn_source_transaction_paths() {
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
 # 任何一项失败均保留快照供人工排查或下次安装继续恢复。
 openvpn_restore_source_transaction() {
-    local root prefix backup="" failed=0 idx=0 path mode
+    local root prefix backup="" failed=0 idx=0 path
     root="$(openvpn_source_transaction_root)" || return 1
     [[ -d "${root}" && ! -L "${root}" ]] || {
         [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
@@ -554,7 +554,7 @@ openvpn_run_package_postflight() {
 }
 
 openvpn_compile_install() {
-    local prefix_parent stage_parent stage_root staged_prefix staged_bin
+    local stage_parent stage_root staged_prefix staged_bin
     local version_output version expected_version hash release_id release_dir
     local existing_version old_target="" txn_root
 
@@ -1012,7 +1012,7 @@ openvpn_validate_systemd_unit() {
 }
 
 _openvpn_post_install_validate_impl() {
-    local candidate="" binary="" version_output="" version="" expected_version="" unit state
+    local candidate="" binary="" version_output="" version="" expected_version=""
     if [[ "${OPENVPN_INSTALL_MODE:-}" == "package" ]]; then
         # 系统包安装必须验证包管理器路径，不能被历史 /opt/openvpn 源码目录抢先命中。
         for candidate in /usr/sbin/openvpn /usr/bin/openvpn; do
