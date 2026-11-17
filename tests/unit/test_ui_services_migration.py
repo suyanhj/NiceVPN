@@ -451,7 +451,7 @@ def test_services_page_exposes_safe_openvpn_upgrade_flow() -> None:
     assert "(临时配置)" in source
     assert "不会修改现有配置文件或 systemd unit" in source
     assert "创建完整 NiceVPN 备份" not in source
-    assert "自动回滚" in source
+    assert "服务重启失败会切回旧版本软链接并恢复原运行实例" in source
     assert "升级日志" in source
     assert "OPENVPN_UPGRADE_LOG_FILE" in source
     assert "_show_openvpn_upgrade_log_viewer" in source
