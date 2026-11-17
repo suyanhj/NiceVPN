@@ -432,7 +432,6 @@ def test_init_wizard_uses_v2_palette_and_keeps_setup_steps(
         const brand = document.querySelector('.page-shell--setup .setup-brand');
         const panel = document.querySelector('.page-shell--setup .setup-panel');
         return {
-          brandBackground: brand ? getComputedStyle(brand).backgroundImage : "",
           panelBackground: panel ? getComputedStyle(panel).backgroundColor : "",
           stepCount: document.querySelectorAll('.page-shell--setup .step-chip').length,
         };

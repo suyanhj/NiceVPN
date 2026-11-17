@@ -121,9 +121,14 @@ def test_shell_and_effect_styles_load_after_tokens() -> None:
     assert "prefers-reduced-motion" in effects_source
 
     setup_source = (STATIC_DIR / "css" / "setup-v2.css").read_text(encoding="utf-8")
+    tokens_source = (STATIC_DIR / "css" / "tokens.css").read_text(encoding="utf-8")
     assert ".page-shell--setup .setup-brand" in setup_source
-    assert "background: #0c0c0d !important;" in setup_source
-    assert "#15bde8" in setup_source
+    assert "var(--vpn-panel)" in setup_source
+    assert "var(--vpn-color-brand)" in setup_source
+    assert "--vpn-color-brand: #6ea8ff;" in tokens_source
+    assert "--vpn-panel: #10151e;" in tokens_source
+    assert "#0c0c0d" not in setup_source
+    assert "#15bde8" not in setup_source
 
     legacy_source = (STATIC_DIR / "css" / "legacy.css").read_text(encoding="utf-8")
     for retired_selector in (
