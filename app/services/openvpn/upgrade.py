@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -18,7 +19,7 @@ from typing import Callable, Iterable
 from packaging.version import Version
 
 from app.core.config import load_config
-from app.core.constants import OPENVPN_INSTALL_PREFIX
+from app.core.constants import OPENVPN_INSTALL_PREFIX, OPENVPN_RELEASES_DIR
 from app.services.openvpn.detector import (
     detect_distro_family,
     detect_openvpn,
@@ -158,16 +159,32 @@ def _openvpn_version(binary: str | Path) -> str:
 
 
 def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
-    """检测当前 OpenVPN 与 GitHub 最新候选 release。"""
-
-    from app.services.openvpn.installer import resolve_latest_openvpn_release
+    """仅对 NiceVPN 管理的源码版本提供原子升级；系统包交由包管理器维护。"""
 
     current = detect_openvpn()
+    mode = str(current.get("install_mode") or "")
     _emit(
         on_output,
         f"[检测] 当前 OpenVPN: {current.get('version') or 'unknown'} "
-        f"({current.get('path') or 'not-found'})",
+        f"({current.get('path') or 'not-found'}; mode={mode or 'unknown'})",
     )
+    if mode != "source":
+        reason = (
+            "当前 OpenVPN 由系统包管理器安装，请使用 apt/dnf/yum 更新；"
+            "NiceVPN 不会覆盖系统包二进制。"
+            if mode == "package"
+            else "当前 OpenVPN 使用自定义路径，NiceVPN 不会擅自迁移或覆盖该二进制。"
+        )
+        return {
+            "current": current,
+            "release": None,
+            "target_version": None,
+            "upgrade_available": False,
+            "reason": reason,
+        }
+
+    from app.services.openvpn.installer import resolve_latest_openvpn_release
+
     release = resolve_latest_openvpn_release(
         on_output=_mirror_installer_output(on_output),
     )
@@ -182,11 +199,19 @@ def inspect_upgrade(on_output: _OUTPUT | None = None) -> dict:
         "release": release,
         "target_version": target_version,
         "upgrade_available": upgrade_available,
+        "reason": None if upgrade_available else "当前源码安装版本已经是最新版本。",
     }
 
 
 def stage_upgrade_candidate(on_output: _OUTPUT | None = None) -> dict:
     """通过正式 install shell 入口把候选 OpenVPN 构建到隔离目录。"""
+
+    current = detect_openvpn()
+    if current.get("install_mode") != "source":
+        raise RuntimeError(
+            "仅 NiceVPN 管理的源码安装支持此升级流程；系统包请使用 apt/dnf/yum 更新，"
+            "自定义路径请自行维护。"
+        )
 
     from app.services.openvpn.installer import stage_openvpn_source_build
 
