@@ -69,8 +69,8 @@ def init():
     config = load_config()
     ensure_storage_ready()
 
-    # 如果上次 OpenVPN 升级在切换期间被 SIGKILL/断电，启动时先恢复旧 release、
-    # systemd 配置和原运行实例；恢复失败保留事务材料并记录严重日志，不静默清理。
+    # 仅恢复首次安装/EasyRSA 迁移留下的 Shell 事务；版本升级只切换稳定软链接，
+    # 不写 systemd/config 快照，也不需要 Python 启动恢复状态机。
     try:
         from app.services.openvpn.installer import (
             recover_interrupted_easyrsa_migration,
@@ -85,15 +85,6 @@ def init():
         )
     except Exception:
         logger.critical("启动时恢复中断的 OpenVPN Shell 安装失败，事务材料已保留", exc_info=True)
-    else:
-        try:
-            from app.services.openvpn.upgrade import recover_interrupted_openvpn_upgrade
-
-            recover_interrupted_openvpn_upgrade(
-                on_output=lambda message: logger.warning("[OpenVPN upgrade recovery] %s", message)
-            )
-        except Exception:
-            logger.critical("启动时恢复中断的 OpenVPN 升级失败，事务材料已保留", exc_info=True)
 
     # 管理端不再注册下载和公网 VPN API；二者仅由第二监听端口提供。
 
