@@ -209,6 +209,183 @@ openvpn_recover_source_install() {
     done
 }
 
+# 源码安装事务快照放在 prefix 同级，避免 /tmp 清理使回滚材料丢失。
+# 固定名称与安装 flock 配合，异常退出或 SIGKILL 后可在下次重试前恢复。
+openvpn_source_transaction_root() {
+    local prefix="${OPENVPN_PREFIX%/}"
+    [[ "${prefix}" == /* && "${prefix}" != "/" ]] || {
+        echo "无效的 OPENVPN_PREFIX: ${OPENVPN_PREFIX}" >&2
+        return 1
+    }
+    printf '%s/.%s.install-transaction\n' "$(dirname -- "${prefix}")" "$(basename -- "${prefix}")"
+}
+
+openvpn_source_transaction_paths() {
+    printf '%s\n' \
+        /etc/systemd/system/openvpn-server@.service \
+        /etc/systemd/system/openvpn-client@.service \
+        /etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf \
+        /usr/local/sbin/openvpn
+    if [[ "${INSTALL_EASYRSA}" == "1" ]]; then
+        printf '%s\n' "${EASYRSA_INSTALL_DIR}/current" /usr/local/bin/easyrsa
+    fi
+}
+
+# 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
+# 任何一项失败均保留快照供人工排查或下次安装继续恢复。
+openvpn_restore_source_transaction() {
+    local root prefix backup="" failed=0 idx=0 path mode failed_tree=""
+    root="$(openvpn_source_transaction_root)" || return 1
+    [[ -d "${root}" && ! -L "${root}" ]] || {
+        [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
+        echo "安装事务目录不安全: ${root}" >&2
+        return 1
+    }
+    if [[ ! -f "${root}/ready" ]]; then
+        # ready 标志最后写入；此前仅保存快照，没有触碰已安装文件。
+        rm -rf -- "${root}"
+        return 0
+    fi
+
+    prefix="${OPENVPN_PREFIX%/}"
+    if [[ -f "${root}/switch-intent" ]]; then
+        if [[ -f "${root}/backup-prefix" ]]; then
+            IFS= read -r backup < "${root}/backup-prefix" || true
+        fi
+        if [[ -n "${backup}" && -d "${backup}" && ! -L "${backup}" ]]; then
+            if [[ -e "${prefix}" || -L "${prefix}" ]]; then
+                failed_tree="${root}/failed-prefix"
+                if ! mv -T -- "${prefix}" "${failed_tree}"; then
+                    echo "无法暂存失败的 OpenVPN 目录: ${prefix}" >&2
+                    failed=1
+                fi
+            fi
+            if [[ "${failed}" == "0" ]]; then
+                if ! mv -T -- "${backup}" "${prefix}"; then
+                    echo "无法恢复旧 OpenVPN 目录: ${backup}" >&2
+                    if [[ -e "${failed_tree}" && ! -e "${prefix}" ]]; then
+                        mv -T -- "${failed_tree}" "${prefix}" || true
+                    fi
+                    failed=1
+                fi
+            fi
+        elif [[ ! -e "${root}/original-prefix" ]]; then
+            # 首次安装此前没有 prefix；失败时不保留半完成的新版本。
+            if [[ -d "${prefix}" && ! -L "${prefix}" ]]; then
+                if ! mv -T -- "${prefix}" "${root}/failed-prefix"; then
+                    failed=1
+                fi
+            elif [[ -e "${prefix}" || -L "${prefix}" ]]; then
+                echo "首次安装生成了非普通目录，拒绝删除: ${prefix}" >&2
+                failed=1
+            fi
+        fi
+    fi
+
+    while IFS= read -r path; do
+        if [[ -f "${root}/${idx}.protected" ]]; then
+            # 原有 current 是实体目录；安装器不会将其替换为 symlink。
+            :
+        elif [[ -f "${root}/${idx}.missing" ]]; then
+            if [[ -f "${path}" || -L "${path}" ]]; then
+                rm -f -- "${path}" || failed=1
+            elif [[ -e "${path}" ]]; then
+                echo "回滚拒绝删除非文件路径: ${path}" >&2
+                failed=1
+            fi
+        elif [[ -L "${root}/${idx}" ]]; then
+            if [[ -f "${path}" && ! -L "${path}" ]]; then
+                echo "回滚拒绝用 symlink 覆盖普通文件: ${path}" >&2
+                failed=1
+            else
+                nicevpn_atomic_symlink "$(readlink -- "${root}/${idx}")" "${path}" || failed=1
+            fi
+        elif [[ -f "${root}/${idx}" ]]; then
+            mode="$(stat -c %a -- "${root}/${idx}")" || { failed=1; idx=$((idx+1)); continue; }
+            nicevpn_atomic_write_command "${path}" "${mode}" cat "${root}/${idx}" || failed=1
+        else
+            echo "安装快照缺失: ${root}/${idx}" >&2
+            failed=1
+        fi
+        idx=$((idx+1))
+    done < "${root}/paths"
+
+    if [[ -f "${root}/systemd-required" ]]; then
+        systemctl daemon-reload || failed=1
+    fi
+    if [[ "${failed}" != "0" ]]; then
+        echo "OpenVPN 安装回滚不完整，已保留事务快照: ${root}" >&2
+        return 1
+    fi
+    if ! rm -rf -- "${root}"; then
+        echo "OpenVPN 已恢复，但清理事务快照失败: ${root}" >&2
+        return 1
+    fi
+    _log "已恢复源码安装前的 OpenVPN prefix、systemd 配置和命令入口"
+}
+
+openvpn_source_transaction_on_exit() {
+    local status="${1:-1}"
+    trap - EXIT
+    # 构建阶段的未发布 stage 也应立即清理；SIGKILL 留下的由下一次预检清理。
+    if [[ -n "${OPENVPN_BUILD_STAGE_ROOT:-}" && -d "${OPENVPN_BUILD_STAGE_ROOT}" ]]; then
+        rm -rf -- "${OPENVPN_BUILD_STAGE_ROOT}" || true
+    fi
+    # 正常路径由 commit 解除 trap；未提交的事务即使 exit 0 也不算成功。
+    if ! openvpn_restore_source_transaction; then
+        echo "严重：OpenVPN 安装失败且自动回滚不完整，请检查事务快照" >&2
+    fi
+    [[ "${status}" != "0" ]] || status=1
+    exit "${status}"
+}
+
+openvpn_begin_source_transaction() {
+    local root path idx=0
+    openvpn_restore_source_transaction || return 1
+    openvpn_recover_source_install || return 1
+    root="$(openvpn_source_transaction_root)" || return 1
+    mkdir -m 0700 -- "${root}" || return 1
+    openvpn_source_transaction_paths > "${root}/paths" || return 1
+    while IFS= read -r path; do
+        if [[ -L "${path}" || -f "${path}" ]]; then
+            cp -a -- "${path}" "${root}/${idx}" || return 1
+        elif [[ "${path}" == "${EASYRSA_INSTALL_DIR}/current" && -d "${path}" ]]; then
+            # 历史安装可能把 current 设为实体目录；不会被原子 symlink 改写。
+            : > "${root}/${idx}.protected"
+        elif [[ -e "${path}" ]]; then
+            echo "系统路径不是普通文件或 symlink，拒绝备份: ${path}" >&2
+            return 1
+        else
+            : > "${root}/${idx}.missing"
+        fi
+        idx=$((idx+1))
+    done < <(openvpn_source_transaction_paths)
+    if [[ -e "${OPENVPN_PREFIX%/}" || -L "${OPENVPN_PREFIX%/}" ]]; then
+        : > "${root}/original-prefix"
+    fi
+    if [[ "${INSTALL_SERVER_SYSTEMD}" == "1" || "${INSTALL_CLIENT_SYSTEMD}" == "1" || "${INSTALL_SERVER_OVERRIDE}" == "1" ]]; then
+        : > "${root}/systemd-required"
+    fi
+    : > "${root}/ready"
+    trap 'openvpn_source_transaction_on_exit "$?"' EXIT
+}
+
+openvpn_commit_source_transaction() {
+    local root
+    root="$(openvpn_source_transaction_root)" || return 1
+    rm -rf -- "${root}" || return 1
+    OPENVPN_BUILD_STAGE_ROOT=""
+    trap - EXIT
+}
+
+openvpn_run_source_install() {
+    openvpn_begin_source_transaction
+    openvpn_compile_install
+    openvpn_post_compile_setup
+    _openvpn_post_install_validate_impl
+    openvpn_commit_source_transaction
+}
+
 openvpn_compile_install() {
     local prefix_parent prefix_base stage_root staged_prefix staged_bin
     local version_output version expected_version backup_root backup_prefix
@@ -239,6 +416,7 @@ openvpn_compile_install() {
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
     mkdir -p -- "${prefix_parent}"
     stage_root="$(mktemp -d "${prefix_parent}/.${prefix_base}.stage.XXXXXX")"
+    OPENVPN_BUILD_STAGE_ROOT="${stage_root}"
     staged_prefix="${stage_root}${OPENVPN_PREFIX}"
     staged_bin="${stage_root}${OPENVPN_BIN}"
     backup_root=""
@@ -294,6 +472,13 @@ openvpn_compile_install() {
             return 1
         fi
         backup_prefix="${backup_root}/${prefix_base}"
+        # 旧 prefix 被移走之前必须先持久记录回滚目标，覆盖 SIGKILL 窗口。
+        local txn_root
+        txn_root="$(openvpn_source_transaction_root)"
+        if [ -f "${txn_root}/ready" ]; then
+            printf '%s\n' "${backup_prefix}" > "${txn_root}/backup-prefix"
+            : > "${txn_root}/switch-intent"
+        fi
         if ! mv -T -- "${OPENVPN_PREFIX}" "${backup_prefix}"; then
             rmdir -- "${backup_root}" 2>/dev/null || true
             echo "无法备份现有 OpenVPN prefix，未切换新版本" >&2
@@ -302,6 +487,14 @@ openvpn_compile_install() {
         fi
     fi
 
+    # 首次安装没有旧 prefix；也要在发布新目录前标记回滚意图。
+    if [ -z "${backup_prefix}" ]; then
+        local txn_root
+        txn_root="$(openvpn_source_transaction_root)"
+        if [ -f "${txn_root}/ready" ]; then
+            : > "${txn_root}/switch-intent"
+        fi
+    fi
     if ! mv -T -- "${staged_prefix}" "${OPENVPN_PREFIX}"; then
         if [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ]; then
             if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
@@ -317,6 +510,7 @@ openvpn_compile_install() {
 
     OPENVPN_LAST_BACKUP_PREFIX="${backup_prefix}"
     rm -rf -- "${stage_root}"
+    OPENVPN_BUILD_STAGE_ROOT=""
 
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
         if ! nicevpn_atomic_symlink "${OPENVPN_BIN}" /usr/local/sbin/openvpn; then
