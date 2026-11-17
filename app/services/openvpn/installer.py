@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.config import load_config
-from app.core.constants import EASYRSA_INSTALL_DIR, OPENVPN_MIN_VERSION
+from app.core.constants import (
+    EASYRSA_INSTALL_DIR,
+    OPENVPN_INSTALL_PREFIX,
+    OPENVPN_MIN_VERSION,
+)
 from app.services.openvpn.detector import find_easyrsa
 
 log = logging.getLogger(__name__)
@@ -98,7 +102,11 @@ def stage_openvpn_source_build(
     )
     env.update(
         {
-            "OPENVPN_PREFIX": str(prefix),
+            "OPENVPN_PREFIX": str(OPENVPN_INSTALL_PREFIX),
+            "OPENVPN_BIN": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"),
+            "OPENVPN_SBIN_DIR": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin"),
+            "OPENVPN_STAGE_ONLY": "1",
+            "OPENVPN_STAGE_DIR": str(prefix),
             "OPENVPN_CACHE": str(cache),
             "OPENVPN_SRC_ROOT": str(src_root),
             "OPENVPN_CREATE_SYMLINK": "0",
@@ -165,7 +173,7 @@ def install_openvpn_server_systemd_from_staged_source(
         "OPENVPN_TAG": str(tag),
     }
     if openvpn_bin:
-        binary = Path(openvpn_bin).expanduser().resolve()
+        binary = Path(openvpn_bin).expanduser()
         env_values["OPENVPN_BIN"] = str(binary)
         env_values["OPENVPN_SBIN_DIR"] = str(binary.parent)
 
@@ -186,7 +194,6 @@ def ensure_openvpn_server_systemd_unit(
     binary = Path(openvpn_bin).expanduser()
     if not binary.is_file():
         raise FileNotFoundError(f"OpenVPN 二进制不存在: {binary}")
-    binary = binary.resolve()
 
     try:
         proc = subprocess.run(
