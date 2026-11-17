@@ -1114,7 +1114,11 @@ openvpn_capture_active_instances() {
 # 对已经运行的实例执行 restart，并验证 systemd 最终状态。
 # 逐个处理且不中断剩余实例，便于失败时完整报告并触发事务回滚。
 openvpn_restart_and_validate_units() {
-    local unit failed=0
+    local binary="" unit failed=0 pid running_inode installed_inode
+    if [ "$#" -gt 0 ] && [[ "$1" == /* || "$1" == ./* ]]; then
+        binary="$1"
+        shift
+    fi
     [ "$#" -gt 0 ] || return 0
     command -v systemctl >/dev/null 2>&1 || {
         echo "存在运行中的 OpenVPN 实例，但未找到 systemctl" >&2
@@ -1129,6 +1133,24 @@ openvpn_restart_and_validate_units() {
                 continue
                 ;;
         esac
+
+        # 包管理器可能已经自动重启服务；比较进程 inode，避免无意义的二次断连。
+        if [ -n "${binary}" ]; then
+            pid="$(systemctl show --property=MainPID --value "${unit}" 2>/dev/null || true)"
+            if [[ "${pid}" =~ ^[1-9][0-9]*$ ]]; then
+                running_inode="$(stat -Lc '%d:%i' "/proc/${pid}/exe" 2>/dev/null || true)"
+                installed_inode="$(stat -Lc '%d:%i' "${binary}" 2>/dev/null || true)"
+                if [ -n "${running_inode}" ] && [ "${running_inode}" = "${installed_inode}" ]; then
+                    _log "OpenVPN 实例已运行当前 binary，无需重复重启: ${unit}"
+                    if ! systemctl is-active --quiet "${unit}"; then
+                        echo "OpenVPN 实例状态异常: ${unit}" >&2
+                        failed=1
+                    fi
+                    continue
+                fi
+            fi
+        fi
+
         if ! systemctl restart "${unit}"; then
             echo "重启 OpenVPN 实例失败: ${unit}" >&2
             failed=1
@@ -1139,19 +1161,6 @@ openvpn_restart_and_validate_units() {
             failed=1
         else
             _log "OpenVPN 实例运行状态校验通过: ${unit}"
-        fi
-    done
-    [ "${failed}" = "0" ]
-}
-
-openvpn_validate_active_instances() {
-    local unit failed=0
-    [ "$#" -gt 0 ] || return 0
-    command -v systemctl >/dev/null 2>&1 || return 1
-    for unit in "$@"; do
-        if ! systemctl is-active --quiet "${unit}"; then
-            echo "OpenVPN 实例未处于 active 状态: ${unit}" >&2
-            failed=1
         fi
     done
     [ "${failed}" = "0" ]
@@ -1266,11 +1275,9 @@ _openvpn_post_install_validate_impl() {
         fi
     fi
 
-    if [ "${OPENVPN_INSTALL_MODE:-}" = "source" ]; then
-        openvpn_restart_and_validate_units "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
-    else
-        openvpn_validate_active_instances "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
-    fi
+    # 若包管理器已自动重启，按 /proc/<pid>/exe inode 判断并跳过二次重启；
+    # 源码切换后旧进程 inode 不同，则必须重启到新 release。
+    openvpn_restart_and_validate_units "${binary}" "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
 }
 
 
