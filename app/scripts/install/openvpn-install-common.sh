@@ -324,6 +324,10 @@ openvpn_restore_source_transaction() {
 openvpn_source_transaction_on_exit() {
     local status="${1:-1}"
     trap - EXIT
+    # 构建阶段的未发布 stage 也应立即清理；SIGKILL 留下的由下一次预检清理。
+    if [[ -n "${OPENVPN_BUILD_STAGE_ROOT:-}" && -d "${OPENVPN_BUILD_STAGE_ROOT}" ]]; then
+        rm -rf -- "${OPENVPN_BUILD_STAGE_ROOT}" || true
+    fi
     # 正常路径由 commit 解除 trap；未提交的事务即使 exit 0 也不算成功。
     if ! openvpn_restore_source_transaction; then
         echo "严重：OpenVPN 安装失败且自动回滚不完整，请检查事务快照" >&2
@@ -367,6 +371,7 @@ openvpn_commit_source_transaction() {
     local root
     root="$(openvpn_source_transaction_root)" || return 1
     rm -rf -- "${root}" || return 1
+    OPENVPN_BUILD_STAGE_ROOT=""
     trap - EXIT
 }
 
@@ -408,6 +413,7 @@ openvpn_compile_install() {
     prefix_base="$(basename -- "${OPENVPN_PREFIX}")"
     mkdir -p -- "${prefix_parent}"
     stage_root="$(mktemp -d "${prefix_parent}/.${prefix_base}.stage.XXXXXX")"
+    OPENVPN_BUILD_STAGE_ROOT="${stage_root}"
     staged_prefix="${stage_root}${OPENVPN_PREFIX}"
     staged_bin="${stage_root}${OPENVPN_BIN}"
     backup_root=""
@@ -501,6 +507,7 @@ openvpn_compile_install() {
 
     OPENVPN_LAST_BACKUP_PREFIX="${backup_prefix}"
     rm -rf -- "${stage_root}"
+    OPENVPN_BUILD_STAGE_ROOT=""
 
     if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]; then
         if ! nicevpn_atomic_symlink "${OPENVPN_BIN}" /usr/local/sbin/openvpn; then
