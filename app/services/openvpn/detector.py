@@ -129,6 +129,10 @@ def detect_openvpn() -> dict:
             mode = marker if marker in {"package", "source", "custom"} else None
         except OSError:
             mode = None
+    if mode is None:
+        # 旧 config.json 没有 install_mode 时，即使升级中 binary 暂时不可见，
+        # 也根据已保存入口判断模式，便于恢复被中断的源码目录迁移。
+        mode = classify_openvpn_install_mode(str(config.get("openvpn_bin") or ""))
 
     result = {
         "installed": False,
