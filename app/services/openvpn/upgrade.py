@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -742,17 +743,66 @@ def _remove_path_strict(path: Path) -> None:
 
 
 def _restore_path(record: dict) -> None:
+    """从快照恢复系统配置：先在目标同目录准备新内容，再原子切换。"""
     path = Path(str(record["path"]))
-    _remove_path_strict(path)
     kind = record.get("kind")
-    if kind == "symlink":
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.symlink_to(str(record["target"]))
-    elif kind == "dir":
-        shutil.copytree(Path(str(record["backup"])), path, symlinks=True)
-    elif kind == "file":
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(Path(str(record["backup"])), path)
+    if kind == "missing":
+        _remove_path_strict(path)
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind in {"symlink", "file"}:
+        candidate = path.with_name(f".{path.name}.nicevpn-restore-{uuid.uuid4().hex}")
+        try:
+            if kind == "symlink":
+                candidate.symlink_to(str(record["target"]))
+            else:
+                shutil.copy2(Path(str(record["backup"])), candidate)
+            if path.is_dir() and not path.is_symlink():
+                raise RuntimeError(f"回滚拒绝用文件覆盖目录: {path}")
+            os.replace(candidate, path)
+        finally:
+            _remove_path_strict(candidate)
+        return
+
+    if kind != "dir":
+        raise ValueError(f"未知的 OpenVPN 系统路径快照类型: {kind!r}")
+
+    # staging 与目标目录同盘，先准备完整副本再切换，避免先删除造成空窗。
+    temp_root = Path(
+        tempfile.mkdtemp(prefix=f".{path.name}.nicevpn-restore-", dir=path.parent)
+    )
+    candidate = temp_root / "candidate"
+    previous = temp_root / "previous"
+    preserve_previous = False
+    try:
+        shutil.copytree(Path(str(record["backup"])), candidate, symlinks=True)
+        if path.exists() or path.is_symlink():
+            os.replace(path, previous)
+        try:
+            os.replace(candidate, path)
+        except Exception:
+            if previous.exists() or previous.is_symlink():
+                try:
+                    os.replace(previous, path)
+                except Exception:
+                    preserve_previous = True
+                    logger.critical(
+                        "OpenVPN systemd 目录恢复失败，保留前一版本目录: %s",
+                        previous,
+                        exc_info=True,
+                    )
+            raise
+    finally:
+        if not preserve_previous:
+            try:
+                shutil.rmtree(temp_root)
+            except OSError:
+                logger.warning(
+                    "清理 OpenVPN systemd 恢复临时目录失败: %s",
+                    temp_root,
+                    exc_info=True,
+                )
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
