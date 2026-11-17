@@ -72,13 +72,22 @@ def init():
     # 如果上次 OpenVPN 升级在切换期间被 SIGKILL/断电，启动时先恢复旧 release、
     # systemd 配置和原运行实例；恢复失败保留事务材料并记录严重日志，不静默清理。
     try:
-        from app.services.openvpn.upgrade import recover_interrupted_openvpn_upgrade
+        from app.services.openvpn.installer import recover_interrupted_openvpn_install
 
-        recover_interrupted_openvpn_upgrade(
-            on_output=lambda message: logger.warning("[OpenVPN recovery] %s", message)
+        recover_interrupted_openvpn_install(
+            on_output=lambda message: logger.warning("[OpenVPN install recovery] %s", message)
         )
     except Exception:
-        logger.critical("启动时恢复中断的 OpenVPN 升级失败，事务材料已保留", exc_info=True)
+        logger.critical("启动时恢复中断的 OpenVPN Shell 安装失败，事务材料已保留", exc_info=True)
+    else:
+        try:
+            from app.services.openvpn.upgrade import recover_interrupted_openvpn_upgrade
+
+            recover_interrupted_openvpn_upgrade(
+                on_output=lambda message: logger.warning("[OpenVPN upgrade recovery] %s", message)
+            )
+        except Exception:
+            logger.critical("启动时恢复中断的 OpenVPN 升级失败，事务材料已保留", exc_info=True)
 
     # 管理端不再注册下载和公网 VPN API；二者仅由第二监听端口提供。
 
