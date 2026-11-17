@@ -98,3 +98,47 @@ def test_peer_manual_shell_templates_have_valid_bash_syntax() -> None:
             check=False,
         )
         assert result.returncode == 0, f"{name}: {result.stderr}"
+
+
+
+def test_optional_manual_steps_are_collapsible_and_base_commands_exclude_them() -> None:
+    ctx = build_peer_site_manual_context(
+        peer_name="站点甲",
+        peer_id="abc-uuid",
+        bound_username="u1",
+        lan_cidrs=["192.168.1.0/24"],
+        global_subnet="10.255.0.0/16",
+        masquerade_on_peer=False,
+    )
+    md = peer_manual_md.build_peer_site_manual_markdown(
+        peer_name="站点甲",
+        peer_id="abc-uuid",
+        bound_username="u1",
+        lan_cidrs=["192.168.1.0/24"],
+        global_subnet="10.255.0.0/16",
+        masquerade_on_peer=False,
+    )
+    optional_titles = [step["title"] for step in ctx["steps"] if step.get("optional")]
+    assert len(optional_titles) == 4
+    for title in optional_titles:
+        assert f"<summary>" in md
+        assert title in md
+    assert md.count("<details>") == len(optional_titles)
+    assert md.count("</details>") == len(optional_titles)
+    assert all("--disable-dco" not in command for command in ctx["commands"])
+
+
+def test_rhel_build_dependencies_use_one_shared_yum_dnf_package_list() -> None:
+    template = Path(peer_manual_md._MANUAL_TEMPLATE_DIR) / "prepare-build-deps.sh.in"
+    source = template.read_text(encoding="utf-8")
+    assert 'RHEL_PACKAGE_MANAGER="dnf"' in source
+    assert 'RHEL_PACKAGE_MANAGER="yum"' in source
+    assert source.count('"${RHEL_PACKAGE_MANAGER}" install -y') == 1
+    assert source.count("gcc gcc-c++ make") == 1
+    result = subprocess.run(
+        ["bash", "-n", str(template)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

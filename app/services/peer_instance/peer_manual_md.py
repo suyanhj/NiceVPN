@@ -200,10 +200,19 @@ def build_peer_site_manual_markdown(
     overview = ctx["overview"]
     cidrs_lines = "\n".join(f"- `{c}`" for c in overview["lan_cidrs"]) or "- （未配置）"
     highlights = "\n".join(f"- {item}" for item in ctx["highlights"])
-    steps = "\n\n".join(
-        f"## {idx}. {step['title']}\n\n{step['summary']}\n\n```bash\n{step['command']}\n```"
-        for idx, step in enumerate(ctx["steps"], start=1)
-    )
+    rendered_steps: list[str] = []
+    for idx, step in enumerate(ctx["steps"], start=1):
+        command_block = f"```bash\n{step['command']}\n```"
+        if step.get("optional"):
+            rendered_steps.append(
+                f"<details>\n<summary>{idx}. {step['title']}</summary>\n\n"
+                f"{step['summary']}\n\n{command_block}\n</details>"
+            )
+        else:
+            rendered_steps.append(
+                f"## {idx}. {step['title']}\n\n{step['summary']}\n\n{command_block}"
+            )
+    steps = "\n\n".join(rendered_steps)
     return _render_manual_template(
         "site-manual.md.in",
         {

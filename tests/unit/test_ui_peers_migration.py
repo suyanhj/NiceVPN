@@ -203,6 +203,27 @@ def test_peer_delete_uses_impact_confirmation(
     assert "CCD" in str(captured["impact"])
 
 
+def test_peer_user_filter_is_case_insensitive_and_keeps_current_selection() -> None:
+    assert PeersPage._filter_peer_bind_usernames(
+        ["zhangmeiyun", "zhangjian", "liwei"],
+        "ZHANG",
+    ) == ["zhangmeiyun", "zhangjian"]
+    assert PeersPage._filter_peer_bind_usernames(
+        ["zhangmeiyun", "zhangjian", "liwei"],
+        "li",
+        selected="zhangmeiyun",
+    ) == ["zhangmeiyun", "liwei"]
+    assert PeersPage._filter_peer_bind_usernames(
+        ["zhangmeiyun", "zhangjian"],
+        "",
+        selected="zhangjian",
+    ) == ["zhangjian"]
+    assert PeersPage._filter_peer_bind_usernames(
+        ["zhangmeiyun", "zhangjian"],
+        "",
+    ) == []
+
+
 def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,6 +235,7 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
         async with user_simulation(page._show_create_dialog) as user:
             await user.open("/")
             await user.should_see("新建对端站点")
+            await user.should_see("搜索可用用户")
             await user.should_see("SSH 认证")
             await user.should_see("创建")
 
