@@ -123,6 +123,7 @@ def test_source_mode_prefers_stable_entry_over_saved_release_path(
         detector, "OPENVPN_RELEASES_DIR",
         str(tmp_path / "opt" / "openvpn-releases"),
     )
+    monkeypatch.setattr(detector, "OPENVPN_SEARCH_PATHS", (str(stable),))
 
     assert detector._find_openvpn_binary({
         "openvpn_install_mode": "source",
