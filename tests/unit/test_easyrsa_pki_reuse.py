@@ -515,11 +515,12 @@ def test_install_easyrsa_migrates_legacy_root_before_reusing(
     )
 
     calls: list[list[str]] = []
-    monkeypatch.setattr(
-        installer_mod,
-        "_run_command",
-        lambda cmd, _output, *, env=None, cwd=None: calls.append(list(cmd)),
-    )
+
+    def fake_migrate(cmd, _output, *, env=None, cwd=None):
+        calls.append(list(cmd))
+        new_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_migrate)
     monkeypatch.setattr(
         installer_mod,
         "ensure_easyrsa_runtime_dependencies",
