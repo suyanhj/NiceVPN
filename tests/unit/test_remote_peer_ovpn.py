@@ -158,7 +158,7 @@ def test_deploy_openvpn_client_systemd_generates_fallback_without_official_templ
     assert ret["service"] == "openvpn-client.service"
     assert ret["unit_path"] == "/etc/systemd/system/openvpn-client.service"
     assert client.sftp.putfo_calls == 0
-    assert any("bash -lc" in c and "ovpn-mgmt-unit" in c for c in client.commands)
+    assert any("bash -lc" in c and "nicevpn_atomic_write_stdin" in c and "UNIT_PATH" in c for c in client.commands)
     assert any("bash -lc" in c and "10-ovpn-mgmt-log.conf" in c for c in client.commands)
     assert client.closed is True
 
