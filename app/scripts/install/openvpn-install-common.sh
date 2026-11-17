@@ -349,6 +349,8 @@ openvpn_begin_source_transaction() {
         return 1
     fi
     root="$(openvpn_source_transaction_root)" || return 1
+    # 系统包模式可能根本没有自编译 prefix，先保证快照所在父目录存在。
+    mkdir -p -- "$(dirname -- "${root}")" || return 1
     mkdir -m 0700 -- "${root}" || return 1
     openvpn_source_transaction_paths > "${root}/paths" || return 1
     while IFS= read -r path; do
