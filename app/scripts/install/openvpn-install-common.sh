@@ -358,7 +358,7 @@ openvpn_source_transaction_paths() {
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
 # 任何一项失败均保留快照供人工排查或下次安装继续恢复。
 openvpn_restore_source_transaction() {
-    local root prefix backup="" new_prefix="" failed=0 idx=0 path
+    local root prefix backup="" new_prefix="" failed=0 idx=0 path mode
     root="$(openvpn_source_transaction_root)" || return 1
     [[ -d "${root}" && ! -L "${root}" ]] || {
         [[ ! -e "${root}" && ! -L "${root}" ]] && return 0
