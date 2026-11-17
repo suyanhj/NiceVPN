@@ -224,6 +224,39 @@ def test_peer_user_filter_is_case_insensitive_and_keeps_current_selection() -> N
     ) == []
 
 
+def test_peer_mesh_optout_switch_disables_scopes_and_preserves_values() -> None:
+    fields: dict = {}
+
+    def page() -> None:
+        PeersPage._render_mesh_route_policy(
+            fields,
+            {"g1": "开发组"},
+            {"tag-a": "研发"},
+            group_ids=["g1"],
+            tag_ids=["tag-a"],
+            disabled=True,
+        )
+
+    async def verify() -> None:
+        async with user_simulation(page) as user:
+            await user.open("/")
+            await user.should_see("不向其他 VPN 客户端推送本站点路由")
+            assert fields["mesh"]._props.get("disable") is True
+            assert fields["mesh_tags"]._props.get("disable") is True
+            assert fields["mesh"].value == ["g1"]
+            assert fields["mesh_tags"].value == ["tag-a"]
+            fields["mesh_route_push_disabled"].set_value(False)
+            assert fields["mesh"]._props.get("disable") is not True
+            assert fields["mesh_tags"]._props.get("disable") is not True
+            assert fields["mesh"].value == ["g1"]
+            assert fields["mesh_tags"].value == ["tag-a"]
+            fields["mesh_route_push_disabled"].set_value(True)
+            assert fields["mesh"]._props.get("disable") is True
+            assert fields["mesh_tags"]._props.get("disable") is True
+
+    asyncio.run(verify())
+
+
 def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -236,6 +269,7 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
             await user.open("/")
             await user.should_see("新建对端站点")
             await user.should_see("搜索可用用户")
+            await user.should_see("不向其他 VPN 客户端推送本站点路由")
             await user.should_see("SSH 认证")
             await user.should_see("创建")
 
@@ -252,6 +286,7 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
         async with user_simulation(lambda: page._show_edit_dialog(row)) as user:
             await user.open("/")
             await user.should_see("编辑对端站点")
+            await user.should_see("不向其他 VPN 客户端推送本站点路由")
             await user.should_see("当前已保存 SSH 密码")
             await user.should_not_see(secret)
 
