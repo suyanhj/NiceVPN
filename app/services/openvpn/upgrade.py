@@ -805,6 +805,229 @@ def _restore_path(record: dict) -> None:
                 )
 
 
+def _upgrade_transaction_root() -> Path:
+    """持久化升级事务目录；不能放在 /tmp，必须跨进程退出和重启保留。"""
+    return Path(OPENVPN_RELEASES_DIR) / ".nicevpn-upgrade-transaction"
+
+
+def _write_upgrade_manifest(root: Path, manifest: dict) -> None:
+    """原子写入事务状态；fsync 文件与目录，确保切换意图先于系统变更落盘。"""
+    temporary = root / f".manifest-{uuid.uuid4().hex}.tmp"
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(manifest, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / "manifest.json")
+        directory_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _legacy_release_target(prefix: Path, releases_dir: Path) -> Path | None:
+    """在移动旧普通目录之前计算确定的 legacy release 目标。"""
+    if prefix.is_symlink():
+        target = prefix.resolve(strict=True)
+        if not target.is_dir():
+            raise RuntimeError(f"OpenVPN 稳定入口没有指向目录: {prefix} -> {target}")
+        return target
+    if not prefix.exists():
+        return None
+    if not prefix.is_dir():
+        raise RuntimeError(f"OpenVPN 安装入口不是目录或软链接，拒绝迁移: {prefix}")
+    binary = _release_binary(prefix)
+    version = _openvpn_version(binary)
+    return releases_dir / f"legacy-{_release_id(version, binary)}"
+
+
+def _validate_upgrade_manifest(root: Path, manifest: dict) -> tuple[Path, Path, Path | None, Path | None]:
+    """只允许恢复本升级流程管理的固定路径，避免损坏的 manifest 触碰任意系统文件。"""
+    prefix = Path(OPENVPN_INSTALL_PREFIX)
+    releases_dir = Path(OPENVPN_RELEASES_DIR)
+    if manifest.get("schema_version") != 1:
+        raise RuntimeError("OpenVPN 升级事务 manifest 版本不受支持")
+    if Path(str(manifest.get("prefix") or "")) != prefix:
+        raise RuntimeError("OpenVPN 升级事务 prefix 与当前安装路径不一致")
+    if Path(str(manifest.get("releases_dir") or "")) != releases_dir:
+        raise RuntimeError("OpenVPN 升级事务 release 目录与当前配置不一致")
+
+    def release_child(value: object, label: str) -> Path | None:
+        if value in (None, ""):
+            return None
+        candidate = Path(str(value))
+        if candidate.parent != releases_dir:
+            raise RuntimeError(f"OpenVPN 升级事务 {label} 不在 release 目录下: {candidate}")
+        return candidate
+
+    old_target = release_child(manifest.get("old_target"), "old_target")
+    new_release = release_child(manifest.get("new_release"), "new_release")
+    stage = release_child(manifest.get("release_stage"), "release_stage")
+    allowed_paths = {
+        "/etc/systemd/system/openvpn-server@.service",
+        "/etc/systemd/system/openvpn-server@.service.d",
+        "/usr/local/sbin/openvpn",
+    }
+    snapshots = manifest.get("snapshots")
+    if not isinstance(snapshots, list):
+        raise RuntimeError("OpenVPN 升级事务 snapshots 格式错误")
+    for record in snapshots:
+        if not isinstance(record, dict) or record.get("path") not in allowed_paths:
+            raise RuntimeError("OpenVPN 升级事务包含未授权的系统路径快照")
+        backup = record.get("backup")
+        if backup:
+            backup_path = Path(str(backup))
+            if root not in backup_path.parents:
+                raise RuntimeError("OpenVPN 升级事务快照文件不在事务目录内")
+    instances = manifest.get("active_instances", [])
+    if not isinstance(instances, list) or any(
+        not isinstance(name, str) or not name or "/" in name or "\\x00" in name
+        for name in instances
+    ):
+        raise RuntimeError("OpenVPN 升级事务 active_instances 格式错误")
+    return prefix, releases_dir, old_target, new_release
+
+
+def _recover_interrupted_openvpn_upgrade_locked(
+    on_output: _OUTPUT | None = None,
+) -> bool:
+    """恢复被 SIGKILL、断电或进程重启中断的 OpenVPN 升级。调用方必须持有安装锁。"""
+    root = _upgrade_transaction_root()
+    if not root.exists() and not root.is_symlink():
+        return False
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError(f"OpenVPN 升级事务目录不安全: {root}")
+
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        # manifest 原子发布前尚未修改 prefix、systemd 或 CLI；只留下了未完成快照。
+        shutil.rmtree(root)
+        return True
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"OpenVPN 升级事务 manifest 无法读取，保留恢复材料: {root}") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"OpenVPN 升级事务 manifest 格式错误，保留恢复材料: {root}")
+
+    prefix, releases_dir, old_target, new_release = _validate_upgrade_manifest(root, manifest)
+    state = str(manifest.get("state") or "")
+    if state == "committed":
+        stage = manifest.get("release_stage")
+        if stage:
+            _remove_path_strict(Path(str(stage)))
+        shutil.rmtree(root)
+        _emit(on_output, "[恢复] 清理已提交的 OpenVPN 升级事务")
+        return True
+    if state != "switching":
+        raise RuntimeError(f"未知 OpenVPN 升级事务状态: {state!r}，恢复材料保留在 {root}")
+
+    errors: list[str] = []
+
+    def record(step: str, exc: Exception) -> None:
+        errors.append(f"{step}: {exc}")
+        logger.critical("OpenVPN interrupted-upgrade recovery failed step=%s", step, exc_info=True)
+
+    _emit(on_output, "[恢复] 检测到未完成的 OpenVPN 升级，恢复旧版本和 systemd 配置")
+    prefix_was_present = bool(manifest.get("prefix_was_present"))
+    try:
+        if old_target is not None:
+            if old_target.is_dir():
+                if prefix.is_symlink():
+                    current_target = prefix.resolve(strict=False)
+                    if current_target != old_target.resolve():
+                        _atomic_symlink(old_target, prefix)
+                elif not prefix.exists():
+                    _atomic_symlink(old_target, prefix)
+                elif prefix.is_dir():
+                    # 普通目录仍在说明旧目录迁移尚未发生；绝不覆盖它。
+                    pass
+                else:
+                    raise RuntimeError(f"无法安全恢复旧 OpenVPN 入口: {prefix}")
+            elif prefix.is_dir() and not prefix.is_symlink():
+                # 在迁移动作发生前被中断，原目录仍完整。
+                pass
+            else:
+                raise RuntimeError(f"旧 OpenVPN release 不存在，无法恢复: {old_target}")
+        elif not prefix_was_present:
+            if prefix.is_symlink():
+                if new_release is not None and prefix.resolve(strict=False) == new_release:
+                    prefix.unlink()
+                else:
+                    raise RuntimeError(f"首次安装回滚发现入口指向未知目标: {prefix}")
+            elif prefix.exists():
+                raise RuntimeError(f"首次安装回滚拒绝删除非软链接路径: {prefix}")
+        else:
+            raise RuntimeError("事务缺少原 OpenVPN 版本目标，拒绝猜测回滚")
+    except Exception as exc:
+        record("恢复 OpenVPN 稳定入口", exc)
+
+    for snapshot in manifest.get("snapshots", []):
+        try:
+            _restore_path(snapshot)
+        except Exception as exc:
+            record(f"恢复系统路径 {snapshot.get('path')}", exc)
+
+    try:
+        proc = _run(["systemctl", "daemon-reload"], timeout=30)
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or "daemon-reload 失败").strip())
+    except Exception as exc:
+        record("systemd daemon-reload", exc)
+
+    for name in manifest.get("active_instances", []):
+        try:
+            proc = _run(["systemctl", "restart", f"openvpn-server@{name}"], timeout=30)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or proc.stdout or "restart 失败").strip())
+            if not is_instance_active(name):
+                raise RuntimeError("restart 后实例仍未处于 active 状态")
+        except Exception as exc:
+            record(f"恢复原实例 {name}", exc)
+
+    if new_release is not None and new_release.is_dir() and new_release != old_target:
+        try:
+            (new_release / ".nicevpn-failed").write_text(
+                "OpenVPN upgrade was interrupted before commit\\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            record("标记未完成 release", exc)
+
+    stage = manifest.get("release_stage")
+    if stage:
+        try:
+            _remove_path_strict(Path(str(stage)))
+        except Exception as exc:
+            record("清理候选 release staging", exc)
+
+    if errors:
+        raise RuntimeError(
+            "OpenVPN 升级中断恢复不完整，恢复材料已保留在 "
+            f"{root}: " + "；".join(errors)
+        )
+
+    shutil.rmtree(root)
+    _emit(on_output, "[恢复] 已恢复旧 OpenVPN 版本、systemd 配置及原运行实例")
+    return True
+
+
+def recover_interrupted_openvpn_upgrade(
+    on_output: _OUTPUT | None = None,
+) -> bool:
+    """应用启动时调用；存在事务时持有跨进程安装锁完成恢复。"""
+    root = _upgrade_transaction_root()
+    if not root.exists() and not root.is_symlink():
+        return False
+    with openvpn_install_lock():
+        return _recover_interrupted_openvpn_upgrade_locked(on_output)
+
+
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
     """串行执行 OpenVPN 切换，并与 Shell 安装入口共享跨进程锁。"""
     if not _OPENVPN_UPGRADE_APPLY_LOCK.acquire(blocking=False):
