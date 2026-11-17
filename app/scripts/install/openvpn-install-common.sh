@@ -80,6 +80,9 @@ easyrsa_find_existing_binary() {
 # EasyRSA 安装/迁移共享跨进程锁；锁文件放在 /run/lock，不能放进会被移动的安装目录。
 easyrsa_acquire_install_lock() {
     local lock_parent
+    if declare -F nicevpn_ensure_commands >/dev/null 2>&1; then
+        nicevpn_ensure_commands flock util-linux
+    fi
     command -v flock >/dev/null 2>&1 || {
         echo "缺少 flock，无法保证 EasyRSA 安装/迁移互斥" >&2
         return 1
