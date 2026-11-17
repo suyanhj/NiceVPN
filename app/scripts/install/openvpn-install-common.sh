@@ -317,7 +317,10 @@ openvpn_restore_source_transaction() {
         echo "OpenVPN 安装回滚不完整，已保留事务快照: ${root}" >&2
         return 1
     fi
-    rm -rf -- "${root}"
+    if ! rm -rf -- "${root}"; then
+        echo "OpenVPN 已恢复，但清理事务快照失败: ${root}" >&2
+        return 1
+    fi
     _log "已恢复源码安装前的 OpenVPN prefix、systemd 配置和命令入口"
 }
 
