@@ -421,7 +421,7 @@ def test_firewall_priority_drag_reorders_and_saves_in_chrome(
 def test_init_wizard_uses_v2_palette_and_keeps_setup_steps(
     screen: Screen,
 ) -> None:
-    """初始化向导沿用新版黑灰青蓝主题，步骤流程仍可正常渲染。"""
+    """初始化向导使用共享 V2 品牌与 Surface 令牌，步骤流程正常渲染。"""
 
     screen.selenium.set_window_size(1440, 900)
     screen.open("/init")
@@ -429,19 +429,20 @@ def test_init_wizard_uses_v2_palette_and_keeps_setup_steps(
 
     appearance = screen.selenium.execute_script(
         """
-        const brand = document.querySelector('.page-shell--setup .setup-brand');
+        const root = getComputedStyle(document.documentElement);
         const panel = document.querySelector('.page-shell--setup .setup-panel');
         return {
-          brandBackground: brand ? getComputedStyle(brand).backgroundImage : "",
+          brandToken: root.getPropertyValue('--vpn-color-brand').trim(),
+          panelToken: root.getPropertyValue('--vpn-panel').trim(),
           panelBackground: panel ? getComputedStyle(panel).backgroundColor : "",
           stepCount: document.querySelectorAll('.page-shell--setup .step-chip').length,
         };
         """
     )
-    assert "21, 189, 232" in appearance["brandBackground"], appearance
-    assert appearance["panelBackground"] == "rgb(12, 12, 13)", appearance
+    assert appearance["brandToken"] == "#6ea8ff", appearance
+    assert appearance["panelToken"] == "#10151e", appearance
+    assert appearance["panelBackground"] == "rgb(16, 21, 30)", appearance
     assert int(appearance["stepCount"]) >= 1, appearance
-
 
 def test_high_value_dialogs_tabs_and_more_menus_are_reachable(
     screen: Screen,

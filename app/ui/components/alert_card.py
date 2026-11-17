@@ -4,9 +4,9 @@
 from nicegui import ui
 
 _LEVEL_STYLES = {
-    "info": {"accent": "#2dd4bf", "bg": "rgba(45, 212, 191, 0.12)", "icon": "info"},
-    "warning": {"accent": "#f59e0b", "bg": "rgba(245, 158, 11, 0.14)", "icon": "warning"},
-    "error": {"accent": "#fb7185", "bg": "rgba(251, 113, 133, 0.14)", "icon": "error"},
+    "info": {"class": "alert-card__icon-wrap--info", "icon": "info"},
+    "warning": {"class": "alert-card__icon-wrap--warning", "icon": "warning"},
+    "error": {"class": "alert-card__icon-wrap--error", "icon": "error"},
 }
 
 
@@ -16,10 +16,8 @@ def show(level: str, title: str, message: str) -> None:
 
     with ui.card().classes("alert-card w-full"):
         with ui.row().classes("items-start no-wrap w-full gap-md"):
-            with ui.element("div").style(
-                f"width: 40px; height: 40px; border-radius: 12px; "
-                f"background: {style['bg']}; color: {style['accent']}; "
-                "display: flex; align-items: center; justify-content: center;"
+            with ui.element("div").classes(
+                f"alert-card__icon-wrap {style['class']}"
             ):
                 ui.icon(style["icon"]).classes("text-subtitle1")
 
