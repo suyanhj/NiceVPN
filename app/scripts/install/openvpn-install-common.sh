@@ -449,6 +449,25 @@ openvpn_restore_source_transaction() {
     if [[ -f "${root}/systemd-required" ]]; then
         systemctl daemon-reload || failed=1
     fi
+    if [[ -f "${root}/active-instances" ]] && command -v systemctl >/dev/null 2>&1; then
+        local -a saved_active_instances=()
+        while IFS= read -r path; do
+            [[ -n "${path}" ]] || continue
+            case "${path}" in
+                openvpn-server@*.service|openvpn-client@*.service|openvpn@*.service|openvpn-client.service)
+                    saved_active_instances+=("${path}")
+                    ;;
+                *)
+                    echo "安装事务中的活动服务名称无效，拒绝执行: ${path}" >&2
+                    failed=1
+                    ;;
+            esac
+        done < "${root}/active-instances"
+        if ! openvpn_restart_and_validate_units "${saved_active_instances[@]}"; then
+            echo "恢复原 OpenVPN 实例运行状态失败" >&2
+            failed=1
+        fi
+    fi
     if [[ "${failed}" != "0" ]]; then
         echo "OpenVPN 安装回滚不完整，已保留事务快照: ${root}" >&2
         return 1
@@ -508,6 +527,11 @@ openvpn_begin_source_transaction() {
     fi
     if [[ "${INSTALL_SERVER_SYSTEMD}" == "1" || "${INSTALL_CLIENT_SYSTEMD}" == "1" || "${INSTALL_SERVER_OVERRIDE}" == "1" ]]; then
         : > "${root}/systemd-required"
+    fi
+    if (declare -p OPENVPN_ACTIVE_INSTANCES >/dev/null 2>&1); then
+        printf '%s\\n' "${OPENVPN_ACTIVE_INSTANCES[@]}" > "${root}/active-instances"
+    else
+        : > "${root}/active-instances"
     fi
     : > "${root}/ready"
     trap 'openvpn_source_transaction_on_exit "$?"' EXIT
@@ -1005,6 +1029,52 @@ openvpn_capture_active_instances() {
     done < <(awk 'NF {print $1}' <<< "${output}")
 }
 
+# 对已经运行的实例执行 restart，并验证 systemd 最终状态。
+# 逐个处理且不中断剩余实例，便于失败时完整报告并触发事务回滚。
+openvpn_restart_and_validate_units() {
+    local unit failed=0
+    [ "$#" -gt 0 ] || return 0
+    command -v systemctl >/dev/null 2>&1 || {
+        echo "存在运行中的 OpenVPN 实例，但未找到 systemctl" >&2
+        return 1
+    }
+    for unit in "$@"; do
+        case "${unit}" in
+            openvpn-server@*.service|openvpn-client@*.service|openvpn@*.service|openvpn-client.service) ;;
+            *)
+                echo "拒绝操作未知的 OpenVPN systemd unit: ${unit}" >&2
+                failed=1
+                continue
+                ;;
+        esac
+        if ! systemctl restart "${unit}"; then
+            echo "重启 OpenVPN 实例失败: ${unit}" >&2
+            failed=1
+            continue
+        fi
+        if ! systemctl is-active --quiet "${unit}"; then
+            echo "OpenVPN 实例重启后未处于 active 状态: ${unit}" >&2
+            failed=1
+        else
+            _log "OpenVPN 实例运行状态校验通过: ${unit}"
+        fi
+    done
+    [ "${failed}" = "0" ]
+}
+
+openvpn_validate_active_instances() {
+    local unit failed=0
+    [ "$#" -gt 0 ] || return 0
+    command -v systemctl >/dev/null 2>&1 || return 1
+    for unit in "$@"; do
+        if ! systemctl is-active --quiet "${unit}"; then
+            echo "OpenVPN 实例未处于 active 状态: ${unit}" >&2
+            failed=1
+        fi
+    done
+    [ "${failed}" = "0" ]
+}
+
 openvpn_validate_systemd_unit() {
     local unit="${1:?必须指定 systemd unit}"
     local output unit_state
@@ -1104,6 +1174,12 @@ _openvpn_post_install_validate_impl() {
             echo "OpenVPN server systemd override 安装后不存在或内容不完整" >&2
             return 1
         fi
+    fi
+
+    if [ "${OPENVPN_INSTALL_MODE:-}" = "source" ]; then
+        openvpn_restart_and_validate_units "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
+    else
+        openvpn_validate_active_instances "${OPENVPN_ACTIVE_INSTANCES[@]}" || return 1
     fi
 }
 
