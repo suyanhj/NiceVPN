@@ -581,24 +581,79 @@ def cleanup_staged_candidate(stage: dict | None) -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _release_binary(release_dir: Path) -> Path:
+    """返回源码 release 中的 OpenVPN binary。"""
+    for candidate in (release_dir / "sbin" / "openvpn", release_dir / "bin" / "openvpn"):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    raise FileNotFoundError(f"OpenVPN release 缺少可执行 binary: {release_dir}")
+
+
+def _release_id(version: str, binary: str | Path) -> str:
+    """版本号 + binary SHA-256 前缀，避免同版本不同构建相互覆盖。"""
+    digest = hashlib.sha256()
+    with Path(binary).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return f"{version}-{digest.hexdigest()[:12]}"
+
+
+def _atomic_symlink(target: Path, link_path: Path) -> None:
+    """在同一目录创建临时软链接并原子替换稳定入口。"""
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = link_path.parent / f".{link_path.name}.link-{uuid.uuid4().hex[:12]}"
+    try:
+        temporary.symlink_to(str(target))
+        os.replace(temporary, link_path)
+    finally:
+        if temporary.is_symlink() or temporary.exists():
+            temporary.unlink(missing_ok=True)
+
+
+def _migrate_legacy_prefix(prefix: Path, releases_dir: Path) -> Path | None:
+    """把历史普通 prefix 迁入 release 仓库；返回切换前的版本目录。"""
+    if prefix.is_symlink():
+        target = prefix.resolve(strict=True)
+        if not target.is_dir():
+            raise RuntimeError(f"OpenVPN 稳定入口没有指向目录: {prefix} -> {target}")
+        return target
+    if not prefix.exists():
+        return None
+    if not prefix.is_dir():
+        raise RuntimeError(f"OpenVPN 安装入口不是目录或软链接，拒绝迁移: {prefix}")
+
+    binary = _release_binary(prefix)
+    version = _openvpn_version(binary)
+    release_dir = releases_dir / f"legacy-{_release_id(version, binary)}"
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    if release_dir.exists() or release_dir.is_symlink():
+        raise RuntimeError(f"旧 OpenVPN 迁移目标已存在，拒绝覆盖: {release_dir}")
+
+    os.replace(prefix, release_dir)
+    try:
+        _atomic_symlink(release_dir, prefix)
+    except Exception:
+        if not prefix.exists() and not prefix.is_symlink():
+            os.replace(release_dir, prefix)
+        raise
+    logger.info("Migrated legacy OpenVPN prefix %s -> %s", prefix, release_dir)
+    return release_dir
+
+
 def _recover_interrupted_prefix_switch(prefix: Path) -> None:
-    """恢复进程被强制终止后留下的 prefix 备份；不自动删除可回滚的旧版本。"""
+    """恢复旧版目录备份；新版切换只更新软链接，release 本身不再移动。"""
     parent = prefix.parent
     if not parent.is_dir():
         return
 
     if not prefix.exists() and not prefix.is_symlink():
         candidates: list[tuple[int, Path, Path | None]] = []
-
-        # upgrade.py 的 old_tree：<prefix>.nicevpn-old-<uuid>
         for candidate in parent.glob(f"{prefix.name}.nicevpn-old-*"):
             if candidate.is_dir() or candidate.is_symlink():
                 try:
                     candidates.append((candidate.lstat().st_ctime_ns, candidate, None))
                 except OSError:
                     continue
-
-        # Shell 初次安装/升级的备份：.<prefix>.backup.<time>.<pid>/<prefix>
         for backup_root in parent.glob(f".{prefix.name}.backup.*"):
             candidate = backup_root / prefix.name
             if candidate.is_dir() and not candidate.is_symlink():
@@ -606,7 +661,6 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
                     candidates.append((candidate.lstat().st_ctime_ns, candidate, backup_root))
                 except OSError:
                     continue
-
         if candidates:
             _, restore_path, backup_root = max(candidates, key=lambda item: item[0])
             os.replace(restore_path, prefix)
@@ -615,24 +669,39 @@ def _recover_interrupted_prefix_switch(prefix: Path) -> None:
                     backup_root.rmdir()
                 except OSError:
                     pass
-            logger.warning(
-                "Recovered interrupted OpenVPN prefix switch: %s -> %s",
-                restore_path,
-                prefix,
-            )
+            logger.warning("Recovered legacy OpenVPN prefix backup: %s -> %s", restore_path, prefix)
 
-    # 未切换的新候选目录不再被引用，可以安全清理；old_tree 始终保留。
+    # 仅源码安装允许从 release 仓库恢复缺失入口，绝不覆盖系统包安装。
+    if not prefix.exists() and not prefix.is_symlink():
+        try:
+            current = detect_openvpn()
+            source_mode = current.get("install_mode") == "source"
+        except Exception:
+            source_mode = False
+        releases_dir = Path(OPENVPN_RELEASES_DIR)
+        if source_mode and releases_dir.is_dir():
+            candidates: list[tuple[int, Path]] = []
+            for candidate in releases_dir.iterdir():
+                if not candidate.is_dir() or candidate.name.startswith("."):
+                    continue
+                try:
+                    _release_binary(candidate)
+                    candidates.append((candidate.stat().st_mtime_ns, candidate))
+                except (OSError, FileNotFoundError):
+                    continue
+            if candidates:
+                _, latest = max(candidates, key=lambda item: item[0])
+                _atomic_symlink(latest, prefix)
+                logger.warning("Recovered missing OpenVPN stable link: %s -> %s", prefix, latest)
+
     stale_candidates = list(parent.glob(f"{prefix.name}.nicevpn-new-*"))
     stale_candidates.extend(parent.glob(f".{prefix.name}.stage.*"))
+    stale_candidates.extend(Path(OPENVPN_RELEASES_DIR).glob(".stage.*"))
     for candidate in stale_candidates:
         try:
             _remove_path_strict(candidate)
         except Exception:
-            logger.warning(
-                "Unable to clean stale OpenVPN candidate tree %s",
-                candidate,
-                exc_info=True,
-            )
+            logger.warning("Unable to clean stale OpenVPN candidate tree %s", candidate, exc_info=True)
 
 
 def _snapshot_path(path: Path, root: Path, name: str) -> dict:
