@@ -124,7 +124,7 @@ def test_common_script_supports_non_destructive_staging_builds() -> None:
     assert 'OPENVPN_CREATE_SYMLINK:=1' in common
     assert 'OPENVPN_FORCE_SOURCE:=0' in common
     assert 'OPENVPN_STAGE_ONLY:=0' in common
-    assert 'if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]' in common
+    assert 'if [[ "${OPENVPN_CREATE_SYMLINK}" == "1" ]]' in common
 
     for name in ("openvpn-install-debian.sh", "openvpn-install-rhel.sh"):
         entry = _read_install_script_text(name)
@@ -248,6 +248,9 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
     dirname_bin = shutil.which("dirname")
     if dirname_bin:
         (bin_dir / "dirname").symlink_to(dirname_bin)
+    readlink_bin = shutil.which("readlink")
+    if readlink_bin:
+        (bin_dir / "readlink").symlink_to(readlink_bin)
     openssl = bin_dir / "openssl"
     openssl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     openssl.chmod(0o755)
