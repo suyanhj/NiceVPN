@@ -205,12 +205,17 @@ def validate_custom_path(path: str) -> dict:
 def _find_installed_executable(
     search_paths: Iterable[str],
     command: str,
+    *,
+    allow_path: bool = True,
 ) -> str | None:
     """优先复用预设路径，最后由标准库从 PATH 查找，避免调用 which/bash。"""
     for candidate in search_paths:
         path = Path(candidate)
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
+
+    if not allow_path:
+        return None
 
     found = shutil.which(command)
     if found:
@@ -255,7 +260,9 @@ def _find_openvpn_binary(config: dict | None = None) -> str | None:
         if configured:
             candidates.insert(0, configured)
 
-    found = _find_installed_executable(candidates, "openvpn")
+    found = _find_installed_executable(
+        candidates, "openvpn", allow_path=mode not in {"custom", "source", "package"}
+    )
     if found:
         return found
 
