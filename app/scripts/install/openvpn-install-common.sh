@@ -1104,7 +1104,10 @@ openvpn_validate_systemd_unit() {
     # systemd-analyze 检查 unit 与其 drop-in 的语法和依赖；精简系统没有该命令时，
     # 仍保留 systemctl 的基础校验。
     if command -v systemd-analyze >/dev/null 2>&1; then
-        fragment_path="$(systemctl show --property=FragmentPath --value "${unit}" 2>/dev/null || true)"
+        fragment_path="/etc/systemd/system/${unit}"
+        if [ ! -f "${fragment_path}" ]; then
+            fragment_path="$(systemctl show --property=FragmentPath --value "${unit}" 2>/dev/null || true)"
+        fi
         if [ -n "${fragment_path}" ] && [ -f "${fragment_path}" ]; then
             systemd-analyze verify "${fragment_path}" || {
                 echo "systemd unit 语法/依赖校验失败: ${unit} (${fragment_path})" >&2
@@ -1166,7 +1169,7 @@ _openvpn_post_install_validate_impl() {
         echo "OpenVPN 安装后版本不满足要求：${version} < ${OPENVPN_MIN_VERSION}，binary=${binary}" >&2
         return 1
     }
-    if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
+    if [ "${OPENVPN_INSTALL_MODE:-}" = "source" ]; then
         expected_version="${OPENVPN_TAG#v}"
         [ "${version}" = "${expected_version}" ] || {
             echo "OpenVPN 源码安装版本不匹配：期望 ${expected_version}，实际 ${version}" >&2
