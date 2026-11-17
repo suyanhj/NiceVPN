@@ -237,7 +237,8 @@ def test_legacy_prefix_migration_keeps_stable_path_and_old_release(
     assert previous.name.startswith("legacy-2.7.8-")
     assert prefix.is_symlink()
     assert (prefix / "sbin" / "openvpn").is_file()
-    assert binary != prefix / "sbin" / "openvpn"
+    assert (previous / "sbin" / "openvpn").is_file()
+    assert prefix.resolve() == previous
 
 
 def test_atomic_release_link_switch_does_not_move_previous_release(
