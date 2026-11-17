@@ -943,33 +943,19 @@ openvpn_post_compile_setup() {
 OPENVPN_ACTIVE_INSTANCES=()
 OPENVPN_LAST_BACKUP_PREFIX=""
 
-# 只有源码 prefix 存在旧版本备份时才回滚；新装和系统包安装不会误删文件。
+# 回滚只切换稳定软链接；新旧版本目录均保留，绝不移动或删除 release。
 openvpn_rollback_previous_prefix() {
     local reason="${1:-安装后校验失败}"
     local backup_prefix="${OPENVPN_LAST_BACKUP_PREFIX:-}"
-    local failed_prefix
     [ -n "${backup_prefix}" ] && [ -d "${backup_prefix}" ] || return 0
 
-    failed_prefix="${OPENVPN_PREFIX}.failed.$(date +%s).${BASHPID}"
-    if [ -e "${OPENVPN_PREFIX}" ] || [ -L "${OPENVPN_PREFIX}" ]; then
-        if ! mv -T -- "${OPENVPN_PREFIX}" "${failed_prefix}"; then
-            _log "无法暂存失败的新 OpenVPN prefix，旧版本仍保留在 ${backup_prefix}"
-            return 1
-        fi
+    if ! nicevpn_atomic_symlink "${backup_prefix}" "${OPENVPN_PREFIX}"; then
+        _log "旧 OpenVPN release 回滚失败，旧版本仍保留在 ${backup_prefix}"
+        return 1
     fi
-
-    if mv -T -- "${backup_prefix}" "${OPENVPN_PREFIX}"; then
-        rmdir -- "$(dirname -- "${backup_prefix}")" 2>/dev/null || true
-        OPENVPN_LAST_BACKUP_PREFIX=""
-        _log "${reason}，已恢复旧 OpenVPN prefix；失败版本保留在 ${failed_prefix}"
-        return 0
-    fi
-
-    if [ -d "${failed_prefix}" ] && [ ! -e "${OPENVPN_PREFIX}" ]; then
-        mv -T -- "${failed_prefix}" "${OPENVPN_PREFIX}" || true
-    fi
-    _log "旧 OpenVPN prefix 恢复失败，备份仍保留在 ${backup_prefix}"
-    return 1
+    OPENVPN_LAST_BACKUP_PREFIX=""
+    _log "${reason}，已将稳定入口恢复到旧版本: ${backup_prefix}"
+    return 0
 }
 
 openvpn_acquire_install_lock() {
