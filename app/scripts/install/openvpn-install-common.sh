@@ -13,11 +13,13 @@ fi
 : "${OPENVPN_TAG:=v2.7.0}"
 : "${OPENVPN_ASSET:=openvpn-2.7.0.tar.gz}"
 : "${OPENVPN_PREFIX:=/opt/openvpn}"
+: "${OPENVPN_RELEASES_DIR:=/opt/openvpn-releases}"
 : "${OPENVPN_SBIN_DIR:=${OPENVPN_PREFIX}/sbin}"
 : "${OPENVPN_BIN:=${OPENVPN_SBIN_DIR}/openvpn}"
 : "${OPENVPN_CACHE:=/tmp/${OPENVPN_ASSET}}"
 : "${OPENVPN_SRC_ROOT:=/tmp/ovpn-mgmt-openvpn-src}"
-: "${EASYRSA_INSTALL_DIR:=/opt/easy-rsa}"
+: "${EASYRSA_INSTALL_DIR:=/opt/ezrsa}"
+: "${EASYRSA_LEGACY_INSTALL_DIR:=/opt/easy-rsa}"
 : "${EASYRSA_TAG:=v3.2.4}"
 : "${EASYRSA_ASSET:=EasyRSA-3.2.4.tgz}"
 : "${EASYRSA_CACHE:=/tmp/${EASYRSA_ASSET}}"
@@ -27,6 +29,9 @@ fi
 : "${INSTALL_SERVER_OVERRIDE:=0}"
 : "${OPENVPN_CREATE_SYMLINK:=1}"
 : "${OPENVPN_FORCE_SOURCE:=0}"
+: "${OPENVPN_STAGE_ONLY:=0}"
+: "${OPENVPN_STAGE_DIR:=}"
+: "${OPENVPN_INSTALL_MODE_FILE:=/etc/openvpn/mgmt/openvpn-install-mode}"
 : "${OPENVPN_DCO_MIN_LIBNL_VERSION:=3.4.0}"
 : "${EASYRSA_FORCE_INSTALL:=0}"
 
@@ -47,6 +52,8 @@ easyrsa_find_existing_binary() {
     local -a candidates=(
         "${EASYRSA_INSTALL_DIR}/current/easyrsa"
         "${EASYRSA_INSTALL_DIR}/easyrsa"
+        "${EASYRSA_LEGACY_INSTALL_DIR}/current/easyrsa"
+        "${EASYRSA_LEGACY_INSTALL_DIR}/easyrsa"
         "${OPENVPN_PREFIX}/share/easy-rsa/easyrsa"
         "${OPENVPN_PREFIX}/share/easy-rsa/3/easyrsa"
         "/usr/share/easy-rsa/easyrsa"
@@ -69,8 +76,36 @@ easyrsa_find_existing_binary() {
     return 1
 }
 
+# 将旧版 /opt/easy-rsa 迁移到新目录；原路径保留兼容软链接。
+# 若新旧目录同时存在，绝不合并或覆盖，优先使用新目录并保留旧目录。
+easyrsa_migrate_legacy_install() {
+    local legacy="${EASYRSA_LEGACY_INSTALL_DIR}" resolved
+    [[ "${legacy}" != "${EASYRSA_INSTALL_DIR}" ]] || return 0
+    if [[ -L "${legacy}" ]]; then
+        resolved="$(readlink -f -- "${legacy}" 2>/dev/null || true)"
+        [[ "${resolved}" == "${EASYRSA_INSTALL_DIR}" ]] && return 0
+        return 0
+    fi
+    [[ -d "${legacy}" ]] || return 0
+    if [[ -e "${EASYRSA_INSTALL_DIR}" || -L "${EASYRSA_INSTALL_DIR}" ]]; then
+        _log "检测到新旧 EasyRSA 目录同时存在，保留两者不做覆盖: ${legacy} / ${EASYRSA_INSTALL_DIR}"
+        return 0
+    fi
+
+    mkdir -p -- "$(dirname -- "${EASYRSA_INSTALL_DIR}")"
+    mv -T -- "${legacy}" "${EASYRSA_INSTALL_DIR}" || {
+        echo "迁移旧 EasyRSA 目录失败: ${legacy} -> ${EASYRSA_INSTALL_DIR}" >&2
+        return 1
+    }
+    if ! nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
+        _log "警告：EasyRSA 已迁移到 ${EASYRSA_INSTALL_DIR}，但无法创建旧路径兼容链接 ${legacy}"
+    fi
+    _log "已将旧 EasyRSA 目录迁移到 ${EASYRSA_INSTALL_DIR}，旧路径保留兼容入口"
+}
+
 # 已有 EasyRSA 默认复用；只有显式 EASYRSA_FORCE_INSTALL=1 才允许覆盖当前安装入口。
 easyrsa_reuse_existing() {
+    easyrsa_migrate_legacy_install || return 1
     [[ "${INSTALL_EASYRSA}" == "1" ]] || return 0
     [[ "${EASYRSA_FORCE_INSTALL}" == "1" ]] && return 0
 
@@ -643,6 +678,7 @@ easyrsa_validate_binary() {
 # 使用不可变版本目录；先完整解压、校验，再原子切换 current。
 # 旧版本不覆盖、不提前删除，更新中断时 current 始终指向原版本。
 easyrsa_download_and_install() (
+    easyrsa_migrate_legacy_install
     easyrsa_reuse_existing
     [ "${INSTALL_EASYRSA}" = "1" ] || exit 0
     : "${EASYRSA_DOWNLOAD_URLS:?必须设置 EASYRSA_DOWNLOAD_URLS}"
