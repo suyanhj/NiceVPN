@@ -3,6 +3,7 @@
 
 import os
 import shlex
+from pathlib import Path
 import shutil
 import subprocess
 
@@ -189,7 +190,7 @@ def test_stage_source_build_uses_distribution_install_entry(
     assert env["OPENVPN_PREFIX"] == installer_mod.OPENVPN_INSTALL_PREFIX
     assert env["OPENVPN_STAGE_ONLY"] == "1"
     assert env["OPENVPN_STAGE_DIR"] == str(prefix)
-    assert env["OPENVPN_BIN"] == str(__import__("pathlib").Path(installer_mod.OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn")
+    assert env["OPENVPN_BIN"] == str(Path(installer_mod.OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn")
     assert result["binary"] == str(prefix / "sbin" / "openvpn")
 
 
