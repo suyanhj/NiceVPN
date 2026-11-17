@@ -216,7 +216,7 @@ def test_upgrade_module_does_not_scan_existing_client_profiles() -> None:
 def _write_openvpn_binary(path: Path, version: str = "2.7.8") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"#!/bin/sh\\nprintf 'OpenVPN {version}\\n'\\n",
+        f"#!/bin/sh\nprintf 'OpenVPN {version}\n'\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
