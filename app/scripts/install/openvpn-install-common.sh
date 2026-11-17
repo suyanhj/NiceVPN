@@ -226,6 +226,9 @@ openvpn_source_transaction_paths() {
         /etc/systemd/system/openvpn-client@.service \
         /etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf \
         /usr/local/sbin/openvpn
+    if [[ "${INSTALL_EASYRSA}" == "1" ]]; then
+        printf '%s\n' "${EASYRSA_INSTALL_DIR}/current" /usr/local/bin/easyrsa
+    fi
 }
 
 # 失败时恢复原 prefix + systemd 文件 + CLI symlink；独立恢复各文件，
@@ -280,7 +283,10 @@ openvpn_restore_source_transaction() {
     fi
 
     while IFS= read -r path; do
-        if [[ -f "${root}/${idx}.missing" ]]; then
+        if [[ -f "${root}/${idx}.protected" ]]; then
+            # 原有 current 是实体目录；安装器不会将其替换为 symlink。
+            :
+        elif [[ -f "${root}/${idx}.missing" ]]; then
             if [[ -f "${path}" || -L "${path}" ]]; then
                 rm -f -- "${path}" || failed=1
             elif [[ -e "${path}" ]]; then
@@ -302,7 +308,7 @@ openvpn_restore_source_transaction() {
             failed=1
         fi
         idx=$((idx+1))
-    done < <(openvpn_source_transaction_paths)
+    done < "${root}/paths"
 
     if [[ -f "${root}/systemd-required" ]]; then
         systemctl daemon-reload || failed=1
@@ -332,9 +338,13 @@ openvpn_begin_source_transaction() {
     openvpn_recover_source_install || return 1
     root="$(openvpn_source_transaction_root)" || return 1
     mkdir -m 0700 -- "${root}" || return 1
+    openvpn_source_transaction_paths > "${root}/paths" || return 1
     while IFS= read -r path; do
         if [[ -L "${path}" || -f "${path}" ]]; then
             cp -a -- "${path}" "${root}/${idx}" || return 1
+        elif [[ "${path}" == "${EASYRSA_INSTALL_DIR}/current" && -d "${path}" ]]; then
+            # 历史安装可能把 current 设为实体目录；不会被原子 symlink 改写。
+            : > "${root}/${idx}.protected"
         elif [[ -e "${path}" ]]; then
             echo "系统路径不是普通文件或 symlink，拒绝备份: ${path}" >&2
             return 1
