@@ -704,7 +704,14 @@ def _restore_path(record: dict) -> None:
             raise
     finally:
         if not preserve_previous:
-            shutil.rmtree(temp_root, ignore_errors=True)
+            try:
+                shutil.rmtree(temp_root)
+            except OSError:
+                logger.warning(
+                    "清理 OpenVPN systemd 恢复临时目录失败: %s",
+                    temp_root,
+                    exc_info=True,
+                )
 
 
 def apply_staged_upgrade(stage: dict, on_output: _OUTPUT | None = None) -> dict:
