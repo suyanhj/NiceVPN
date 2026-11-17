@@ -347,7 +347,8 @@ openvpn_source_transaction_paths() {
         /etc/systemd/system/openvpn-server@.service \
         /etc/systemd/system/openvpn-client@.service \
         /etc/systemd/system/openvpn-server@.service.d/10-ovpn-mgmt.conf \
-        /usr/local/sbin/openvpn
+        /usr/local/sbin/openvpn \
+        "${OPENVPN_INSTALL_MODE_FILE}"
     if [[ "${INSTALL_EASYRSA}" == "1" ]]; then
         printf '%s\n' "${EASYRSA_INSTALL_DIR}/current" /usr/local/bin/easyrsa
     fi
