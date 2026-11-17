@@ -211,7 +211,7 @@ EOF
     fi
 }
 
-# 校验 current 入口和目录结构；不自动迁移旧布局。
+# 校验 current 入口和版本目录结构；旧目录迁移由启动检查入口统一处理。
 openvpn_recover_source_install() {
     local root="${OPENVPN_ROOT_DIR}" current="${OPENVPN_PREFIX}"
     local target part stage_root
@@ -399,43 +399,42 @@ openvpn_update_legacy_paths() {
     local legacy_easy_root="${EASYRSA_LEGACY_INSTALL_DIR%/}"
     local easyrsa_releases="${EASYRSA_INSTALL_DIR%/}/releases"
 
-    # 只有新入口确实存在时才改路径，避免把失效服务指向不存在的 binary。
     if [[ -x "${current}/sbin/openvpn" || -x "${current}/bin/openvpn" ]]; then
         has_openvpn=1
     fi
 
     # 只改 NiceVPN 管理的 systemd 模板文件，不碰发行版包管理器的 unit。
     if [[ "${has_openvpn}" == "1" ]]; then
-    for unit in \
-        "${OPENVPN_SYSTEMD_UNIT_DIR}/openvpn-server@.service" \
-        "${OPENVPN_SYSTEMD_UNIT_DIR}/openvpn-client@.service"; do
-        [[ -f "${unit}" && ! -L "${unit}" ]] || continue
-        if grep -Fq "${root}/sbin/" "${unit}" || grep -Fq "${root}/bin/" "${unit}"; then
-            nicevpn_atomic_write_command "${unit}" 0644 sed \
-                -e "s#${root}/sbin/#${current}/sbin/#g" \
-                -e "s#${root}/bin/#${current}/bin/#g" \
-                "${unit}" || return 1
-            changed=1
-            _log "已更新 systemd 二进制路径: ${unit}"
+        for unit in \
+            "${OPENVPN_SYSTEMD_UNIT_DIR}/openvpn-server@.service" \
+            "${OPENVPN_SYSTEMD_UNIT_DIR}/openvpn-client@.service"; do
+            [[ -f "${unit}" && ! -L "${unit}" ]] || continue
+            if grep -Fq "${root}/sbin/" "${unit}" || grep -Fq "${root}/bin/" "${unit}"; then
+                nicevpn_atomic_write_command "${unit}" 0644 sed \
+                    -e "s#${root}/sbin/#${current}/sbin/#g" \
+                    -e "s#${root}/bin/#${current}/bin/#g" \
+                    "${unit}" || return 1
+                changed=1
+                _log "已更新 systemd 二进制路径: ${unit}"
+            fi
+        done
+        if [[ "${changed}" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload
         fi
-    done
-    if [[ "${changed}" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload
-    fi
 
-    if [[ -L "${OPENVPN_CLI_LINK}" ]]; then
-        target="$(readlink -- "${OPENVPN_CLI_LINK}")"
-        case "${target}" in
-            "${root}/sbin/openvpn")
-                [[ -x "${current}/sbin/openvpn" ]] &&
-                    nicevpn_atomic_symlink "${current}/sbin/openvpn" "${OPENVPN_CLI_LINK}" || return 1
-                ;;
-            "${root}/bin/openvpn")
-                [[ -x "${current}/bin/openvpn" ]] &&
-                    nicevpn_atomic_symlink "${current}/bin/openvpn" "${OPENVPN_CLI_LINK}" || return 1
-                ;;
-        esac
-    fi
+        if [[ -L "${OPENVPN_CLI_LINK}" ]]; then
+            target="$(readlink -- "${OPENVPN_CLI_LINK}")"
+            case "${target}" in
+                "${root}/sbin/openvpn")
+                    [[ -x "${current}/sbin/openvpn" ]] &&
+                        nicevpn_atomic_symlink "${current}/sbin/openvpn" "${OPENVPN_CLI_LINK}" || return 1
+                    ;;
+                "${root}/bin/openvpn")
+                    [[ -x "${current}/bin/openvpn" ]] &&
+                        nicevpn_atomic_symlink "${current}/bin/openvpn" "${OPENVPN_CLI_LINK}" || return 1
+                    ;;
+            esac
+        fi
     fi
 
     if [[ -L "${EASYRSA_CLI_LINK}" && -x "${EASYRSA_INSTALL_DIR}/current/easyrsa" ]]; then

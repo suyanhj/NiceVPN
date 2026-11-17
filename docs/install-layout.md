@@ -30,7 +30,9 @@
 - 同一版本目录已存在时会校验版本并复用；不会静默覆盖已有目录。
 - 系统包安装仍由 apt/dnf/yum 管理，不会切换到源码版本。
 
-NiceVPN 启动时会调用共享 Shell 检查并迁移旧布局：旧 `/opt/openvpn/{sbin,lib,libexec,include,share}` 会按二进制版本整理到 `/opt/openvpn/<version>/`，再创建 `current -> <version>`；旧 `/opt/easy-rsa/releases/<version>/` 会迁移到 `/opt/ezrsa/<version>/`，并重建相对 `current` 软链接。迁移同时更新 NiceVPN 管理的 systemd unit、CLI 软链接和系统设置中保存的旧可执行文件路径。新旧目录同时存在或目标冲突时会停止迁移并保留原目录，不覆盖已有版本。\n\n## 关键固定路径
+NiceVPN 启动时会调用共享 Shell 检查并迁移旧布局：旧 `/opt/openvpn/{sbin,lib,libexec,include,share}` 会按二进制版本整理到 `/opt/openvpn/<version>/`，再创建 `current -> <version>`；旧 `/opt/easy-rsa/releases/<version>/` 会迁移到 `/opt/ezrsa/<version>/`，并重建相对 `current` 软链接。迁移同时更新 NiceVPN 管理的 systemd unit、CLI 软链接和系统设置中保存的旧可执行文件路径。目标目录冲突或旧目录结构异常时会跳过对应迁移并保留原目录，不覆盖已有版本。
+
+## 关键固定路径
 
 | 组件 | 固定入口 | 版本目录 |
 |---|---|---|
