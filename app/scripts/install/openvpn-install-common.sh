@@ -117,7 +117,11 @@ easyrsa_migrate_legacy_install_impl() {
         return 1
     }
     if ! nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
-        _log "警告：EasyRSA 已迁移到 ${EASYRSA_INSTALL_DIR}，但无法创建旧路径兼容链接 ${legacy}"
+        echo "无法创建 EasyRSA 旧路径兼容链接，尝试恢复原目录: ${legacy}" >&2
+        if ! mv -T -- "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
+            echo "严重：EasyRSA 兼容链接和原目录恢复均失败；新目录保留在 ${EASYRSA_INSTALL_DIR}" >&2
+        fi
+        return 1
     fi
     _log "已将旧 EasyRSA 目录迁移到 ${EASYRSA_INSTALL_DIR}，旧路径保留兼容入口"
 }
