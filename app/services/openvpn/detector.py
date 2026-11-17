@@ -221,7 +221,7 @@ def _find_installed_executable(
     if found:
         path = Path(found)
         if path.is_file() and os.access(path, os.X_OK):
-            return str(path.resolve())
+            return str(path)
     return None
 
 
