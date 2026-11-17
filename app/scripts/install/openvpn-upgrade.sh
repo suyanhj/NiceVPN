@@ -75,6 +75,7 @@ trap openvpn_upgrade_exit EXIT
 
 openvpn_acquire_install_lock
 openvpn_restore_source_transaction
+openvpn_recover_source_install
 
 prefix_binary="$(openvpn_find_binary "${OPENVPN_PREFIX}")" || {
     echo "当前 OpenVPN 安装入口缺少可执行 binary: ${OPENVPN_PREFIX}" >&2
