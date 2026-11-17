@@ -99,30 +99,59 @@ easyrsa_acquire_install_lock() {
 # 调用方必须持有 EasyRSA 全局锁。
 easyrsa_migrate_legacy_install_impl() {
     local legacy="${EASYRSA_LEGACY_INSTALL_DIR}" resolved
-    [[ "${legacy}" != "${EASYRSA_INSTALL_DIR}" ]] || return 0
+    local migration_marker
+    migration_marker="$(dirname -- "${EASYRSA_INSTALL_DIR}")/.$(basename -- "${EASYRSA_INSTALL_DIR}")-legacy-migration"
+
     if [[ -L "${legacy}" ]]; then
         resolved="$(readlink -f -- "${legacy}" 2>/dev/null || true)"
-        [[ "${resolved}" == "${EASYRSA_INSTALL_DIR}" ]] && return 0
-        return 0
-    fi
-    [[ -d "${legacy}" ]] || return 0
-    if [[ -e "${EASYRSA_INSTALL_DIR}" || -L "${EASYRSA_INSTALL_DIR}" ]]; then
-        _log "检测到新旧 EasyRSA 目录同时存在，保留两者不做覆盖: ${legacy} / ${EASYRSA_INSTALL_DIR}"
+        if [[ "${resolved}" == "${EASYRSA_INSTALL_DIR}" ]]; then
+            rm -f -- "${migration_marker}"
+        fi
         return 0
     fi
 
+    if [[ -e "${legacy}" && ( -e "${EASYRSA_INSTALL_DIR}" || -L "${EASYRSA_INSTALL_DIR}" ) ]]; then
+        _log "检测到新旧 EasyRSA 目录同时存在，保留两者不做覆盖: ${legacy} / ${EASYRSA_INSTALL_DIR}"
+        rm -f -- "${migration_marker}"
+        return 0
+    fi
+
+    if [[ -f "${migration_marker}" && ! -e "${legacy}" && -d "${EASYRSA_INSTALL_DIR}" ]]; then
+        # 上次在 mv 后、兼容链接创建前中断；新目录完整保留，只补回旧路径入口。
+        nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}" || {
+            echo "恢复 EasyRSA 旧路径兼容链接失败: ${legacy}" >&2
+            return 1
+        }
+        rm -f -- "${migration_marker}"
+        _log "已恢复中断的 EasyRSA 兼容链接: ${legacy} -> ${EASYRSA_INSTALL_DIR}"
+        return 0
+    fi
+
+    [[ -d "${legacy}" ]] || {
+        if [[ -f "${migration_marker}" ]]; then
+            echo "EasyRSA 迁移标记存在，但新旧目录均无法恢复: ${migration_marker}" >&2
+            return 1
+        fi
+        return 0
+    }
+
     mkdir -p -- "$(dirname -- "${EASYRSA_INSTALL_DIR}")"
+    printf '%s\n' "${legacy}" | nicevpn_atomic_write_stdin "${migration_marker}" 0600 || return 1
     mv -T -- "${legacy}" "${EASYRSA_INSTALL_DIR}" || {
         echo "迁移旧 EasyRSA 目录失败: ${legacy} -> ${EASYRSA_INSTALL_DIR}" >&2
+        rm -f -- "${migration_marker}"
         return 1
     }
     if ! nicevpn_atomic_symlink "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
         echo "无法创建 EasyRSA 旧路径兼容链接，尝试恢复原目录: ${legacy}" >&2
-        if ! mv -T -- "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
-            echo "严重：EasyRSA 兼容链接和原目录恢复均失败；新目录保留在 ${EASYRSA_INSTALL_DIR}" >&2
+        if mv -T -- "${EASYRSA_INSTALL_DIR}" "${legacy}"; then
+            rm -f -- "${migration_marker}"
+        else
+            echo "严重：EasyRSA 兼容链接和原目录恢复均失败；迁移标记保留在 ${migration_marker}" >&2
         fi
         return 1
     fi
+    rm -f -- "${migration_marker}"
     _log "已将旧 EasyRSA 目录迁移到 ${EASYRSA_INSTALL_DIR}，旧路径保留兼容入口"
 }
 
