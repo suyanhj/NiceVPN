@@ -45,7 +45,9 @@ def adapt_peer_view(
         str(tags.get(tag_id) or f"{tag_id[:8]}…")
         for tag_id in visible_tag_ids
     ]
-    if not visible_group_ids and not visible_tag_ids:
+    if row.get("mesh_route_push_disabled", False):
+        mesh_label = "不推送路由"
+    elif not visible_group_ids and not visible_tag_ids:
         mesh_label = "全部用户"
     elif visible_group_ids and not visible_tag_ids:
         # 保留旧版仅组范围的展示文案，避免无关 UI 回归。

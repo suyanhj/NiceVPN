@@ -42,6 +42,10 @@ class PeerInstance(BaseModel):
         default="",
         description="写入本机 iptables -m comment 的说明；空则使用系统默认 tag（ovpn-mgmt-center-peer…）",
     )
+    mesh_route_push_disabled: bool = Field(
+        default=False,
+        description="为 True 时不向其它 VPN 用户 CCD 推送本对端 LAN；不改变本站点 iroute、中心防火墙或已选组/标签",
+    )
     mesh_route_visible_group_ids: list[str] = Field(
         default_factory=list,
         description="mesh push 路由允许访问本对端 LAN 的组 ID；与标签条件为 OR",

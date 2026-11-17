@@ -133,12 +133,12 @@ def _vpn_forward_wire_snapshot(row: dict) -> tuple:
 
 
 def _mesh_push_wire_snapshot(row: dict) -> tuple:
-    """mesh 向各用户 CCD 下发 push route 时的指纹：后方 LAN + 路由可见组/标签。"""
+    """mesh 下发语义指纹：后方 LAN、推送总开关及组/标签可见范围。"""
     raw_lan = [str(x).strip() for x in (row.get("lan_cidrs") or []) if str(x).strip()]
     lan_t = tuple(sorted_unique_ipv4_cidrs(raw_lan))
     mugs = tuple(sorted(str(x).strip() for x in (row.get("mesh_route_visible_group_ids") or []) if str(x).strip()))
     tags = tuple(sorted(str(x).strip() for x in (row.get("mesh_route_visible_tag_ids") or []) if str(x).strip()))
-    return (lan_t, mugs, tags)
+    return (lan_t, mugs, tags, bool(row.get("mesh_route_push_disabled", False)))
 
 
 def _ccd_iroute_wire_snapshot(row: dict) -> tuple:
@@ -158,11 +158,15 @@ def mesh_lan_cidrs_for_user_group(
 
     组与标签采用 OR 关系：命中任一已选组，或用户/所属组拥有任一已选标签即可。
     两类限制都为空时对所有活跃用户下发；标签同时包含直接用户标签和组继承标签。
+    单个对端设置 mesh_route_push_disabled 时完全跳过该对端的 Mesh push，
+    不影响其绑定用户 CCD iroute 与中心侧路由/防火墙。
     """
     group_id = str(user_group_id or "").strip()
     user_tags = {str(value).strip() for value in (user_tag_ids or ()) if str(value).strip()}
     acc: list[str] = []
     for row in peers_rows:
+        if row.get("mesh_route_push_disabled", False):
+            continue
         lan = list(row.get("lan_cidrs") or [])
         if not lan:
             continue
@@ -1109,6 +1113,7 @@ class PeerService:
 
         每个用户收到的 CIDR 并集由对端的组/标签可见范围决定：组和标签采用 OR 关系，
         命中任一组或任一直接/组继承标签即可；两类限制均为空则对所有活跃用户下发。
+        对端关闭 Mesh push 时，不论可见组/标签设置如何均不向其他用户下发其 LAN。
         停用用户会清除其 Mesh push 块；已删除用户不再有 CCD 文件。
 
         无匹配 CIDR 时移除该块。任一 CCD 写入失败则抛出 RuntimeError。

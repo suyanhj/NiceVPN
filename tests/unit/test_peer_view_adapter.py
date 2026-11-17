@@ -145,3 +145,14 @@ def test_peer_adapter_shows_remote_operation_failure_separately_from_ssh() -> No
     assert row["remote_operation_label"] == "对端防火墙下发失败"
     assert row["remote_operation_tone"] == "failed"
     assert "iptables timed out" in row["remote_operation_tooltip"]
+
+
+def test_peer_adapter_mesh_push_disabled_overrides_scopes():
+    row = adapt_peer_view({
+        **BASE,
+        "mesh_route_visible_tag_ids": ["tag-a"],
+        "mesh_route_push_disabled": True,
+    }, group_names={"group-dev": "开发组"}, tag_names={"tag-a": "办公"})
+    assert row["mesh_label"] == "不推送路由"
+    assert row["visible_group_ids"] == ["group-dev", "group-ops"]
+    assert row["visible_tag_ids"] == ["tag-a"]

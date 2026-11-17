@@ -224,6 +224,54 @@ class PeersPage:
 
         fields["user_search"].on_value_change(update_user_options)
 
+    @staticmethod
+    def _render_mesh_route_policy(
+        fields: dict[str, Any],
+        group_options: dict[str, str],
+        tag_options: dict[str, str],
+        *,
+        group_ids: list[str] | None = None,
+        tag_ids: list[str] | None = None,
+        disabled: bool = False,
+    ) -> None:
+        """Mesh 推送总开关：禁用组/标签选择，但保留其值供重新开启时恢复。"""
+        fields["mesh_route_push_disabled"] = ui.switch(
+            "不向其他 VPN 客户端推送本站点路由",
+            value=disabled,
+        ).classes("w-full")
+        fields["mesh"] = ui.select(
+            options=group_options,
+            label="Mesh 可见组（命中任一组或标签即可）",
+            multiple=True,
+            value=list(group_ids or []),
+            with_input=True,
+        ).props("use-chips clearable").classes("w-full")
+        fields["mesh_tags"] = ui.select(
+            options=tag_options,
+            label="Mesh 可见标签（与组为 OR 关系）",
+            multiple=True,
+            value=list(tag_ids or []),
+            with_input=True,
+        ).props("use-chips clearable").classes("w-full")
+        ui.label(
+            "开启：不向其他用户下发本站点 LAN 路由，组/标签选择暂时禁用；"
+            "关闭：未选组/标签时按原逻辑向全部活跃用户推送，已选时为 OR 关系。"
+            "不会修改本站点 iroute 和中心侧防火墙。"
+        ).classes("section-caption")
+
+        def sync_mesh_policy_controls() -> None:
+            skip = bool(fields["mesh_route_push_disabled"].value)
+            for name in ("mesh", "mesh_tags"):
+                if skip:
+                    fields[name].disable()
+                else:
+                    fields[name].enable()
+
+        fields["mesh_route_push_disabled"].on_value_change(
+            lambda _event: sync_mesh_policy_controls()
+        )
+        sync_mesh_policy_controls()
+
     def _group_id_to_name(self) -> dict[str, str]:
         return {str(g.get("id") or ""): str(g.get("name") or "") for g in self.group_service.list_all() if g.get("id")}
 
@@ -1251,21 +1299,7 @@ class PeersPage:
             ).classes("w-full")
 
             ui.label("路由策略").classes("section-caption q-mt-sm")
-            fields["mesh"] = ui.select(
-                options=group_options,
-                label="Mesh 可见组（命中任一组或标签即可）",
-                multiple=True,
-                value=[],
-                with_input=True,
-            ).props("use-chips clearable").classes("w-full")
-            fields["mesh_tags"] = ui.select(
-                options=tag_options,
-                label="Mesh 可见标签（与组为 OR 关系）",
-                multiple=True,
-                value=[],
-                with_input=True,
-            ).props("use-chips clearable").classes("w-full")
-            ui.label("组和标签都不选时，对所有活跃用户下发路由；两者都选时，命中任一条件即可。").classes("section-caption")
+            self._render_mesh_route_policy(fields, group_options, tag_options)
             fields["masq"] = ui.checkbox("启用对端 SNAT 策略", value=False)
 
             ui.label("SSH 连接").classes("section-caption q-mt-sm")
@@ -1356,14 +1390,10 @@ class PeersPage:
                 "name": name,
                 "bound_username": username,
                 "lan_cidrs": _parse_lan_cidrs_text(fields["cidrs"].value or ""),
+                "mesh_route_push_disabled": bool(fields["mesh_route_push_disabled"].value),
                 "mesh_route_visible_group_ids": [
                     str(value).strip()
                     for value in (fields["mesh"].value or [])
-                    if str(value).strip()
-                ],
-                "mesh_route_visible_tag_ids": [
-                    str(value).strip()
-                    for value in (fields["mesh_tags"].value or [])
                     if str(value).strip()
                 ],
                 "mesh_route_visible_tag_ids": [
@@ -1517,21 +1547,14 @@ class PeersPage:
             ).classes("w-full")
 
             ui.label("路由策略").classes("section-caption q-mt-sm")
-            fields["mesh"] = ui.select(
-                options=group_options,
-                label="Mesh 可见组（命中任一组或标签即可）",
-                multiple=True,
-                value=current_mesh,
-                with_input=True,
-            ).props("use-chips clearable").classes("w-full")
-            fields["mesh_tags"] = ui.select(
-                options=tag_options,
-                label="Mesh 可见标签（与组为 OR 关系）",
-                multiple=True,
-                value=current_mesh_tags,
-                with_input=True,
-            ).props("use-chips clearable").classes("w-full")
-            ui.label("组和标签都不选时，对所有活跃用户下发路由；两者都选时，命中任一条件即可。").classes("section-caption")
+            self._render_mesh_route_policy(
+                fields,
+                group_options,
+                tag_options,
+                group_ids=current_mesh,
+                tag_ids=current_mesh_tags,
+                disabled=bool(row.get("mesh_route_push_disabled", False)),
+            )
             fields["masq"] = ui.checkbox(
                 "启用对端 SNAT 策略",
                 value=bool(row.get("masquerade_on_peer")),
@@ -1642,9 +1665,15 @@ class PeersPage:
                 "name": name,
                 "bound_username": username,
                 "lan_cidrs": _parse_lan_cidrs_text(fields["cidrs"].value or ""),
+                "mesh_route_push_disabled": bool(fields["mesh_route_push_disabled"].value),
                 "mesh_route_visible_group_ids": [
                     str(value).strip()
                     for value in (fields["mesh"].value or [])
+                    if str(value).strip()
+                ],
+                "mesh_route_visible_tag_ids": [
+                    str(value).strip()
+                    for value in (fields["mesh_tags"].value or [])
                     if str(value).strip()
                 ],
                 "ssh_host": str(fields["ssh_host"].value or "").strip(),

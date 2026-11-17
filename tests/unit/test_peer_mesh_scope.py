@@ -67,6 +67,7 @@ def test_peer_model_normalizes_tag_visibility_ids_and_legacy_defaults():
         bound_username="alice",
     )
     assert legacy.mesh_route_visible_tag_ids == []
+    assert legacy.mesh_route_push_disabled is False
 
     peer = PeerInstance(
         id="peer-tag",
@@ -137,3 +138,82 @@ def test_mesh_sync_uses_direct_and_active_group_tags_and_clears_disabled_users(t
     assert route not in bob  # inactive group tag is ignored
     assert route not in carol  # disabled users have mesh routes removed
     assert route in dave  # direct user tag
+
+
+def test_mesh_route_push_disabled_skips_peer_with_or_without_scopes():
+    disabled_peer = {
+        "lan_cidrs": ["10.51.0.0/24"],
+        "mesh_route_push_disabled": True,
+        "mesh_route_visible_group_ids": ["ga"],
+        "mesh_route_visible_tag_ids": ["tag-a"],
+    }
+    open_peer = {
+        "lan_cidrs": ["10.52.0.0/24"],
+        "mesh_route_push_disabled": False,
+        "mesh_route_visible_group_ids": [],
+        "mesh_route_visible_tag_ids": [],
+    }
+    assert mesh_lan_cidrs_for_user_group([disabled_peer], "ga", {"tag-a"}) == []
+    assert mesh_lan_cidrs_for_user_group(
+        [disabled_peer, open_peer], "ga", {"tag-a"},
+    ) == ["10.52.0.0/24"]
+    assert mesh_lan_cidrs_for_user_group(
+        [{**disabled_peer, "mesh_route_visible_group_ids": [],
+          "mesh_route_visible_tag_ids": []}],
+        "any",
+    ) == []
+
+
+def test_mesh_push_optout_removes_only_push_block_and_can_restore(tmp_path, monkeypatch):
+    from app.services.peer_instance import service as peer_module
+    from app.services.peer_instance.service import PeerService
+    from app.storage.sqlite_store import SqliteStore
+
+    store = SqliteStore(tmp_path / "mesh-optout.sqlite")
+    store.upsert_group({
+        "id": "g1", "name": "活动组",
+        "subnet": "10.8.1.0/24", "status": "active",
+    })
+    store.upsert_user({"username": "alice", "group_id": "g1", "status": "active"})
+    peer = {
+        "id": "peer-optout",
+        "name": "对端",
+        "bound_username": "alice",
+        "lan_cidrs": ["192.168.90.0/24"],
+        "mesh_route_visible_group_ids": ["g1"],
+        "mesh_route_visible_tag_ids": [],
+        "mesh_route_push_disabled": False,
+    }
+    store.upsert_peer(peer)
+    ccd_dir = tmp_path / "ccd"
+    ccd_dir.mkdir()
+    iroute_line = "iroute 192.168.90.0 255.255.255.0"
+    ccd = ccd_dir / "alice"
+    ccd.write_text(
+        "ifconfig-push 10.8.1.5 255.255.255.0\n"
+        "# --- ovpn-peer begin peer-optout ---\n"
+        f"{iroute_line}\n"
+        "# --- ovpn-peer end peer-optout ---\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(peer_module, "CCD_DIR", ccd_dir)
+    monkeypatch.setattr(
+        peer_module, "fix_path_for_openvpn_shared_data", lambda _path: None,
+    )
+    service = PeerService(store=store)
+    route = 'push "route 192.168.90.0 255.255.255.0"'
+
+    service.sync_all_mesh_push_routes_in_ccd()
+    assert route in ccd.read_text(encoding="utf-8")
+
+    store.upsert_peer({**peer, "mesh_route_push_disabled": True})
+    service.sync_all_mesh_push_routes_in_ccd()
+    stopped_text = ccd.read_text(encoding="utf-8")
+    assert route not in stopped_text
+    assert "ovpn-mesh-peer-routes" not in stopped_text
+    assert iroute_line in stopped_text
+    assert "ifconfig-push" in stopped_text
+
+    store.upsert_peer(peer)
+    service.sync_all_mesh_push_routes_in_ccd()
+    assert route in ccd.read_text(encoding="utf-8")
