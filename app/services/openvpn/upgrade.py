@@ -747,7 +747,10 @@ def _restore_path(record: dict) -> None:
     path = Path(str(record["path"]))
     kind = record.get("kind")
     if kind == "missing":
-        _remove_path_strict(path)
+        if path.is_dir() and not path.is_symlink():
+            raise RuntimeError(f"回滚拒绝删除快照前不存在的目录: {path}")
+        if path.exists() or path.is_symlink():
+            path.unlink()
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
