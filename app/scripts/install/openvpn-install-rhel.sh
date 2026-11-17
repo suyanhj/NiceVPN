@@ -61,12 +61,7 @@ _log "RHEL 系安装：pm=${PM} min_version=${OPENVPN_MIN_VERSION}"
 if [ "${OPENVPN_FORCE_SOURCE}" = "1" ]; then
     _log "强制源码构建模式：跳过 OpenVPN 系统包安装"
     install_source_dependencies
-    openvpn_compile_install
-    if ! openvpn_post_compile_setup; then
-        openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
-        exit 1
-    fi
-    openvpn_post_install_validate
+    openvpn_run_source_install
     exit 0
 fi
 
@@ -95,9 +90,4 @@ fi
 _log "仓库 openvpn 版本 ${PKG_VERSION:-unknown} 低于 ${OPENVPN_MIN_VERSION}，改为源码编译安装"
 install_source_dependencies
 
-openvpn_compile_install
-if ! openvpn_post_compile_setup; then
-    openvpn_rollback_previous_prefix "OpenVPN 安装后置配置失败" || true
-    exit 1
-fi
-openvpn_post_install_validate
+openvpn_run_source_install
