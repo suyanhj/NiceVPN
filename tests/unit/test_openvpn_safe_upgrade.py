@@ -155,6 +155,7 @@ def test_apply_staged_upgrade_stops_before_backup_when_preflight_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(mod, "detect_openvpn", lambda: {"install_mode": "source"})
     monkeypatch.setattr(
         mod,
         "preflight_upgrade_candidate",
@@ -209,3 +210,73 @@ def test_upgrade_module_does_not_scan_existing_client_profiles() -> None:
     assert "OVPN_PROFILES_DIR" not in source
     assert "_find_existing_client_profile" not in source
     assert "glob(\"*.ovpn\")" not in source
+
+
+
+def _write_openvpn_binary(path: Path, version: str = "2.7.8") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"#!/bin/sh\\nprintf 'OpenVPN {version}\\n'\\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def test_legacy_prefix_migration_keeps_stable_path_and_old_release(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    binary = _write_openvpn_binary(prefix / "sbin" / "openvpn")
+    releases = tmp_path / "opt" / "openvpn-releases"
+
+    previous = mod._migrate_legacy_prefix(prefix, releases)
+
+    assert previous is not None
+    assert previous.parent == releases
+    assert previous.name.startswith("legacy-2.7.8-")
+    assert prefix.is_symlink()
+    assert (prefix / "sbin" / "openvpn").is_file()
+    assert binary != prefix / "sbin" / "openvpn"
+
+
+def test_atomic_release_link_switch_does_not_move_previous_release(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt" / "openvpn"
+    releases = tmp_path / "opt" / "openvpn-releases"
+    old_release = releases / "2.7.8-old"
+    new_release = releases / "2.8.0-new"
+    _write_openvpn_binary(old_release / "sbin" / "openvpn", "2.7.8")
+    _write_openvpn_binary(new_release / "sbin" / "openvpn", "2.8.0")
+
+    mod._atomic_symlink(old_release, prefix)
+    mod._atomic_symlink(new_release, prefix)
+
+    assert prefix.resolve() == new_release
+    assert (old_release / "sbin" / "openvpn").is_file()
+
+
+def test_package_install_is_not_offered_source_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mod,
+        "detect_openvpn",
+        lambda: {
+            "installed": True,
+            "path": "/usr/sbin/openvpn",
+            "version": "2.7.8",
+            "install_mode": "package",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.openvpn.installer.resolve_latest_openvpn_release",
+        lambda **_kwargs: pytest.fail("系统包安装不应触发源码 release 查询"),
+    )
+
+    result = mod.inspect_upgrade()
+
+    assert result["upgrade_available"] is False
+    assert result["release"] is None
+    assert "包管理器" in result["reason"]
