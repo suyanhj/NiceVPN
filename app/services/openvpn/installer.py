@@ -15,6 +15,7 @@ from app.core.constants import (
     EASYRSA_LEGACY_INSTALL_DIR,
     OPENVPN_INSTALL_PREFIX,
     OPENVPN_MIN_VERSION,
+    OPENVPN_RELEASES_DIR,
 )
 from app.services.openvpn.detector import find_easyrsa
 
@@ -154,6 +155,36 @@ def stage_openvpn_source_build(
         "distro": distro,
         "distro_version": str(version_id or ""),
     }
+
+
+
+def apply_openvpn_release_upgrade(
+    *,
+    stage_prefix: str | Path,
+    expected_version: str,
+    expected_current_binary: str | Path,
+    on_output: Callable[[str], None] | None = None,
+) -> None:
+    """调用 Shell 完成 release 发布、稳定软链接切换、服务重启和失败回滚。"""
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-upgrade.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN 升级脚本不存在: {script_path}")
+
+    env = _subprocess_env({
+        "OPENVPN_PREFIX": str(OPENVPN_INSTALL_PREFIX),
+        "OPENVPN_RELEASES_DIR": str(OPENVPN_RELEASES_DIR),
+        "OPENVPN_BIN": str(Path(OPENVPN_INSTALL_PREFIX) / "sbin" / "openvpn"),
+        "OPENVPN_STAGE_PREFIX": str(Path(stage_prefix).expanduser()),
+        "OPENVPN_EXPECTED_VERSION": str(expected_version),
+        "OPENVPN_EXPECTED_CURRENT_BINARY": str(Path(expected_current_binary).expanduser()),
+        "INSTALL_SERVER_SYSTEMD": "1",
+        "INSTALL_CLIENT_SYSTEMD": "0",
+        "INSTALL_SERVER_OVERRIDE": "0",
+        "INSTALL_EASYRSA": "0",
+        "OPENVPN_CREATE_SYMLINK": "0",
+    })
+    _run_command(["bash", str(script_path)], on_output, env=env)
 
 
 def install_openvpn_server_systemd_from_staged_source(
