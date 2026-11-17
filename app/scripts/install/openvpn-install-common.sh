@@ -105,7 +105,9 @@ easyrsa_migrate_legacy_install() {
 
 # 已有 EasyRSA 默认复用；只有显式 EASYRSA_FORCE_INSTALL=1 才允许覆盖当前安装入口。
 easyrsa_reuse_existing() {
-    easyrsa_migrate_legacy_install || return 1
+    if [[ "${OPENVPN_STAGE_ONLY}" != "1" ]]; then
+        easyrsa_migrate_legacy_install || return 1
+    fi
     [[ "${INSTALL_EASYRSA}" == "1" ]] || return 0
     [[ "${EASYRSA_FORCE_INSTALL}" == "1" ]] && return 0
 
