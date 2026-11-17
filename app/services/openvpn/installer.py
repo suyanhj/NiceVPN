@@ -338,6 +338,28 @@ def install_easyrsa(
     return str(installed_bin)
 
 
+def recover_interrupted_openvpn_install(
+    on_output: Callable[[str], None] | None = None,
+) -> bool:
+    """应用启动时恢复 Shell 安装入口留下的持久化事务。"""
+
+    prefix = Path(OPENVPN_INSTALL_PREFIX)
+    transaction_root = prefix.parent / f".{prefix.name}.install-transaction"
+    if not transaction_root.exists() and not transaction_root.is_symlink():
+        return False
+
+    script_path = _INSTALL_SCRIPTS_DIR / "openvpn-recover.sh"
+    if not script_path.is_file():
+        raise FileNotFoundError(f"OpenVPN 安装事务恢复脚本不存在: {script_path}")
+    _emit(on_output, f"[恢复] 检测到 Shell 安装事务: {transaction_root}")
+    _run_command(
+        ["bash", str(script_path)],
+        on_output,
+        env=_subprocess_env({"OPENVPN_PREFIX": str(prefix)}),
+    )
+    return True
+
+
 def install_openvpn(
     distro: str,
     version_id: str,
