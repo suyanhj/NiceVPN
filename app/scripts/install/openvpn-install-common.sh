@@ -1037,6 +1037,18 @@ EOF
 
     old_current="$(readlink "${current_link}" 2>/dev/null || true)"
     nicevpn_atomic_symlink "${install_dir}" "${current_link}"
+    if ! easyrsa_validate_binary "${current_link}/easyrsa" "${expected_version}" >/dev/null; then
+        echo "EasyRSA current 切换后版本校验失败，恢复旧版本入口" >&2
+        if [ -n "${old_current}" ]; then
+            nicevpn_atomic_symlink "${old_current}" "${current_link}" || {
+                echo "严重：EasyRSA current 版本校验失败且旧入口恢复失败: ${current_link}" >&2
+                exit 1
+            }
+        else
+            rm -f -- "${current_link}"
+        fi
+        exit 1
+    fi
     if ! nicevpn_atomic_symlink "${current_link}/easyrsa" /usr/local/bin/easyrsa; then
         _log "警告：无法更新 /usr/local/bin/easyrsa；NiceVPN 将优先使用 ${current_link}/easyrsa"
     fi
