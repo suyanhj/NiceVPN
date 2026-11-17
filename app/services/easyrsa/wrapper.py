@@ -5,7 +5,6 @@ import os
 import subprocess
 from pathlib import Path
 
-from app.core.config import load_config
 from app.core.constants import (
     EASYRSA_CA_EXPIRE_DAYS,
     EASYRSA_CERT_EXPIRE_DAYS,
