@@ -32,7 +32,7 @@ class SystemConfig(BaseModel):
     )
     admin_password: Optional[str] = Field(
         default=None,
-        description="仅首次启用时填写；启动后会自动转换为 Argon2id 哈希并清空",
+        description="仅首次启用时指定；哈希存运行配置，YAML 中明文须由管理员手动清除",
     )
     admin_password_hash: Optional[str] = Field(
         default=None,
