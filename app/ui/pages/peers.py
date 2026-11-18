@@ -521,12 +521,12 @@ class PeersPage:
             "w-full max-w-xl peers-operation-dialog"
         ):
             ui.label("对端配置推送").classes("text-h6 peers-operation-dialog__title")
-            ui.label("经 SSH 检查或推送对端客户端配置、systemd 与站点防火墙；远端需 root 或免密 sudo。").classes(
-                "text-caption text-grey q-mb-sm"
-            )
+            ui.label(
+                "按需经 SSH 推送客户端配置、systemd 或站点防火墙；各项操作相互独立，远端需 root 或免密 sudo。"
+            ).classes("text-caption text-grey q-mb-sm")
             reuse_existing = ui.switch("对端已安装 OpenVPN（复用现有环境）", value=False)
             reuse_hint = ui.label(
-                "开启后只检查 OpenVPN 版本、客户端 service 和配置文件；不上传/覆盖 .ovpn，不创建或重启 service。"
+                "开启后跳过客户端配置和 systemd 操作，不检查远端配置文件或 service；仅执行下方勾选的站点防火墙推送。"
             ).classes("text-caption text-grey")
             reuse_hint.set_visibility(False)
             push_ovpn = ui.checkbox("推送客户端配置", value=True)
@@ -594,77 +594,27 @@ class PeersPage:
             result_box = ui.column().classes("w-full min-h-[80px] q-mt-sm")
 
             async def do_push() -> None:
-                selected = (
-                    bool(reuse_existing.value)
-                    or bool(push_ovpn.value)
-                    or bool(push_service.value)
-                    or bool(push_fw.value)
-                )
+                if reuse_existing.value:
+                    selected = bool(push_fw.value)
+                else:
+                    selected = any(
+                        (push_ovpn.value, push_service.value, push_fw.value)
+                    )
                 if not selected:
                     safe_notify("请至少勾选一个推送项", type="warning")
                     return
                 result_box.clear()
                 with result_box:
-                    ui.label("检查并推送中…" if reuse_existing.value else "推送中…").classes("text-grey")
+                    ui.label("推送中…").classes("text-grey")
                 lines: list[str] = []
                 service_config_path = (path_in.value or "").strip() or None
                 try:
                     if reuse_existing.value:
-                        probe = await run.io_bound(
-                            lambda: self.peer_service.probe_openvpn_via_ssh(pid)
-                        )
-                        if not probe.get("connected"):
-                            raise RuntimeError(
-                                str(probe.get("ssh_error") or "SSH 连接失败，无法检查对端 OpenVPN")
-                            )
-                        version = str(probe.get("version") or "未识别")
-                        binary = str(probe.get("path") or "未识别")
-                        version_ok = bool(probe.get("installed") and probe.get("meets_requirement"))
+                        # 复用模式不接管远端 OpenVPN：不探测版本、不检查客户端配置或
+                        # systemd 状态，也不因这些本地环境差异阻断独立的站点防火墙推送。
                         lines.append(
-                            f"- OpenVPN：{version}（{binary}）"
-                            + ("，版本符合要求" if version_ok else "，未安装或版本不符合要求")
+                            "- 复用现有 OpenVPN 环境：跳过客户端配置与 systemd，不检查或修改其现状"
                         )
-
-                        service_data = await run.io_bound(
-                            lambda: self.peer_service.fetch_peer_client_service_status_via_ssh(pid)
-                        )
-                        service_exists = bool(
-                            service_data.get("service_file_exists", service_data.get("exists"))
-                        )
-                        service_name = str(service_data.get("service") or "未发现")
-                        active_state = str(
-                            service_data.get("active_state")
-                            or service_data.get("is_active")
-                            or "unknown"
-                        )
-                        unit_state = str(
-                            service_data.get("unit_file_state")
-                            or service_data.get("is_enabled")
-                            or "unknown"
-                        )
-                        lines.append(
-                            f"- systemd：{service_name}；服务文件"
-                            + ("存在" if service_exists else "不存在")
-                            + f"；运行状态 {active_state}；开机状态 {unit_state}"
-                        )
-                        config_path = str(
-                            service_data.get("config_path") or "/etc/openvpn/client/client.conf"
-                        )
-                        config_exists = bool(service_data.get("config_exists"))
-                        lines.append(
-                            f"- 客户端配置：{config_path}；"
-                            + ("文件存在" if config_exists else "文件不存在")
-                        )
-
-                        if not version_ok:
-                            raise RuntimeError("OpenVPN 未安装或版本不满足要求，未执行防火墙推送")
-                        if not service_exists:
-                            raise RuntimeError("未发现可用的 OpenVPN 客户端 systemd service，请改用完整装配模式")
-                        if not config_exists:
-                            raise RuntimeError("对端客户端配置文件不存在，请改用完整装配模式")
-                        if active_state != "active":
-                            lines.append("- 注意：客户端 service 当前未运行；本次不会自动启动或重启它")
-                        lines.append("- 复用模式：未上传或覆盖配置文件，未创建或修改 service")
 
                     else:
                         if push_ovpn.value:
@@ -722,9 +672,13 @@ class PeersPage:
                         custom_tmp["path"] = None
                 result_box.clear()
                 with result_box:
-                    heading = "检查完成" if reuse_existing.value and not push_fw.value else "推送完成"
-                    ui.markdown(f"**{heading}**\n\n" + "\n".join(lines))
-                safe_notify("对端配置检查完成" if reuse_existing.value and not push_fw.value else "对端配置推送完成", type="positive")
+                    ui.markdown("**推送完成**\n\n" + "\n".join(lines))
+                safe_notify(
+                    "对端站点防火墙推送完成"
+                    if reuse_existing.value
+                    else "对端配置推送完成",
+                    type="positive",
+                )
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
                 secondary_action("关闭", on_click=dialog.close)

@@ -293,6 +293,53 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
     asyncio.run(verify_edit())
 
 
+def test_peer_reuse_mode_pushes_firewall_without_inspecting_openvpn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = PeersPage()
+    calls: list[tuple[str, bool]] = []
+
+    class ReusePeerService:
+        def probe_openvpn_via_ssh(self, _peer_id: str):
+            raise AssertionError("复用模式不应探测 OpenVPN 版本")
+
+        def fetch_peer_client_service_status_via_ssh(self, _peer_id: str):
+            raise AssertionError("复用模式不应检查客户端 service 或配置文件")
+
+        def deploy_peer_site_firewall_via_ssh(
+            self, peer_id: str, *, masquerade_on_peer: bool,
+        ):
+            calls.append((peer_id, masquerade_on_peer))
+            return {"already_current": False, "masquerade_rules": 1}
+
+    page.peer_service = ReusePeerService()
+    monkeypatch.setattr(
+        "app.ui.pages.peers.peer_row_has_usable_ssh_auth",
+        lambda _row: True,
+    )
+
+    async def fake_io_bound(callback, *args, **kwargs):
+        return callback(*args, **kwargs)
+
+    monkeypatch.setattr("app.ui.pages.peers.run.io_bound", fake_io_bound)
+
+    async def verify() -> None:
+        async with user_simulation(
+            lambda: page._show_peer_config_push_dialog(
+                _peer(masquerade_on_peer=True)
+            )
+        ) as user:
+            await user.open("/")
+            user.find("对端已安装 OpenVPN（复用现有环境）").click()
+            user.find("开始推送").click()
+            await user.should_see("推送完成")
+            await user.should_see("复用现有 OpenVPN 环境")
+            await user.should_see("已下发")
+
+    asyncio.run(verify())
+    assert calls == [("peer-1234567890", True)]
+
+
 def test_peer_remote_dialogs_validate_credentials_and_build_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
