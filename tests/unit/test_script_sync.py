@@ -62,25 +62,20 @@ def test_hook_python_path_is_shell_quoted(tmp_path: Path, monkeypatch) -> None:
         assert check.returncode == 0, check.stderr
 
 
-def test_hook_python_selector_rejects_unsupported_override(tmp_path: Path) -> None:
-    """显式覆盖使用旧 Python 时在执行审计脚本前明确拒绝。"""
+def test_hook_scripts_use_selected_python_without_per_connection_version_probe(
+    tmp_path: Path,
+) -> None:
+    """部署时固定 Python 解释器，不在每次连接/断开时再次启动 Python 检测版本。"""
     from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
 
     sync_packaged_openvpn_scripts(tmp_path)
-    script = (tmp_path / "scripts" / "vpn-session-disconnect.sh").read_text(encoding="utf-8")
-    start = script.index("init_py3_for_audit() {")
-    end = script.index("\n}", start) + 2
-    function = script[start:end]
+    bind = (tmp_path / "scripts" / "device-bind.sh").read_text(encoding="utf-8")
+    disconnect = (tmp_path / "scripts" / "vpn-session-disconnect.sh").read_text(encoding="utf-8")
+    assert "init_py3_for_bind()" in bind
+    assert "init_py3_for_audit" not in disconnect
+    assert ' -c \'import sys;' not in bind
+    assert ' -c \'import sys;' not in disconnect
 
-    fake_python = tmp_path / "python3.6"
-    fake_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    fake_python.chmod(0o755)
-    result = subprocess.run(
-        ["bash", "-c", function + "\ninit_py3_for_audit"],
-        env={**os.environ, "PY3_AUDIT": str(fake_python)},
-        capture_output=True, text=True,
-    )
-    assert result.returncode != 0
 
 
 def test_connect_and_disconnect_hooks_use_selected_python_not_path_python3(
