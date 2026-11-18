@@ -502,6 +502,7 @@ def replace_peer_filter_chain_plan_via_ssh(
                         _is_managed_peer_global_allow_rule(current_rest, peer_id)
                         and current_rest not in clean_rests
                     ):
+                        validate_iptables_rest_line_addr_tokens(current_rest)
                         clean_rests.append(current_rest)
 
             newly_created: set[str] = set()
