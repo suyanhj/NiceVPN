@@ -50,12 +50,15 @@ admin_password: null
 2. 不填 `admin_password`：启动会自动生成本机独有的随机初始密码，仅保存在 `data/admin_initial_password`，权限 0600。可通过 `sudo cat data/admin_initial_password` 查看，随后使用 CLI 重置。
 
 ```bash
-ovpn-cli admin password reset
-# 或
-./start.sh cli admin password reset
+ovpn-cli admin password reset                       # 无参数：安全交互输入新密码
+ovpn-cli admin password reset admin 'YourNewPassword' # 指定用户名和新密码
+ovpn-cli admin password reset admin                 # 为该管理员随机生成密码，终端只显示一次
+# 未安装 ovpn-cli 时也可使用 ./start.sh cli admin password reset ...
 ```
 
-CLI 只修改 `data/config.json` 中的密码哈希，不改 `config.yml` 的登录开关和用户名；如尚未启用登录，请先将 YAML 中的 `admin_login_enabled` 设为 `true`。重置成功后会清理初始密码文件及旧 Session 密钥；**重启 NiceVPN** 后新密码生效，旧会话不能沿用。
+NiceVPN 目前仅支持单管理员：命令给出的用户名必须与根目录 `config.yml` 的 `admin_username` 一致，账号更名请修改 YAML。CLI 只修改 `data/config.json` 中的密码哈希，不改 `config.yml`；如尚未启用登录，请先设置 `admin_login_enabled: true`。重置成功后清理初始密码文件及旧 Session 密钥；**重启 NiceVPN** 后新密码生效，旧会话不能沿用。
+
+注意：明文密码作为命令行参数会暴露在 shell 历史与进程列表中。正式环境建议使用无参数交互模式；随机密码只显示一次。
 
 恢复旧备份或升级时，旧版 `admin_username` + `admin_password_hash` 的有效组合会保留其登录开启状态。8881 公网 VPN API 仍采用独立认证。
 
