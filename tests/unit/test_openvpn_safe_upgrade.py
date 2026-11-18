@@ -250,15 +250,15 @@ def _run_openvpn_upgrade_shell(
     legacy_prefix: bool = False,
     fail_first_restart: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
-    prefix = tmp_path / "opt" / "openvpn"
-    releases = tmp_path / "opt" / "openvpn-releases"
-    old_release = releases / "2.7.8-old"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
+    old_release = root / "2.7.8"
+    root.mkdir(parents=True)
     if legacy_prefix:
         old_root = prefix
     else:
         old_root = old_release
-        prefix.parent.mkdir(parents=True, exist_ok=True)
-        prefix.symlink_to(old_release)
+        prefix.symlink_to(old_release.name)
     current_binary = _write_openvpn_binary(old_root / "sbin" / "openvpn", "2.7.8")
     stage_prefix = tmp_path / "candidate"
     _write_openvpn_binary(stage_prefix / "sbin" / "openvpn", "2.8.0")
@@ -286,8 +286,8 @@ def _run_openvpn_upgrade_shell(
     env.update(
         {
             "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+            "OPENVPN_ROOT_DIR": str(root),
             "OPENVPN_PREFIX": str(prefix),
-            "OPENVPN_RELEASES_DIR": str(releases),
             "OPENVPN_BIN": str(prefix / "sbin" / "openvpn"),
             "OPENVPN_STAGE_PREFIX": str(stage_prefix),
             "OPENVPN_EXPECTED_VERSION": "2.8.0",
@@ -308,51 +308,51 @@ def _run_openvpn_upgrade_shell(
         env=env,
         check=False,
     )
-    return result, prefix, releases, log_path
+    return result, prefix, root, log_path
 
 
-def test_shell_upgrade_switches_stable_link_and_keeps_previous_release(
+def test_shell_upgrade_switches_current_and_keeps_previous_version(
     tmp_path: Path,
 ) -> None:
-    result, prefix, releases, log_path = _run_openvpn_upgrade_shell(tmp_path)
+    result, prefix, root, log_path = _run_openvpn_upgrade_shell(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert prefix.is_symlink()
-    assert prefix.resolve().parent == releases
-    assert prefix.resolve().name.startswith("2.8.0-")
-    assert (releases / "2.7.8-old" / "sbin" / "openvpn").is_file()
+    assert prefix.resolve().parent == root
+    assert prefix.readlink() == Path("2.8.0")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
+    assert (root / "2.8.0" / "sbin" / "openvpn").is_file()
+    assert not (root / "sbin").exists() and not (root / "sbin").is_symlink()
     assert log_path.read_text(encoding="utf-8").splitlines() == [
         "openvpn-server@server.service"
     ]
 
 
-def test_shell_upgrade_migrates_legacy_prefix_once(
+def test_upgrade_rejects_legacy_plain_current_directory(
     tmp_path: Path,
 ) -> None:
-    result, prefix, releases, _ = _run_openvpn_upgrade_shell(
+    result, prefix, root, _ = _run_openvpn_upgrade_shell(
         tmp_path,
         legacy_prefix=True,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert prefix.is_symlink()
-    assert prefix.resolve().name.startswith("2.8.0-")
-    legacy_releases = list(releases.glob("legacy-2.7.8-*"))
-    assert len(legacy_releases) == 1
-    assert (legacy_releases[0] / "sbin" / "openvpn").is_file()
+    assert result.returncode != 0
+    assert prefix.is_dir() and not prefix.is_symlink()
+    assert (prefix / "sbin" / "openvpn").is_file()
+    assert "OpenVPN current 必须是软链接" in result.stderr
 
 
 def test_shell_upgrade_failure_switches_back_and_restarts_old_instance(
     tmp_path: Path,
 ) -> None:
-    result, prefix, releases, log_path = _run_openvpn_upgrade_shell(
+    result, prefix, root, log_path = _run_openvpn_upgrade_shell(
         tmp_path,
         fail_first_restart=True,
     )
 
     assert result.returncode != 0
-    assert prefix.resolve() == releases / "2.7.8-old"
-    assert (releases / "2.7.8-old" / "sbin" / "openvpn").is_file()
+    assert prefix.readlink() == Path("2.7.8")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
     assert len(log_path.read_text(encoding="utf-8").splitlines()) == 2
     assert "切回旧版本" in result.stderr
 

@@ -1371,7 +1371,7 @@ class PeersPage:
             ui.label("远端运行参数").classes("section-caption q-mt-sm")
             fields["ssh_openvpn_binary"] = ui.input(
                 "远端 openvpn 路径（可选）",
-                placeholder="例 /opt/openvpn/sbin/openvpn；留空则 PATH 探测",
+                placeholder="例 /opt/openvpn/current/sbin/openvpn；留空则 PATH 探测",
             ).classes("w-full")
             fields["auto_install"] = ui.checkbox("创建后自动装配", value=False)
 

@@ -11,3 +11,4 @@ source "${SCRIPT_DIR}/openvpn-install-common.sh"
 
 openvpn_acquire_install_lock
 openvpn_restore_source_transaction
+openvpn_migrate_legacy_layout

@@ -14,7 +14,7 @@ from app.core.constants import (
     OPENVPN_MIN_VERSION,
     OPENVPN_SEARCH_PATHS,
     OPENVPN_INSTALL_PREFIX,
-    OPENVPN_RELEASES_DIR,
+    OPENVPN_INSTALL_ROOT,
     OPENVPN_INSTALL_MODE_FILE,
 )
 
@@ -89,10 +89,11 @@ def classify_openvpn_install_mode(path: str | None) -> str | None:
         return None
     candidate = Path(raw)
     source_prefix = Path(OPENVPN_INSTALL_PREFIX)
+    source_root = Path(OPENVPN_INSTALL_ROOT)
     if (
         raw == str(source_prefix / "sbin" / "openvpn")
-        or _path_is_within(candidate, source_prefix)
-        or _path_is_within(candidate, Path(OPENVPN_RELEASES_DIR))
+        or raw == str(source_root / "sbin" / "openvpn")
+        or _path_is_within(candidate, source_root)
     ):
         return "source"
     if raw in {"/usr/sbin/openvpn", "/usr/bin/openvpn"}:
@@ -106,7 +107,7 @@ def classify_easyrsa_install_mode(path: str | None) -> str | None:
     if not raw:
         return None
     candidate = Path(raw)
-    source_roots = (Path("/opt/ezrsa"), Path("/opt/easy-rsa"), Path(OPENVPN_INSTALL_PREFIX))
+    source_roots = (Path("/opt/ezrsa"), Path(OPENVPN_INSTALL_PREFIX))
     if any(_path_is_within(candidate, root) for root in source_roots):
         return "source"
     if raw.startswith("/usr/share/easy-rsa/"):

@@ -316,11 +316,12 @@ def test_standalone_easyrsa_installer_uses_common_release_helper(
 
     def fake_run(cmd, _output, *, env=None, cwd=None):
         calls.append((cmd, dict(env or {})))
-        current = install_root / "current"
-        current.mkdir(parents=True)
-        easyrsa = current / "easyrsa"
+        version_dir = install_root / "3.2.4"
+        version_dir.mkdir(parents=True)
+        easyrsa = version_dir / "easyrsa"
         easyrsa.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
         easyrsa.chmod(0o755)
+        (install_root / "current").symlink_to(version_dir.name)
 
     monkeypatch.setattr(installer_mod, "_run_command", fake_run)
 
@@ -493,43 +494,3 @@ def test_pki_path_status_supports_manual_directories(tmp_path: Path) -> None:
     _write_ready_pki(pki)
     assert "复用 CA" in InitPage._pki_path_status(str(pki))
     assert "绝对路径" in InitPage._pki_path_status("relative/pki")
-
-
-
-def test_install_easyrsa_migrates_legacy_root_before_reusing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from app.services.openvpn import installer as installer_mod
-
-    legacy_root = tmp_path / "opt" / "easy-rsa"
-    new_root = tmp_path / "opt" / "ezrsa"
-    legacy_bin = legacy_root / "current" / "easyrsa"
-    new_bin = new_root / "current" / "easyrsa"
-    monkeypatch.setattr(installer_mod, "EASYRSA_LEGACY_INSTALL_DIR", str(legacy_root))
-    monkeypatch.setattr(installer_mod, "EASYRSA_INSTALL_DIR", str(new_root))
-    monkeypatch.setattr(
-        installer_mod,
-        "find_easyrsa",
-        lambda: str(legacy_bin) if not new_root.exists() else str(new_bin),
-    )
-
-    calls: list[list[str]] = []
-
-    def fake_migrate(cmd, _output, *, env=None, cwd=None):
-        calls.append(list(cmd))
-        new_root.mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(installer_mod, "_run_command", fake_migrate)
-    monkeypatch.setattr(
-        installer_mod,
-        "ensure_easyrsa_runtime_dependencies",
-        lambda on_output=None: None,
-    )
-
-    result = installer_mod.install_easyrsa()
-
-    assert result == str(new_bin)
-    assert len(calls) == 1
-    assert calls[0][0] == "bash"
-    assert calls[0][1].endswith("easyrsa-migrate.sh")

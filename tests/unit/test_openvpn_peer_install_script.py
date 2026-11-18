@@ -40,7 +40,6 @@ def test_install_script_files_exist() -> None:
         "openvpn-install-rhel.sh",
         "openvpn-install-systemd.sh",
         "openvpn-recover.sh",
-        "easyrsa-migrate.sh",
         "ensure-runtime-dependencies.sh",
     ):
         assert (_INSTALL_SCRIPTS_DIR / name).is_file(), name
@@ -125,7 +124,7 @@ def test_common_script_supports_non_destructive_staging_builds() -> None:
     assert 'OPENVPN_CREATE_SYMLINK:=1' in common
     assert 'OPENVPN_FORCE_SOURCE:=0' in common
     assert 'OPENVPN_STAGE_ONLY:=0' in common
-    assert 'if [ "${OPENVPN_CREATE_SYMLINK}" = "1" ]' in common
+    assert 'if [[ "${OPENVPN_CREATE_SYMLINK}" == "1" ]]' in common
 
     for name in ("openvpn-install-debian.sh", "openvpn-install-rhel.sh"):
         entry = _read_install_script_text(name)
@@ -189,6 +188,7 @@ def test_stage_source_build_uses_distribution_install_entry(
     assert env["INSTALL_SERVER_SYSTEMD"] == "0"
     assert env["INSTALL_CLIENT_SYSTEMD"] == "0"
     assert env["INSTALL_SERVER_OVERRIDE"] == "0"
+    assert env["OPENVPN_ROOT_DIR"] == installer_mod.OPENVPN_INSTALL_ROOT
     assert env["OPENVPN_PREFIX"] == installer_mod.OPENVPN_INSTALL_PREFIX
     assert env["OPENVPN_STAGE_ONLY"] == "1"
     assert env["OPENVPN_STAGE_DIR"] == str(prefix)
@@ -216,10 +216,12 @@ def test_easyrsa_download_reuses_existing_binary_without_download(
     tmp_path: Path,
 ) -> None:
     install_root = tmp_path / "easy-rsa"
-    existing = install_root / "current" / "easyrsa"
-    existing.parent.mkdir(parents=True)
+    version_dir = install_root / "3.2.4-abcdef123456"
+    existing = version_dir / "easyrsa"
+    version_dir.mkdir(parents=True)
     existing.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     existing.chmod(0o755)
+    (install_root / "current").symlink_to(version_dir.name)
 
     result = _run_common_shell(
         tmp_path,
@@ -235,15 +237,20 @@ def test_standalone_easyrsa_script_skips_existing_install_before_release_lookup(
     tmp_path: Path,
 ) -> None:
     install_root = tmp_path / "easy-rsa"
-    existing = install_root / "current" / "easyrsa"
-    existing.parent.mkdir(parents=True)
+    version_dir = install_root / "3.2.4-abcdef123456"
+    existing = version_dir / "easyrsa"
+    version_dir.mkdir(parents=True)
     existing.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     existing.chmod(0o755)
+    (install_root / "current").symlink_to(version_dir.name)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     dirname_bin = shutil.which("dirname")
     if dirname_bin:
         (bin_dir / "dirname").symlink_to(dirname_bin)
+    readlink_bin = shutil.which("readlink")
+    if readlink_bin:
+        (bin_dir / "readlink").symlink_to(readlink_bin)
     openssl = bin_dir / "openssl"
     openssl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     openssl.chmod(0o755)
@@ -313,6 +320,155 @@ def _run_common_shell(
         text=True,
         check=False,
     )
+
+
+
+def test_startup_recovery_runs_shell_layout_check_without_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    monkeypatch.setattr(installer_mod.os, "geteuid", lambda: 0)
+
+    def fake_run(command, _output, *, env=None, cwd=None):
+        calls.append({"command": command, "env": dict(env or {})})
+
+    monkeypatch.setattr(installer_mod, "_run_command", fake_run)
+    monkeypatch.setattr(installer_mod, "_sync_legacy_install_paths", lambda _output=None: False)
+
+    assert installer_mod.recover_interrupted_openvpn_install() is True
+    assert len(calls) == 1
+    assert calls[0]["command"] == [
+        "bash",
+        str(_INSTALL_SCRIPTS_DIR / "openvpn-recover.sh"),
+    ]
+    assert calls[0]["env"]["OPENVPN_PREFIX"] == str(installer_mod.OPENVPN_INSTALL_PREFIX)
+
+
+def test_startup_syncs_saved_legacy_install_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
+    openvpn = prefix / "sbin" / "openvpn"
+    openvpn.parent.mkdir(parents=True)
+    openvpn.write_text("#!/bin/sh\n", encoding="utf-8")
+    openvpn.chmod(0o755)
+
+    easyrsa_root = tmp_path / "opt" / "ezrsa"
+    easyrsa = easyrsa_root / "current" / "easyrsa"
+    easyrsa.parent.mkdir(parents=True)
+    easyrsa.write_text("#!/bin/sh\n", encoding="utf-8")
+    easyrsa.chmod(0o755)
+
+    config = {
+        "openvpn_bin": str(root / "sbin" / "openvpn"),
+        "openvpn_install_mode": "custom",
+        "easyrsa_dir": "/opt/easy-rsa/releases/3.2.6/easyrsa",
+        "easyrsa_install_mode": "custom",
+    }
+    saved: list[dict] = []
+    monkeypatch.setattr(installer_mod, "OPENVPN_INSTALL_ROOT", root)
+    monkeypatch.setattr(installer_mod, "OPENVPN_INSTALL_PREFIX", prefix)
+    monkeypatch.setattr(installer_mod, "EASYRSA_INSTALL_DIR", easyrsa_root)
+    monkeypatch.setattr(installer_mod, "load_config", lambda: config)
+    monkeypatch.setattr(installer_mod, "save_config", lambda value: saved.append(dict(value)))
+
+    assert installer_mod._sync_legacy_install_paths() is True
+    assert config["openvpn_bin"] == str(prefix / "sbin" / "openvpn")
+    assert config["openvpn_install_mode"] == "source"
+    assert config["easyrsa_dir"] == str(easyrsa)
+    assert config["easyrsa_install_mode"] == "source"
+    assert saved == [config]
+
+
+def test_startup_migrates_legacy_openvpn_and_easyrsa_layouts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opt" / "openvpn"
+    old_binary = root / "sbin" / "openvpn"
+    old_binary.parent.mkdir(parents=True)
+    old_binary.write_text(
+        "#!/bin/sh\nprintf 'OpenVPN 2.7.8\\n'\n",
+        encoding="utf-8",
+    )
+    old_binary.chmod(0o755)
+    for part in ("include", "lib", "libexec", "share"):
+        (root / part).mkdir(parents=True)
+        (root / part / "marker").write_text(part, encoding="utf-8")
+
+    legacy_easy = tmp_path / "opt" / "easy-rsa"
+    easy_release = legacy_easy / "releases" / "3.2.6"
+    easy_release.mkdir(parents=True)
+    easy_binary = easy_release / "easyrsa"
+    easy_binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    easy_binary.chmod(0o755)
+    (legacy_easy / "current").symlink_to(easy_release)
+
+    systemd_dir = tmp_path / "etc" / "systemd" / "system"
+    systemd_dir.mkdir(parents=True)
+    server_unit = systemd_dir / "openvpn-server@.service"
+    server_unit.write_text(
+        f"ExecStart={root}/sbin/openvpn --config %i.conf\n",
+        encoding="utf-8",
+    )
+    client_unit = systemd_dir / "openvpn-client@.service"
+    client_unit.write_text(
+        f"ExecStart={root}/bin/openvpn --config %i.conf\n",
+        encoding="utf-8",
+    )
+
+    openvpn_cli = tmp_path / "usr" / "local" / "sbin" / "openvpn"
+    openvpn_cli.parent.mkdir(parents=True)
+    openvpn_cli.symlink_to(old_binary)
+    easyrsa_cli = tmp_path / "usr" / "local" / "bin" / "easyrsa"
+    easyrsa_cli.parent.mkdir(parents=True)
+    easyrsa_cli.symlink_to(legacy_easy / "current" / "easyrsa")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    systemctl_log = tmp_path / "systemctl.log"
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_LOG"\n',
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+
+    env = {
+        "OPENVPN_ROOT_DIR": str(root),
+        "OPENVPN_PREFIX": str(root / "current"),
+        "EASYRSA_INSTALL_DIR": str(tmp_path / "opt" / "ezrsa"),
+        "EASYRSA_LEGACY_INSTALL_DIR": str(legacy_easy),
+        "OPENVPN_SYSTEMD_UNIT_DIR": str(systemd_dir),
+        "OPENVPN_CLI_LINK": str(openvpn_cli),
+        "EASYRSA_CLI_LINK": str(easyrsa_cli),
+        "SYSTEMCTL_LOG": str(systemctl_log),
+    }
+    result = _run_common_shell(tmp_path, "openvpn_migrate_legacy_layout", extra_env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    current = root / "current"
+    assert current.is_symlink() and current.readlink() == Path("2.7.8")
+    assert (root / "2.7.8" / "sbin" / "openvpn").is_file()
+    assert (root / "2.7.8" / "include" / "marker").read_text(encoding="utf-8") == "include"
+    assert not (root / "sbin").exists()
+    assert f"ExecStart={root}/current/sbin/openvpn" in server_unit.read_text(encoding="utf-8")
+    assert f"ExecStart={root}/current/bin/openvpn" in client_unit.read_text(encoding="utf-8")
+    assert openvpn_cli.readlink() == root / "current" / "sbin" / "openvpn"
+
+    ezrsa = tmp_path / "opt" / "ezrsa"
+    assert not legacy_easy.exists()
+    assert (ezrsa / "3.2.6" / "easyrsa").is_file()
+    assert (ezrsa / "current").is_symlink()
+    assert (ezrsa / "current").readlink() == Path("3.2.6")
+    assert easyrsa_cli.readlink() == ezrsa / "current" / "easyrsa"
+    assert "daemon-reload" in systemctl_log.read_text(encoding="utf-8")
+
+    # 启动检查可重复执行；第二次不再移动目录或重写服务文件。
+    result = _run_common_shell(tmp_path, "openvpn_migrate_legacy_layout", extra_env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -518,65 +674,65 @@ def test_easyrsa_install_shell_syntax() -> None:
 
 
 
-def test_legacy_openvpn_prefix_migrates_to_immutable_release_and_stable_link(
+def test_openvpn_install_refuses_current_link_outside_version_root(
     tmp_path: Path,
 ) -> None:
-    prefix = tmp_path / "opt" / "openvpn"
-    binary = prefix / "sbin" / "openvpn"
+    root = tmp_path / "opt" / "openvpn"
+    old_release = tmp_path / "opt" / "openvpn-releases" / "2.7.8-old"
+    binary = old_release / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
     binary.write_text("#!/bin/sh\nprintf 'OpenVPN 2.7.8\n'\n", encoding="utf-8")
     binary.chmod(0o755)
-    releases = tmp_path / "opt" / "openvpn-releases"
+    root.mkdir(parents=True)
+    (root / "current").symlink_to(old_release)
 
     result = _run_common_shell(
         tmp_path,
-        "openvpn_migrate_legacy_prefix; "
-        "test -L \"$OPENVPN_PREFIX\"; "
-        "test -x \"$OPENVPN_PREFIX/sbin/openvpn\"; "
-        "readlink -f \"$OPENVPN_PREFIX\"",
+        "openvpn_recover_source_install",
         extra_env={
-            "OPENVPN_PREFIX": str(prefix),
-            "OPENVPN_BIN": str(binary),
-            "OPENVPN_RELEASES_DIR": str(releases),
+            "OPENVPN_ROOT_DIR": str(root),
+            "OPENVPN_PREFIX": str(root / "current"),
+            "OPENVPN_BIN": str(root / "current" / "sbin" / "openvpn"),
         },
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    target = Path(result.stdout.strip().splitlines()[-1])
-    assert target.parent == releases
-    assert target.name.startswith("legacy-2.7.8-")
-    assert (target / "sbin" / "openvpn").is_file()
-    assert prefix.is_symlink()
+    assert result.returncode != 0
+    assert "根目录外的版本目录" in result.stderr
 
 
-def test_legacy_easyrsa_root_migrates_and_keeps_compatibility_link(
+def test_easyrsa_install_refuses_current_link_outside_version_root(
     tmp_path: Path,
 ) -> None:
-    legacy = tmp_path / "opt" / "easy-rsa"
-    current = legacy / "current"
-    current.mkdir(parents=True)
-    script = current / "easyrsa"
-    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    script.chmod(0o755)
-    new_root = tmp_path / "opt" / "ezrsa"
+    install_root = tmp_path / "opt" / "ezrsa"
+    old_release = tmp_path / "opt" / "ezrsa-releases" / "3.2.4-old"
+    binary = old_release / "easyrsa"
+    old_release.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    install_root.mkdir(parents=True)
+    (install_root / "current").symlink_to(old_release)
 
     result = _run_common_shell(
         tmp_path,
-        "easyrsa_migrate_legacy_install; "
-        "test -x \"$EASYRSA_INSTALL_DIR/current/easyrsa\"; "
-        "test -L \"$EASYRSA_LEGACY_INSTALL_DIR\"",
+        "INSTALL_EASYRSA=1; easyrsa_reuse_existing",
         extra_env={
-            "EASYRSA_INSTALL_DIR": str(new_root),
-            "EASYRSA_LEGACY_INSTALL_DIR": str(legacy),
-            "EASYRSA_INSTALL_LOCK_FILE": str(tmp_path / "run" / "easyrsa.lock"),
+            "EASYRSA_INSTALL_DIR": str(install_root),
         },
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert new_root.is_dir()
-    assert legacy.is_symlink()
-    assert (new_root / "current" / "easyrsa").is_file()
+    assert result.returncode != 0
+    assert "根目录外的版本目录" in result.stderr
 
+
+def test_easyrsa_install_uses_flat_version_directory_and_current_link() -> None:
+    common = _read_install_script_text("openvpn-install-common.sh")
+    assert 'install_dir="${EASYRSA_INSTALL_DIR}/${release_id}"' in common
+    assert 'current_link="${EASYRSA_INSTALL_DIR}/current"' in common
+    assert 'release_id="${actual_version}"' in common
+    assert 'release_id="${version}"' in common
+    assert "easyrsa_tree_hash" not in common
+    assert "EASYRSA_INSTALL_DIR}/releases/" not in common
+    assert "easyrsa_migrate_legacy_install" not in common
 
 
 def _write_fake_systemctl(tmp_path: Path) -> Path:
@@ -603,7 +759,8 @@ def test_source_postflight_restarts_and_verifies_previously_active_instances(
     tmp_path: Path,
 ) -> None:
     log_path = _write_fake_systemctl(tmp_path)
-    prefix = tmp_path / "opt" / "openvpn"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
     binary = prefix / "sbin" / "openvpn"
     binary.parent.mkdir(parents=True)
     binary.write_text(
@@ -616,6 +773,7 @@ def test_source_postflight_restarts_and_verifies_previously_active_instances(
         tmp_path,
         "openvpn_capture_active_instances; _openvpn_post_install_validate_impl",
         extra_env={
+            "OPENVPN_ROOT_DIR": str(root),
             "OPENVPN_PREFIX": str(prefix),
             "OPENVPN_BIN": str(binary),
             "OPENVPN_INSTALL_MODE": "source",
@@ -639,7 +797,8 @@ def test_source_postflight_rejects_stale_system_binary_when_prefix_binary_missin
     tmp_path: Path,
 ) -> None:
     _write_fake_systemctl(tmp_path)
-    prefix = tmp_path / "opt" / "openvpn"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
     stale = tmp_path / "usr" / "sbin" / "openvpn"
     stale.parent.mkdir(parents=True)
     stale.write_text(
@@ -652,6 +811,7 @@ def test_source_postflight_rejects_stale_system_binary_when_prefix_binary_missin
         tmp_path,
         "_openvpn_post_install_validate_impl",
         extra_env={
+            "OPENVPN_ROOT_DIR": str(root),
             "OPENVPN_PREFIX": str(prefix),
             "OPENVPN_BIN": str(prefix / "sbin" / "openvpn"),
             "OPENVPN_INSTALL_MODE": "source",
@@ -672,8 +832,8 @@ def test_shell_transaction_persists_active_instance_names(
     tmp_path: Path,
 ) -> None:
     _write_fake_systemctl(tmp_path)
-    prefix = tmp_path / "opt" / "openvpn"
-    releases = tmp_path / "opt" / "openvpn-releases"
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
     mode_file = tmp_path / "etc" / "openvpn-install-mode"
     result = _run_common_shell(
         tmp_path,
@@ -681,8 +841,8 @@ def test_shell_transaction_persists_active_instance_names(
         "openvpn_begin_source_transaction; trap - EXIT; "
         'cat "$(openvpn_source_transaction_root)/active-instances"',
         extra_env={
+            "OPENVPN_ROOT_DIR": str(root),
             "OPENVPN_PREFIX": str(prefix),
-            "OPENVPN_RELEASES_DIR": str(releases),
             "OPENVPN_INSTALL_MODE_FILE": str(mode_file),
             "INSTALL_SERVER_SYSTEMD": "0",
             "INSTALL_CLIENT_SYSTEMD": "0",
@@ -698,9 +858,11 @@ def test_shell_transaction_restore_restarts_saved_active_instances(
     tmp_path: Path,
 ) -> None:
     log_path = _write_fake_systemctl(tmp_path)
-    prefix = tmp_path / "opt" / "openvpn"
-    root = prefix.parent / ".openvpn.install-transaction"
-    root.mkdir(parents=True)
+    root = tmp_path / "opt" / "openvpn"
+    prefix = root / "current"
+    transaction_root = root / ".current.install-transaction"
+    transaction_root.mkdir(parents=True)
+    root = transaction_root
     (root / "ready").touch()
     (root / "paths").write_text("", encoding="utf-8")
     (root / "active-instances").write_text(
@@ -712,8 +874,8 @@ def test_shell_transaction_restore_restarts_saved_active_instances(
         tmp_path,
         "openvpn_restore_source_transaction",
         extra_env={
+            "OPENVPN_ROOT_DIR": str(prefix.parent),
             "OPENVPN_PREFIX": str(prefix),
-            "OPENVPN_RELEASES_DIR": str(prefix.parent / "openvpn-releases"),
             "SYSTEMCTL_LOG": str(log_path),
         },
     )
@@ -723,32 +885,3 @@ def test_shell_transaction_restore_restarts_saved_active_instances(
         "openvpn-server@server.service"
     ]
     assert not root.exists()
-
-
-def test_easyrsa_migration_recovers_crash_after_directory_move(
-    tmp_path: Path,
-) -> None:
-    legacy = tmp_path / "opt" / "easy-rsa"
-    new_root = tmp_path / "opt" / "ezrsa"
-    current = new_root / "current"
-    current.mkdir(parents=True)
-    binary = current / "easyrsa"
-    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    binary.chmod(0o755)
-    marker = tmp_path / "opt" / ".ezrsa-legacy-migration"
-    marker.write_text(str(legacy) + "\n", encoding="utf-8")
-
-    result = _run_common_shell(
-        tmp_path,
-        "easyrsa_migrate_legacy_install",
-        extra_env={
-            "EASYRSA_INSTALL_DIR": str(new_root),
-            "EASYRSA_LEGACY_INSTALL_DIR": str(legacy),
-            "EASYRSA_INSTALL_LOCK_FILE": str(tmp_path / "run" / "easyrsa.lock"),
-        },
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert legacy.is_symlink()
-    assert legacy.resolve() == new_root
-    assert not marker.exists()

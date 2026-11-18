@@ -69,22 +69,17 @@ def init():
     config = load_config()
     ensure_storage_ready()
 
-    # 仅恢复首次安装/EasyRSA 迁移留下的 Shell 事务；版本升级只切换稳定软链接，
-    # 不写 systemd/config 快照，也不需要 Python 启动恢复状态机。
+    # 启动时由 Shell 检查并迁移旧安装目录，同时恢复中断的安装事务。
     try:
-        from app.services.openvpn.installer import (
-            recover_interrupted_easyrsa_migration,
-            recover_interrupted_openvpn_install,
-        )
+        from app.services.openvpn.installer import recover_interrupted_openvpn_install
 
         recover_interrupted_openvpn_install(
             on_output=lambda message: logger.warning("[OpenVPN install recovery] %s", message)
         )
-        recover_interrupted_easyrsa_migration(
-            on_output=lambda message: logger.warning("[EasyRSA migration recovery] %s", message)
-        )
     except Exception:
         logger.critical("启动时恢复中断的 OpenVPN Shell 安装失败，事务材料已保留", exc_info=True)
+
+    config = load_config()
 
     # 管理端不再注册下载和公网 VPN API；二者仅由第二监听端口提供。
 
