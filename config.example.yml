@@ -1,0 +1,17 @@
+# NiceVPN 部署参数模板：仅手动部署配置放在项目根目录 config.yml。
+# 新环境：cp config.example.yml config.yml && chmod 600 config.yml
+# 已有 data/config.json 的旧环境：不必复制本模板，升级后自动拆分。
+# 管理端「系统设置」保存到 data/config.json，不修改本文件。
+# 监听地址/端口继续使用 /etc/nicevpn/listen.env 或 NICEVPN_* 环境变量。
+
+# 管理后台登录开关，默认关闭，影响 8880，不影响独立公网 API 8881。
+admin_login_enabled: false
+admin_username: admin
+admin_session_lifetime_minutes: 480
+admin_reconnect_timeout_seconds: 300
+
+# 首次启用登录时可指定一次性初始密码。启动生成哈希保存到
+# data/config.json 后，不再读取此字段作为实际登录密码；
+# 强烈建议首次成功启动后从本文件中删除明文，平时用 CLI 重置。
+# 不填写时随机生成本机独有的初始密码，保存到 data/admin_initial_password（0600）。
+admin_password: null

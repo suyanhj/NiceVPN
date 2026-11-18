@@ -22,7 +22,7 @@ python3.11 cli.py --help    # 直接调用（需 Python >= 3.10）
 | `tag` | `list/show/add/update/delete` | 标签及策略属性管理 |
 | `tag` | `member list/add/remove/set/clear` | 标签与用户、用户组关联 |
 | `firewall` | `rule list/add/delete/enable/disable` | 中心防火墙规则管理 |
-| `admin` | `password hash` | 生成管理后台 Argon2id 密码哈希 |
+| `admin` | `password hash/reset` | 生成哈希、指定密码重置、随机密码重置 |
 
 ## 用户组
 
@@ -116,8 +116,17 @@ ovpn-cli firewall rule delete <规则ID>
 ## 管理后台工具
 
 ```bash
-ovpn-cli admin password hash
+ovpn-cli admin password hash                  # 交互生成哈希（不修改文件）
+ovpn-cli admin password reset                 # 原有交互式修改密码
+ovpn-cli admin password reset admin 'YourNewPassword'  # 指定管理员与密码
+ovpn-cli admin password reset admin           # 为管理员生成随机密码，并只在终端显示一次
 ```
+
+当前只支持**单管理员**：`reset` 的用户名必须与根目录 `config.yml` 的 `admin_username` 一致。修改管理员名称须手动更改 YAML，CLI 不会自动创建其他账号。
+
+`reset` 成功后将 Argon2id 哈希写入 `data/config.json`，清除旧会话密钥；**修改后重启 NiceVPN** 生效。登录开关由 `admin_login_enabled: true` 控制。
+
+**安全提醒：** 位置参数中的明文密码可能被 shell 历史记录、进程列表和运维审计系统记录；生产环境更推荐无参数的交互输入模式。随机生成的密码只在成功后显示一次，请妥善保存。
 
 ## 试运行
 

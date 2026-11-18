@@ -114,6 +114,148 @@ def test_cli_parser_registers_nested_admin_password_hash_command() -> None:
     assert args.func is entry.cmd_admin_password_hash
 
 
+def test_cli_admin_password_reset_writes_runtime_only_and_preserves_yaml(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    from app.core import config as cfg
+
+    data = tmp_path / "data"
+    data.mkdir()
+    root_config = tmp_path / "config.yml"
+    root_text = "# 人工设置不修改\nadmin_login_enabled: true\nadmin_username: operator\n"
+    root_config.write_text(root_text, encoding="utf-8")
+    runtime_config = data / "config.json"
+    secret_file = data / "admin_initial_password"
+    secret_file.write_text("old-secret", encoding="utf-8")
+    (data / "admin_session_secret").write_text("old-session", encoding="utf-8")
+
+    monkeypatch.setattr(cfg, "CONFIG_FILE", root_config)
+    monkeypatch.setattr(cfg, "RUNTIME_CONFIG_FILE", runtime_config)
+    monkeypatch.setattr(cfg, "DATA_DIR", data)
+    monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
+    monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
+    monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
+    monkeypatch.setattr(entry, "ADMIN_SESSION_SECRET_FILE", data / "admin_session_secret")
+    answers = iter(("new-safe-password-123", "new-safe-password-123"))
+    monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
+
+    assert entry.cmd_admin_password_reset(argparse.Namespace()) == 0
+    import json
+    stored = json.loads(runtime_config.read_text(encoding="utf-8"))
+    assert root_config.read_text(encoding="utf-8") == root_text
+    assert "admin_login_enabled" not in stored
+    assert "admin_username" not in stored
+    assert stored["admin_password_hash"].startswith("$argon2id$")
+    assert "new-safe-password-123" not in runtime_config.read_text(encoding="utf-8")
+    assert cfg.load_config().admin_username == "operator"
+    assert not secret_file.exists()
+    assert not (data / "admin_session_secret").exists()
+    assert "已更新" in capsys.readouterr().out
+
+
+def test_cli_admin_password_reset_parser_is_nested() -> None:
+    args = entry.build_parser().parse_args(["admin", "password", "reset"])
+    assert args.func is entry.cmd_admin_password_reset
+
+
+def _setup_admin_reset_test(monkeypatch, tmp_path):
+    from app.core import config as cfg
+
+    data = tmp_path / "data"
+    data.mkdir()
+    deployment = tmp_path / "config.yml"
+    deployment.write_text(
+        "admin_login_enabled: true\nadmin_username: operator\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg, "CONFIG_FILE", deployment)
+    monkeypatch.setattr(cfg, "RUNTIME_CONFIG_FILE", data / "config.json")
+    monkeypatch.setattr(cfg, "DATA_DIR", data)
+    monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", data / "admin_initial_password")
+    monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
+    monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", data / "admin_initial_password")
+    monkeypatch.setattr(entry, "ADMIN_SESSION_SECRET_FILE", data / "admin_session_secret")
+    # 提前建立原管理员凭据，以便验证拒绝修改时不会改变已有哈希。
+    previous_hash = cfg.load_config().admin_password_hash
+    return cfg, deployment, data, previous_hash
+
+
+def test_cli_admin_reset_accepts_explicit_username_and_password(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+
+    cfg, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    password = "my-custom-admin-secret"
+    monkeypatch.setattr(
+        entry.getpass, "getpass",
+        lambda _: (_ for _ in ()).throw(AssertionError("指定密码时不应交互输入")),
+    )
+
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "operator", password],
+    )
+    assert entry.cmd_admin_password_reset(args) == 0
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] != previous_hash
+    assert entry.AdminAuthService().verify_credentials(
+        submitted_username="operator",
+        submitted_password=password,
+        configured_username="operator",
+        configured_password_hash=state["admin_password_hash"],
+    )
+    assert password not in capsys.readouterr().out
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
+def test_cli_admin_reset_generates_random_password_for_username(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+    import re
+
+    cfg, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        entry.getpass, "getpass",
+        lambda _: (_ for _ in ()).throw(AssertionError("随机密码不应弹出交互输入")),
+    )
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "operator"],
+    )
+    assert entry.cmd_admin_password_reset(args) == 0
+    output = capsys.readouterr().out
+    match = re.search(r"随机生成的密码（只显示本次，请妥善保存）：(\S+)", output)
+    assert match
+    password = match.group(1)
+    assert len(password) >= 24
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] != previous_hash
+    assert entry.AdminAuthService().verify_credentials(
+        submitted_username="operator",
+        submitted_password=password,
+        configured_username="operator",
+        configured_password_hash=state["admin_password_hash"],
+    )
+    assert not (data / "admin_initial_password").exists()
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
+def test_cli_admin_reset_rejects_wrong_username_without_modifying_hash(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+
+    _, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "other", "test-secret"],
+    )
+    assert entry.cmd_admin_password_reset(args) == 1
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] == previous_hash
+    assert "账号不匹配" in capsys.readouterr().err
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
 def test_login_failure_limit_recovers_after_window() -> None:
     """同一来源达到失败阈值后受限，窗口结束后自动恢复。"""
 

@@ -1,5 +1,6 @@
 .git/
 data/
+/config.yml
 backups/
 *.ovpn
 *.key

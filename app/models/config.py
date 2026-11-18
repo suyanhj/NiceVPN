@@ -21,10 +21,18 @@ class SystemConfig(BaseModel):
     """系统全局配置"""
 
     initialized: bool = Field(default=False, description="系统是否已初始化")
+    admin_login_enabled: Optional[bool] = Field(
+        default=None,
+        description="可选管理端登录开关；None 兼容旧版凭据自动启用",
+    )
     admin_username: Optional[str] = Field(
         default=None,
         max_length=128,
-        description="管理后台单管理员用户名；与密码哈希同时配置时启用登录保护",
+        description="管理后台用户名；开启登录时缺省为 admin",
+    )
+    admin_password: Optional[str] = Field(
+        default=None,
+        description="仅首次启用时指定；哈希存运行配置，YAML 中明文须由管理员手动清除",
     )
     admin_password_hash: Optional[str] = Field(
         default=None,
@@ -196,7 +204,7 @@ class SystemConfig(BaseModel):
             d["notify_provider"] = "dingtalk"
         return d
 
-    @field_validator("admin_username", "admin_password_hash", mode="before")
+    @field_validator("admin_username", "admin_password", "admin_password_hash", mode="before")
     @classmethod
     def normalize_admin_credentials(cls, value):
         """将未配置或仅含空白的管理员凭据统一为 None。"""
@@ -211,24 +219,33 @@ class SystemConfig(BaseModel):
         """凭据必须同时缺失或同时有效，禁止认证配置静默降级。"""
 
         has_username = self.admin_username is not None
-        has_password_hash = self.admin_password_hash is not None
-        if has_username != has_password_hash:
+        has_hash = self.admin_password_hash is not None
+        if self.admin_login_enabled is True:
+            if not has_username:
+                self.admin_username = "admin"
+        elif self.admin_login_enabled is None and has_username != has_hash:
             raise ValueError("管理员用户名和密码哈希必须同时配置或同时留空")
-        if not has_username:
-            return self
+        elif self.admin_login_enabled is False and has_hash and not has_username:
+            raise ValueError("管理员密码哈希存在时必须指定用户名")
 
-        assert self.admin_username is not None
-        assert self.admin_password_hash is not None
-        if any(character.isspace() or ord(character) < 32 for character in self.admin_username):
+        if self.admin_username and any(
+            character.isspace() or ord(character) < 32 for character in self.admin_username
+        ):
             raise ValueError("管理员用户名不能包含空白或控制字符")
-        if not _ARGON2ID_HASH_PATTERN.fullmatch(self.admin_password_hash):
+        if has_hash and not _ARGON2ID_HASH_PATTERN.fullmatch(self.admin_password_hash):
             raise ValueError("管理员密码哈希必须是有效的 Argon2id PHC 格式")
+        if self.admin_password and has_hash:
+            raise ValueError("admin_password 和 admin_password_hash 不能同时填写")
+        if self.admin_password and self.admin_login_enabled is not True:
+            raise ValueError("使用明文初始密码时必须设置 admin_login_enabled: true")
         return self
 
     @property
     def admin_auth_enabled(self) -> bool:
-        """完整管理员凭据存在时才启用后台登录保护。"""
+        """显式开关优先，兼容旧版用户名与密码哈希配对开启的规则。"""
 
+        if self.admin_login_enabled is not None:
+            return self.admin_login_enabled
         return self.admin_username is not None and self.admin_password_hash is not None
 
     @field_validator("device_bind_mode", mode="before")

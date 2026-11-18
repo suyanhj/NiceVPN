@@ -89,7 +89,9 @@ def test_load_config_fails_for_incomplete_admin_credentials(
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "DATA_DIR", data_dir)
-    monkeypatch.setattr(config_module, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", tmp_path / "config.yml")
+    monkeypatch.setattr(config_module, "RUNTIME_CONFIG_FILE", config_file)
+    monkeypatch.setattr(config_module, "ensure_openvpn_runtime_dirs", lambda: None)
 
     with pytest.raises(ValidationError, match="必须同时配置或同时留空"):
         config_module.load_config()

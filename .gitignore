@@ -158,6 +158,8 @@ cython_debug/
 certs/
 data
 logs
+# 根目录配置由 config.example.yml 复制创建
+/config.yml
 
 # CRT 及其他子项目中的证书目录
 **/certs/**
