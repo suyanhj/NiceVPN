@@ -34,7 +34,8 @@ def _prepare_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     openvpn = tmp_path / "openvpn"
     pki = openvpn / "pki"
     db = data / "nicevpn.db"
-    config_file = tmp_path / "config.yml"
+    config_file = data / "config.json"
+    deploy_file = tmp_path / "config.yml"
     api_file = data / "api_basic_credentials.json"
     session_file = data / "admin_session_secret"
     remote_chains = data / "remote_peer_chains"
@@ -96,7 +97,11 @@ def _prepare_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     ).model_dump()
     # openvpn_conf_dir 是历史/运行时扩展字段，当前模型允许忽略未知字段。
     config["openvpn_conf_dir"] = str(openvpn)
-    config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    deploy_file.write_text(
+        "# 只读部署配置\nadmin_login_enabled: false\nadmin_username: admin\n",
+        encoding="utf-8",
+    )
     api_file.write_text(
         '{"username":"vpn","password":"secret"}',
         encoding="utf-8",
@@ -105,12 +110,11 @@ def _prepare_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
 
     monkeypatch.setattr(backup_mod, "BACKUPS_DIR", backups)
     monkeypatch.setattr(backup_mod, "SQLITE_DB_FILE", db)
-    monkeypatch.setattr(backup_mod, "CONFIG_FILE", config_file)
-    # 备份恢复的 save_config 写入根目录 YAML，测试不触及真实项目路径。
+    monkeypatch.setattr(backup_mod, "CONFIG_FILE", deploy_file)
     from app.core import config as cfg
-    monkeypatch.setattr(cfg, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(cfg, "CONFIG_FILE", deploy_file)
+    monkeypatch.setattr(cfg, "RUNTIME_CONFIG_FILE", config_file)
     monkeypatch.setattr(cfg, "DATA_DIR", data)
-    monkeypatch.setattr(cfg, "LEGACY_CONFIG_FILE", data / "config.json")
     monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", data / "admin_initial_password")
     monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
     monkeypatch.setattr(backup_mod, "API_BASIC_CREDENTIALS_FILE", api_file)
@@ -139,6 +143,7 @@ def _prepare_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
         "pki": pki,
         "db": db,
         "config": config_file,
+        "deploy_config": deploy_file,
         "remote_chains": remote_chains,
     }
 
@@ -162,9 +167,13 @@ def test_full_backup_restore_roundtrip_replaces_stale_state(
         )
         conn.commit()
 
-    config = yaml.safe_load(env["config"].read_text(encoding="utf-8"))
+    config = json.loads(env["config"].read_text(encoding="utf-8"))
     config["server_ip"] = "vpn-after.example.com"
-    env["config"].write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    env["config"].write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    env["deploy_config"].write_text(
+        "# 后来修改\nadmin_login_enabled: true\nadmin_username: changed\n",
+        encoding="utf-8",
+    )
     (env["pki"] / "ca.crt").write_text("CA-AFTER", encoding="utf-8")
     (env["openvpn"] / "ccd" / "stale-user").write_text(
         "ifconfig-push 10.8.1.99 255.255.0.0\n",
@@ -183,8 +192,12 @@ def test_full_backup_restore_roundtrip_replaces_stale_state(
     assert pre_restore.is_file()
     assert backup_mod.inspect_full_backup(pre_restore)["file_count"] > 0
 
-    restored_config = yaml.safe_load(env["config"].read_text(encoding="utf-8"))
+    restored_config = json.loads(env["config"].read_text(encoding="utf-8"))
     assert restored_config["server_ip"] == "vpn-before.example.com"
+    assert "admin_username" not in restored_config
+    assert env["deploy_config"].read_text(encoding="utf-8") == (
+        "# 只读部署配置\nadmin_login_enabled: false\nadmin_username: admin\n"
+    )
     assert (env["pki"] / "ca.crt").read_text(encoding="utf-8") == "CA-BEFORE"
     assert not (env["openvpn"] / "ccd" / "stale-user").exists()
     assert not (env["remote_chains"] / "stale.json").exists()
