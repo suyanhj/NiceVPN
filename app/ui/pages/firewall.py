@@ -3,10 +3,10 @@
 
 对端远端与数据一致性（须全体遵守）:
 
-- **事实源在对端机**：以 SSH 上读到的用户链为唯一事实；切换策略 Tab 到「对端远端」或更换对端节点时，必须
+- **事实源在对端机**：以 SSH 上读到的本对端链全部规则为唯一事实（包括系统初始化规则）；切换策略 Tab 到「对端远端」或更换对端节点时，必须
   先 ``fetch_remote_peer_filter_chain_snapshot`` 再 ``record_from_fetch`` 落库（
   见 :mod:`app.services.peer_instance.remote_chain_cache` 与 :func:`_remote_fetch_chain_via_ssh`）。
-- **本机文件是工作副本**：落库后一切列表、编辑、批处理、排序、导入均只以本地 JSON 为准，不得假定内存或旧文件
+- **本机文件是完整工作副本**：系统规则与普通规则一视同仁；落库后一切列表、编辑、批处理、排序、导入均只以本地 JSON 为准，不得假定内存或旧文件
   与对端已一致而跳过拉取。
 - **回写仅经 SSH 下发**：对端上链的增删改序仅通过
   :meth:`app.services.peer_instance.service.PeerService.apply_remote_peer_filter_chain_rests` 等路径
