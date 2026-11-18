@@ -95,3 +95,13 @@ def test_yaml_auth_without_password_generates_unique_initial_secret(monkeypatch,
         configured_password_hash=loaded.admin_password_hash,
     )
     assert cfg.load_config().admin_password_hash == loaded.admin_password_hash
+
+
+def test_config_template_covers_all_system_config_fields() -> None:
+    from app.models.config import SystemConfig
+
+    template = Path(__file__).resolve().parents[2] / "config.example.yml"
+    defaults = yaml.safe_load(template.read_text(encoding="utf-8"))
+    assert set(SystemConfig.model_fields) <= set(defaults)
+    assert defaults["admin_login_enabled"] is False
+    assert defaults["admin_password"] is None
