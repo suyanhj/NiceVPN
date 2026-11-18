@@ -114,22 +114,24 @@ def test_cli_parser_registers_nested_admin_password_hash_command() -> None:
     assert args.func is entry.cmd_admin_password_hash
 
 
-def test_cli_admin_password_reset_writes_yaml_hash_and_removes_bootstrap(
+def test_cli_admin_password_reset_writes_runtime_only_and_preserves_yaml(
     monkeypatch, tmp_path, capsys,
 ) -> None:
     from app.core import config as cfg
-    import yaml
 
     data = tmp_path / "data"
     data.mkdir()
     root_config = tmp_path / "config.yml"
-    root_config.write_text("admin_login_enabled: false\n", encoding="utf-8")
+    root_text = "# 人工设置不修改\nadmin_login_enabled: true\nadmin_username: operator\n"
+    root_config.write_text(root_text, encoding="utf-8")
+    runtime_config = data / "config.json"
     secret_file = data / "admin_initial_password"
     secret_file.write_text("old-secret", encoding="utf-8")
+    (data / "admin_session_secret").write_text("old-session", encoding="utf-8")
 
     monkeypatch.setattr(cfg, "CONFIG_FILE", root_config)
+    monkeypatch.setattr(cfg, "RUNTIME_CONFIG_FILE", runtime_config)
     monkeypatch.setattr(cfg, "DATA_DIR", data)
-    monkeypatch.setattr(cfg, "LEGACY_CONFIG_FILE", data / "config.json")
     monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
     monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
     monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
@@ -138,13 +140,16 @@ def test_cli_admin_password_reset_writes_yaml_hash_and_removes_bootstrap(
     monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
 
     assert entry.cmd_admin_password_reset(argparse.Namespace()) == 0
-    stored = yaml.safe_load(root_config.read_text(encoding="utf-8"))
-    assert stored["admin_login_enabled"] is True
-    assert stored["admin_username"] == "admin"
-    assert stored["admin_password"] is None
+    import json
+    stored = json.loads(runtime_config.read_text(encoding="utf-8"))
+    assert root_config.read_text(encoding="utf-8") == root_text
+    assert "admin_login_enabled" not in stored
+    assert "admin_username" not in stored
     assert stored["admin_password_hash"].startswith("$argon2id$")
-    assert "new-safe-password-123" not in root_config.read_text(encoding="utf-8")
+    assert "new-safe-password-123" not in runtime_config.read_text(encoding="utf-8")
+    assert cfg.load_config().admin_username == "operator"
     assert not secret_file.exists()
+    assert not (data / "admin_session_secret").exists()
     assert "已更新" in capsys.readouterr().out
 
 
