@@ -22,7 +22,7 @@ python3.11 cli.py --help    # 直接调用（需 Python >= 3.10）
 | `tag` | `list/show/add/update/delete` | 标签及策略属性管理 |
 | `tag` | `member list/add/remove/set/clear` | 标签与用户、用户组关联 |
 | `firewall` | `rule list/add/delete/enable/disable` | 中心防火墙规则管理 |
-| `admin` | `password hash` | 生成管理后台 Argon2id 密码哈希 |
+| `admin` | `password hash/reset` | 生成密码哈希、交互重置密码 |
 
 ## 用户组
 
@@ -116,7 +116,8 @@ ovpn-cli firewall rule delete <规则ID>
 ## 管理后台工具
 
 ```bash
-ovpn-cli admin password hash
+ovpn-cli admin password hash   # 生成哈希
+ovpn-cli admin password reset  # 设置新密码并启用登录，需重启服务
 ```
 
 ## 试运行
