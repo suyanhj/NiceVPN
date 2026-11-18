@@ -53,7 +53,9 @@ SSO_AUTH_AUDIT_LOG_FILE = LOGS_DIR / "sso-auth.jsonl"
 OPENVPN_UPGRADE_LOG_FILE = LOGS_DIR / "openvpn-upgrade.log"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 CONFIG_FILE = BASE_DIR / "config.yml"
-LEGACY_CONFIG_FILE = DATA_DIR / "config.json"
+# Web 管理的系统持久化设置：保持旧版数据位置和 JSON 格式。
+RUNTIME_CONFIG_FILE = DATA_DIR / "config.json"
+LEGACY_CONFIG_FILE = RUNTIME_CONFIG_FILE
 ADMIN_INITIAL_PASSWORD_FILE = DATA_DIR / "admin_initial_password"
 # 管理后台登录会话签名密钥，与管理员密码哈希分离并仅由服务进程读取
 ADMIN_SESSION_SECRET_FILE = DATA_DIR / "admin_session_secret"
