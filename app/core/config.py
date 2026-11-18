@@ -110,12 +110,8 @@ def _combine_config(runtime: dict, deployment: dict) -> dict:
     return _normalize_config_data(combined)
 
 
-def _migrate_legacy_deployment(runtime: dict) -> bool:
-    """老环境首次读取时，只提取部署字段生成 YAML，旧 JSON 留待原子改写。"""
-    if CONFIG_FILE.exists() or not RUNTIME_CONFIG_FILE.exists():
-        return False
-
-    # 旧版配置中用户名与密码哈希成对存在。没有 YAML 时沿用原有登录状态。
+def restore_legacy_deployment_config(runtime: dict) -> None:
+    """从历史完整配置中提取 YAML 部署参数；供首次迁移和旧备份恢复共用。"""
     old = dict(runtime)
     if old.get("admin_password_hash") and not old.get("admin_username"):
         old["admin_username"] = "admin"
@@ -131,6 +127,13 @@ def _migrate_legacy_deployment(runtime: dict) -> bool:
         CONFIG_FILE,
         yaml.safe_dump(deployment, allow_unicode=True, sort_keys=False),
     )
+
+
+def _migrate_legacy_deployment(runtime: dict) -> bool:
+    """老环境首次读取时生成独立 YAML，之后原子精简旧 JSON。"""
+    if CONFIG_FILE.exists() or not RUNTIME_CONFIG_FILE.exists():
+        return False
+    restore_legacy_deployment_config(runtime)
     return True
 
 
