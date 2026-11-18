@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 
 from app.cli.iptables_parse import iter_iptables_file, parse_iptables_line
-from app.core.config import load_config
+from app.core.config import load_config, save_config
+from app.core.constants import ADMIN_INITIAL_PASSWORD_FILE
 from app.services.firewall.rule_service import FirewallRuleService
 from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
@@ -356,6 +357,31 @@ def cmd_admin_password_hash(args: argparse.Namespace) -> int:
     logger.info("已生成管理员密码哈希")
     return 0
 
+
+
+def cmd_admin_password_reset(args: argparse.Namespace) -> int:
+    """交互重置后台密码，写入根目录 YAML 中的 Argon2id 哈希。"""
+
+    del args
+    password = getpass.getpass("新管理员密码: ")
+    confirmation = getpass.getpass("再次输入新密码: ")
+    if password != confirmation:
+        print("两次输入的新密码不一致。", file=sys.stderr)
+        return 1
+    try:
+        new_hash = AdminAuthService().hash_password(password)
+        config = load_config()
+        config["admin_username"] = str(config.get("admin_username") or "admin")
+        config["admin_login_enabled"] = True
+        config["admin_password"] = None
+        config["admin_password_hash"] = new_hash
+        save_config(config)
+        ADMIN_INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+    except (OSError, ValueError) as exc:
+        print(f"重置失败: {exc}", file=sys.stderr)
+        return 1
+    print("后台密码已更新且登录保护已开启，请重启 NiceVPN 生效。")
+    return 0
 
 
 def _print_json(data: object) -> None:
@@ -1274,6 +1300,8 @@ def build_parser() -> argparse.ArgumentParser:
     password_sub = password.add_subparsers(dest="admin_password_command", required=True)
     password_hash = password_sub.add_parser("hash", help="交互生成 Argon2id 密码哈希")
     password_hash.set_defaults(func=cmd_admin_password_hash, dry_run=False)
+    password_reset = password_sub.add_parser("reset", help="交互重置管理后台密码并启用登录")
+    password_reset.set_defaults(func=cmd_admin_password_reset, dry_run=False)
     return p
 
 
