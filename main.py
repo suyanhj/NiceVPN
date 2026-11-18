@@ -86,7 +86,7 @@ def init():
     if config.initialized:
         ensure_api_basic_credentials_file()
 
-    auth_enabled = bool(config.admin_username and config.admin_password_hash)
+    auth_enabled = bool(config.admin_login_enabled if config.admin_login_enabled is not None else (config.admin_username and config.admin_password_hash))
     if auth_enabled:
         register_admin_auth(config)
     _register_pages(auth_enabled=auth_enabled)
@@ -209,7 +209,7 @@ def run_web() -> None:
     # 当调用方从 localhost 访问、又未配置 download_base_url 时，
     # 下载链接应回退到 API 端口，而不是已对公网关闭的管理端口。
     set_listen_http_base("http", api_host, api_port)
-    auth_enabled = bool(config.get("admin_username") and config.get("admin_password_hash"))
+    auth_enabled = bool(config.get("admin_login_enabled") if config.get("admin_login_enabled") is not None else (config.get("admin_username") and config.get("admin_password_hash")))
     storage_secret = load_or_create_session_secret() if auth_enabled else None
     session_middleware_kwargs = (
         {
