@@ -245,6 +245,45 @@ def test_peer_site_rules_current_does_not_depend_on_editable_global_allow_rule()
     assert check([]) is True
 
 
+def test_remote_tag_refresh_preserves_existing_managed_rule_for_legacy_cache():
+    import shlex
+    from app.services.firewall.iptables_mgr import IptablesManager
+    from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
+
+    client = _FakeClient()
+    peer_id = "peer-1"
+    chain = IptablesManager.peer_chain_name_for_id(peer_id)
+    managed = (
+        f'-s 10.255.0.0/16 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+    tag_rule = "-m set --match-set nvpnpt_abc_123 src -j ACCEPT"
+    commands = []
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        commands.append(command)
+        if command.endswith(f"iptables -S {chain}"):
+            return f"-N {chain}\\n-A {chain} {managed}\\n", "", 0
+        if "iptables-restore" in command:
+            return "", "", 0
+        return "", "", 0
+
+    row = {"id": peer_id, "ssh_host": "h", "ssh_username": "u", "ssh_password": "p"}
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                replace_peer_filter_chain_plan_via_ssh(
+                    row, [tag_rule], [], preserve_managed_rules=True,
+                )
+
+    restore = next(command for command in commands if "iptables-restore" in command)
+    payload = shlex.split(restore)[2]
+    assert f"-A {chain} {tag_rule}" in payload
+    assert f"-A {chain} {managed}" in payload
+    assert payload.index(f"-A {chain} {tag_rule}") < payload.index(f"-A {chain} {managed}")
+    assert client.closed is True
+
+
 def test_remote_tag_ipset_new_sets_are_removed_when_atomic_restore_fails():
     import pytest
     from app.services.peer_instance.remote_peer_ipset import build_remote_tag_ipset_spec
