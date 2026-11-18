@@ -325,7 +325,7 @@ def test_peer_site_refresh_without_force_preserves_edited_global_rule() -> None:
     def fake_exec(_client, command: str, *, timeout: int):
         client.commands.append(command)
         if command.endswith(f"iptables -S {chain}"):
-            return f"-N {chain}\\n{edited_base}\\n", "", 0
+            return f"-N {chain}\n{edited_base}\n", "", 0
         if command.endswith("iptables -S FORWARD"):
             return "", "", 0
         if command.endswith("iptables -t nat -S POSTROUTING"):
