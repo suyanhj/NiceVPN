@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.cli.iptables_parse import iter_iptables_file, parse_iptables_line
 from app.core.config import load_config, save_config
-from app.core.constants import ADMIN_INITIAL_PASSWORD_FILE
+from app.core.constants import ADMIN_INITIAL_PASSWORD_FILE, ADMIN_SESSION_SECRET_FILE
 from app.services.firewall.rule_service import FirewallRuleService
 from app.services.firewall.tag_service import TagService
 from app.services.group.crud import GroupService
@@ -377,6 +377,8 @@ def cmd_admin_password_reset(args: argparse.Namespace) -> int:
         config["admin_password_hash"] = new_hash
         save_config(config)
         ADMIN_INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+        # 让重新启动后的旧管理员 Session 失效。
+        ADMIN_SESSION_SECRET_FILE.unlink(missing_ok=True)
     except (OSError, ValueError) as exc:
         print(f"重置失败: {exc}", file=sys.stderr)
         return 1
