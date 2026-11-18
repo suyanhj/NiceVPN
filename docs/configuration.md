@@ -1,60 +1,66 @@
-# NiceVPN 配置与后台认证
+# NiceVPN 配置与管理后台认证
 
-## 配置文件位置
+## 两类配置（字段归属互不重叠）
 
-- 可复制模板：项目根目录 `config.example.yml`（带默认值，Git 跟踪）
-- 实际配置：项目根目录 `config.yml`（不进 Git；建议权限 `600`）
-- 运行数据：`data/` 启动时自动按需创建，保存 SQLite、会话密钥、审计信息等，不再存系统运行配置。
+| 文件 | 维护者 | 职责 |
+| --- | --- | --- |
+| 根目录 \`config.example.yml\` | Git | 部署参数默认模板，带注释 |
+| 根目录 \`config.yml\` | 管理员 | 部署参数，只读：登录开关、用户名、Session/重连设置及一次性初始密码 |
+| \`data/config.json\` | NiceVPN | 初始化状态、VPN/PKI、实例、路由、域名、SSO/绑定、通知、SSH 配置和管理员密码哈希等长期持久化设置 |
+| \`data/nicevpn.db\` | NiceVPN | 用户、组、标签、证书关联、对端、防火墙等业务结构化数据 |
+| \`data/admin_session_secret\` | NiceVPN | 管理端 Session 签名密钥 |
 
-新部署：
+系统设置和初始化向导只保存 \`data/config.json\`；\`config.yml\` 不由程序反复重写，所以注释、顺序等保留。无关联查询需求的单份全局设置不引入额外 SQLite 配置表。
 
-```bash
+### 新环境
+
+\`\`\`bash
 cp config.example.yml config.yml
 chmod 600 config.yml
 ./start.sh
-```
+\`\`\`
 
-不复制模板也会使用 `SystemConfig` 的默认值；首次通过系统向导保存后生成 `config.yml`。系统设置页写回时会规范化并重写 YAML，因此注释保留在模板里。
+未复制模板也可启动：没有文件时使用内置默认值，之后由系统初始化向导生成 \`data/config.json\`。运行数据目录由程序自动创建。
 
-**旧环境：**如果 `data/config.json` 已存在且项目根目录没有 `config.yml`，启动时自动验证、写入根目录 YAML，并保留原 JSON 不删除。若根目录放了未初始化模板而旧 JSON 已初始化，会拒绝启动并提示移走模板，防止覆盖既有 VPN、SSO、服务端设置。
+### 旧环境自动拆分
 
-## 管理后台登录（8880）
+旧版只有 \`data/config.json\` 时，首次启动会自动提取管理员登录参数到根目录 \`config.yml\`，将其余配置保留在 \`data/config.json\`，不重新初始化 VPN。两份写入均采用原子替换，原有运行参数不丢失。
 
-配置模板默认关闭登录：
+已有 \`config.yml\` 时，它只允许部署字段；不要从旧 PR #111 的“全量 YAML 模板”复制 VPN/运行参数到此文件，运行参数请通过 Web 管理端修改。
 
-```yaml
-admin_login_enabled: false
-admin_username: admin
-admin_password: null
-admin_password_hash: null
-admin_session_lifetime_minutes: 480
-admin_reconnect_timeout_seconds: 300
-```
+## 管理端登录（8880）
 
-开启登录，只需要改：
+\`config.yml\`：
 
-```yaml
+\`\`\`yaml
 admin_login_enabled: true
 admin_username: admin
-admin_password: "自行设置的强密码"
-```
+admin_session_lifetime_minutes: 480
+admin_reconnect_timeout_seconds: 300
 
-启动时将明文密码转成 Argon2id 并写回 `admin_password_hash`，同时清空 `admin_password`。以后不要同时填写两项。
+# 只在第一次没有密码哈希时使用
+admin_password: null
+\`\`\`
 
-若开启但没有设置任何密码，程序将自动生成一份**机器专属随机初始密码**，哈希保存在 `config.yml`，明文只存在 `data/admin_initial_password`（仅 root/当前服务用户可读）。查看后使用 CLI 重置：
+管理员密码**永久哈希**保存在 \`data/config.json\` 的 \`admin_password_hash\` 字段中（Argon2id），不放在 YAML 中。
 
-```bash
-sudo cat data/admin_initial_password
+初次开启登录时，有两种方式：
+
+1. 在 YAML 中临时写 \`admin_password: "自行设置的强密码"\`；启动时将其哈希持久化到 JSON。**确认首次启动成功后，手工删除 YAML 中的明文密码**。该值仅用于首次初始化，不会在密码重置后覆盖新密码。
+2. 不填 \`admin_password\`：启动会自动生成本机独有的随机初始密码，仅保存在 \`data/admin_initial_password\`，权限 0600。可通过 \`sudo cat data/admin_initial_password\` 查看，随后使用 CLI 重置。
+
+\`\`\`bash
 ovpn-cli admin password reset
-# 或 ./start.sh cli admin password reset
-```
+# 或
+./start.sh cli admin password reset
+\`\`\`
 
-重置成功后自动删除初始密码文件。CLI 会在终端交互输入并确认新密码，只保存哈希。若需要手动指定哈希，还可使用 `ovpn-cli admin password hash`。
+CLI 只修改 \`data/config.json\` 中的密码哈希，不改 \`config.yml\` 的登录开关和用户名；如尚未启用登录，请先将 YAML 中的 \`admin_login_enabled\` 设为 \`true\`。重置成功后会清理初始密码文件及旧 Session 密钥；**重启 NiceVPN** 后新密码生效，旧会话不能沿用。
 
-修改认证配置或 CLI 重置密码后重启 `openvpn-mgmt` 生效。单机管理员认证不影响 OpenVPN 客户端连接和公网 API 的独立 Basic/SSO 验证。
+恢复旧备份或升级时，旧版 \`admin_username\` + \`admin_password_hash\` 的有效组合会保留其登录开启状态。8881 公网 VPN API 仍采用独立认证。
 
-## 原配置兼容及完整备份
+## 备份与 Docker
 
-老版本通过 `admin_username` 与 `admin_password_hash` 同时存在启用登录；迁移后继续兼容。设置 `admin_login_enabled: false` 可以明确关闭后台登录。
+完整备份会保存运行配置快照 \`app/config.json\` 和独立部署配置 \`app/config.yml\`；备份格式继续兼容旧版（无 YAML）归档，历史备份恢复时会自动提取部署参数。
 
-完整备份包里的配置快照继续使用 `app/config.json` 这一**备份交换格式**，兼容已有备份；恢复时会写入根目录 `config.yml`，而不是再次写入旧 `data/config.json`。如通过 Docker 部署，建议挂载 `config.yml` 到容器 `/app/config.yml`，不要把私有配置打进镜像（`.dockerignore` 已排除该文件）。
+部署时应同时保留 \`config.yml\`、\`data/\`、\`backups/\`。容器使用绑定挂载 \`/app/config.yml\` 与 \`/app/data\`，不要将真实配置打入镜像，\`.dockerignore\` 已排除根目录实际配置。
