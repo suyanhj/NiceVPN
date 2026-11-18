@@ -112,7 +112,7 @@ def _remove_remote_peer_chain_and_jump(
 
 
 def _is_managed_peer_global_allow_rule(rest: str, peer_id: str) -> bool:
-    """识别由站点组网维护的兜底 ACCEPT，不把它当作用户防火墙规则。"""
+    """识别首次建链生成的默认 ACCEPT，仅用于 force 显式重置，不参与列表过滤或普通写回。"""
     body = str(rest or "").strip()
     return COMMENT_FWD_TMPL.format(peer_id=str(peer_id or "").strip()) in body
 
