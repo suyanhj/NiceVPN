@@ -521,9 +521,9 @@ class PeersPage:
             "w-full max-w-xl peers-operation-dialog"
         ):
             ui.label("对端配置推送").classes("text-h6 peers-operation-dialog__title")
-            ui.label("按需经 SSH 推送客户端配置、systemd 或站点防火墙；各项操作相互独立，远端需 root 或免密 sudo。").classes(
-                "text-caption text-grey q-mb-sm"
-            )
+            ui.label(
+                "按需经 SSH 推送客户端配置、systemd 或站点防火墙；各项操作相互独立，远端需 root 或免密 sudo。"
+            ).classes("text-caption text-grey q-mb-sm")
             reuse_existing = ui.switch("对端已安装 OpenVPN（复用现有环境）", value=False)
             reuse_hint = ui.label(
                 "开启后跳过客户端配置和 systemd 操作，不检查远端配置文件或 service；仅执行下方勾选的站点防火墙推送。"
@@ -594,11 +594,12 @@ class PeersPage:
             result_box = ui.column().classes("w-full min-h-[80px] q-mt-sm")
 
             async def do_push() -> None:
-                selected = (
-                    bool(push_fw.value)
-                    if reuse_existing.value
-                    else bool(push_ovpn.value) or bool(push_service.value) or bool(push_fw.value)
-                )
+                if reuse_existing.value:
+                    selected = bool(push_fw.value)
+                else:
+                    selected = any(
+                        (push_ovpn.value, push_service.value, push_fw.value)
+                    )
                 if not selected:
                     safe_notify("请至少勾选一个推送项", type="warning")
                     return
@@ -611,7 +612,9 @@ class PeersPage:
                     if reuse_existing.value:
                         # 复用模式不接管远端 OpenVPN：不探测版本、不检查客户端配置或
                         # systemd 状态，也不因这些本地环境差异阻断独立的站点防火墙推送。
-                        lines.append("- 复用现有 OpenVPN 环境：跳过客户端配置与 systemd，不检查或修改其现状")
+                        lines.append(
+                            "- 复用现有 OpenVPN 环境：跳过客户端配置与 systemd，不检查或修改其现状"
+                        )
 
                     else:
                         if push_ovpn.value:
@@ -670,7 +673,12 @@ class PeersPage:
                 result_box.clear()
                 with result_box:
                     ui.markdown("**推送完成**\n\n" + "\n".join(lines))
-                safe_notify("对端站点防火墙推送完成" if reuse_existing.value else "对端配置推送完成", type="positive")
+                safe_notify(
+                    "对端站点防火墙推送完成"
+                    if reuse_existing.value
+                    else "对端配置推送完成",
+                    type="positive",
+                )
 
             with ui.row().classes("w-full justify-end q-gutter-sm q-mt-md"):
                 secondary_action("关闭", on_click=dialog.close)
