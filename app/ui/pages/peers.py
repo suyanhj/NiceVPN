@@ -604,7 +604,7 @@ class PeersPage:
                     return
                 result_box.clear()
                 with result_box:
-                    ui.label("检查并推送中…" if reuse_existing.value else "推送中…").classes("text-grey")
+                    ui.label("推送中…").classes("text-grey")
                 lines: list[str] = []
                 service_config_path = (path_in.value or "").strip() or None
                 try:
