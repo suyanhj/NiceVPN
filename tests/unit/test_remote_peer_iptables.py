@@ -263,7 +263,7 @@ def test_remote_tag_refresh_preserves_existing_managed_rule_for_legacy_cache():
     def fake_exec(_client, command: str, *, timeout: int):
         commands.append(command)
         if command.endswith(f"iptables -S {chain}"):
-            return f"-N {chain}\\n-A {chain} {managed}\\n", "", 0
+            return f"-N {chain}\n-A {chain} {managed}\n", "", 0
         if "iptables-restore" in command:
             return "", "", 0
         return "", "", 0
