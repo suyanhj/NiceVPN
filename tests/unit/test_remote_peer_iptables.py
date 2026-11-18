@@ -311,6 +311,49 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
     assert client.closed is True
 
 
+def test_peer_site_refresh_without_force_preserves_edited_global_rule() -> None:
+    from app.services.firewall.iptables_mgr import IptablesManager
+
+    client = _FakeClient()
+    peer_id = "peer-1"
+    chain = IptablesManager.peer_chain_name_for_id(peer_id)
+    edited_base = (
+        f'-A {chain} -s 192.168.20.0/24 -m comment '
+        f'--comment "ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        client.commands.append(command)
+        if command.endswith(f"iptables -S {chain}"):
+            return f"-N {chain}\\n{edited_base}\\n", "", 0
+        if command.endswith("iptables -S FORWARD"):
+            return "", "", 0
+        if command.endswith("iptables -t nat -S POSTROUTING"):
+            return "", "", 0
+        return "", "", 0
+
+    row = {
+        "id": peer_id,
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+        "masquerade_on_peer": False,
+    }
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                with patch(
+                    "app.services.peer_instance.remote_peer_iptables._peer_site_rules_already_current",
+                    return_value=False,
+                ):
+                    apply_peer_site_iptables_via_ssh(row, "10.8.0.0/16")
+
+    assert not any(f"iptables -D {chain} " in cmd and "role=fwd-global" in cmd for cmd in client.commands)
+    assert not any(f"iptables -A {chain} -s 10.8.0.0/16" in cmd for cmd in client.commands)
+    assert any("iptables -I FORWARD 1" in cmd for cmd in client.commands)
+    assert client.closed is True
+
+
 def test_peer_site_refresh_preserves_remote_tag_rules_in_existing_chain() -> None:
     from app.services.firewall.iptables_mgr import IptablesManager
 
