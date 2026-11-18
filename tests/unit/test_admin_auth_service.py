@@ -114,6 +114,44 @@ def test_cli_parser_registers_nested_admin_password_hash_command() -> None:
     assert args.func is entry.cmd_admin_password_hash
 
 
+def test_cli_admin_password_reset_writes_yaml_hash_and_removes_bootstrap(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    from app.core import config as cfg
+    import yaml
+
+    data = tmp_path / "data"
+    data.mkdir()
+    root_config = tmp_path / "config.yml"
+    root_config.write_text("admin_login_enabled: false\n", encoding="utf-8")
+    secret_file = data / "admin_initial_password"
+    secret_file.write_text("old-secret", encoding="utf-8")
+
+    monkeypatch.setattr(cfg, "CONFIG_FILE", root_config)
+    monkeypatch.setattr(cfg, "DATA_DIR", data)
+    monkeypatch.setattr(cfg, "LEGACY_CONFIG_FILE", data / "config.json")
+    monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
+    monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
+    monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
+    answers = iter(("new-safe-password-123", "new-safe-password-123"))
+    monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
+
+    assert entry.cmd_admin_password_reset(argparse.Namespace()) == 0
+    stored = yaml.safe_load(root_config.read_text(encoding="utf-8"))
+    assert stored["admin_login_enabled"] is True
+    assert stored["admin_username"] == "admin"
+    assert stored["admin_password"] is None
+    assert stored["admin_password_hash"].startswith("$argon2id$")
+    assert "new-safe-password-123" not in root_config.read_text(encoding="utf-8")
+    assert not secret_file.exists()
+    assert "已更新" in capsys.readouterr().out
+
+
+def test_cli_admin_password_reset_parser_is_nested() -> None:
+    args = entry.build_parser().parse_args(["admin", "password", "reset"])
+    assert args.func is entry.cmd_admin_password_reset
+
+
 def test_login_failure_limit_recovers_after_window() -> None:
     """同一来源达到失败阈值后受限，窗口结束后自动恢复。"""
 
