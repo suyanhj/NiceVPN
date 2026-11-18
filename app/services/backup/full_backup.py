@@ -13,11 +13,13 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from app.core.config import load_config, save_config
+from app.core.config import DEPLOYMENT_CONFIG_FIELDS, load_config, save_config
 from app.core.constants import (
     ADMIN_SESSION_SECRET_FILE,
     SSO_PROVIDER_MASTER_KEY_FILE,
@@ -126,6 +128,8 @@ def _copy_backup_payload(payload: Path, config: dict) -> None:
         json.dumps(dict(config), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # 额外打包部署层 YAML 原文件，保留用户注释；老备份无此文件仍可恢复。
+    _copy_file(Path(CONFIG_FILE), app_dir / "config.yml")
     _copy_file(Path(API_BASIC_CREDENTIALS_FILE), app_dir / "api_basic_credentials.json")
     _copy_file(Path(ADMIN_SESSION_SECRET_FILE), app_dir / "admin_session_secret")
     _copy_file(Path(SSO_PROVIDER_MASTER_KEY_FILE), app_dir / "sso_provider_master.key")
@@ -308,9 +312,20 @@ def _validate_restore_payload(root: Path) -> dict:
 
     try:
         config_data = json.loads(config_path.read_text(encoding="utf-8"))
+        yaml_path = payload / "app" / "config.yml"
+        if yaml_path.is_file():
+            deployment = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            if not isinstance(deployment, dict):
+                raise ValueError("config.yml 内容不是 YAML 对象")
+            unknown = set(deployment) - DEPLOYMENT_CONFIG_FIELDS
+            if unknown:
+                raise ValueError("config.yml 含有非部署字段: " + ", ".join(sorted(unknown)))
+            config_data = {**config_data, **deployment}
+            if config_data.get("admin_password_hash"):
+                config_data.pop("admin_password", None)
         SystemConfig.model_validate(config_data)
     except Exception as exc:
-        raise ValueError(f"备份 config.json 校验失败: {exc}") from exc
+        raise ValueError(f"备份配置校验失败: {exc}") from exc
 
     _validate_nicevpn_sqlite(db_path)
 
@@ -436,6 +451,8 @@ def restore_full_backup(archive_path: str | Path) -> dict:
         )
 
         _restore_sqlite(payload / "app" / "nicevpn.db")
+        # 部署配置和运行配置分开还原；旧版备份无 YAML 时由下次启动迁移。
+        _replace_optional_file(payload / "app" / "config.yml", Path(CONFIG_FILE))
         save_config(config_data)
         _replace_optional_file(
             payload / "app" / "api_basic_credentials.json",
