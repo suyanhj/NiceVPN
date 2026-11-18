@@ -158,6 +158,104 @@ def test_cli_admin_password_reset_parser_is_nested() -> None:
     assert args.func is entry.cmd_admin_password_reset
 
 
+def _setup_admin_reset_test(monkeypatch, tmp_path):
+    from app.core import config as cfg
+
+    data = tmp_path / "data"
+    data.mkdir()
+    deployment = tmp_path / "config.yml"
+    deployment.write_text(
+        "admin_login_enabled: true\nadmin_username: operator\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg, "CONFIG_FILE", deployment)
+    monkeypatch.setattr(cfg, "RUNTIME_CONFIG_FILE", data / "config.json")
+    monkeypatch.setattr(cfg, "DATA_DIR", data)
+    monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", data / "admin_initial_password")
+    monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
+    monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", data / "admin_initial_password")
+    monkeypatch.setattr(entry, "ADMIN_SESSION_SECRET_FILE", data / "admin_session_secret")
+    # 提前建立原管理员凭据，以便验证拒绝修改时不会改变已有哈希。
+    previous_hash = cfg.load_config().admin_password_hash
+    return cfg, deployment, data, previous_hash
+
+
+def test_cli_admin_reset_accepts_explicit_username_and_password(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+
+    cfg, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    password = "my-custom-admin-secret"
+    monkeypatch.setattr(
+        entry.getpass, "getpass",
+        lambda _: (_ for _ in ()).throw(AssertionError("指定密码时不应交互输入")),
+    )
+
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "operator", password],
+    )
+    assert entry.cmd_admin_password_reset(args) == 0
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] != previous_hash
+    assert entry.AdminAuthService().verify_credentials(
+        submitted_username="operator",
+        submitted_password=password,
+        configured_username="operator",
+        configured_password_hash=state["admin_password_hash"],
+    )
+    assert password not in capsys.readouterr().out
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
+def test_cli_admin_reset_generates_random_password_for_username(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+    import re
+
+    cfg, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        entry.getpass, "getpass",
+        lambda _: (_ for _ in ()).throw(AssertionError("随机密码不应弹出交互输入")),
+    )
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "operator"],
+    )
+    assert entry.cmd_admin_password_reset(args) == 0
+    output = capsys.readouterr().out
+    match = re.search(r"随机生成的密码（只显示本次，请妥善保存）：(\S+)", output)
+    assert match
+    password = match.group(1)
+    assert len(password) >= 24
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] != previous_hash
+    assert entry.AdminAuthService().verify_credentials(
+        submitted_username="operator",
+        submitted_password=password,
+        configured_username="operator",
+        configured_password_hash=state["admin_password_hash"],
+    )
+    assert not (data / "admin_initial_password").exists()
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
+def test_cli_admin_reset_rejects_wrong_username_without_modifying_hash(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    import json
+
+    _, deployment, data, previous_hash = _setup_admin_reset_test(monkeypatch, tmp_path)
+    args = entry.build_parser().parse_args(
+        ["admin", "password", "reset", "other", "test-secret"],
+    )
+    assert entry.cmd_admin_password_reset(args) == 1
+    state = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert state["admin_password_hash"] == previous_hash
+    assert "账号不匹配" in capsys.readouterr().err
+    assert "admin_username: operator" in deployment.read_text(encoding="utf-8")
+
+
 def test_login_failure_limit_recovers_after_window() -> None:
     """同一来源达到失败阈值后受限，窗口结束后自动恢复。"""
 
