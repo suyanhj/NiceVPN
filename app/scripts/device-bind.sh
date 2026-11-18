@@ -40,15 +40,15 @@ BD_JSON_PY="${SCRIPT_DIR}/device_binding_json.py"
 SESSION_AUDIT_PY="${SCRIPT_DIR}/vpn_session_audit.py"
 EXEMPT_PY="${SCRIPT_DIR}/device_bind_exemption.py"
 
-# Python 路径由 NiceVPN 同步脚本时写入；保留 PY3_BIND 供人工覆盖。
-# 不再依赖 OpenVPN systemd 服务的 PATH 猜测 Python 版本。
+# Python 路径由 NiceVPN 同步脚本时写入（NiceVPN 本身要求 Python >= 3.10）。
+# 运行时只校验解释器存在，不再为每次连接额外启动 python -c 查版本；
+# 脚本实际执行失败仍按设备绑定的原有 fail-closed 规则处理。
 init_py3_for_bind() {
     [ "${PY3_BIND_CHECKED:-0}" = "1" ] && return 0
     if [ -z "${PY3_BIND:-}" ]; then
         PY3_BIND=__NICEVPN_PYTHON_BIN__
     fi
     command -v "${PY3_BIND}" >/dev/null 2>&1 || return 1
-    "${PY3_BIND}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || return 1
     PY3_BIND_CHECKED=1
 }
 
@@ -71,21 +71,22 @@ if [ -z "${CN}" ]; then
 fi
 
 write_session_start() {
+    # 审计属于观测功能，不得因脚本、Python 或日志路径故障拒绝合法 VPN 连接。
     if [ ! -f "${SESSION_AUDIT_PY}" ]; then
-        log "错误: 未找到 ${SESSION_AUDIT_PY}，请与 device-bind.sh 一并部署到 scripts 目录，CN=${CN}"
-        exit 1
+        log "警告: 会话开始审计缺失 ${SESSION_AUDIT_PY}，跳过写入，CN=${CN}"
+        return 0
     fi
     if ! init_py3_for_bind; then
-        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法写入会话审计 JSONL，CN=${CN}"
-        exit 1
+        log "警告: 会话审计 Python 不可用（PY3_BIND=${PY3_BIND:-未配置}），跳过写入，CN=${CN}"
+        return 0
     fi
     if ! "${PY3_BIND}" "${SESSION_AUDIT_PY}" \
         --event-type vpn_session_start \
         --log-file "${SESSION_AUDIT_LOG}" \
         2>>"${BIND_LOG}"; then
-        log "错误: 写入会话开始审计失败（${PY3_BIND} 执行 vpn_session_audit.py），CN=${CN}"
-        exit 1
+        log "警告: 会话开始审计写入失败（${PY3_BIND} 执行 vpn_session_audit.py），CN=${CN}"
     fi
+    return 0
 }
 
 # ---------- 通过企业 SSO 后仅记录设备 ----------
@@ -96,7 +97,174 @@ SSO_GRANT_PY="${SCRIPT_DIR}/sso_grant.py"
 # OpenVPN client-connect 并不保证导出 config 环境变量；使用由 NiceVPN
 # 同一个生成器写入的固定实例配置路径，避免已完成 SSO 后误走旧设备绑定。
 SSO_SERVER_CONF="${OVPN_ETC}/server/${VPN_INSTANCE_NAME:-}.conf"
+# 先用 grep 检查实例是否真正启用了 management-client-auth。
+# 普通实例无需为 SSO 授权检查额外启动 Python。完整授权校验仍由 sso_grant.py 完成。
 if [ -n "${VPN_INSTANCE_NAME:-}" ] && [ -f "${SSO_SERVER_CONF}" ] \
+    && grep -Eq '^[[:space:]]*management-client-auth([[:space:]]*(#.*)?)?
+    if "${PY3_BIND}" "${SSO_GRANT_PY}" \
+        --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
+        --instance "${VPN_INSTANCE_NAME}" \
+        --common-name "${CN}" \
+        --peer-ip "${trusted_ip:-${trusted_ip6:-${untrusted_ip:-${untrusted_ip6:-}}}}" \
+        --peer-port "${trusted_port:-${untrusted_port:-}}" \
+        --server-config "${SSO_SERVER_CONF}" >/dev/null 2>>"${BIND_LOG}"; then
+        export DEVICE_BIND_DECISION="sso_verified"
+        log "SSO 授权后仅记录设备: CN=${CN} IV_PLAT=${IV_PLAT:-} IV_HWADDR=${IV_HWADDR:-}"
+        write_session_start
+        exit 0
+    fi
+fi
+
+# ---------- 模式 A：仅记录 ----------
+if [ "${DEVICE_BIND_MODE}" = "weak_log" ]; then
+    log "mode=weak_log CN=${CN} IV_PLAT=${IV_PLAT:-} UV_UUID=${UV_UUID:-} IV_VER=${IV_VER:-} IV_HWADDR=${IV_HWADDR:-} IV_AUTO_SESS=${IV_AUTO_SESS:-} IV_PLAT_VER=${IV_PLAT_VER:-} IV_GUI_VER=${IV_GUI_VER:-}"
+    write_session_start
+    exit 0
+fi
+
+# ---------- 仅通用/强制模式可按组或标签豁免 ----------
+# 总闸来自 root 发布的 mode 文件第二行，缺失即关闭（兼容旧安装）。
+EXEMPT_SWITCH=""
+if [ -f "${MODE_FILE}" ]; then
+    EXEMPT_SWITCH=$(sed -n '2p' "${MODE_FILE}" | tr -d '\r\n')
+fi
+if [ "${EXEMPT_SWITCH}" = "exemptions_enabled=1" ]; then
+    if [ -f "${EXEMPT_PY}" ] && init_py3_for_bind; then
+        EXEMPT_SOURCE=$("${PY3_BIND}" "${EXEMPT_PY}" --file "${EXEMPT_FILE}" --username "${CN}" 2>>"${BIND_LOG}")
+        EXEMPT_RESULT=$?
+        if [ "${EXEMPT_RESULT}" -eq 0 ] && [ -n "${EXEMPT_SOURCE}" ]; then
+            log "设备绑定豁免: CN=${CN} mode=${DEVICE_BIND_MODE} source=${EXEMPT_SOURCE}"
+            export DEVICE_BIND_DECISION="exempt"
+            export DEVICE_BIND_EXEMPT_SOURCE="${EXEMPT_SOURCE}"
+            write_session_start
+            exit 0
+        fi
+        if [ "${EXEMPT_RESULT}" -gt 1 ]; then
+            log "豁免策略读取失败，回退原有绑定校验: CN=${CN}"
+        fi
+    else
+        log "豁免检查脚本或 Python 不可用，回退原有绑定校验: CN=${CN}"
+    fi
+fi
+
+# ---------- 模式 C：强绑定，必须 IV_HWADDR ----------
+if [ "${DEVICE_BIND_MODE}" = "strict_hwaddr" ]; then
+    if [ -z "${IV_HWADDR:-}" ]; then
+        log "mode=strict_hwaddr 拒绝: CN=${CN} 未提供 IV_HWADDR。请使用带 OpenVPN 3.x 核心且上报硬件地址的客户端；仅 2.x 核心/老安卓常无此项。"
+        exit 1
+    fi
+    FINGERPRINT="${IV_HWADDR}"
+    FINGERPRINT_SOURCE="IV_HWADDR"
+else
+    # ---------- 模式 B：弱指纹（全体 HW；再按平台：iOS/Mac/Win→UV_UUID，安卓→IV_PLAT|IV_PLAT_VER，其它→弱串）----------
+    if [ -n "${IV_HWADDR:-}" ]; then
+        FINGERPRINT="${IV_HWADDR}"
+        FINGERPRINT_SOURCE="IV_HWADDR"
+    else
+        _plat_lc=$(printf '%s' "${IV_PLAT:-}" | tr '[:upper:]' '[:lower:]')
+        case "${_plat_lc}" in
+            ios|iphone|ipad|mac|macos|macosx|darwin|osx|win|windows)
+                if [ -z "${UV_UUID:-}" ]; then
+                    log "mode=weak_fingerprint CN=${CN} 平台 IV_PLAT=${IV_PLAT:-?}（iOS/Mac/Win）无 IV_HWADDR 且缺 UV_UUID，仅证书认证通过"
+                    write_session_start
+                    exit 0
+                fi
+                FINGERPRINT="${UV_UUID}"
+                FINGERPRINT_SOURCE="UV_UUID"
+                ;;
+            android)
+                if [ -z "${IV_PLAT_VER:-}" ]; then
+                    log "mode=weak_fingerprint CN=${CN} 安卓无 IV_HWADDR 且缺 IV_PLAT_VER，仅证书认证通过"
+                    write_session_start
+                    exit 0
+                fi
+                FINGERPRINT="${IV_PLAT:-android}|${IV_PLAT_VER}"
+                FINGERPRINT_SOURCE="android_peer_info"
+                ;;
+            *)
+                if [ -z "${IV_PLAT_VER:-}" ] && [ -z "${IV_GUI_VER:-}" ]; then
+                    log "mode=weak_fingerprint CN=${CN} 无 IV_HWADDR，IV_PLAT=${IV_PLAT:-?} 非 iOS/Mac/Win/安卓或未上报 PLAT_VER|GUI_VER，仅证书认证通过"
+                    write_session_start
+                    exit 0
+                fi
+                FINGERPRINT="${IV_PLAT_VER:-}|${IV_GUI_VER:-}"
+                FINGERPRINT_SOURCE="weak_peer_info"
+                ;;
+        esac
+    fi
+fi
+
+mkdir -p "${BINDINGS_DIR}"
+
+BINDING_FILE=""
+for f in "${BINDINGS_DIR}"/*.json; do
+    [ -f "$f" ] || continue
+    if grep -q "\"username\": \"${CN}\"" "$f" 2>/dev/null; then
+        BINDING_FILE="$f"
+        break
+    fi
+done
+
+write_binding_json() {
+    if [ ! -f "${BD_JSON_PY}" ]; then
+        log "错误: 未找到 ${BD_JSON_PY}，请与 device-bind.sh 一并部署到 scripts 目录，CN=${CN}"
+        exit 1
+    fi
+    if ! init_py3_for_bind; then
+        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法写入绑定 JSON，CN=${CN}"
+        exit 1
+    fi
+    if ! "${PY3_BIND}" "${BD_JSON_PY}" write-new \
+        --bindings-dir "${BINDINGS_DIR}" \
+        --username "${CN}" \
+        --fingerprint "${FINGERPRINT}" \
+        --fingerprint-source "${FINGERPRINT_SOURCE}" \
+        --iv-plat "${IV_PLAT:-}" \
+        --time-ascii "${time_ascii:-}" \
+        2>>"${BIND_LOG}"; then
+        log "错误: 写入绑定 JSON 失败（${PY3_BIND} 执行 device_binding_json.py），CN=${CN}"
+        exit 1
+    fi
+}
+
+update_binding_seen_and_plat() {
+    if [ ! -f "${BD_JSON_PY}" ]; then
+        log "错误: 未找到 ${BD_JSON_PY}，CN=${CN}"
+        exit 1
+    fi
+    if ! init_py3_for_bind; then
+        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法更新绑定 JSON，CN=${CN}"
+        exit 1
+    fi
+    if ! "${PY3_BIND}" "${BD_JSON_PY}" update \
+        --file "${BINDING_FILE}" \
+        --iv-plat "${IV_PLAT:-}" \
+        --time-ascii "${time_ascii:-}" \
+        2>>"${BIND_LOG}"; then
+        log "错误: 更新绑定 JSON 失败（${PY3_BIND} 执行 device_binding_json.py），CN=${CN}"
+        exit 1
+    fi
+}
+
+if [ -z "${BINDING_FILE}" ]; then
+    write_binding_json
+    log "新设备绑定: mode=${DEVICE_BIND_MODE} 用户=${CN}, 指纹=${FINGERPRINT}, source=${FINGERPRINT_SOURCE}"
+    write_session_start
+    exit 0
+fi
+
+STORED_FP=$(grep -o '"fingerprint": "[^"]*"' "${BINDING_FILE}" | head -1 | cut -d'"' -f4)
+
+if [ "${FINGERPRINT}" = "${STORED_FP}" ]; then
+    update_binding_seen_and_plat
+    log "设备指纹匹配: CN=${CN} mode=${DEVICE_BIND_MODE}"
+    write_session_start
+    exit 0
+fi
+
+log "设备指纹不匹配! mode=${DEVICE_BIND_MODE} CN=${CN}, 期望=${STORED_FP}, 收到=${FINGERPRINT}"
+exit 1
+ "${SSO_SERVER_CONF}" \
     && [ -f "${SSO_GRANT_PY}" ] && init_py3_for_bind; then
     if "${PY3_BIND}" "${SSO_GRANT_PY}" \
         --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
