@@ -37,6 +37,36 @@ python -m pip install -r requirements.txt
 
 仓库已包含 Vue 生产构建产物，正常启动不需要 Node.js、npm 或 Docker。
 
+## 配置文件与管理后台登录
+
+项目根目录使用 `config.yml` 保存系统配置，`config.example.yml` 包含所有默认字段：
+
+```bash
+cp config.example.yml config.yml
+chmod 600 config.yml
+```
+
+新环境可先复制模板再修改；**已有 `data/config.json` 的旧环境不要预先复制模板**，首次启动会自动迁移所有既有设置到根目录 `config.yml`，并保留旧 JSON 文件。
+
+默认不要求管理后台登录。如需开启：
+
+```yaml
+admin_login_enabled: true
+admin_username: admin
+admin_password: "请设置自己的强密码"
+```
+
+首次启动时会将明文转换为 Argon2id 哈希并从 `config.yml` 清除；也可以不填 `admin_password`，程序将随机生成初始密码，仅保存在本机 `data/admin_initial_password`（权限 600），查看后立即重置。**没有仓库内置的固定弱密码。**
+
+```bash
+# 推荐：交互式重置，密码不在终端历史中出现
+ovpn-cli admin password reset
+# 或者还未安装 CLI 包装器
+./start.sh cli admin password reset
+```
+
+密码修改后重启 NiceVPN；管理端 8880 生效，公网 VPN API 8881 独立认证。更多说明见 [docs/configuration.md](docs/configuration.md)。
+
 ## 生产部署
 
 使用 systemd：
@@ -64,8 +94,8 @@ Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提�
 ## 数据
 
 - SQLite：用户、组、对端、标签和防火墙等结构化数据。
-- 文件：系统配置、PKI/CRL、CCD、OVPN、运行状态及审计日志。
-- 备份时保留 `data/` 和 `backups/`；启用 SSO 时，数据库必须与 `data/sso_provider_master.key` 一起备份。
+- 配置：项目根目录 `config.yml`；运行文件：`data/` 内的会话密钥、SQLite、审计等，以及 OpenVPN 的 PKI/CCD/OVPN。
+- 备份时同时保留根目录 `config.yml`、`data/` 和 `backups/`；启用 SSO 时，数据库必须与 `data/sso_provider_master.key` 一起备份。
 
 ## 文档
 
@@ -75,6 +105,7 @@ Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提�
 | [docs/security.md](docs/security.md) | SSO 与设备绑定 |
 | [docs/firewall-tags.md](docs/firewall-tags.md) | 标签、防火墙与 Mesh |
 | [docs/storage.md](docs/storage.md) | SQLite 与迁移 |
+| [docs/configuration.md](docs/configuration.md) | 根目录配置、管理员登录与旧版迁移 |
 | [docs/logging.md](docs/logging.md) | 日志与审计 |
 | [docs/install-layout.md](docs/install-layout.md) | OpenVPN / EasyRSA 安装目录、安装模式与版本回滚 |
 | [api.md](api.md) | 公网 API |
