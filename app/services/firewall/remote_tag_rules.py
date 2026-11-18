@@ -214,7 +214,7 @@ def sync_remote_tag_firewall_rules(tag_ids: Iterable[str], *, store=None) -> dic
             )
             rests = list(plan["rests"])
             peer_service.apply_remote_peer_filter_chain_plan(
-                peer_id, rests, list(plan["ipsets"]),
+                peer_id, rests, list(plan["ipsets"]), preserve_managed_rules=True,
             )
             remote_chain_cache.record_after_apply(
                 peer_id, chain, chain_exists, rows, True, None,
