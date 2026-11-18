@@ -293,7 +293,6 @@ def test_peer_create_and_edit_use_shared_forms_without_echoing_secrets(
     asyncio.run(verify_edit())
 
 
-
 def test_peer_reuse_mode_pushes_firewall_without_inspecting_openvpn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -339,6 +338,7 @@ def test_peer_reuse_mode_pushes_firewall_without_inspecting_openvpn(
 
     asyncio.run(verify())
     assert calls == [("peer-1234567890", True)]
+
 
 def test_peer_remote_dialogs_validate_credentials_and_build_when_available(
     monkeypatch: pytest.MonkeyPatch,
