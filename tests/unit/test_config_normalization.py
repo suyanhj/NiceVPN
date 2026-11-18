@@ -90,6 +90,29 @@ def test_legacy_json_migrates_once_without_losing_settings(monkeypatch, tmp_path
     assert cfg.load_config().server_ip == "vpn.example.com"
 
 
+def test_legacy_admin_login_remains_enabled_after_config_split(monkeypatch, tmp_path: Path) -> None:
+    from app.services.auth import AdminAuthService
+
+    deploy, runtime = _paths(monkeypatch, tmp_path)
+    runtime.parent.mkdir()
+    original_hash = AdminAuthService().hash_password("legacy-strong-password")
+    runtime.write_text(json.dumps({
+        "initialized": True,
+        "admin_username": "legacyadmin",
+        "admin_password_hash": original_hash,
+        "admin_session_lifetime_minutes": 120,
+    }), encoding="utf-8")
+
+    loaded = cfg.load_config()
+    assert loaded.admin_login_enabled is True
+    assert loaded.admin_username == "legacyadmin"
+    assert loaded.admin_password_hash == original_hash
+    assert yaml.safe_load(deploy.read_text(encoding="utf-8"))["admin_login_enabled"] is True
+    assert json.loads(runtime.read_text(encoding="utf-8"))["admin_password_hash"] == original_hash
+    assert "admin_username" not in json.loads(runtime.read_text(encoding="utf-8"))
+    assert cfg.load_config().admin_password_hash == original_hash
+
+
 def test_deployment_params_win_but_runtime_json_remains_sole_mutable_source(monkeypatch, tmp_path: Path) -> None:
     deploy, runtime = _paths(monkeypatch, tmp_path)
     runtime.parent.mkdir()
