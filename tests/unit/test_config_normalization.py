@@ -87,7 +87,7 @@ def test_yaml_auth_without_password_generates_unique_initial_secret(monkeypatch,
     assert secret_file.stat().st_mode & 0o777 == 0o600
     assert len(password) >= 24
     assert loaded.admin_username == "admin"
-    assert loaded.admin_auth_enabled is True if hasattr(loaded, "admin_auth_enabled") else loaded.admin_login_enabled
+    assert loaded.admin_login_enabled is True
     assert AdminAuthService().verify_credentials(
         submitted_username="admin",
         submitted_password=password,
