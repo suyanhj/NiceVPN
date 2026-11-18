@@ -8,9 +8,9 @@
 data/nicevpn.db
 ```
 
-SQLite 保存用户、组、对端、标签和防火墙等管理数据。**系统配置位于项目根目录 `config.yml`**（见 `config.example.yml`），`data/` 由启动流程按需创建，保留 SQLite、会话密钥、远端工作副本等；PKI/CRL、CCD、OVPN 与运行日志沿用相应文件路径。
+SQLite 保存用户、组、对端、标签和防火墙等管理数据。**部署参数位于项目根目录 `config.yml`**（见 `config.example.yml`），长期运行设置写入 `data/config.json`；`data/` 由启动流程按需创建，还保存 SQLite、会话密钥、远端工作副本等；PKI/CRL、CCD、OVPN 与运行日志沿用相应文件路径。
 
-旧版 `data/config.json` 在根目录尚无 `config.yml` 时自动迁移并保留旧文件；旧版本的 `data/users`、`data/groups`、`data/peers`、`data/firewall` JSON 仅用于启动时的一次性迁移，不是当前运行时主存储。迁移完成后，旧数据归档在 `backups/storage-migration-<UTC>/`。
+旧版 `data/config.json` 在根目录尚无 `config.yml` 时自动提取部署字段，运行字段仍留在原 JSON；旧版本的 `data/users`、`data/groups`、`data/peers`、`data/firewall` JSON 仅用于启动时的一次性迁移，不是当前运行时主存储。迁移完成后，旧数据归档在 `backups/storage-migration-<UTC>/`。
 
 ## Schema 迁移规则
 
