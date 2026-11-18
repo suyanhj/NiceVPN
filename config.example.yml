@@ -1,68 +1,17 @@
-# NiceVPN 配置模板；新环境复制到项目根目录 config.yml 后修改。
-# cp config.example.yml config.yml
-# 运行时 data/ 由程序按需生成；所有非数据类设置均保存在 config.yml。
-# 注意：系统设置页保存配置时会重写 YAML（注释请保留在本模板）。
-# 升级已有环境时不要预先复制本模板：若无 config.yml，首次启动会自动迁移 data/config.json。
-# config.yml 会保存密码哈希、SSH 凭据等敏感信息，请设置 chmod 600。
+# NiceVPN 部署参数模板：仅手动部署配置放在项目根目录 config.yml。
+# 新环境：cp config.example.yml config.yml && chmod 600 config.yml
+# 已有 data/config.json 的旧环境：不必复制本模板，升级后自动拆分。
+# 管理端「系统设置」保存到 data/config.json，不修改本文件。
+# 监听地址/端口继续使用 /etc/nicevpn/listen.env 或 NICEVPN_* 环境变量。
 
-# 管理后台登录，默认关闭（VPN 连接与公网 API 不受影响）
+# 管理后台登录开关，默认关闭，影响 8880，不影响独立公网 API 8881。
 admin_login_enabled: false
 admin_username: admin
-# admin_login_enabled=true 后：
-# - 可设置 admin_password: "你自己的强密码"，启动时会自动转换为哈希并删除明文
-# - 不填密码则生成随机初始密码（仅限本机查看 data/admin_initial_password）
-# - 也可用 ovpn-cli admin password reset 交互设置（只保存哈希）
-admin_password: null
-admin_password_hash: null
 admin_session_lifetime_minutes: 480
 admin_reconnect_timeout_seconds: 300
 
-# 初始化及本机 OpenVPN 环境（未配置时自动发现或使用向导）
-initialized: false
-global_subnet: null
-openvpn_bin: null
-openvpn_install_mode: null
-easyrsa_dir: null
-easyrsa_install_mode: null
-pki_dir: null
-instances: {}
-vpn_instance_id: null
-server_ip: null
-port: 1194
-proto: udp
-max_clients: 2048
-push_lan_routes: []
-domains: []
-download_base_url: null
-github_proxy_urls:
-  - https://gh-proxy.org/
-  - https://cdn.gh-proxy.org/
-  - https://gh.llkk.cc/
-
-# 客户端设备绑定及企业身份认证
-device_bind_mode: weak_fingerprint
-device_bind_exemption_enabled: false
-enterprise_sso_public_base_url: null
-enterprise_sso_allowed_corps: []
-enterprise_sso_enabled: false
-enterprise_sso_all_users: false
-
-# 通知渠道
-notify_enabled: false
-notify_provider: none
-dingtalk_webhook: null
-dingtalk_secret: null
-wework_webhook: null
-rocketchat_webhook: null
-rocketchat_channel: null
-rocketchat_username: VPN管理
-rocketchat_icon_emoji: ":lock:"
-rocketchat_title: OpenVPN
-
-# 对端 SSH 全局私钥（敏感，建议配合文件权限保护）
-global_ssh_private_key: null
-global_ssh_private_key_passphrase: null
-
-# 程序维护字段，通常无需修改
-created_at: null
-updated_at: null
+# 首次启用登录时可指定一次性初始密码。启动生成哈希保存到
+# data/config.json 后，不再读取此字段作为实际登录密码；
+# 强烈建议首次成功启动后从本文件中删除明文，平时用 CLI 重置。
+# 不填写时随机生成本机独有的初始密码，保存到 data/admin_initial_password（0600）。
+admin_password: null
