@@ -463,7 +463,12 @@ class PeerService:
 
     @_track_peer_remote_operation("远端防火墙更新")
     def apply_remote_peer_filter_chain_plan(
-        self, peer_id: str, rests: list[str], ipsets: list | None = None,
+        self,
+        peer_id: str,
+        rests: list[str],
+        ipsets: list | None = None,
+        *,
+        preserve_managed_rules: bool = False,
     ) -> None:
         """经 SSH 原子应用对端防火墙规则与标签 ipset 完整计划。"""
         from app.services.peer_instance.remote_peer_iptables import (
@@ -473,7 +478,9 @@ class PeerService:
         row = self.get(peer_id)
         if not row:
             raise ValueError(f"对端实例不存在: {peer_id}")
-        replace_peer_filter_chain_plan_via_ssh(row, rests, list(ipsets or []))
+        replace_peer_filter_chain_plan_via_ssh(
+            row, rests, list(ipsets or []), preserve_managed_rules=preserve_managed_rules,
+        )
 
     @_track_peer_remote_operation("OVPN 配置推送")
     def deploy_peer_ovpn_via_ssh(self, peer_id: str, *, remote_path: str | None = None) -> dict:

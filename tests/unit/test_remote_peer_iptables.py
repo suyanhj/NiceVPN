@@ -90,7 +90,51 @@ def test_remote_tag_ipset_is_prepared_before_atomic_iptables_restore():
     assert client.closed is True
 
 
-def test_remote_chain_plan_preserves_site_allow_as_last_fallback():
+def test_remote_chain_plan_applies_edited_managed_rule_exactly_as_submitted():
+    import shlex
+    from app.services.firewall.iptables_mgr import IptablesManager
+    from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
+
+    client = _FakeClient()
+    peer_id = "peer-1"
+    chain = IptablesManager.peer_chain_name_for_id(peer_id)
+    old_fallback = (
+        f'-s 10.8.0.0/16 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+    edited_fallback = (
+        f'-s 192.168.20.0/24 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+    commands = []
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        commands.append(command)
+        if command.endswith(f"iptables -S {chain}"):
+            return f"-N {chain}\n-A {chain} {old_fallback}\n", "", 0
+        if "iptables-restore" in command:
+            return "", "", 0
+        return "", "", 0
+
+    row = {"id": peer_id, "ssh_host": "h", "ssh_username": "u", "ssh_password": "p"}
+    user_drop = "-s 10.8.0.10 -j DROP"
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                replace_peer_filter_chain_plan_via_ssh(
+                    row, [user_drop, edited_fallback], [],
+                )
+
+    restore = next(command for command in commands if "iptables-restore" in command)
+    payload = shlex.split(restore)[2]
+    assert f"-A {chain} {user_drop}" in payload
+    assert f"-A {chain} {edited_fallback}" in payload
+    assert old_fallback not in payload
+    assert payload.count("role=fwd-global") == 1
+    assert client.closed is True
+
+
+def test_remote_chain_plan_allows_managed_rule_to_be_deleted():
     import shlex
     from app.services.firewall.iptables_mgr import IptablesManager
     from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
@@ -108,8 +152,6 @@ def test_remote_chain_plan_preserves_site_allow_as_last_fallback():
         commands.append(command)
         if command.endswith(f"iptables -S {chain}"):
             return f"-N {chain}\n-A {chain} {fallback}\n", "", 0
-        if "command -v ipset" in command:
-            return "", "", 1
         if "iptables-restore" in command:
             return "", "", 0
         return "", "", 0
@@ -119,21 +161,16 @@ def test_remote_chain_plan_preserves_site_allow_as_last_fallback():
     with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
         with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
             with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
-                # 兼容旧缓存曾把系统兜底规则作为普通行保存的情况，写回时也只保留一份。
-                replace_peer_filter_chain_plan_via_ssh(
-                    row, [user_drop, fallback], [],
-                )
+                replace_peer_filter_chain_plan_via_ssh(row, [user_drop], [])
 
     restore = next(command for command in commands if "iptables-restore" in command)
     payload = shlex.split(restore)[2]
-    user_index = payload.index(f"-A {chain} {user_drop}")
-    fallback_index = payload.index(f"-A {chain} {fallback}")
-    assert user_index < fallback_index
-    assert payload.count("role=fwd-global") == 1
+    assert f"-A {chain} {user_drop}" in payload
+    assert "role=fwd-global" not in payload
     assert client.closed is True
 
 
-def test_fetch_remote_chain_snapshot_hides_managed_site_fallback():
+def test_fetch_remote_chain_snapshot_includes_managed_site_rule():
     from app.services.firewall.iptables_mgr import IptablesManager
     from app.services.peer_instance.remote_peer_iptables import fetch_peer_filter_chain_snapshot_via_ssh
 
@@ -160,12 +197,12 @@ def test_fetch_remote_chain_snapshot_hides_managed_site_fallback():
             with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
                 snapshot = fetch_peer_filter_chain_snapshot_via_ssh(row)
 
-    assert snapshot["chain_rests"] == [user_drop]
+    assert snapshot["chain_rests"] == [fallback, user_drop]
     assert snapshot["forward_refs"] == [f"-A FORWARD -j {chain}"]
     assert client.closed is True
 
 
-def test_peer_site_rules_are_not_current_when_global_allow_precedes_user_policy():
+def test_peer_site_rules_current_does_not_depend_on_editable_global_allow_rule():
     from app.services.peer_instance import remote_peer_iptables as rpi
     from app.services.firewall.iptables_mgr import IptablesManager
 
@@ -197,8 +234,54 @@ def test_peer_site_rules_are_not_current_when_global_allow_precedes_user_policy(
                 False, timeout=10,
             )
 
+    edited_fallback = (
+        f'-s 192.168.20.0/24 -m comment --comment '
+        f'"{rpi.COMMENT_FWD_TMPL.format(peer_id=peer_id)}" -j ACCEPT'
+    )
     assert check([user_drop, fallback]) is True
-    assert check([fallback, user_drop]) is False
+    assert check([fallback, user_drop]) is True
+    assert check([user_drop, edited_fallback]) is True
+    assert check([user_drop]) is True
+    assert check([]) is True
+
+
+def test_remote_tag_refresh_preserves_existing_managed_rule_for_legacy_cache():
+    import shlex
+    from app.services.firewall.iptables_mgr import IptablesManager
+    from app.services.peer_instance.remote_peer_iptables import replace_peer_filter_chain_plan_via_ssh
+
+    client = _FakeClient()
+    peer_id = "peer-1"
+    chain = IptablesManager.peer_chain_name_for_id(peer_id)
+    managed = (
+        f'-s 10.255.0.0/16 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+    tag_rule = "-m set --match-set nvpnpt_abc_123 src -j ACCEPT"
+    commands = []
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        commands.append(command)
+        if command.endswith(f"iptables -S {chain}"):
+            return f"-N {chain}\n-A {chain} {managed}\n", "", 0
+        if "iptables-restore" in command:
+            return "", "", 0
+        return "", "", 0
+
+    row = {"id": peer_id, "ssh_host": "h", "ssh_username": "u", "ssh_password": "p"}
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                replace_peer_filter_chain_plan_via_ssh(
+                    row, [tag_rule], [], preserve_managed_rules=True,
+                )
+
+    restore = next(command for command in commands if "iptables-restore" in command)
+    payload = shlex.split(restore)[2]
+    assert f"-A {chain} {tag_rule}" in payload
+    assert f"-A {chain} {managed}" in payload
+    assert payload.index(f"-A {chain} {tag_rule}") < payload.index(f"-A {chain} {managed}")
+    assert client.closed is True
 
 
 def test_remote_tag_ipset_new_sets_are_removed_when_atomic_restore_fails():
@@ -264,6 +347,49 @@ def test_peer_snat_uses_global_subnet_as_source_without_dest_limit() -> None:
     assert "-d " not in nat_commands[0]
     assert "-o tun0" not in nat_commands[0]
     assert not any("iptables -F VPN_PEER_" in cmd or "iptables -X VPN_PEER_" in cmd for cmd in client.commands)
+    assert client.closed is True
+
+
+def test_peer_site_refresh_without_force_preserves_edited_global_rule() -> None:
+    from app.services.firewall.iptables_mgr import IptablesManager
+
+    client = _FakeClient()
+    peer_id = "peer-1"
+    chain = IptablesManager.peer_chain_name_for_id(peer_id)
+    edited_base = (
+        f'-A {chain} -s 192.168.20.0/24 -m comment '
+        f'--comment "ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+
+    def fake_exec(_client, command: str, *, timeout: int):
+        client.commands.append(command)
+        if command.endswith(f"iptables -S {chain}"):
+            return f"-N {chain}\n{edited_base}\n", "", 0
+        if command.endswith("iptables -S FORWARD"):
+            return "", "", 0
+        if command.endswith("iptables -t nat -S POSTROUTING"):
+            return "", "", 0
+        return "", "", 0
+
+    row = {
+        "id": peer_id,
+        "ssh_host": "h",
+        "ssh_username": "u",
+        "ssh_password": "p",
+        "masquerade_on_peer": False,
+    }
+    with patch("app.services.peer_instance.remote_peer_iptables.connect_peer_ssh_client_from_row", return_value=client):
+        with patch("app.services.peer_instance.remote_peer_iptables._exec_ssh", side_effect=fake_exec):
+            with patch("app.services.peer_instance.remote_peer_iptables._detect_sudo_prefix", return_value=""):
+                with patch(
+                    "app.services.peer_instance.remote_peer_iptables._peer_site_rules_already_current",
+                    return_value=False,
+                ):
+                    apply_peer_site_iptables_via_ssh(row, "10.8.0.0/16")
+
+    assert not any(f"iptables -D {chain} " in cmd and "role=fwd-global" in cmd for cmd in client.commands)
+    assert not any(f"iptables -A {chain} -s 10.8.0.0/16" in cmd for cmd in client.commands)
+    assert any("iptables -I FORWARD 1" in cmd for cmd in client.commands)
     assert client.closed is True
 
 

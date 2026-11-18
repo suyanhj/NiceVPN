@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""对端 filter 用户链在管理端的本地工作副本（``REMOTE_PEER_CHAINS_DIR`` 下每对端一 JSON）。
+"""对端 filter 链在管理端的完整工作副本（``REMOTE_PEER_CHAINS_DIR`` 下每对端一 JSON）。
 
-产品约定：对端机链上**实际状态**是事实源；见 ``FirewallPage`` 模块 docstring，须先
-``record_from_fetch`` 再经本处读写；一切改动的写回用 ``mark_pending_apply`` / ``record_after_apply``
-走 SSH 下发。``rows`` 每项至少含 ``rest``、``enabled``，可选 ``description``、``priority``
-（与中心新建/排序一致，用于本机展示与插入位置）。推对端时仅按序下发已启用之 ``rest``。
-旧版仅含 ``rests: [str]`` 的仍可读，并视为全部启用。
+产品约定：对端机链上**全部实际规则**是事实源，包括首次建链生成的 ``role=fwd-global``；
+拉取时不隐藏系统规则，列表中的规则均可编辑、排序和删除。见 ``FirewallPage`` 模块 docstring，
+须先 ``record_from_fetch`` 再经本处读写；一切改动的写回用 ``mark_pending_apply`` /
+``record_after_apply`` 走 SSH 下发。``rows`` 每项至少含 ``rest``、``enabled``，可选
+``description``、``priority``（与中心新建/排序一致，用于本机展示与插入位置）。
+推对端时仅按序下发已启用之 ``rest``。旧版仅含 ``rests: [str]`` 的仍可读，并视为全部启用。
 """
 from __future__ import annotations
 

@@ -83,6 +83,28 @@ def test_remote_rule_adapter_keeps_raw_and_parsed_traceability() -> None:
     assert row["can_edit"] is True
 
 
+def test_managed_peer_global_rule_is_a_normal_editable_rule() -> None:
+    peer_id = "peer-1"
+    row = adapt_remote_rule_row(
+        {
+            "rest": (
+                '-s 10.255.0.0/16 -m comment --comment '
+                f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+            ),
+            "enabled": True,
+        },
+        index=0,
+        peer_id=peer_id,
+    )
+
+    assert row["source"] == "10.255.0.0/16"
+    assert row["action_label"] == "ACCEPT"
+    assert row["can_toggle"] is True
+    assert row["can_edit"] is True
+    assert row["can_delete"] is True
+    assert "role=fwd-global" in row["raw_rest"]
+
+
 def test_remote_rule_adapter_fallbacks_for_raw_unparsed_rule() -> None:
     row = adapt_remote_rule_row(
         {

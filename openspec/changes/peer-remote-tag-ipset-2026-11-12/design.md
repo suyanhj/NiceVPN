@@ -13,13 +13,15 @@
 2. 生成内容寻址的 ipset 期望集合。
 3. SSH 检查 ipset；Debian/Ubuntu 使用 apt，RHEL 系使用 dnf/yum 安装缺失依赖。
 4. 创建 staging 集合并写入完整成员，随后 swap 到 stable 内容寻址名称。
-5. 从当前对端链提取系统维护的 `role=fwd-global` 规则；它是 global_subnet 放行兜底，不属于用户工作副本。
-6. 使用 `iptables-restore --noflush` 在一个 filter 表事务内清空并重建本对端用户链：先写用户/标签策略，再把系统兜底 ACCEPT 放在链尾。
+5. 对端链上的全部规则均属于完整工作副本，包含首次建链生成的 `role=fwd-global`；拉取、编辑、删除、排序均不对系统规则做特殊过滤。
+6. 使用 `iptables-restore --noflush` 在一个 filter 表事务内清空并按工作副本顺序重建本对端链；不从远端旧链隐式补回已删除或已修改的规则。
 7. iptables 更新成功后，只回收当前 peer 命名空间中不再被逻辑计划或保留的原始规则引用的集合。
 8. iptables 更新失败时，旧链保持不变，只删除本轮新建且尚未被旧规则引用的集合。
 
 ## 手工规则兼容
 
+- 普通原始规则与系统初始化规则统一保留原始 rest；`role=fwd-global` 不再隐藏，也不在普通写回时自动恢复旧值。
+- 首次创建对端链时生成默认 `role=fwd-global`；后续普通站点防火墙刷新只维护 FORWARD 跳转与可选 NAT，不覆盖链内规则。只有显式 `force=True` 才重置该默认规则。
 - 普通原始规则继续保留原始 rest。
 - 若管理员手动拉取并接管了引用 NiceVPN 对端标签集合的原始规则，GC 会识别 `--match-set` 并保留被引用集合。
 - 不属于当前 peer 命名空间的集合永远不会被本功能 GC。

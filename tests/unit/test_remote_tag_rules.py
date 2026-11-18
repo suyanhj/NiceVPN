@@ -262,8 +262,8 @@ def test_remote_tag_sync_rebuilds_peer_chain_from_latest_tag_members(
     monkeypatch.setattr(
         PeerService,
         "apply_remote_peer_filter_chain_plan",
-        lambda self, peer_id, rests, ipsets: pushed.append(
-            (peer_id, list(rests), list(ipsets))
+        lambda self, peer_id, rests, ipsets, *, preserve_managed_rules=False: pushed.append(
+            (peer_id, list(rests), list(ipsets), preserve_managed_rules)
         ),
     )
 
@@ -272,8 +272,9 @@ def test_remote_tag_sync_rebuilds_peer_chain_from_latest_tag_members(
     assert result["updated"] == ["peer-remote-tag"]
     assert result["failed"] == []
     assert len(pushed) == 1
-    peer_id, rests, ipsets = pushed[0]
+    peer_id, rests, ipsets, preserve_managed_rules = pushed[0]
     assert peer_id == "peer-remote-tag"
+    assert preserve_managed_rules is True
     assert len(ipsets) == 1
     assert any(
         f"-m set --match-set {ipsets[0].name} src" in rest and "--dport 443" in rest

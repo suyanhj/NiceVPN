@@ -149,6 +149,47 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
     assert options["suppressMoveWhenRowDragging"] is False
 
 
+def test_remote_grid_shows_managed_global_rule_as_editable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FirewallPage()
+    page._peer_service = FakePeerService()
+    peer_id = "peer-001"
+    managed = (
+        '-s 10.255.0.0/16 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={peer_id} role=fwd-global" -j ACCEPT'
+    )
+    cache = copy.deepcopy(CACHE)
+    cache["rows"] = [{"rest": managed, "enabled": True}]
+    cache["rests"] = [managed]
+
+    monkeypatch.setattr(
+        "app.ui.pages.firewall_remote.peer_row_has_usable_ssh_auth",
+        lambda _row: True,
+    )
+    monkeypatch.setattr(
+        "app.ui.pages.firewall_remote.remote_chain_cache.read_remote_chain_cache",
+        lambda _peer_id: copy.deepcopy(cache),
+    )
+
+    async def verify() -> None:
+        async with user_simulation(lambda: _build_remote_view(page)) as user:
+            response = await user.open("/")
+            assert response.status_code == 200
+            await user.should_see("已与远端同步")
+
+    asyncio.run(verify())
+
+    assert page._remote_grid_view is not None
+    rows = page._remote_grid_view.grid.options["rowData"]
+    assert len(rows) == 1
+    assert rows[0]["source"] == "10.255.0.0/16"
+    assert rows[0]["action_label"] == "ACCEPT"
+    assert rows[0]["can_toggle"] is True
+    assert rows[0]["can_edit"] is True
+    assert rows[0]["can_delete"] is True
+
+
 def test_remote_toolbar_disables_pull_and_push_without_ssh_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
