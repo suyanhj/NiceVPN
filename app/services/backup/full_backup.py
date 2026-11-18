@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from app.core.config import load_config
+from app.core.config import load_config, save_config
 from app.core.constants import (
     ADMIN_SESSION_SECRET_FILE,
     SSO_PROVIDER_MASTER_KEY_FILE,
@@ -121,7 +121,11 @@ def _copy_backup_payload(payload: Path, config: dict) -> None:
     vpn_dir.mkdir(parents=True, exist_ok=True)
 
     _sqlite_snapshot(Path(SQLITE_DB_FILE), app_dir / "nicevpn.db")
-    _copy_file(Path(CONFIG_FILE), app_dir / "config.json")
+    # 备份包保持历史 JSON 数据格式，兼容之前的归档；运行配置使用根目录 YAML。
+    (app_dir / "config.json").write_text(
+        json.dumps(dict(config), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     _copy_file(Path(API_BASIC_CREDENTIALS_FILE), app_dir / "api_basic_credentials.json")
     _copy_file(Path(ADMIN_SESSION_SECRET_FILE), app_dir / "admin_session_secret")
     _copy_file(Path(SSO_PROVIDER_MASTER_KEY_FILE), app_dir / "sso_provider_master.key")
@@ -432,7 +436,7 @@ def restore_full_backup(archive_path: str | Path) -> dict:
         )
 
         _restore_sqlite(payload / "app" / "nicevpn.db")
-        _replace_file(payload / "app" / "config.json", Path(CONFIG_FILE))
+        save_config(config_data)
         _replace_optional_file(
             payload / "app" / "api_basic_credentials.json",
             Path(API_BASIC_CREDENTIALS_FILE),
