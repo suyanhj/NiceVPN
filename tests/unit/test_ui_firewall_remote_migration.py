@@ -149,7 +149,9 @@ def test_remote_toolbar_and_aggrid_show_ssh_cache_and_raw_rule(
     assert options["suppressMoveWhenRowDragging"] is False
 
 
-def test_remote_grid_shows_managed_global_rule_as_editable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_grid_shows_managed_global_rule_as_editable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = FirewallPage()
     page._peer_service = FakePeerService()
     peer_id = "peer-001"
