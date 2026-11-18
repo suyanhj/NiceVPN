@@ -117,8 +117,10 @@ ovpn-cli firewall rule delete <规则ID>
 
 ```bash
 ovpn-cli admin password hash   # 生成哈希
-ovpn-cli admin password reset  # 设置新密码并启用登录，需重启服务
+ovpn-cli admin password reset  # 重置密码写入 data/config.json；启用登录须配置根目录 YAML，重启生效
 ```
+
+`config.yml` 仅管理登录开关、用户名和会话参数，不存密码哈希；密码哈希及其他长期设置写在 `data/config.json`。CLI 重置不修改 YAML，请在需要启用登录时设置 `admin_login_enabled: true`。
 
 ## 试运行
 
