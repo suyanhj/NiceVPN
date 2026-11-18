@@ -62,25 +62,20 @@ def test_hook_python_path_is_shell_quoted(tmp_path: Path, monkeypatch) -> None:
         assert check.returncode == 0, check.stderr
 
 
-def test_hook_python_selector_rejects_unsupported_override(tmp_path: Path) -> None:
-    """显式覆盖使用旧 Python 时在执行审计脚本前明确拒绝。"""
+def test_hook_scripts_use_selected_python_without_per_connection_version_probe(
+    tmp_path: Path,
+) -> None:
+    """部署时固定 Python 解释器，不在每次连接/断开时再次启动 Python 检测版本。"""
     from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
 
     sync_packaged_openvpn_scripts(tmp_path)
-    script = (tmp_path / "scripts" / "vpn-session-disconnect.sh").read_text(encoding="utf-8")
-    start = script.index("init_py3_for_audit() {")
-    end = script.index("\n}", start) + 2
-    function = script[start:end]
+    bind = (tmp_path / "scripts" / "device-bind.sh").read_text(encoding="utf-8")
+    disconnect = (tmp_path / "scripts" / "vpn-session-disconnect.sh").read_text(encoding="utf-8")
+    assert "init_py3_for_bind()" in bind
+    assert "init_py3_for_audit" not in disconnect
+    assert ' -c \'import sys;' not in bind
+    assert ' -c \'import sys;' not in disconnect
 
-    fake_python = tmp_path / "python3.6"
-    fake_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    fake_python.chmod(0o755)
-    result = subprocess.run(
-        ["bash", "-c", function + "\ninit_py3_for_audit"],
-        env={**os.environ, "PY3_AUDIT": str(fake_python)},
-        capture_output=True, text=True,
-    )
-    assert result.returncode != 0
 
 
 def test_connect_and_disconnect_hooks_use_selected_python_not_path_python3(
@@ -148,3 +143,164 @@ def test_connect_and_disconnect_hooks_use_selected_python_not_path_python3(
         "vpn_session_end",
     ]
     assert not marker.exists(), "不能回退到 PATH 中不受支持的系统 python3"
+
+
+def _prepare_hook_runtime(tmp_path: Path):
+    """以真实 Shell 调用部署后的 Python 脚本，避免只测试字符串。"""
+    from app.core.constants import DEVICE_BIND_LOG_FILE, VPN_SESSION_AUDIT_LOG_FILE
+    from app.services.openvpn.script_sync import sync_packaged_openvpn_scripts
+
+    sync_packaged_openvpn_scripts(tmp_path)
+    scripts = tmp_path / "scripts"
+    mgmt = tmp_path / "mgmt"
+    mgmt.mkdir()
+    (mgmt / "device_bind_mode").write_text("weak_log\n", encoding="utf-8")
+    server = tmp_path / "server"
+    server.mkdir()
+    server_conf = server / "server.conf"
+    server_conf.write_text("management 127.0.0.1 7505\n", encoding="utf-8")
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    bind_log = log_dir / "bind.log"
+    audit_log = log_dir / "sessions.jsonl"
+    connect = scripts / "device-bind.sh"
+    body = connect.read_text(encoding="utf-8")
+    body = body.replace('OVPN_ETC="/etc/openvpn"', f'OVPN_ETC="{tmp_path}"')
+    body = body.replace(DEVICE_BIND_LOG_FILE.as_posix(), str(bind_log))
+    body = body.replace(VPN_SESSION_AUDIT_LOG_FILE.as_posix(), str(audit_log))
+    connect.write_text(body, encoding="utf-8")
+    disconnect = scripts / "vpn-session-disconnect.sh"
+    body = disconnect.read_text(encoding="utf-8")
+    body = body.replace(VPN_SESSION_AUDIT_LOG_FILE.as_posix(), str(audit_log))
+    disconnect.write_text(body, encoding="utf-8")
+
+    call_log = tmp_path / "python-calls.txt"
+    fake_python = tmp_path / "spy-python"
+    fake_python.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$1" >> "$PY_CALL_LOG"\nexec '
+        + shlex.quote(os.path.abspath(sys.executable)) + ' "$@"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = {
+        **os.environ,
+        "common_name": "demo-user",
+        "VPN_INSTANCE_NAME": "server",
+        "trusted_ip": "203.0.113.7",
+        "trusted_port": "55778",
+        "PY_CALL_LOG": str(call_log),
+        "PY3_BIND": str(fake_python),
+        "PY3_AUDIT": str(fake_python),
+    }
+    return {
+        "connect": connect, "disconnect": disconnect, "server_conf": server_conf,
+        "bind_mode": mgmt / "device_bind_mode", "bind_log": bind_log,
+        "audit_log": audit_log, "call_log": call_log, "env": env,
+        "scripts": scripts,
+    }
+
+
+def _run_hook(path: Path, env: dict[str, str]):
+    return subprocess.run(["bash", str(path)], env=env, capture_output=True, text=True)
+
+
+def test_connect_without_sso_starts_python_only_for_session_audit(tmp_path: Path) -> None:
+    runtime = _prepare_hook_runtime(tmp_path)
+    result = _run_hook(runtime["connect"], runtime["env"])
+    assert result.returncode == 0, result.stderr
+    calls = runtime["call_log"].read_text(encoding="utf-8").splitlines()
+    assert [Path(item).name for item in calls] == ["vpn_session_audit.py"]
+
+
+def test_connect_with_management_auth_checks_sso_grant_before_audit(tmp_path: Path) -> None:
+    runtime = _prepare_hook_runtime(tmp_path)
+    runtime["server_conf"].write_text(
+        "management /etc/openvpn/mgmt/sso.sock unix\n"
+        "management-client-user root\n"
+        "management-client-auth\n",
+        encoding="utf-8",
+    )
+    result = _run_hook(runtime["connect"], runtime["env"])
+    assert result.returncode == 0, result.stderr
+    calls = runtime["call_log"].read_text(encoding="utf-8").splitlines()
+    assert [Path(item).name for item in calls] == [
+        "sso_grant.py", "vpn_session_audit.py",
+    ]
+
+
+def test_audit_failures_do_not_reject_connect_or_disconnect(tmp_path: Path) -> None:
+    runtime = _prepare_hook_runtime(tmp_path)
+    # 目录路径无法作为 JSONL 文件追加，模拟文件写入失败。
+    runtime["audit_log"].mkdir()
+
+    connected = _run_hook(runtime["connect"], runtime["env"])
+    assert connected.returncode == 0, connected.stderr
+    assert "警告: 会话开始审计写入失败" in runtime["bind_log"].read_text(encoding="utf-8")
+
+    disconnected = _run_hook(runtime["disconnect"], runtime["env"])
+    assert disconnected.returncode == 0
+    assert "警告: 写入 vpn_session_end 失败" in disconnected.stderr
+
+
+def test_audit_missing_or_python_missing_is_nonblocking(tmp_path: Path) -> None:
+    runtime = _prepare_hook_runtime(tmp_path)
+    audit_script = runtime["scripts"] / "vpn_session_audit.py"
+    audit_source = audit_script.read_text(encoding="utf-8")
+    audit_script.unlink()
+    assert _run_hook(runtime["connect"], runtime["env"]).returncode == 0
+    assert _run_hook(runtime["disconnect"], runtime["env"]).returncode == 0
+
+    # 恢复审计脚本后模拟 Python 不存在，验证解释器失败也不影响连接。
+    audit_script.write_text(audit_source, encoding="utf-8")
+    runtime["env"]["PY3_BIND"] = "/not-a-real-python-interpreter"
+    assert _run_hook(runtime["connect"], runtime["env"]).returncode == 0
+    runtime["env"]["PY3_AUDIT"] = "/not-a-real-python-interpreter"
+    assert _run_hook(runtime["disconnect"], runtime["env"]).returncode == 0
+
+
+def test_verified_sso_grant_still_bypasses_strict_binding(tmp_path: Path) -> None:
+    """只有通过 Management 认证发布的同一端点授权才可跳过强设备绑定。"""
+    import json
+
+    from app.services.auth.sso_grants import write_sso_grant
+
+    runtime = _prepare_hook_runtime(tmp_path)
+    runtime["bind_mode"].write_text("strict_hwaddr\n", encoding="utf-8")
+    runtime["server_conf"].write_text(
+        "management /etc/openvpn/mgmt/sso.sock unix\n"
+        "management-client-user root\n"
+        "management-client-auth\n",
+        encoding="utf-8",
+    )
+    # 无 IV_HWADDR 且没有真实授权时，强绑定仍拒绝。
+    denied = _run_hook(runtime["connect"], runtime["env"])
+    assert denied.returncode != 0
+
+    write_sso_grant(
+        "server", "demo-user",
+        peer_ip="203.0.113.7", peer_port="55778",
+        grant_dir=tmp_path / "mgmt" / "sso_grants",
+    )
+    accepted = _run_hook(runtime["connect"], runtime["env"])
+    assert accepted.returncode == 0, accepted.stderr
+    events = [
+        json.loads(row)
+        for row in runtime["audit_log"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[-1]["device_binding_action"] == "sso_verified"
+
+
+def test_hardware_binding_rejections_remain_fail_closed(tmp_path: Path) -> None:
+    runtime = _prepare_hook_runtime(tmp_path)
+    runtime["bind_mode"].write_text("strict_hwaddr\n", encoding="utf-8")
+    result = _run_hook(runtime["connect"], runtime["env"])
+    assert result.returncode != 0, "强制模式缺 IV_HWADDR 应拒绝连接"
+
+    env = {
+        **runtime["env"],
+        "IV_HWADDR": "device-fingerprint",
+        "PY3_BIND": "/not-a-real-python-interpreter",
+    }
+    result = _run_hook(runtime["connect"], env)
+    assert result.returncode != 0, "设备绑定写入依赖故障必须拒绝连接"

@@ -40,15 +40,15 @@ BD_JSON_PY="${SCRIPT_DIR}/device_binding_json.py"
 SESSION_AUDIT_PY="${SCRIPT_DIR}/vpn_session_audit.py"
 EXEMPT_PY="${SCRIPT_DIR}/device_bind_exemption.py"
 
-# Python 路径由 NiceVPN 同步脚本时写入；保留 PY3_BIND 供人工覆盖。
-# 不再依赖 OpenVPN systemd 服务的 PATH 猜测 Python 版本。
+# Python 路径由 NiceVPN 同步脚本时写入（NiceVPN 本身要求 Python >= 3.10）。
+# 每次连接只检查解释器存在，不额外运行 python -c 探测版本。
+# 设备绑定 Python 执行失败继续拒绝接入。
 init_py3_for_bind() {
     [ "${PY3_BIND_CHECKED:-0}" = "1" ] && return 0
     if [ -z "${PY3_BIND:-}" ]; then
         PY3_BIND=__NICEVPN_PYTHON_BIN__
     fi
     command -v "${PY3_BIND}" >/dev/null 2>&1 || return 1
-    "${PY3_BIND}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || return 1
     PY3_BIND_CHECKED=1
 }
 
@@ -71,21 +71,22 @@ if [ -z "${CN}" ]; then
 fi
 
 write_session_start() {
+    # 审计属于观测功能，不因 Python/脚本/日志故障拒绝合法连接。
     if [ ! -f "${SESSION_AUDIT_PY}" ]; then
-        log "错误: 未找到 ${SESSION_AUDIT_PY}，请与 device-bind.sh 一并部署到 scripts 目录，CN=${CN}"
-        exit 1
+        log "警告: 会话开始审计缺失 ${SESSION_AUDIT_PY}，跳过写入，CN=${CN}"
+        return 0
     fi
     if ! init_py3_for_bind; then
-        log "错误: Python >= 3.10 不可用（请检查 PY3_BIND 与 NiceVPN 虚拟环境），无法写入会话审计 JSONL，CN=${CN}"
-        exit 1
+        log "警告: 会话审计 Python 不可用（PY3_BIND=${PY3_BIND:-未配置}），跳过写入，CN=${CN}"
+        return 0
     fi
     if ! "${PY3_BIND}" "${SESSION_AUDIT_PY}" \
         --event-type vpn_session_start \
         --log-file "${SESSION_AUDIT_LOG}" \
         2>>"${BIND_LOG}"; then
-        log "错误: 写入会话开始审计失败（${PY3_BIND} 执行 vpn_session_audit.py），CN=${CN}"
-        exit 1
+        log "警告: 会话开始审计写入失败（${PY3_BIND} 执行 vpn_session_audit.py），CN=${CN}"
     fi
+    return 0
 }
 
 # ---------- 通过企业 SSO 后仅记录设备 ----------
@@ -96,7 +97,9 @@ SSO_GRANT_PY="${SCRIPT_DIR}/sso_grant.py"
 # OpenVPN client-connect 并不保证导出 config 环境变量；使用由 NiceVPN
 # 同一个生成器写入的固定实例配置路径，避免已完成 SSO 后误走旧设备绑定。
 SSO_SERVER_CONF="${OVPN_ETC}/server/${VPN_INSTANCE_NAME:-}.conf"
+# 仅检查实例是否配置管理端认证；真正的授权证明仍由 Python 严格验证。
 if [ -n "${VPN_INSTANCE_NAME:-}" ] && [ -f "${SSO_SERVER_CONF}" ] \
+    && grep -Eq '^[[:space:]]*management-client-auth([[:space:]]*(#.*)?)?$' "${SSO_SERVER_CONF}" \
     && [ -f "${SSO_GRANT_PY}" ] && init_py3_for_bind; then
     if "${PY3_BIND}" "${SSO_GRANT_PY}" \
         --grant-dir "${OVPN_ETC}/mgmt/sso_grants" \
