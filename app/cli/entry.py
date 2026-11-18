@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import logging
+import secrets
 import shutil
 import sys
 from pathlib import Path
@@ -360,28 +361,54 @@ def cmd_admin_password_hash(args: argparse.Namespace) -> int:
 
 
 def cmd_admin_password_reset(args: argparse.Namespace) -> int:
-    """交互重置后台密码，写入根目录 YAML 中的 Argon2id 哈希。"""
+    """重置单管理员密码：无参交互、用户名+密码指定、仅用户名随机生成。"""
 
-    del args
-    password = getpass.getpass("新管理员密码: ")
-    confirmation = getpass.getpass("再次输入新密码: ")
-    if password != confirmation:
-        print("两次输入的新密码不一致。", file=sys.stderr)
-        return 1
+    requested_username = getattr(args, "username", None)
+    supplied_password = getattr(args, "password", None)
+
     try:
-        new_hash = AdminAuthService().hash_password(password)
         config = load_config()
+        configured_username = str(config.get("admin_username") or "admin")
+        username = str(requested_username or configured_username).strip()
+
+        if username != configured_username:
+            print(
+                f"管理员账号不匹配：当前账号为 {configured_username}。"
+                "若需更名，请先修改根目录 config.yml 中的 admin_username。",
+                file=sys.stderr,
+            )
+            return 1
+
+        if requested_username is None:
+            # 兼容既有无参数交互模式；不会回显密码到终端或进程参数。
+            password = getpass.getpass("新管理员密码: ")
+            confirmation = getpass.getpass("再次输入新密码: ")
+            if password != confirmation:
+                print("两次输入的新密码不一致。", file=sys.stderr)
+                return 1
+            generated = False
+        elif supplied_password is None:
+            password = secrets.token_urlsafe(24)
+            generated = True
+        else:
+            password = supplied_password
+            generated = False
+
+        new_hash = AdminAuthService().hash_password(password)
         config["admin_password"] = None
         config["admin_password_hash"] = new_hash
         save_config(config)
         ADMIN_INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
-        # 让重新启动后的旧管理员 Session 失效。
+        # 重启后生成新 Session 密钥，令旧管理员会话失效。
         ADMIN_SESSION_SECRET_FILE.unlink(missing_ok=True)
     except (OSError, ValueError) as exc:
         print(f"重置失败: {exc}", file=sys.stderr)
         return 1
-    print("管理后台密码已更新到 data/config.json，请重启 NiceVPN 生效。")
-    print("如需开启管理页登录，请在项目根目录 config.yml 设置 admin_login_enabled: true。")
+
+    print(f"管理员 {username} 的密码已更新到 data/config.json，请重启 NiceVPN 生效。")
+    if generated:
+        print(f"随机生成的密码（只显示本次，请妥善保存）：{password}")
+    print("如需开启管理页登录，请在 config.yml 设置 admin_login_enabled: true。")
     return 0
 
 
@@ -1301,7 +1328,15 @@ def build_parser() -> argparse.ArgumentParser:
     password_sub = password.add_subparsers(dest="admin_password_command", required=True)
     password_hash = password_sub.add_parser("hash", help="交互生成 Argon2id 密码哈希")
     password_hash.set_defaults(func=cmd_admin_password_hash, dry_run=False)
-    password_reset = password_sub.add_parser("reset", help="交互重置管理后台密码并启用登录")
+    password_reset = password_sub.add_parser(
+        "reset", help="重置管理员密码：无参交互、账号+密码指定、仅账号随机生成",
+    )
+    password_reset.add_argument(
+        "username", nargs="?", help="单管理员账号；未指定时交互修改当前账号密码",
+    )
+    password_reset.add_argument(
+        "password", nargs="?", help="可选明文新密码；留空且指定账号时生成随机密码",
+    )
     password_reset.set_defaults(func=cmd_admin_password_reset, dry_run=False)
     return p
 
