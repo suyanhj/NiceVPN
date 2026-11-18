@@ -127,7 +127,7 @@ def _peer_site_rules_already_current(
     *,
     timeout: int,
 ) -> bool:
-    """检测当前规则是否已与本次期望一致，避免重复清理和重写。"""
+    """检查 FORWARD 跳转和可选 NAT 是否就绪；不校验用户链内容，避免覆盖人工规则。"""
     peer_tag = f"peer={peer_id}"
     out_forward, err_forward, code_forward = _exec_ssh(client, f"{sp}iptables -S FORWARD", timeout=timeout)
     if code_forward != 0:
@@ -144,31 +144,13 @@ def _peer_site_rules_already_current(
     forward_peer_lines = [
         line for line in out_forward.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line
     ]
-    chain_rules = [
-        line.strip() for line in out_chain.splitlines()
-        if line.strip().startswith(f"-A {chain} ")
-    ]
-    chain_peer_lines = [
-        line for line in chain_rules
-        if _is_managed_peer_global_allow_rule(line, peer_id)
-    ]
     nat_peer_lines = [line for line in out_nat.splitlines() if peer_tag in line and "ovpn-mgmt-peer" in line]
 
     c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
     jump_ok = len(forward_peer_lines) == 1 and all(
         part in forward_peer_lines[0] for part in (c_jump, f"-j {chain}")
     )
-    c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
-    fwd_ok = (
-        len(chain_peer_lines) == 1
-        and bool(chain_rules)
-        and chain_rules[-1] == chain_peer_lines[0]
-        and all(
-            part in chain_peer_lines[0]
-            for part in (f"-s {global_subnet}", c_fwd, "-j ACCEPT")
-        )
-    )
-    if not jump_ok or not fwd_ok:
+    if not jump_ok:
         return False
 
     if not want_masquerade:
@@ -186,7 +168,7 @@ def apply_peer_site_iptables_via_ssh(
     force: bool = False,
     exec_timeout: int = 120,
 ) -> dict[str, Any]:
-    """SSH 登录对端：先清理本 peer 旧规则，再写入 FORWARD（global_subnet 为源）及可选 MASQUERADE。
+    """SSH 登录对端：确保 FORWARD 跳转及可选 MASQUERADE；仅首次建链或 force 时写入默认放行规则。
 
     Args:
         row: 对端实例 dict（须含 id、ssh_*、lan_cidrs、masquerade_on_peer）
@@ -241,35 +223,38 @@ def apply_peer_site_iptables_via_ssh(
                     "warnings": warnings,
                 }
 
-            # 只清理本 peer 的 FORWARD 跳转与 NAT 规则，不再 flush 整条用户链；
-            # 用户链内的远端防火墙规则（尤其是标签 ipset matcher）必须保留。
+            # 只清理本 peer 的 FORWARD 跳转与 NAT；普通刷新不改写链内规则，
+            # 因为包括 role=fwd-global 在内的所有链规则都由对端防火墙工作副本管理。
             removed = _remove_rules_matching_peer(client, peer_id, sp, timeout=exec_timeout)
 
             chain_out, chain_err, chain_code = _exec_ssh(
                 client, f"{sp}iptables -S {shlex.quote(chain)}", timeout=exec_timeout,
             )
             removed_base = 0
+            chain_created = False
             if chain_code == 0:
-                prefix = f"-A {chain} "
-                peer_marker = f"peer={peer_id}"
-                for line in chain_out.splitlines():
-                    current = line.strip()
-                    if not current.startswith(prefix):
-                        continue
-                    if peer_marker not in current or "role=fwd-global" not in current:
-                        continue
-                    delete_command = (
-                        f"{sp}iptables -D {shlex.quote(chain)} "
-                        f"{current[len(prefix):]}"
-                    )
-                    _, delete_err, delete_code = _exec_ssh(
-                        client, delete_command, timeout=exec_timeout,
-                    )
-                    if delete_code != 0:
-                        raise RuntimeError(
-                            f"更新对端全局放行规则失败: {(delete_err or '').strip()}"
+                # 仅 force 明确要求重置默认规则时，才替换已存在的 role=fwd-global。
+                if force:
+                    prefix = f"-A {chain} "
+                    peer_marker = f"peer={peer_id}"
+                    for line in chain_out.splitlines():
+                        current = line.strip()
+                        if not current.startswith(prefix):
+                            continue
+                        if peer_marker not in current or "role=fwd-global" not in current:
+                            continue
+                        delete_command = (
+                            f"{sp}iptables -D {shlex.quote(chain)} "
+                            f"{current[len(prefix):]}"
                         )
-                    removed_base += 1
+                        _, delete_err, delete_code = _exec_ssh(
+                            client, delete_command, timeout=exec_timeout,
+                        )
+                        if delete_code != 0:
+                            raise RuntimeError(
+                                f"更新对端全局放行规则失败: {(delete_err or '').strip()}"
+                            )
+                        removed_base += 1
             elif _chain_missing_message(f"{chain_err or ''} {chain_out or ''}"):
                 create_command = f"{sp}iptables -N {shlex.quote(chain)}"
                 _, create_err, create_code = _exec_ssh(
@@ -279,6 +264,7 @@ def apply_peer_site_iptables_via_ssh(
                     raise RuntimeError(
                         f"创建对端链 {chain} 失败: {(create_err or '').strip()}"
                     )
+                chain_created = True
             else:
                 raise RuntimeError(
                     f"读取对端链 {chain} 失败: {(chain_err or chain_out or '').strip()}"
@@ -286,14 +272,15 @@ def apply_peer_site_iptables_via_ssh(
 
             c_fwd = COMMENT_FWD_TMPL.format(peer_id=peer_id)
             c_jump = COMMENT_JUMP_TMPL.format(peer_id=peer_id)
-            # 全局网段 ACCEPT 是兜底规则，必须放在用户/标签策略之后，不能抢先绕过 DROP/REJECT。
-            fw_rule = (
-                f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
-                f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
-            )
-            _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
-            if cf != 0:
-                raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
+            # 默认放行规则只在首次建链时创建；force=True 是显式重置，不会被普通同步覆盖。
+            if chain_created or force:
+                fw_rule = (
+                    f"{sp}iptables -A {shlex.quote(chain)} -s {shlex.quote(gs)} "
+                    f"-m comment --comment {shlex.quote(c_fwd)} -j ACCEPT"
+                )
+                _, err_f, cf = _exec_ssh(client, fw_rule, timeout=exec_timeout)
+                if cf != 0:
+                    raise RuntimeError(f"写入对端链 {chain} 规则失败: {err_f.strip()}")
             jump_cmd = (
                 f"{sp}iptables -I FORWARD 1 -m comment --comment {shlex.quote(c_jump)} "
                 f"-j {shlex.quote(chain)}"
@@ -421,10 +408,8 @@ def fetch_peer_filter_chain_snapshot_via_ssh(
                         "forward_refs": forward_refs,
                     }
                 raise RuntimeError(f"iptables -S {chain} 失败: {msg}")
-            rests = [
-                rest for rest in _filter_chain_rests_from_iptables_s(out, chain)
-                if not _is_managed_peer_global_allow_rule(rest, peer_id)
-            ]
+            # 对端链的实际规则是唯一事实源；系统生成的 role=fwd-global 也必须完整进入工作副本。
+            rests = _filter_chain_rests_from_iptables_s(out, chain)
             return {
                 "ok": True,
                 "chain": chain,
@@ -465,8 +450,9 @@ def replace_peer_filter_chain_plan_via_ssh(
     *,
     exec_timeout: int = 180,
 ) -> None:
-    """原子更新对端用户链，并声明式管理本对端的标签 ipset。
+    """按传入的完整规则计划原子更新对端链，并声明式管理本对端的标签 ipset。
 
+    链上所有规则（包括 role=fwd-global）均属于工作副本，编辑、删除、排序后按计划原样写回。
     顺序：预建内容寻址 ipset → iptables-restore 原子替换链 → GC 孤儿集合。
     如果准备集合失败或 iptables-restore 失败，旧链不被清空；本轮新建集合会回收。
     """
@@ -506,21 +492,6 @@ def replace_peer_filter_chain_plan_via_ssh(
                     )
                 raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
 
-            # 站点组网的 global_subnet ACCEPT 不是用户策略；拉取时隐藏它，写回时保留并放在链尾。
-            chain_prefix = f"-A {expect} "
-            site_fallbacks = list(dict.fromkeys(
-                line.strip()[len(chain_prefix):].strip()
-                for line in pout.splitlines()
-                if line.strip().startswith(chain_prefix)
-                and _is_managed_peer_global_allow_rule(
-                    line.strip()[len(chain_prefix):], peer_id,
-                )
-            ))
-            clean_rests = [
-                body for body in clean_rests
-                if not _is_managed_peer_global_allow_rule(body, peer_id)
-            ]
-
             newly_created: set[str] = set()
             if ipsets:
                 newly_created = reconcile_remote_peer_tag_ipsets(
@@ -555,8 +526,6 @@ def replace_peer_filter_chain_plan_via_ssh(
 
             payload_lines = ["*filter", f"-F {expect}"]
             payload_lines.extend(f"-A {expect} {body}" for body in clean_rests)
-            # 用户策略先匹配；未命中时再按原站点语义放行中心 VPN 地址池。
-            payload_lines.extend(f"-A {expect} {body}" for body in site_fallbacks)
             payload_lines.append("COMMIT")
             payload = "\n".join(payload_lines) + "\n"
             command = (
@@ -580,7 +549,7 @@ def replace_peer_filter_chain_plan_via_ssh(
             )
             logger.info(
                 "对端链原子写回完成 peer=%s rules=%s tag_ipsets=%s gc=%s",
-                peer_id[:8], len(clean_rests) + len(site_fallbacks), len(ipsets), len(removed),
+                peer_id[:8], len(clean_rests), len(ipsets), len(removed),
             )
         finally:
             client.close()
