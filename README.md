@@ -39,33 +39,33 @@ python -m pip install -r requirements.txt
 
 ## 配置文件与管理后台登录
 
-项目根目录使用 `config.yml` 保存系统配置，`config.example.yml` 包含所有默认字段：
+配置已分层：项目根目录的 `config.yml` 是**人工维护的部署参数**；`data/config.json` 由 NiceVPN 持久化初始化状态、VPN/SSO 等系统设置和管理员密码哈希。SQLite 继续保存用户、组、标签、对端和防火墙数据。
 
 ```bash
+# 新环境使用项目内置的最小模板
 cp config.example.yml config.yml
 chmod 600 config.yml
 ```
 
-新环境可先复制模板再修改；**已有 `data/config.json` 的旧环境不要预先复制模板**，首次启动会自动迁移所有既有设置到根目录 `config.yml`，并保留旧 JSON 文件。
+旧环境只有 `data/config.json` 时，升级后自动拆分，保留已初始化状态和历史设置。Web 设置和 CLI 重置密码都不会修改 YAML 中的注释。
 
-默认不要求管理后台登录。如需开启：
+管理后台登录默认关闭；开启后可选择临时初始密码或随机生成：
 
 ```yaml
 admin_login_enabled: true
 admin_username: admin
-admin_password: "请设置自己的强密码"
+admin_session_lifetime_minutes: 480
+admin_password: null
 ```
 
-首次启动时会将明文转换为 Argon2id 哈希并从 `config.yml` 清除；也可以不填 `admin_password`，程序将随机生成初始密码，仅保存在本机 `data/admin_initial_password`（权限 600），查看后立即重置。**没有仓库内置的固定弱密码。**
+若不设置初始密码，随机密码写入本机 `data/admin_initial_password`（0600）。若填入 `admin_password`，启动哈希化后请**手动删除 YAML 中的明文**；密码哈希保存在 `data/config.json`。
 
 ```bash
-# 推荐：交互式重置，密码不在终端历史中出现
 ovpn-cli admin password reset
-# 或者还未安装 CLI 包装器
-./start.sh cli admin password reset
+# 或 ./start.sh cli admin password reset
 ```
 
-密码修改后重启 NiceVPN；管理端 8880 生效，公网 VPN API 8881 独立认证。更多说明见 [docs/configuration.md](docs/configuration.md)。
+CLI 仅修改运行配置中的哈希，登录开关由 YAML 控制；修改后重启 NiceVPN 服务生效。更多见 [docs/configuration.md](docs/configuration.md)。
 
 ## 生产部署
 
@@ -94,7 +94,7 @@ Docker 构建入口：`deploy/docker/Dockerfile`。容器需按部署方式提�
 ## 数据
 
 - SQLite：用户、组、对端、标签和防火墙等结构化数据。
-- 配置：项目根目录 `config.yml`；运行文件：`data/` 内的会话密钥、SQLite、审计等，以及 OpenVPN 的 PKI/CCD/OVPN。
+- 配置：根目录 `config.yml` 存部署参数，`data/config.json` 存程序持久化设置；`data/` 另含会话密钥、SQLite 等运行数据；OpenVPN 的 PKI/CCD/OVPN 独立保存。
 - 备份时同时保留根目录 `config.yml`、`data/` 和 `backups/`；启用 SSO 时，数据库必须与 `data/sso_provider_master.key` 一起备份。
 
 ## 文档
