@@ -42,11 +42,15 @@ def test_write_read_round_trip_and_fetch_record(tmp_path, monkeypatch) -> None:
     assert out["pending_sync"] is True
     assert out["rests"] == ["-j RETURN", "-j ACCEPT"]
     assert [r.get("rest") for r in out["rows"]] == ["-j RETURN", "-j ACCEPT"]
+    managed = (
+        '-s 10.255.0.0/16 -m comment --comment '
+        f'"ovpn-mgmt-peer peer={pid} role=fwd-global" -j ACCEPT'
+    )
     record_from_fetch(
         {
             "chain": ch,
             "chain_exists": True,
-            "chain_rests": ["-j ACCEPT"],
+            "chain_rests": [managed, "-j ACCEPT"],
         },
         pid,
     )
@@ -54,7 +58,7 @@ def test_write_read_round_trip_and_fetch_record(tmp_path, monkeypatch) -> None:
     assert out2 is not None
     assert out2["pending_sync"] is False
     assert out2["last_sync_error"] is None
-    assert out2["rests"] == ["-j ACCEPT"]
+    assert out2["rests"] == [managed, "-j ACCEPT"]
 
 
 
