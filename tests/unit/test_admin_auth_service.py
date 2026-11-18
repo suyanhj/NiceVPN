@@ -133,6 +133,7 @@ def test_cli_admin_password_reset_writes_yaml_hash_and_removes_bootstrap(
     monkeypatch.setattr(cfg, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
     monkeypatch.setattr(cfg, "ensure_openvpn_runtime_dirs", lambda: None)
     monkeypatch.setattr(entry, "ADMIN_INITIAL_PASSWORD_FILE", secret_file)
+    monkeypatch.setattr(entry, "ADMIN_SESSION_SECRET_FILE", data / "admin_session_secret")
     answers = iter(("new-safe-password-123", "new-safe-password-123"))
     monkeypatch.setattr(entry.getpass, "getpass", lambda _: next(answers))
 
