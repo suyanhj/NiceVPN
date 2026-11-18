@@ -19,7 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from app.core.config import DEPLOYMENT_CONFIG_FIELDS, load_config, save_config
+from app.core.config import (
+    DEPLOYMENT_CONFIG_FIELDS, load_config, save_config,
+    restore_legacy_deployment_config,
+)
 from app.core.constants import (
     ADMIN_SESSION_SECRET_FILE,
     SSO_PROVIDER_MASTER_KEY_FILE,
@@ -451,8 +454,12 @@ def restore_full_backup(archive_path: str | Path) -> dict:
         )
 
         _restore_sqlite(payload / "app" / "nicevpn.db")
-        # 部署配置和运行配置分开还原；旧版备份无 YAML 时由下次启动迁移。
-        _replace_optional_file(payload / "app" / "config.yml", Path(CONFIG_FILE))
+        # 同时恢复两个配置；历史备份没有 YAML 时，从旧 JSON 提取部署参数。
+        deployment_snapshot = payload / "app" / "config.yml"
+        if deployment_snapshot.is_file():
+            _replace_file(deployment_snapshot, Path(CONFIG_FILE))
+        else:
+            restore_legacy_deployment_config(config_data)
         save_config(config_data)
         _replace_optional_file(
             payload / "app" / "api_basic_credentials.json",
