@@ -371,8 +371,6 @@ def cmd_admin_password_reset(args: argparse.Namespace) -> int:
     try:
         new_hash = AdminAuthService().hash_password(password)
         config = load_config()
-        config["admin_username"] = str(config.get("admin_username") or "admin")
-        config["admin_login_enabled"] = True
         config["admin_password"] = None
         config["admin_password_hash"] = new_hash
         save_config(config)
@@ -382,7 +380,8 @@ def cmd_admin_password_reset(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"重置失败: {exc}", file=sys.stderr)
         return 1
-    print("后台密码已更新且登录保护已开启，请重启 NiceVPN 生效。")
+    print("管理后台密码已更新到 data/config.json，请重启 NiceVPN 生效。")
+    print("如需开启管理页登录，请在项目根目录 config.yml 设置 admin_login_enabled: true。")
     return 0
 
 
