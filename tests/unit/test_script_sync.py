@@ -245,14 +245,50 @@ def test_audit_failures_do_not_reject_connect_or_disconnect(tmp_path: Path) -> N
 
 def test_audit_missing_or_python_missing_is_nonblocking(tmp_path: Path) -> None:
     runtime = _prepare_hook_runtime(tmp_path)
-    (runtime["scripts"] / "vpn_session_audit.py").unlink()
+    audit_script = runtime["scripts"] / "vpn_session_audit.py"
+    audit_source = audit_script.read_text(encoding="utf-8")
+    audit_script.unlink()
     assert _run_hook(runtime["connect"], runtime["env"]).returncode == 0
     assert _run_hook(runtime["disconnect"], runtime["env"]).returncode == 0
 
+    # 恢复审计脚本后模拟 Python 不存在，验证解释器失败也不影响连接。
+    audit_script.write_text(audit_source, encoding="utf-8")
     runtime["env"]["PY3_BIND"] = "/not-a-real-python-interpreter"
     assert _run_hook(runtime["connect"], runtime["env"]).returncode == 0
     runtime["env"]["PY3_AUDIT"] = "/not-a-real-python-interpreter"
     assert _run_hook(runtime["disconnect"], runtime["env"]).returncode == 0
+
+
+def test_verified_sso_grant_still_bypasses_strict_binding(tmp_path: Path) -> None:
+    """只有通过 Management 认证发布的同一端点授权才可跳过强设备绑定。"""
+    import json
+
+    from app.services.auth.sso_grants import write_sso_grant
+
+    runtime = _prepare_hook_runtime(tmp_path)
+    runtime["bind_mode"].write_text("strict_hwaddr\n", encoding="utf-8")
+    runtime["server_conf"].write_text(
+        "management /etc/openvpn/mgmt/sso.sock unix\n"
+        "management-client-user root\n"
+        "management-client-auth\n",
+        encoding="utf-8",
+    )
+    # 无 IV_HWADDR 且没有真实授权时，强绑定仍拒绝。
+    denied = _run_hook(runtime["connect"], runtime["env"])
+    assert denied.returncode != 0
+
+    write_sso_grant(
+        "server", "demo-user",
+        peer_ip="203.0.113.7", peer_port="55778",
+        grant_dir=tmp_path / "mgmt" / "sso_grants",
+    )
+    accepted = _run_hook(runtime["connect"], runtime["env"])
+    assert accepted.returncode == 0, accepted.stderr
+    events = [
+        json.loads(row)
+        for row in runtime["audit_log"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[-1]["device_binding_action"] == "sso_verified"
 
 
 def test_hardware_binding_rejections_remain_fail_closed(tmp_path: Path) -> None:
