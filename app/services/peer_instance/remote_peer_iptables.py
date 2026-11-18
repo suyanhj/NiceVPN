@@ -133,7 +133,7 @@ def _peer_site_rules_already_current(
     if code_forward != 0:
         raise RuntimeError(f"iptables -S FORWARD 失败: {err_forward.strip() or out_forward}")
 
-    out_chain, _, code_chain = _exec_ssh(client, f"{sp}iptables -S {shlex.quote(chain)}", timeout=timeout)
+    _, _, code_chain = _exec_ssh(client, f"{sp}iptables -S {shlex.quote(chain)}", timeout=timeout)
     if code_chain != 0:
         return False
 
@@ -543,7 +543,7 @@ def replace_peer_filter_chain_plan_via_ssh(
                 )
 
             keep_names = {spec.name for spec in ipsets}
-            keep_names.update(referenced_peer_tag_ipsets(clean_rests + site_fallbacks, peer_id))
+            keep_names.update(referenced_peer_tag_ipsets(clean_rests, peer_id))
             removed = gc_remote_peer_tag_ipsets(
                 client, sp, peer_id, keep_names, _exec_ssh, timeout=exec_timeout,
             )
