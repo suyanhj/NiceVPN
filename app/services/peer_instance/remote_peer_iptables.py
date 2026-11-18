@@ -448,6 +448,7 @@ def replace_peer_filter_chain_plan_via_ssh(
     rests: list[str],
     ipsets: list[RemoteIpsetSpec],
     *,
+    preserve_managed_rules: bool = False,
     exec_timeout: int = 180,
 ) -> None:
     """按传入的完整规则计划原子更新对端链，并声明式管理本对端的标签 ipset。
@@ -491,6 +492,17 @@ def replace_peer_filter_chain_plan_via_ssh(
                         f"对端上尚不存在链 {expect}。请先在「组网对端」对该节点执行「SSH 下发对端防火墙」以创建链。"
                     )
                 raise RuntimeError(f"无法读取对端链 {expect}: {msg}")
+
+            # 仅后台标签成员刷新可启用兼容保留：旧缓存可能尚未记录系统规则，
+            # 从远端当前链补回仍存在的规则；普通 UI 写回严格遵循用户提交的完整列表。
+            if preserve_managed_rules:
+                current_rests = _filter_chain_rests_from_iptables_s(pout, expect)
+                for current_rest in current_rests:
+                    if (
+                        _is_managed_peer_global_allow_rule(current_rest, peer_id)
+                        and current_rest not in clean_rests
+                    ):
+                        clean_rests.append(current_rest)
 
             newly_created: set[str] = set()
             if ipsets:
